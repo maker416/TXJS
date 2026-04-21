@@ -1,7 +1,7 @@
 <div align="center">
-<h1> RWPP </h1>
+<h1>铁锈战争极速版</h1>
 <div align="center">
-  <strong>multiplatform launcher for Rusted Warfare</strong>
+  <strong>基于 RWPP，面向萌新云生态的多平台铁锈战争启动器</strong>
 </div>
 <br />
 <div align="center">
@@ -14,52 +14,73 @@
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-1.10.1-brightgreen)](https://www.jetbrains.com/lp/compose-multiplatform/)
 ![Android](https://img.shields.io/badge/Android-green)
 ![Desktop](https://img.shields.io/badge/Desktop-tomato)
-[![License](https://img.shields.io/github/license/Minxyzgo/RWPP)]()
-[![Issues](https://img.shields.io/github/issues/Minxyzgo/RWPP)]()
+[![License](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](./LICENSE)
 </div>
 
-<h1 align="center"> Screenshot </h1>
+## 关于本项目
+
+**铁锈战争极速版**是从 [RWPP](https://github.com/Minxyzgo/RWPP) 体系 fork 并独立维护的项目，在遵守上游及本仓库**开源许可**的前提下持续开发。技术基底与 RWPP 一脉相承，产品方向聚焦于**萌新云**与更清爽的铁锈联机体验，致力于缓解当前铁锈生态中的典型痛点。
+
+### 我们关注的问题
+
+- **上手与开放流程繁琐**：原版路径长、步骤多，不利于快速开局。
+- **服务器列表体验混乱**：列表信息杂乱，难以快速找到合适房间。
+- **广告与干扰过多**：影响浏览与进房效率。
+- **公开房间曝光困难**：房间难以稳定、清晰地出现在公开列表中，房主与玩家匹配成本高。
+
+本项目以「极速版」为定位，在 RWPP 能力之上持续优化上述体验（具体能力以各版本 Release 说明为准）。
+
+<h1 align="center">截图</h1>
 
 ![screenshot](/.github/img.png)
 
-<h1 align="center"> Implemented </h1>
+<h1 align="center">已实现与规划</h1>
 
- - __Ban Units__
- - __IME fixed__
- - __Blacklists__
- - __List filter__
- - __More room options__ (Such as lock room and team look)
- - __External Resource__
- - __New UI__
+继承自 RWPP 的典型能力包括但不限于：
 
-<h1 align="center"> Download </h1>
+- **单位禁用（Ban Units）**
+- **输入法（IME）相关修复**
+- **黑名单**
+- **列表过滤**
+- **更多房间选项**（如锁房、观战等）
+- **外部资源**
+- **新版界面**
 
-You can download RWPP release version in the releases.
+极速版在此基础上，围绕萌新云与联机列表体验做针对性迭代；具体变更以本仓库各版本 Release 说明为准。
 
-<h1 align="center"> Run </h1>
+<h1 align="center">下载</h1>
 
-## Msi Version
-- Install RWPP to your rw root directory
-> e.g. SteamLibrary\steamapps\common\Rusted Warfare\
-- Run RWPP.exe
+请在 **本仓库 Releases** 页面下载对应平台的发行包（若仓库已迁移，请使用新仓库的 Releases）。
 
-## Jar Version
-- Install Java 17
-- Copy RWPP.jar to your rw root directory.
-> e.g. SteamLibrary\steamapps\common\Rusted Warfare\
-- Run launcher.bat
+<h1 align="center">运行</h1>
 
-<h1 align="center"> Build </h1>
+## Windows（MSI）
 
-- Use OpenJdk 17 or above.
-- For desktop, run task `rwpp-desktop:packageReleaseUberJarForCurrentOS`
-- To build msi, run task `rwpp-desktop:packageWixDistribution` (Note that you need .net SDK)
-- For android, assets and res are missing for some reason, you can find them in your Rusted Warfare client.
+- 将铁锈战争极速版安装到游戏根目录，例如：  
+  `SteamLibrary\steamapps\common\Rusted Warfare\`
+- 运行安装后的启动器可执行文件（名称以实际发布包为准，例如 `铁锈战争极速版.exe` 或与 Release 中一致）。
 
-<h1 align="center"> Contribute </h1>
+## Jar 版本
 
-If you find any bugs or have any suggestions, please create an issue.
+- 安装 **Java 17** 或以上。
+- 将发行包中的 `.jar` 放到游戏根目录，例如：  
+  `SteamLibrary\steamapps\common\Rusted Warfare\`
+- 使用随包提供的 `launcher.bat` 或等价脚本启动（以 Release 说明为准）。
 
-<h1 align="center"> Thanks </h1>
+<h1 align="center">构建</h1>
 
-[RW-HPS](https://github.com/deng-rui/RW-HPS)
+- 使用 **OpenJDK 17** 或以上。
+- 桌面端可执行任务：`rwpp-desktop:packageReleaseUberJarForCurrentOS`
+- 构建 MSI：执行任务 `rwpp-desktop:packageWixDistribution`（需安装 .NET SDK）
+- Android 端若缺少部分 assets/res，可从本机已安装的铁锈战争客户端中对照补齐。
+
+<h1 align="center">参与贡献</h1>
+
+若发现缺陷或有功能建议，欢迎提交 Issue；也欢迎通过 Pull Request 参与改进。
+
+<h1 align="center">致谢与协议</h1>
+
+- 上游启动器：[RWPP](https://github.com/Minxyzgo/RWPP)
+- 相关生态：[RW-HPS](https://github.com/deng-rui/RW-HPS)
+
+**许可**：本仓库沿用 **GNU Affero General Public License v3.0（AGPL-3.0）**（见根目录 [`LICENSE`](./LICENSE)）。fork 与再分发时请务必保留许可与版权信息，并遵守 AGPL-3.0 的全部义务。
