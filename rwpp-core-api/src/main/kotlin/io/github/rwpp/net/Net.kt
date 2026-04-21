@@ -15,6 +15,7 @@ import io.github.rwpp.logger
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import okhttp3.*
+import org.apache.commons.csv.CSVFormat
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.get
 import java.io.*
@@ -260,56 +261,130 @@ interface Net : KoinComponent, Initialization {
 
                 val roomDescriptions = mutableListOf<RoomDescription>()
 
-                result.body!!.source().use {
-                    val read = it.readUtf8Line()
-                    if (read?.contains("CORRODINGGAMES") != true) throw RuntimeException("Unknown header: $read")
-                    var i = 0
-                    while (true) {
-                        val r = it.readUtf8Line()?.split(",") ?: break
-                        val uuid = if (r[0].toIntOrNull() == 0) {
-                            r[0] + i++
-                        } else {
-                            r[0]
-                        }
-                        try {
-                            val desc = RoomDescription(
-                                uuid,
-                                r[1],
-                                r[2].toInt(),
-                                r[3],
-                                r[4],
-                                r[5].toLong(),
-                                r[6].toBooleanStrict(),
-                                r[7],
-                                r[8].toBooleanStrict(),
-                                r[9],
-                                r[10],
-                                r[11],
-                                r[12],
-                                r[13].toBooleanStrict(),
-                                r[14],
-                                r[15].toIntOrNull(),
-                                r[16].toIntOrNull(),
-                                r[17].toBooleanStrict(),
-                                r[18].ifBlank { r[0] },
-                                r[19].toBooleanStrict(),
-                                r[20],
-                                r[21].toInt(),
-                            )
-
-                            roomDescriptions.add(desc)
-                        } catch (e: Throwable) {
-                            throw RuntimeException("Parse error when reading: ${r.joinToString(",")}", e)
-                        }
-                    }
-                }
-
+                val body = result.body!!.string()
                 result.close()
                 channel.close()
+
+                val headerEnd = body.indexOfAny(charArrayOf('\r', '\n'))
+                val header = if (headerEnd < 0) body else body.substring(0, headerEnd)
+                if (!header.contains("CORRODINGGAMES")) {
+                    throw RuntimeException("Unknown header: $header")
+                }
+                val payload = if (headerEnd < 0) "" else body.substring(headerEnd).trimStart('\r', '\n')
+
+                val records = runCatching {
+                    CSVFormat.RFC4180.builder()
+                        .setIgnoreEmptyLines(true)
+                        .build()
+                        .parse(StringReader(payload))
+                        .records
+                }.getOrElse { e ->
+                    throw RuntimeException("Failed to parse room list CSV body", e)
+                }
+
+                var blankUuidSeq = 0
+                for (record in records) {
+                    val fields = record.toList()
+                    val desc = runCatching {
+                        when (fields.size) {
+                            13 -> parseNewProtocolRecord(fields, blankUuidSeq).also {
+                                if (fields[0].toIntOrNull() == 0) blankUuidSeq++
+                            }
+                            22 -> parseLegacyRecord(fields, blankUuidSeq).also {
+                                if (fields[0].toIntOrNull() == 0) blankUuidSeq++
+                            }
+                            else -> {
+                                logger.warn("Skip room list record with unexpected column count ${fields.size}: $fields")
+                                null
+                            }
+                        }
+                    }.onFailure {
+                        logger.error("Parse error when reading: ${fields.joinToString(",")}", it)
+                    }.getOrNull()
+
+                    if (desc != null) roomDescriptions.add(desc)
+                }
 
                 roomDescriptions
             }
         }
+
+}
+
+private fun parseNewProtocolRecord(f: List<String>, blankUuidSeq: Int): RoomDescription {
+    val rawUuid = f[0]
+    val uuid = if (rawUuid.toIntOrNull() == 0) rawUuid + blankUuidSeq else rawUuid
+    val roomOwner = f[1]
+    val address = f[2]
+    val portStr = f[3].trim()
+    val requiredPassword = f[4].equals("true", ignoreCase = true)
+    val mapName = f[5]
+    val statusRaw = f[6]
+    val status = when (statusRaw) {
+        "pending" -> "battleroom"
+        else -> statusRaw
+    }
+    val roomType = f[7].ifBlank { RoomJoinType.IP }
+    val currentPlayers = f[8].toIntOrNull()
+    val maxPlayers = f[9].toIntOrNull()
+    val isUpperCase = f[10].equals("true", ignoreCase = true)
+    val roomMode = f[11]
+    val mods = f[12]
+
+    val port = portStr.toLongOrNull() ?: if (roomType == RoomJoinType.SHORT) 0L else 5123L
+    val versionLabel = when {
+        roomMode.equals("modded", ignoreCase = true) -> "modded"
+        roomMode.equals("vanilla", ignoreCase = true) -> "vanilla"
+        else -> roomMode
+    }
+
+    return RoomDescription(
+        uuid = uuid,
+        roomOwner = roomOwner,
+        netWorkAddress = address,
+        port = port,
+        isOpen = !requiredPassword,
+        creator = roomOwner,
+        requiredPassword = requiredPassword,
+        mapName = mapName,
+        status = status,
+        version = versionLabel,
+        displayMapName = mapName,
+        playerCurrentCount = currentPlayers,
+        playerMaxCount = maxPlayers,
+        isUpperCase = isUpperCase,
+        mods = mods,
+        roomJoinType = roomType,
+    )
+}
+
+private fun parseLegacyRecord(r: List<String>, blankUuidSeq: Int): RoomDescription {
+    val rawUuid = r[0]
+    val uuid = if (rawUuid.toIntOrNull() == 0) rawUuid + blankUuidSeq else rawUuid
+    return RoomDescription(
+        uuid,
+        r[1],
+        r[2].toInt(),
+        r[3],
+        r[4],
+        r[5].toLong(),
+        r[6].toBooleanStrict(),
+        r[7],
+        r[8].toBooleanStrict(),
+        r[9],
+        r[10],
+        r[11],
+        r[12],
+        r[13].toBooleanStrict(),
+        r[14],
+        r[15].toIntOrNull(),
+        r[16].toIntOrNull(),
+        r[17].toBooleanStrict(),
+        r[18].ifBlank { r[0] },
+        r[19].toBooleanStrict(),
+        r[20],
+        r[21].toInt(),
+    )
 }
 
 @Suppress("UNCHECKED_CAST")

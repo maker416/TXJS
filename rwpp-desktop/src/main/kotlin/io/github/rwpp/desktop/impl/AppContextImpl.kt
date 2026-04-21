@@ -15,11 +15,10 @@ import io.github.rwpp.graphics.GL
 import io.github.rwpp.impl.BaseAppContextImpl
 import org.koin.core.annotation.Single
 import org.koin.core.component.get
-import kotlin.system.exitProcess
-
 @Single([AppContext::class])
 class AppContextImpl : BaseAppContextImpl() {
     private val exitActions = mutableListOf<() -> Unit>()
+    @Volatile private var exiting = false
 
 
     override fun onExit(action: () -> Unit) {
@@ -38,17 +37,42 @@ class AppContextImpl : BaseAppContextImpl() {
         GL.gameCanvas = GameCanvasImpl()
     }
 
+    /**
+     * Shut the desktop client down without blocking the calling thread (typically the
+     * AWT Event Dispatch Thread when this is invoked from the main window's close dialog).
+     *
+     * Why this looks the way it does:
+     * - `System.exit()` / `exitProcess()` acquire the single `Runtime` exit lock and run
+     *   shutdown hooks/finalizers/AWT teardown. When triggered from the EDT while Swing
+     *   and Slick2D rendering threads are still alive, JVM shutdown regularly deadlocks,
+     *   leaving the UI frozen even though the game engine already logged a clean
+     *   `gameThread already null`.
+     * - `Runtime.halt(0)` is a hard abort that bypasses all of that. We only use the
+     *   graceful engine shutdown path best-effort, and always arm a daemon watchdog
+     *   that halts the VM within a short grace period regardless of outcome.
+     */
     override fun exit() {
-        GameEngine.B().bO
-        val configIO: ConfigIO = get()
-        GameEngine.B().bQ.apply {
-            numLoadsSinceRunningGameOrNormalExit = 0
-            numIncompleteLoadAttempts = 0
+        if (exiting) return
+        exiting = true
+
+        runCatching {
+            GameEngine.B().bO
+            val configIO: ConfigIO = get()
+            GameEngine.B().bQ.apply {
+                numLoadsSinceRunningGameOrNormalExit = 0
+                numIncompleteLoadAttempts = 0
+            }
+            configIO.saveAllConfig()
         }
-        configIO.saveAllConfig()
-        exitActions.forEach { it.invoke() }
-        ScriptEngine.getInstance().root.exit()
-        GameImpl.gameThread.stop()
-        exitProcess(0)
+        runCatching { exitActions.forEach { it.invoke() } }
+
+        Thread {
+            runCatching { ScriptEngine.getInstance().root.exit() }
+        }.apply { isDaemon = true; name = "rwpp-engine-shutdown" }.start()
+
+        Thread {
+            runCatching { Thread.sleep(1000) }
+            Runtime.getRuntime().halt(0)
+        }.apply { isDaemon = true; name = "rwpp-exit-watchdog" }.start()
     }
 }

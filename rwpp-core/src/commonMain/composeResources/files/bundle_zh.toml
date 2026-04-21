@@ -34,12 +34,42 @@ admitting = """
 您是否同意？(该对话框第一次显示后将不再显示，稍后可在 设置 - Show Welcome Message中更改)
 """
 
+[multiplayer.roomList]
+colStatus = "状态"
+colCreator = "房主"
+colPlayers = "人数"
+colMap = "地图"
+colMods = "模组"
+colAccess = "访问"
+vanillaDisplay = "原版"
+accessPassword = "需要密码"
+accessPublic = "公开"
+accessLegend = "最后一列：需要密码表示需密码加入；公开表示无需密码。"
+
+[multiplayer.roomList.status]
+ingame = "游戏中"
+battleroom = "等待中"
+
+[multiplayer.roomListApi]
+title = "房间列表 API"
+hint = "须与官方 masterserver 文本协议兼容（CORRODINGGAMES）。多个备用地址可用英文分号连接。"
+fieldLabel = "列表请求 URL（可有多个）"
+cancel = "取消"
+save = "保存"
+
 [multiplayer.filter]
 gameMapNameFilter = "地图名称"
 creatorNameFilter = "创建者"
 playerLimitRange = "玩家限制范围"
 blacklist = "黑名单"
 reset = "重置"
+sectionSearch = "搜索条件"
+sectionRange = "玩家数量"
+sectionDisplay = "列表选项"
+hideInProgressRooms = "隐藏进行中的房间"
+hideInProgressRoomsHint = "开启后不显示已开始对局的房间"
+hideModdedRooms = "不显示模组房间"
+hideModdedRoomsHint = "开启后隐藏带模组的房间，仅看到原版或空模组"
 
 [multiplayer.room]
 selectMap = "选择地图"

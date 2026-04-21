@@ -33,12 +33,42 @@ In order to make RWPP even better, we want you to send a message to joining play
 Do you agree? (The dialog will no longer be displayed, and can be changed later in Settings - Show Welcome Message)
 """
 
+[multiplayer.roomList]
+colStatus = "Status"
+colCreator = "Host"
+colPlayers = "Players"
+colMap = "Map"
+colMods = "Mods"
+colAccess = "Access"
+vanillaDisplay = "Vanilla"
+accessPassword = "Password required"
+accessPublic = "Open"
+accessLegend = "Last column: Password required vs Open (no password)."
+
+[multiplayer.roomList.status]
+ingame = "In game"
+battleroom = "Waiting"
+
+[multiplayer.roomListApi]
+title = "Room list API"
+hint = "Must use the same masterserver text protocol as the official game (CORRODINGGAMES header). Separate mirror URLs with semicolon ; "
+fieldLabel = "List request URL(s)"
+cancel = "Cancel"
+save = "Save"
+
 [multiplayer.filter]
 gameMapNameFilter = "Game Map Name Filter"
 creatorNameFilter = "Creator Name Filter"
 playerLimitRange = "Player Limit Range"
 blacklist = "Blacklist"
 reset = "Reset"
+sectionSearch = "Search"
+sectionRange = "Player count"
+sectionDisplay = "Display"
+hideInProgressRooms = "Hide in-progress games"
+hideInProgressRoomsHint = "When enabled, rooms that have already started are hidden."
+hideModdedRooms = "Hide modded rooms"
+hideModdedRoomsHint = "When on, modded rooms are not shown in the list."
 
 [multiplayer.room]
 selectMap = "Select Map"

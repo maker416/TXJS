@@ -56,13 +56,18 @@ class ExternalHandlerImpl : BaseExternalHandlerImpl() {
         val resources = get<Context>().resources
 
         resList.forEach { clazz ->
-            clazz.declaredFields.forEach {
-                val i = (it.get(null) as Int)
-                val bytes = resources.openRawResource(i).use { res -> res.readBytes() }
-                val fi = File(resOutputDir + resources.getResourceFileName(i))
-                fi.parentFile!!.run { if (!exists()) mkdirs() }
-                if (!fi.exists()) fi.createNewFile()
-                fi.writeBytes(bytes)
+            clazz.declaredFields.forEach { field ->
+                runCatching {
+                    val i = field.get(null) as Int
+                    // openRawResource 仅适用于 res/raw；drawable（含 vector）会抛 NotFoundException
+                    val bytes = resources.openRawResource(i).use { res -> res.readBytes() }
+                    val fi = File(resOutputDir + resources.getResourceFileName(i))
+                    fi.parentFile!!.run { if (!exists()) mkdirs() }
+                    if (!fi.exists()) fi.createNewFile()
+                    fi.writeBytes(bytes)
+                }.onFailure { e ->
+                    logger.warn("skip app resource copy [${field.name}]: ${e.message}")
+                }
             }
         }
 

@@ -96,11 +96,12 @@ android {
     sourceSets["main"].resources.srcDirs("src/commonMain/resources")
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        // Align with androidx.core:core-ktx 1.16+ and other deps compiled for JVM 21
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
     kotlin {
-        jvmToolchain(17)
+        jvmToolchain(21)
     }
 }
 

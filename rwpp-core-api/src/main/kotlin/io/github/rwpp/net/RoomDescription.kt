@@ -32,34 +32,71 @@ data class RoomDescription(
     val unknown: Boolean = false, // it is unused in source code
     val mods: String = "", // even though, this cannot be evidence that the mod has been enabled
     val roomId: Int = 0,
-    val customIp: String? = null
+    val customIp: String? = null,
+    /**
+     * Join transport hint from the third-party list protocol.
+     *
+     * - [RoomJoinType.IP]: treat [netWorkAddress] + [port] as a direct endpoint.
+     * - [RoomJoinType.SHORT]: [netWorkAddress] is a short code, [port] is ignored.
+     */
+    val roomJoinType: String = RoomJoinType.IP,
 ) {
     fun addressProvider(): String {
-        if (this.roomId == 0) {
-            return customIp ?: "$netWorkAddress:$port"
+        if (this.roomId != 0) {
+            return "get|" + uuid2.replace("|", ".") + "|" + roomId + "|" + requiredPassword + "|" + port
         }
-        return "get|" + uuid2.replace("|", ".") + "|" + roomId + "|" + requiredPassword + "|" + port
+        return when (roomJoinType) {
+            RoomJoinType.SHORT -> customIp ?: netWorkAddress
+            else -> customIp ?: "$netWorkAddress:$port"
+        }
     }
 }
 
-val List<RoomDescription>.sorted
-    get() = this.sortedBy {
-        when {
-            it.isUpperCase && it.netWorkAddress.startsWith("uuid:") -> 0
-            //it.isUpperCase -> 1
-            it.isLocal -> 2
-            it.isUpperCase && it.creator.contains("RELAY") -> 4
-            it.status.contains("battleroom") -> {
-                if(it.playerCurrentCount != null && it.playerMaxCount != null
-                    && it.playerCurrentCount < it.playerMaxCount
-                    && it.gameVersion == gameVersion
-                    && it.isOpen) {
-                    if(it.isUpperCase) 3 else 5
-                }
-                else if (it.gameVersion == gameVersion) 6
-                else if (it.isUpperCase) 7
-                else if (it.isOpen) 9 else 10
-            }
-            else -> 99
-        }
+object RoomJoinType {
+    const val IP = "IP"
+    const val SHORT = "short"
+}
+
+private fun RoomDescription.battleroomSubRank(): Int {
+    if (!status.contains("battleroom", ignoreCase = true)) return 0
+    return when {
+        playerCurrentCount != null && playerMaxCount != null
+            && playerCurrentCount < playerMaxCount
+            && gameVersion == io.github.rwpp.gameVersion
+            && isOpen -> if (isUpperCase) 3 else 5
+        gameVersion == io.github.rwpp.gameVersion -> 6
+        isUpperCase -> 7
+        isOpen -> 9
+        else -> 10
     }
+}
+
+/**
+ * Room list ordering by joinability first, then special tiers within the same tier:
+ * 1. `ingame` always last.
+ * 2. Password-required after open rooms.
+ * 3. Full rooms (no available slots) after rooms with space.
+ * 4. Version-mismatched rooms after version-matched rooms.
+ * 5. Within the same tier: uuid relay → local → RELAY tag → other uppercase → normal.
+ */
+val List<RoomDescription>.sorted
+    get() = sortedWith(
+        compareBy<RoomDescription>(
+            { if (it.status.contains("ingame", ignoreCase = true)) 1 else 0 },
+            { if (it.requiredPassword) 1 else 0 },
+            {
+                if (it.playerCurrentCount != null && it.playerMaxCount != null
+                    && it.playerCurrentCount >= it.playerMaxCount) 1 else 0
+            },
+            { if (it.gameVersion != io.github.rwpp.gameVersion) 1 else 0 },
+            {
+                when {
+                    it.isUpperCase && it.netWorkAddress.startsWith("uuid:") -> 0
+                    it.isLocal -> 1
+                    it.isUpperCase && it.creator.contains("RELAY") -> 2
+                    it.isUpperCase -> 3
+                    else -> 4
+                }
+            },
+        )
+    )

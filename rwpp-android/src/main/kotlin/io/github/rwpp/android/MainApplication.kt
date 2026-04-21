@@ -9,6 +9,7 @@ package io.github.rwpp.android
 
 import android.app.Application
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -33,6 +34,7 @@ import io.github.rwpp.ui.defaultBuildLogger
 import org.koin.android.ext.koin.androidLogger
 import org.koin.core.context.startKoin
 import org.koin.ksp.generated.module
+import android.util.Log
 import org.slf4j.LoggerFactory
 import java.io.File
 import kotlin.system.exitProcess
@@ -64,10 +66,14 @@ class MainApplication : Application() {
         val fileAppender = FileAppender<ILoggingEvent>()
         fileAppender.isAppend = false
         fileAppender.context = lc
-        fileAppender.file = "/storage/emulated/0/rustedWarfare/rwpp-log.txt"
+        val logFile = File("/storage/emulated/0/rustedWarfare/rwpp-log.txt")
+        logFile.parentFile?.mkdirs()
+        fileAppender.file = logFile.absolutePath
         fileAppender.encoder = encoder1
-        fileAppender.start()
-
+        val fileAppenderOk = runCatching { fileAppender.start() }.isSuccess
+        if (!fileAppenderOk) {
+            Log.e("RWPP", "File logging unavailable (storage permission or path); using logcat only")
+        }
 
         // setup LogcatAppender
         val encoder2 = PatternLayoutEncoder()
@@ -83,12 +89,21 @@ class MainApplication : Application() {
         // add the newly created appenders to the root logger;
         // qualify Logger to disambiguate from org.slf4j.Logger
         val root = LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME) as Logger
-        root.addAppender(fileAppender)
+        if (fileAppenderOk) {
+            root.addAppender(fileAppender)
+        }
         root.addAppender(logcatAppender)
 
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, ex ->
-            logger.error("Uncaught exception in thread ${thread.name}", ex)
-            exitProcess(0)
+            try {
+                LoggerFactory.getLogger(packageName).error("Uncaught exception in thread ${thread.name}", ex)
+            } catch (_: Throwable) { /* logger may not be ready */ }
+            if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                defaultHandler?.uncaughtException(thread, ex)
+            } else {
+                exitProcess(0)
+            }
         }
 
         logger = LoggerFactory.getLogger(packageName)

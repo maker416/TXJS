@@ -32,6 +32,7 @@ dependencies {
     api("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.eclipsesource.minimal-json:minimal-json:0.9.5")
     implementation("net.peanuuutz.tomlkt:tomlkt:0.3.7")
+    api("org.apache.commons:commons-csv:1.11.0")
     compileOnly("org.javassist:javassist:3.30.2-GA")
     ksp("io.insert-koin:koin-ksp-compiler:$koinAnnotationsVersion")
 }

@@ -12,7 +12,9 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -345,10 +347,13 @@ fun RowScope.TableCell(
     drawStroke: Boolean = true,
     modifier: Modifier = Modifier,
     strokeColor: Color = MaterialTheme.colorScheme.primaryContainer,
+    fontWeight: FontWeight? = null,
     iconLeader: (@Composable () -> Unit)? = null,
 ) {
     val border = if(drawStroke) Modifier.border(0.5f.dp, strokeColor) else Modifier
     val settings = koinInject<Settings>()
+    val baseStyle = if (settings.boldText) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium
+    val textStyle = fontWeight?.let { baseStyle.copy(fontWeight = it) } ?: baseStyle
     Row(
         horizontalArrangement = Arrangement.Center,
         modifier = Modifier
@@ -365,7 +370,44 @@ fun RowScope.TableCell(
             color = color,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(0.dp, 2.dp, 0.dp, 2.dp),
-            style = if (settings.boldText) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium
+            style = textStyle,
+        )
+    }
+}
+
+/**
+ * Single-line cell that scrolls horizontally when [text] is long (e.g. many mod names).
+ */
+@Composable
+fun RowScope.TableCellHorizontalScroll(
+    text: String,
+    weight: Float,
+    color: Color = MaterialTheme.colorScheme.onSurface,
+    drawStroke: Boolean = true,
+    modifier: Modifier = Modifier,
+    strokeColor: Color = MaterialTheme.colorScheme.primaryContainer,
+    fontWeight: FontWeight? = null,
+) {
+    val border = if (drawStroke) Modifier.border(0.5f.dp, strokeColor) else Modifier
+    val settings = koinInject<Settings>()
+    val baseStyle = if (settings.boldText) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium
+    val textStyle = fontWeight?.let { baseStyle.copy(fontWeight = it) } ?: baseStyle
+    val scrollState = rememberScrollState()
+    Row(
+        horizontalArrangement = Arrangement.Center,
+        modifier = Modifier
+            .weight(weight)
+            .then(border)
+            .padding(0.dp, 2.dp, 0.dp, 2.dp)
+            .horizontalScroll(scrollState)
+            .then(modifier)
+    ) {
+        Text(
+            text,
+            maxLines = 1,
+            color = color,
+            modifier = Modifier.padding(0.dp, 2.dp, 0.dp, 2.dp),
+            style = textStyle,
         )
     }
 }
