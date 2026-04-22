@@ -230,6 +230,51 @@ interface Net : KoinComponent, Initialization {
     }
 
 
+    /**
+     * Fetch the server-defined label whitelist from the same origin as the room-list API.
+     *
+     * For each candidate URL (semicolon-separated [roomListApiUrls]), the origin
+     * (`scheme://authority`) is derived and `GET /api/labels` is attempted in sequence.
+     * Returns the label list on the first successful + parseable 2xx response.
+     * Returns an empty list if all origins fail or the endpoint does not exist (e.g. the
+     * official masterserver), so callers should treat an empty result as "not supported".
+     */
+    suspend fun fetchRoomListLabels(roomListApiUrls: String): List<String> =
+        withContext(Dispatchers.IO) {
+            val origins = roomListApiUrls
+                .split(";")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .mapNotNull { rawUrl ->
+                    runCatching {
+                        val uri = java.net.URI(rawUrl)
+                        if (uri.scheme != null && uri.authority != null)
+                            "${uri.scheme}://${uri.authority}"
+                        else null
+                    }.getOrNull()
+                }
+                .distinct()
+
+            for (origin in origins) {
+                val labelsUrl = "$origin/api/labels"
+                val result = runCatching {
+                    val request = okhttp3.Request.Builder().url(labelsUrl).get().build()
+                    val response = client.newCall(request).execute()
+                    if (!response.isSuccessful) return@runCatching null
+                    val body = response.body?.string() ?: return@runCatching null
+                    val obj = com.eclipsesource.json.Json.parse(body).asObject()
+                    val arr = (runCatching { obj.get("label").asArray() }.getOrNull()
+                        ?: runCatching { obj.get("labels").asArray() }.getOrNull())
+                        ?: return@runCatching null
+                    arr.mapNotNull { v ->
+                        if (v.isString) v.asString().trim().takeIf { it.isNotEmpty() } else null
+                    }.distinct().sorted()
+                }.getOrNull()
+                if (!result.isNullOrEmpty()) return@withContext result
+            }
+            emptyList()
+        }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     suspend fun CoroutineScope.getRoomListFromSourceUrl(url: List<String>): List<RoomDescription> =
         withContext(Dispatchers.IO) {

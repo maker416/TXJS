@@ -70,6 +70,11 @@ hideInProgressRooms = "隐藏进行中的房间"
 hideInProgressRoomsHint = "开启后不显示已开始对局的房间"
 hideModdedRooms = "不显示模组房间"
 hideModdedRoomsHint = "开启后隐藏带模组的房间，仅看到原版或空模组"
+sectionLabel = "房间标签"
+labelLoading = "正在加载标签…"
+labelUnavailable = "该服务器不支持标签筛选。"
+labelLoadFailed = "标签加载失败，服务器可能不支持此功能。"
+labelClearSelection = "清除标签筛选"
 
 [multiplayer.room]
 selectMap = "选择地图"

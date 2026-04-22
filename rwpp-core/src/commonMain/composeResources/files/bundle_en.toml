@@ -69,6 +69,11 @@ hideInProgressRooms = "Hide in-progress games"
 hideInProgressRoomsHint = "When enabled, rooms that have already started are hidden."
 hideModdedRooms = "Hide modded rooms"
 hideModdedRoomsHint = "When on, modded rooms are not shown in the list."
+sectionLabel = "Room Label"
+labelLoading = "Loading labels..."
+labelUnavailable = "This server does not support label filtering."
+labelLoadFailed = "Failed to load labels. The server may not support this feature."
+labelClearSelection = "Clear label filter"
 
 [multiplayer.room]
 selectMap = "Select Map"

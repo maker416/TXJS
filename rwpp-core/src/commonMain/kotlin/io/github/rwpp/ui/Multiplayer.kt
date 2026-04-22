@@ -298,6 +298,9 @@ fun MultiplayerView(
     var joinServerAddress by rememberSaveable { mutableStateOf(instance.joinServerAddress) }
     val showWelcomeMessage by remember { mutableStateOf(settings.showWelcomeMessage) }
     var battleroom by remember { mutableStateOf(instance.battleroom) }
+    var roomLabelFilterSelection by remember {
+        mutableStateOf(instance.roomLabelFilterSelection.toSet())
+    }
 
     var serverAddress by remember { mutableStateOf("") }
     var isConnecting by remember { mutableStateOf(false) }
@@ -320,6 +323,9 @@ fun MultiplayerView(
     remember(playerLimitRange) {
         instance.playerLimitRangeFrom = playerLimitRange.first
         instance.playerLimitRangeTo = playerLimitRange.last
+    }
+    remember(roomLabelFilterSelection) {
+        instance.roomLabelFilterSelection = roomLabelFilterSelection.toList()
     }
 
     DisposableEffect(Unit) {
@@ -873,6 +879,7 @@ fun MultiplayerView(
         playerLimitRange = 0..100
         mapNameFilter = ""
         creatorNameFilter = ""
+        roomLabelFilterSelection = emptySet()
     }
 
     @Composable
@@ -1114,6 +1121,95 @@ fun MultiplayerView(
                             )
                         }
 
+                        // --- 标签筛选区块 ---
+                        var availableLabels by remember { mutableStateOf<List<String>?>(null) }
+                        var labelsLoading by remember { mutableStateOf(false) }
+                        var labelsFailed by remember { mutableStateOf(false) }
+
+                        LaunchedEffect(visible, instance.roomListApiUrls) {
+                            if (!visible) return@LaunchedEffect
+                            availableLabels = null
+                            labelsLoading = true
+                            labelsFailed = false
+                            val result = runCatching {
+                                net.fetchRoomListLabels(instance.roomListApiUrls)
+                            }
+                            labelsLoading = false
+                            result.onSuccess { list ->
+                                availableLabels = list
+                            }.onFailure {
+                                labelsFailed = true
+                            }
+                        }
+
+                        FilterSectionCard(readI18n("multiplayer.filter.sectionLabel")) {
+                            when {
+                                labelsLoading -> {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidth = 2.dp,
+                                        )
+                                        Text(
+                                            readI18n("multiplayer.filter.labelLoading"),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                                labelsFailed || availableLabels == null -> {
+                                    Text(
+                                        if (labelsFailed)
+                                            readI18n("multiplayer.filter.labelLoadFailed")
+                                        else
+                                            readI18n("multiplayer.filter.labelUnavailable"),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                availableLabels!!.isEmpty() -> {
+                                    Text(
+                                        readI18n("multiplayer.filter.labelUnavailable"),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                else -> {
+                                    FlowRow(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                                    ) {
+                                        availableLabels!!.forEach { labelText ->
+                                            val selected = labelText in roomLabelFilterSelection
+                                            FilterChip(
+                                                selected = selected,
+                                                onClick = {
+                                                    roomLabelFilterSelection =
+                                                        if (selected)
+                                                            roomLabelFilterSelection - labelText
+                                                        else
+                                                            roomLabelFilterSelection + labelText
+                                                },
+                                                label = { Text(labelText) },
+                                            )
+                                        }
+                                    }
+                                    if (roomLabelFilterSelection.isNotEmpty()) {
+                                        TextButton(
+                                            onClick = { roomLabelFilterSelection = emptySet() },
+                                            modifier = Modifier.padding(top = 2.dp),
+                                        ) {
+                                            Text(readI18n("multiplayer.filter.labelClearSelection"))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
@@ -1257,7 +1353,8 @@ fun MultiplayerView(
                         mapNameFilter,
                         creatorNameFilter,
                         blacklists.size,
-                        battleroom
+                        battleroom,
+                        roomLabelFilterSelection,
                     ) {
                         currentViewList.filter { room ->
                             if (blacklists.any { it.uuid == room.uuid }) return@filter false
@@ -1267,6 +1364,10 @@ fun MultiplayerView(
                                 if (room.version.contains("mod", true) || room.mods.isNotBlank()) {
                                     return@filter false
                                 }
+                            }
+
+                            if (roomLabelFilterSelection.isNotEmpty()) {
+                                if (room.label.trim() !in roomLabelFilterSelection) return@filter false
                             }
 
                             if (mapNameFilter.isNotBlank()) {

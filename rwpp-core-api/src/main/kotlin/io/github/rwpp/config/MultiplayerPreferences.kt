@@ -28,4 +28,5 @@ data class MultiplayerPreferences(
     var battleroom: Boolean = true,
     var roomListApiUrls: String = DEFAULT_ROOM_LIST_API_URLS,
     var allServerConfig: MutableList<ServerConfig> = mutableListOf(),
+    var roomLabelFilterSelection: List<String> = emptyList(),
 ) : Config
