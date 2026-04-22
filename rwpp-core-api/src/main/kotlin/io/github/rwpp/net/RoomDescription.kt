@@ -34,6 +34,11 @@ data class RoomDescription(
     val roomId: Int = 0,
     val customIp: String? = null,
     /**
+     * Server-defined room label supplied by the 14th CSV column.
+     * Empty string means no label.
+     */
+    val label: String = "",
+    /**
      * Join transport hint from the third-party list protocol.
      *
      * - [RoomJoinType.IP]: treat [netWorkAddress] + [port] as a direct endpoint.

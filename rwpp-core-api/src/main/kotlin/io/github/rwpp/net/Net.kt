@@ -287,7 +287,7 @@ interface Net : KoinComponent, Initialization {
                     val fields = record.toList()
                     val desc = runCatching {
                         when (fields.size) {
-                            13 -> parseNewProtocolRecord(fields, blankUuidSeq).also {
+                            13, 14 -> parseNewProtocolRecord(fields, blankUuidSeq).also {
                                 if (fields[0].toIntOrNull() == 0) blankUuidSeq++
                             }
                             22 -> parseLegacyRecord(fields, blankUuidSeq).also {
@@ -330,6 +330,7 @@ private fun parseNewProtocolRecord(f: List<String>, blankUuidSeq: Int): RoomDesc
     val isUpperCase = f[10].equals("true", ignoreCase = true)
     val roomMode = f[11]
     val mods = f[12]
+    val label = if (f.size >= 14) f[13].trim() else ""
 
     val port = portStr.toLongOrNull() ?: if (roomType == RoomJoinType.SHORT) 0L else 5123L
     val versionLabel = when {
@@ -355,6 +356,7 @@ private fun parseNewProtocolRecord(f: List<String>, blankUuidSeq: Int): RoomDesc
         isUpperCase = isUpperCase,
         mods = mods,
         roomJoinType = roomType,
+        label = label,
     )
 }
 

@@ -206,6 +206,23 @@ private fun RoomAccessChip(text: String, hasPassword: Boolean) {
     }
 }
 
+@Composable
+private fun RoomLabelChip(label: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.primaryContainer,
+        shape = RoundedCornerShape(6.dp),
+    ) {
+        Text(
+            label,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
 /** For modded rows, show comma-separated mod names from [RoomDescription.mods] JSON; otherwise [RoomDescription.version] (vanilla → [vanillaLabel]). */
 private fun roomListModsColumnText(desc: RoomDescription, vanillaLabel: String): String {
     val looksModded = desc.version.equals("modded", ignoreCase = true)
@@ -570,6 +587,9 @@ fun MultiplayerView(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         RoomStatusChip(statusText, isIngame)
+                        if (desc.label.isNotBlank()) {
+                            RoomLabelChip(desc.label)
+                        }
                         Text(
                             desc.creator,
                             modifier = Modifier.weight(1f),
