@@ -630,6 +630,30 @@ fun App(
                         UI.dialogWidget?.Render()
                     }
                 }
+
+                val appContext = koinInject<AppContext>()
+                val exitOverlay by appContext.exitOverlayVisible.collectAsState()
+                if (exitOverlay) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color(0xCC000000)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            LineSpinFadeLoaderIndicator(Color.White)
+                            Spacer(Modifier.height(16.dp))
+                            Text(
+                                readI18n("app.exiting", I18nType.RWPP),
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+                    }
+                }
             }
         }
     }

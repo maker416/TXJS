@@ -24,6 +24,8 @@ ksp {
 }
 
 dependencies {
+    // Binds Dispatchers.Main to Swing EDT; required for coroutines using Main on plain JVM desktop.
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:${findProperty("kotlin.coroutines.version")}")
     api(project(":rwpp-core"))
     implementation(compose.desktop.macos_arm64)
     implementation(compose.desktop.windows_x64)

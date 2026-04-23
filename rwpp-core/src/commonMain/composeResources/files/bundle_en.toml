@@ -45,10 +45,6 @@ accessPassword = "Password required"
 accessPublic = "Open"
 accessLegend = "Last column: Password required vs Open (no password)."
 
-[multiplayer.roomList.status]
-ingame = "In game"
-battleroom = "Waiting"
-
 [multiplayer.roomListApi]
 title = "Room list API"
 hint = "Must use the same masterserver text protocol as the official game (CORRODINGGAMES header). Separate mirror URLs with semicolon ; "
@@ -65,8 +61,6 @@ reset = "Reset"
 sectionSearch = "Search"
 sectionRange = "Player count"
 sectionDisplay = "Display"
-hideInProgressRooms = "Hide in-progress games"
-hideInProgressRoomsHint = "When enabled, rooms that have already started are hidden."
 hideModdedRooms = "Hide modded rooms"
 hideModdedRoomsHint = "When on, modded rooms are not shown in the list."
 sectionLabel = "Room Label"
@@ -213,3 +207,6 @@ unknownFileTypeError = "Unknown file type: {0}."
 SkirmishMap = "Skirmish Map"
 CustomMap = "Custom Map"
 SavedGame = "Saved Game"
+
+[app]
+exiting = "Exiting…"

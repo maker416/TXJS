@@ -14,8 +14,18 @@ import io.github.rwpp.core.Logic
 import io.github.rwpp.scripts.Scripts
 import io.github.rwpp.ui.IUserInterface
 import io.github.rwpp.ui.UI
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 abstract class BaseAppContextImpl : AppContext {
+    private val _exitOverlayVisible = MutableStateFlow(false)
+    override val exitOverlayVisible: StateFlow<Boolean> = _exitOverlayVisible.asStateFlow()
+
+    protected fun markExitOverlayVisible() {
+        _exitOverlayVisible.value = true
+    }
+
     override fun init() {
         Logic.init()
         Scripts.init()

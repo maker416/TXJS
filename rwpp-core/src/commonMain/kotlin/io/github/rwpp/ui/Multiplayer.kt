@@ -164,27 +164,6 @@ private fun FilterSwitchRow(
 }
 
 @Composable
-private fun RoomStatusChip(text: String, isIngame: Boolean) {
-    val containerColor =
-        if (isIngame) MaterialTheme.colorScheme.errorContainer
-        else MaterialTheme.colorScheme.secondaryContainer
-    val contentColor =
-        if (isIngame) MaterialTheme.colorScheme.onErrorContainer
-        else MaterialTheme.colorScheme.onSecondaryContainer
-    Surface(
-        color = containerColor,
-        shape = RoundedCornerShape(6.dp),
-    ) {
-        Text(
-            text,
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-            style = MaterialTheme.typography.labelMedium,
-            color = contentColor,
-        )
-    }
-}
-
-@Composable
 private fun RoomAccessChip(text: String, hasPassword: Boolean) {
     val containerColor =
         if (hasPassword) MaterialTheme.colorScheme.tertiaryContainer
@@ -232,14 +211,6 @@ private fun roomListModsColumnText(desc: RoomDescription, vanillaLabel: String):
     val names = parseModNamesFromJson(desc.mods)
     val joined = names.joinToString(", ").ifBlank { desc.version }
     return mapVanillaVersionDisplay(joined, vanillaLabel)
-}
-
-/** Display labels for list status column; raw values stay in [RoomDescription.status] for filtering/sorting. */
-private fun roomListStatusDisplay(status: String): String = when {
-    status.equals("ingame", ignoreCase = true) -> readI18n("multiplayer.roomList.status.ingame")
-    status.equals("battleroom", ignoreCase = true) -> readI18n("multiplayer.roomList.status.battleroom")
-    status.equals("pending", ignoreCase = true) -> readI18n("multiplayer.roomList.status.battleroom")
-    else -> status
 }
 
 @Suppress("UnusedMaterial3ScaffoldPaddingParameter", "RememberReturnType")
@@ -297,7 +268,6 @@ fun MultiplayerView(
     var playerLimitRange by remember { mutableStateOf(instance.playerLimitRangeFrom..instance.playerLimitRangeTo) }
     var joinServerAddress by rememberSaveable { mutableStateOf(instance.joinServerAddress) }
     val showWelcomeMessage by remember { mutableStateOf(settings.showWelcomeMessage) }
-    var battleroom by remember { mutableStateOf(instance.battleroom) }
     var roomLabelFilterSelection by remember {
         mutableStateOf(instance.roomLabelFilterSelection.toSet())
     }
@@ -552,7 +522,6 @@ fun MultiplayerView(
             key = { descriptions[it].uuid }
         ) { index ->
             val desc = descriptions[index]
-            val isIngame = desc.status.contains("ingame", ignoreCase = true)
             val accentUpperCase = desc.isUpperCase && desc.gameVersion == gameVersion
             val rowFontWeight: FontWeight? = when {
                 accentUpperCase -> FontWeight.Black
@@ -564,7 +533,6 @@ fun MultiplayerView(
                 desc.isLocal -> Color(255, 127, 80)
                 else -> MaterialTheme.colorScheme.onSurface
             }
-            val statusText = roomListStatusDisplay(desc.status)
             val modsText = roomListModsColumnText(desc, readI18n("multiplayer.roomList.vanillaDisplay"))
             val playersText = "${desc.playerCurrentCount ?: "?"}/${desc.playerMaxCount ?: "?"}"
             val accessText =
@@ -592,7 +560,6 @@ fun MultiplayerView(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        RoomStatusChip(statusText, isIngame)
                         if (desc.label.isNotBlank()) {
                             RoomLabelChip(desc.label)
                         }
@@ -1110,15 +1077,6 @@ fun MultiplayerView(
                                 checked = enableModFilter,
                                 onCheckedChange = { enableModFilter = it }
                             )
-                            HorizontalDivider(
-                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .4f)
-                            )
-                            FilterSwitchRow(
-                                label = readI18n("multiplayer.filter.hideInProgressRooms"),
-                                hint = readI18n("multiplayer.filter.hideInProgressRoomsHint"),
-                                checked = battleroom,
-                                onCheckedChange = { battleroom = it }
-                            )
                         }
 
                         // --- 标签筛选区块 ---
@@ -1353,13 +1311,12 @@ fun MultiplayerView(
                         mapNameFilter,
                         creatorNameFilter,
                         blacklists.size,
-                        battleroom,
                         roomLabelFilterSelection,
                     ) {
                         currentViewList.filter { room ->
                             if (blacklists.any { it.uuid == room.uuid }) return@filter false
 
-                            if (battleroom && room.status == "ingame") return@filter false
+                            if (room.status.equals("ingame", ignoreCase = true)) return@filter false
                             if (enableModFilter) {
                                 if (room.version.contains("mod", true) || room.mods.isNotBlank()) {
                                     return@filter false

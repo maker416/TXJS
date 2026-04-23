@@ -25,7 +25,6 @@ data class MultiplayerPreferences(
     var playerLimitRangeFrom: Int = 0,
     var playerLimitRangeTo: Int = 100,
     var joinServerAddress: String = "",
-    var battleroom: Boolean = true,
     var roomListApiUrls: String = DEFAULT_ROOM_LIST_API_URLS,
     var allServerConfig: MutableList<ServerConfig> = mutableListOf(),
     var roomLabelFilterSelection: List<String> = emptyList(),

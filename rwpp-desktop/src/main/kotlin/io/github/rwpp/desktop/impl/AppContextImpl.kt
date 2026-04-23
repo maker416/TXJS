@@ -13,13 +13,20 @@ import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.desktop.GameEngine
 import io.github.rwpp.graphics.GL
 import io.github.rwpp.impl.BaseAppContextImpl
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.yield
 import org.koin.core.annotation.Single
 import org.koin.core.component.get
+
 @Single([AppContext::class])
 class AppContextImpl : BaseAppContextImpl() {
     private val exitActions = mutableListOf<() -> Unit>()
     @Volatile private var exiting = false
 
+    private val exitScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     override fun onExit(action: () -> Unit) {
         exitActions.add(action)
@@ -50,29 +57,38 @@ class AppContextImpl : BaseAppContextImpl() {
      * - `Runtime.halt(0)` is a hard abort that bypasses all of that. We only use the
      *   graceful engine shutdown path best-effort, and always arm a daemon watchdog
      *   that halts the VM within a short grace period regardless of outcome.
+     * - The overlay flag is set first, then the heavy work is deferred via `yield()` so
+     *   Compose gets at least one frame to render the "exiting" overlay before the main
+     *   thread is occupied with config saving.
      */
     override fun exit() {
         if (exiting) return
         exiting = true
 
-        runCatching {
-            GameEngine.B().bO
-            val configIO: ConfigIO = get()
-            GameEngine.B().bQ.apply {
-                numLoadsSinceRunningGameOrNormalExit = 0
-                numIncompleteLoadAttempts = 0
+        markExitOverlayVisible()
+
+        exitScope.launch {
+            yield()
+
+            runCatching {
+                GameEngine.B().bO
+                val configIO: ConfigIO = get()
+                GameEngine.B().bQ.apply {
+                    numLoadsSinceRunningGameOrNormalExit = 0
+                    numIncompleteLoadAttempts = 0
+                }
+                configIO.saveAllConfig()
             }
-            configIO.saveAllConfig()
+            runCatching { exitActions.forEach { it.invoke() } }
+
+            Thread {
+                runCatching { ScriptEngine.getInstance().root.exit() }
+            }.apply { isDaemon = true; name = "rwpp-engine-shutdown" }.start()
+
+            Thread {
+                runCatching { Thread.sleep(1000) }
+                Runtime.getRuntime().halt(0)
+            }.apply { isDaemon = true; name = "rwpp-exit-watchdog" }.start()
         }
-        runCatching { exitActions.forEach { it.invoke() } }
-
-        Thread {
-            runCatching { ScriptEngine.getInstance().root.exit() }
-        }.apply { isDaemon = true; name = "rwpp-engine-shutdown" }.start()
-
-        Thread {
-            runCatching { Thread.sleep(1000) }
-            Runtime.getRuntime().halt(0)
-        }.apply { isDaemon = true; name = "rwpp-exit-watchdog" }.start()
     }
 }

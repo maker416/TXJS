@@ -7,6 +7,7 @@
 
 package io.github.rwpp
 
+import kotlinx.coroutines.flow.StateFlow
 import org.koin.core.component.KoinComponent
 
 interface AppContext : KoinComponent {
@@ -21,4 +22,7 @@ interface AppContext : KoinComponent {
     fun externalStoragePath(path: String): String
 
     fun exit()
+
+    /** Emits `true` once [exit] has been called; drives the full-screen "exiting" overlay. */
+    val exitOverlayVisible: StateFlow<Boolean>
 }
