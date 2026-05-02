@@ -37,7 +37,7 @@
             android:label="RWPP"
             android:usesCleartextTraffic="true"
             android:resizeableActivity="true"
-            android:requestLegacyExternalStorage="true" android:icon="@mipmap/ic_launcher_2">
+            android:requestLegacyExternalStorage="true" android:icon="@drawable/ic_launcher_2">
         <uses-library android:name="org.apache.http.legacy" android:required="false"/>
         <activity
                 android:name="io.github.rwpp.android.LoadingScreen"

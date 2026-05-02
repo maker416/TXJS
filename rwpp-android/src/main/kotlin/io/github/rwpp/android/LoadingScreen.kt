@@ -24,6 +24,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import android.util.Log
 import io.github.rwpp.AppContext
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.android.impl.GameEngine
@@ -142,12 +143,18 @@ class LoadingScreen : ComponentActivity() {
                                     LaunchedEffect(Unit) {
                                         withContext(Dispatchers.IO) {
                                             appKoin.get<AppContext>().init()
-                                            File("/storage/emulated/0/rustedWarfare/maps/")
-                                                .walk()
-                                                .filter { it.name.startsWith("generated_") }
-                                                .forEach {
-                                                    it.delete()
+                                            runCatching {
+                                                val mapsDir = File(
+                                                    appKoin.get<AppContext>().externalStoragePath("maps")
+                                                )
+                                                if (mapsDir.isDirectory) {
+                                                    mapsDir.walk()
+                                                        .filter { it.isFile && it.name.startsWith("generated_") }
+                                                        .forEach { it.delete() }
                                                 }
+                                            }.onFailure {
+                                                Log.e("RWPP", "cleanup generated_ maps failed", it)
+                                            }
 
                                             async {
                                                 try {
@@ -161,7 +168,7 @@ class LoadingScreen : ComponentActivity() {
                                                         configIO.setGameConfig("storageType", 0)
                                                     }
                                                 } catch (e: Exception) {
-                                                    e.printStackTrace()
+                                                    Log.e("RWPP", "GameEngine init failed", e)
                                                 }
                                                 //Reflect.callVoid<GameEngine>(null, "f", listOf(Context::class), listOf(this@LoadingScreen))
                                             }.await()
