@@ -79,8 +79,6 @@ class GameImpl : AbstractGame() {
     override val gameRoom: GameRoom = object : AbstractGameRoom() {
         override fun startGame() {
             rwppVisibleSetter(false)
-            gameCanvas.isVisible = true
-            gameCanvas.requestFocus()
             super.startGame()
         }
     }
@@ -96,8 +94,6 @@ class GameImpl : AbstractGame() {
     init {
         GlobalEventChannel.filter(StartGameEvent::class).subscribeAlways {
             rwppVisibleSetter(false)
-            gameCanvas.isVisible = true
-            gameCanvas.requestFocus()
             isGaming = true
         }
     }
@@ -105,8 +101,6 @@ class GameImpl : AbstractGame() {
     override fun startNewMissionGame(difficulty: Difficulty, mission: Mission) {
         GameEngine.B().bX.b("starting singleplayer")
         rwppVisibleSetter(false)
-        gameCanvas.isVisible = true
-        gameCanvas.requestFocus()
         isGaming = true
 
         gameOver = false
@@ -440,9 +434,6 @@ class GameImpl : AbstractGame() {
 
     override fun watchReplay(replay: Replay) {
         rwppVisibleSetter(false)
-        gameCanvas.isVisible = true
-
-        gameCanvas.requestFocus()
         gameOver = false
 
         isGaming = true
@@ -468,9 +459,6 @@ class GameImpl : AbstractGame() {
 
     override fun continueGame() {
         rwppVisibleSetter(false)
-        gameCanvas.isVisible = true
-
-        gameCanvas.requestFocus()
 
         isGaming = true
         gameOver = false

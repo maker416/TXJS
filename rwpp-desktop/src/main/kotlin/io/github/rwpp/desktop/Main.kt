@@ -199,7 +199,13 @@ fun swingApplication() = SwingUtilities.invokeLater {
     panel.size = displaySize.size
     panel.isOpaque = false
     panel.isFocusable = true
-    rwppVisibleSetter = { panel.isVisible = it }
+    rwppVisibleSetter = { visible ->
+        panel.isVisible = visible
+        canvas.isVisible = !visible
+        if (!visible) canvas.requestFocus()
+        window.revalidate()
+        window.repaint()
+    }
     panel.setContent {
         var isLoading by remember { mutableStateOf(true) }
         var message by remember { mutableStateOf("loading...") }
