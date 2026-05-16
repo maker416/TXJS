@@ -16,6 +16,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # Android Debug APK
 ./gradlew :rwpp-android:assembleDebug
+
+# Android Release APK（需先配置签名）
+./gradlew :rwpp-android:assembleRelease
 ```
 
 Gradle JVM 参数及版本号均在 `gradle.properties` 中。需要 JDK 17+。
