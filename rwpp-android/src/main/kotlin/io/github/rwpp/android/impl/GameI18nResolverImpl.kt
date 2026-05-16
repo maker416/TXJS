@@ -15,6 +15,10 @@ import org.koin.core.annotation.Single
 @Single([GameI18nResolver::class, Initialization::class])
 class GameI18nResolverImpl : BaseGameI18nResolverImpl() {
     override fun i18n(str: String, vararg args: Any?): String {
-        return com.corrodinggames.rts.gameFramework.h.a.a(str, args)
+        return try {
+            com.corrodinggames.rts.gameFramework.h.a.a(str, args)
+        } catch (e: Exception) {
+            "[$str]"
+        }
     }
 }

@@ -1,12 +1,27 @@
- *.iml
+*.iml
 .gradle
 /.idea
+.agents/
+.vscode/
 build/
 /captures
 /android/release/
 /local.properties
-/android/src/main/assets/
-/android/src/main/res/
+skills-lock.json
+
+# Game resources extracted from original APK
+rwpp-android/src/main/assets/
+rwpp-android/src/main/res/anim/
+rwpp-android/src/main/res/layout/
+rwpp-android/src/main/res/layout-v11/
+rwpp-android/src/main/res/values-v11/
+rwpp-android/src/main/res/xml/
+rwpp-android/src/main/res/drawable/*
+!rwpp-android/src/main/res/drawable/ic_launcher_2.xml
+rwpp-android/src/main/res/raw/*
+!rwpp-android/src/main/res/raw/keep.txt
+rwpp-android/src/main/res/values/*
+!rwpp-android/src/main/res/values/themes.xml
 
 # Ignore per-module bin output directories
 **/bin/

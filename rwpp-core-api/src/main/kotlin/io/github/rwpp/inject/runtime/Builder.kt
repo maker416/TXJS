@@ -107,7 +107,7 @@ object Builder {
         logger?.info("Save lib to $outputDir")
         GameLibraries.includes.forEach { v ->
             val jarFile = File("$outputDir/${v.realName}.jar")
-            buildJar(jarFile, v.classTree.allClasses)
+            buildJar(jarFile, v.classTree.allClasses, v.lib)
         }
     }
 
@@ -278,8 +278,9 @@ object Builder {
      * 给定文件和类列表生成jar
      * @param jar 生成jar的文件
      * @param classes 给定的类列表
+     * @param originalJar 原始jar文件，用于复制非class资源文件
      */
-    fun buildJar(jar: File, classes: Iterable<CtClass>) {
+    fun buildJar(jar: File, classes: Iterable<CtClass>, originalJar: File? = null) {
         if (!jar.exists()) {
             jar.parentFile.mkdirs()
             jar.createNewFile()
@@ -293,6 +294,21 @@ object Builder {
             classes.forEach {
                 zip.putNextEntry(ZipEntry(Descriptor.toJvmName(it) + ".class"))
                 zip.write(it.toBytecode())
+            }
+
+            originalJar?.let { origJar ->
+                if (origJar.exists()) {
+                    java.util.zip.ZipFile(origJar).use { origZip ->
+                        origZip.entries().asSequence().forEach { entry ->
+                            if (!entry.name.endsWith(".class") && !entry.name.startsWith("META-INF") && !entry.isDirectory) {
+                                zip.putNextEntry(ZipEntry(entry.name))
+                                origZip.getInputStream(entry).use { input ->
+                                    input.copyTo(zip)
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 

@@ -156,6 +156,7 @@ class LoadingScreen : ComponentActivity() {
                                                 Log.e("RWPP", "cleanup generated_ maps failed", it)
                                             }
 
+                                            var engineInitSuccess = false
                                             async {
                                                 try {
                                                     val engineImpl = GameEngine.dv.a(this@LoadingScreen)
@@ -167,19 +168,23 @@ class LoadingScreen : ComponentActivity() {
                                                         configIO.setGameConfig("hasSelectedAStorageType", true)
                                                         configIO.setGameConfig("storageType", 0)
                                                     }
+                                                    engineInitSuccess = true
                                                 } catch (e: Exception) {
                                                     Log.e("RWPP", "GameEngine init failed", e)
                                                 }
-                                                //Reflect.callVoid<GameEngine>(null, "f", listOf(Context::class), listOf(this@LoadingScreen))
                                             }.await()
 
-                                            gameLoaded = true
-                                            GameLoadedEvent().broadcastIn()
-                                            startActivityForResult(
-                                                Intent(this@LoadingScreen, MainActivity::class.java),
-                                                0
-                                            )
-                                            finish()
+                                            if (engineInitSuccess) {
+                                                gameLoaded = true
+                                                GameLoadedEvent().broadcastIn()
+                                                startActivityForResult(
+                                                    Intent(this@LoadingScreen, MainActivity::class.java),
+                                                    0
+                                                )
+                                                finish()
+                                            } else {
+                                                message = "Game engine init failed, please restart"
+                                            }
                                         }
                                     }
                                 }
