@@ -10,8 +10,6 @@ package io.github.rwpp.desktop
 import java.util.concurrent.CopyOnWriteArraySet
 
 @Volatile
-var isGaming = false
-@Volatile
 var gameOver = false
     set(value) {
         field = value
@@ -19,6 +17,9 @@ var gameOver = false
             defeatedPlayerSet.clear()
         }
     }
+var isGaming
+    get() = runCatching { displaySwitcher.currentMode.value == DisplayMode.Game }.getOrDefault(false)
+    set(_) {}
 var roomMods: Array<String> = arrayOf()
 var rcnOption: String? = null
 var singlePlayer: Boolean = false

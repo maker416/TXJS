@@ -33,10 +33,13 @@ import io.github.rwpp.desktop.displaySize
 import io.github.rwpp.desktop.gameCanvas
 import io.github.rwpp.desktop.gameOver
 import io.github.rwpp.desktop.getDPIScale
-import io.github.rwpp.desktop.isGaming
+import io.github.rwpp.desktop.GameSessionManager
+import io.github.rwpp.desktop.GameStartMode
+import io.github.rwpp.desktop.displaySwitcher
+import io.github.rwpp.desktop.gameSessionManager
 import io.github.rwpp.desktop.native
 import io.github.rwpp.desktop.offscreenComposeRenderer
-import io.github.rwpp.desktop.rwppVisibleSetter
+import io.github.rwpp.desktop.singlePlayer
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.events.StartGameEvent
 import io.github.rwpp.game.Game
@@ -78,7 +81,9 @@ class GameImpl : AbstractGame() {
     private var _maps = mutableMapOf<MapType, List<GameMap>>()
     override val gameRoom: GameRoom = object : AbstractGameRoom() {
         override fun startGame() {
-            rwppVisibleSetter(false)
+            gameSessionManager.startGame(
+                if (singlePlayer) GameStartMode.Skirmish() else GameStartMode.Multiplayer
+            )
             super.startGame()
         }
     }
@@ -91,42 +96,9 @@ class GameImpl : AbstractGame() {
         container.post(action)
     }
 
-    init {
-        GlobalEventChannel.filter(StartGameEvent::class).subscribeAlways {
-            rwppVisibleSetter(false)
-            isGaming = true
-        }
-    }
 
     override fun startNewMissionGame(difficulty: Difficulty, mission: Mission) {
-        GameEngine.B().bX.b("starting singleplayer")
-        rwppVisibleSetter(false)
-        isGaming = true
-
-        gameOver = false
-        container.post {
-            val root = ScriptEngine.getInstance().root
-            val libRocket = ScriptContext::class.java.getDeclaredField("libRocket").run {
-                isAccessible = true
-                get(root)
-            } as com.corrodinggames.librocket.b
-            val guiEngine = ScriptContext::class.java.getDeclaredField("guiEngine").run {
-                isAccessible = true
-                get(root)
-            } as a
-            //root.loadConfigAndStartNew("maps/normal/${mission.tmx.displayName}")
-            val game = l.B()
-            game.bQ.aiDifficulty = difficulty.ordinal - 2 // fuck code
-
-            guiEngine.b(true)
-            guiEngine.c(false)
-            val met = IClass::class.java.getDeclaredMethod("a", String::class.java, Boolean::class.java, Int::class.java, Int::class.java, Boolean::class.java, Boolean::class.java)
-            met.invoke(null, "maps/${mission.type.pathName()}/${(mission.mapName + mission.getMapSuffix())}", false, 0, 0, true, false)
-
-            guiEngine.f()
-            libRocket.closeActiveDocument()
-            libRocket.clearHistory()
-        }
+        gameSessionManager.startGame(GameStartMode.Mission(difficulty, mission))
     }
 
     override suspend fun load(context: LoadingContext): Unit = with(context) {
@@ -298,6 +270,56 @@ class GameImpl : AbstractGame() {
         //q = true
         // r = true // is reloaded
         receivedChannel.receive()
+
+        gameSessionManager = GameSessionManager(
+            displaySwitcher = displaySwitcher,
+            onStart = { mode ->
+                when (mode) {
+                    is GameStartMode.Mission -> {
+                        GameEngine.B().bX.b("starting singleplayer")
+                        gameOver = false
+                        container.post {
+                            val root = ScriptEngine.getInstance().root
+                            val libRocket = ScriptContext::class.java.getDeclaredField("libRocket").run {
+                                isAccessible = true
+                                get(root)
+                            } as com.corrodinggames.librocket.b
+                            val guiEngine = ScriptContext::class.java.getDeclaredField("guiEngine").run {
+                                isAccessible = true
+                                get(root)
+                            } as a
+                            val game = l.B()
+                            game.bQ.aiDifficulty = mode.difficulty.ordinal - 2
+
+                            guiEngine.b(true)
+                            guiEngine.c(false)
+                            val met = IClass::class.java.getDeclaredMethod("a", String::class.java, Boolean::class.java, Int::class.java, Int::class.java, Boolean::class.java, Boolean::class.java)
+                            met.invoke(null, "maps/${mode.mission.type.pathName()}/${(mode.mission.mapName + mode.mission.getMapSuffix())}", false, 0, 0, true, false)
+
+                            guiEngine.f()
+                            libRocket.closeActiveDocument()
+                            libRocket.clearHistory()
+                        }
+                    }
+                    is GameStartMode.Skirmish, is GameStartMode.Multiplayer -> { }
+                    is GameStartMode.Replay -> {
+                        gameOver = false
+                        container.post {
+                            ScriptEngine.getInstance().root.loadReplay(mode.replay.name)
+                        }
+                    }
+                    is GameStartMode.Continue -> {
+                        gameOver = false
+                        container.post {
+                            ScriptEngine.getInstance().root.resumeNonMenu()
+                        }
+                    }
+                }
+            },
+            onReturnToMenu = {
+                gameOver = false
+            }
+        )
     }
 
     override fun getAllMissions(): List<Mission> {
@@ -433,14 +455,7 @@ class GameImpl : AbstractGame() {
     }
 
     override fun watchReplay(replay: Replay) {
-        rwppVisibleSetter(false)
-        gameOver = false
-
-        isGaming = true
-
-        container.post {
-            ScriptEngine.getInstance().root.loadReplay(replay.name)
-        }
+        gameSessionManager.startGame(GameStartMode.Replay(replay))
     }
 
     override fun setEffectLimitForAllEffects(limit: Int) {
@@ -458,14 +473,7 @@ class GameImpl : AbstractGame() {
     }
 
     override fun continueGame() {
-        rwppVisibleSetter(false)
-
-        isGaming = true
-        gameOver = false
-
-        container.post {
-            ScriptEngine.getInstance().root.resumeNonMenu()
-        }
+        gameSessionManager.startGame(GameStartMode.Continue)
     }
 
     private fun loadInputStream(path: String): InputStream? {
@@ -502,6 +510,8 @@ class GameImpl : AbstractGame() {
         private var uiTextureID: Int = -1
         private var lastUpdateNs = 0L
         private val targetFrameDurationNs = 1_000_000_000L / 30 // 33,333,333
+        private var frameNumber = 0L
+        private var lastFrameLogTime = 0L
 
         private val intBuffer = BufferUtils.createIntBuffer(width * height)
 
@@ -543,6 +553,16 @@ class GameImpl : AbstractGame() {
         }
 
         override fun updateAndRender(p0: Int) {
+            frameNumber++
+            val logFrame = frameNumber <= 10 || (frameNumber % 180 == 0L)
+            if (logFrame) {
+                val now = System.currentTimeMillis()
+                val elapsed = now - lastFrameLogTime
+                lastFrameLogTime = now
+                logger.info("[GameLoop] frame #{} delta={}ms channelPending={} (thread={})",
+                    frameNumber, elapsed, !channel.isEmpty, Thread.currentThread().name)
+            }
+
             val f = channel.tryReceive()
             f.getOrNull()?.invoke()
 

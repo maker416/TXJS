@@ -28,12 +28,9 @@ import javax.swing.SwingUtilities
 object RootInject {
     @Inject("showMainMenu", InjectMode.Override)
     fun onShowMainMenu() {
-        if(isGaming) {
+        if(displaySwitcher.currentMode.value == DisplayMode.Game) {
             if(singlePlayer) appKoin.get<Game>().gameRoom.disconnect()
             GameEngine.B().bS.u = false
-            rwppVisibleSetter(true)
-            isGaming = false
-            gameOver = false
             com.corrodinggames.librocket.a.a().b()
             val libRocket = ScriptContext::class.java.getDeclaredField("libRocket").run {
                 isAccessible = true
@@ -44,16 +41,15 @@ object RootInject {
 
             QuitGameEvent().broadcastIn()
             ReturnMainMenuEvent().broadcastIn()
+
+            gameSessionManager.returnToMenu()
         }
     }
 
     @Inject("showBattleroom", InjectMode.Override)
     fun onShowBattleroom() {
-        if(isGaming) {
+        if(displaySwitcher.currentMode.value == DisplayMode.Game) {
             GameEngine.B().bS.u = false
-            rwppVisibleSetter(true)
-            isGaming = false
-            gameOver = false
             val libRocket = ScriptContext::class.java.getDeclaredField("libRocket").run {
                 isAccessible = true
                 get(ScriptEngine.getInstance().root)
@@ -62,6 +58,7 @@ object RootInject {
             libRocket.clearHistory()
 
             QuitGameEvent().broadcastIn()
+            gameSessionManager.returnToMenu()
         }
     }
     @Inject("makeSendMessagePopup", InjectMode.Override)

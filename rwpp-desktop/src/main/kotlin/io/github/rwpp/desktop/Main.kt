@@ -88,6 +88,7 @@ import org.koin.core.context.startKoin
 import org.koin.ksp.generated.module
 import org.slf4j.LoggerFactory
 import java.awt.BorderLayout
+import java.awt.CardLayout
 import java.awt.Canvas
 import java.awt.Dialog
 import java.awt.Dimension
@@ -104,6 +105,7 @@ import java.util.logging.Logger
 import javax.imageio.ImageIO
 import javax.swing.JFrame
 import javax.swing.JOptionPane
+import javax.swing.JPanel
 import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
 
@@ -118,7 +120,8 @@ lateinit var gameCanvas: Canvas
 var offscreenComposeRenderer: OffscreenComposeRenderer? = null
 lateinit var displaySize: Dimension
 lateinit var sendMessageDialog: Dialog
-lateinit var rwppVisibleSetter: (Boolean) -> Unit
+lateinit var displaySwitcher: DisplaySwitcher
+lateinit var gameSessionManager: GameSessionManager
 lateinit var focusRequester: FocusRequester
 var inGameWidget: Widget? = null
 lateinit var inGameWidgetDialog: Dialog
@@ -199,13 +202,6 @@ fun swingApplication() = SwingUtilities.invokeLater {
     panel.size = displaySize.size
     panel.isOpaque = false
     panel.isFocusable = true
-    rwppVisibleSetter = { visible ->
-        panel.isVisible = visible
-        canvas.isVisible = !visible
-        if (!visible) canvas.requestFocus()
-        window.revalidate()
-        window.repaint()
-    }
     panel.setContent {
         var isLoading by remember { mutableStateOf(true) }
         var message by remember { mutableStateOf("loading...") }
@@ -348,10 +344,24 @@ fun swingApplication() = SwingUtilities.invokeLater {
     canvas.background = java.awt.Color.BLACK
     canvas.isFocusable = true
 
-    window.layout = BorderLayout()
-    window.add(canvas, BorderLayout.CENTER)
-    window.add(panel, BorderLayout.CENTER)
+    val displayLayout = CardLayout()
+    val displayHost = JPanel(displayLayout).apply {
+        isOpaque = true
+        background = java.awt.Color.BLACK
+        add(panel, DisplayMode.Menu.cardName)
+        add(canvas, DisplayMode.Game.cardName)
+    }
 
+    window.layout = BorderLayout()
+    window.add(displayHost, BorderLayout.CENTER)
+
+    displaySwitcher = DisplaySwitcher(
+        menuPanel = panel,
+        gameCanvas = gameCanvas,
+        displayHost = displayHost,
+        displayLayout = displayLayout,
+        window = window
+    )
 
     window.isVisible = true
     panel.requestFocus()
@@ -485,7 +495,6 @@ fun swingApplication() = SwingUtilities.invokeLater {
     sendMessageDialog.size = Dimension(550, 540)
     sendMessageDialog.add(panel2)
     mainJFrame = window
-    canvas.createBufferStrategy(2)
 
     window.addComponentListener(object : ComponentAdapter() {
         override fun componentResized(e: ComponentEvent) {
@@ -502,7 +511,6 @@ fun swingApplication() = SwingUtilities.invokeLater {
             )
 
             offscreenComposeRenderer?.updateWindowSize(window.contentPane.width, window.contentPane.height)
-
             resetSendDialogLocation()
         }
 
