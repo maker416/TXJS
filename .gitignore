@@ -1,13 +1,58 @@
 *.iml
 .gradle
+.kotlin/
+
+# Local agent handbooks (public repo uses AGENTS.md)
+AGENT.md
+CLAUDE.md
+
+# IDE / editor
 /.idea
 .agents/
 .vscode/
+
+# Gradle / build
 build/
+**/bin/
+out/
+
+# Android
 /captures
 /android/release/
+.cxx/
+.externalNativeBuild/
+**/local.properties
+/dx/
+
+# Secrets / local machine paths
 /local.properties
+
+# Tools
 skills-lock.json
+
+# Desktop runtime (user.dir when developing from repo root)
+/generated_lib/
+/extension/
+/maps/
+/units/
+/resource_generated/
+
+# User settings (ConfigIOImpl)
+/io.github.rwpp.config.*.toml
+/*.properties
+
+# Release packages & logs
+*.apk
+*.aab
+*.msi
+*.dmg
+*.deb
+*.log
+*.hprof
+
+# OS junk
+.DS_Store
+Thumbs.db
 
 # Game resources extracted from original APK
 rwpp-android/src/main/assets/
@@ -22,6 +67,3 @@ rwpp-android/src/main/res/raw/*
 !rwpp-android/src/main/res/raw/keep.txt
 rwpp-android/src/main/res/values/*
 !rwpp-android/src/main/res/values/themes.xml
-
-# Ignore per-module bin output directories
-**/bin/

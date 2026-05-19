@@ -320,6 +320,12 @@ class GameImpl : AbstractGame() {
                 gameOver = false
             }
         )
+
+        GlobalEventChannel.filter(StartGameEvent::class).subscribeAlways {
+            gameSessionManager.startGame(
+                if (singlePlayer) GameStartMode.Skirmish() else GameStartMode.Multiplayer
+            )
+        }
     }
 
     override fun getAllMissions(): List<Mission> {
