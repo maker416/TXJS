@@ -61,6 +61,7 @@ import io.github.rwpp.io.SizeUtils
 import io.github.rwpp.logger
 import io.github.rwpp.maxModSize
 import io.github.rwpp.net.Net
+import io.github.rwpp.net.parseRwListBaseUrls
 import io.github.rwpp.net.RoomDescription
 import io.github.rwpp.net.sorted
 import io.github.rwpp.platform.BackHandler
@@ -1194,9 +1195,9 @@ fun MultiplayerView(
                 throwable = null
                 isRefreshing = true
                 try {
-                    val urls = instance.roomListApiUrls.split(";").map { it.trim() }.filter { it.isNotEmpty() }
-                    val effectiveUrls =
-                        if (urls.isNotEmpty()) urls else DEFAULT_ROOM_LIST_API_URLS.split(";").map { it.trim() }
+                    val effectiveUrls = parseRwListBaseUrls(
+                        instance.roomListApiUrls.ifBlank { DEFAULT_ROOM_LIST_API_URLS }
+                    )
                     currentViewList = getRoomListFromSourceUrl(effectiveUrls)
                     for (s in allServerData) {
                         launch(Dispatchers.IO) {

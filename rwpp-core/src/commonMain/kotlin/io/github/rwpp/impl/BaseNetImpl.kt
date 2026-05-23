@@ -8,9 +8,11 @@
 package io.github.rwpp.impl
 
 import com.eclipsesource.json.Json
+import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.DEFAULT_ROOM_LIST_API_URLS
 import io.github.rwpp.config.MultiplayerPreferences
 import io.github.rwpp.config.ServerType
+import io.github.rwpp.logger
 import io.github.rwpp.net.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -42,12 +44,31 @@ abstract class BaseNetImpl : Net {
 
     override fun init() {
         val prefs = get<MultiplayerPreferences>()
+        val configIO = get<ConfigIO>()
         val roomLists = prefs.allServerConfig.filter { it.type == ServerType.RoomList }
-        if (prefs.roomListApiUrls == DEFAULT_ROOM_LIST_API_URLS) {
-            val migrated = roomLists.firstOrNull { it.ip.isNotBlank() }?.ip
-            if (migrated != null) prefs.roomListApiUrls = migrated
+        var prefsChanged = false
+
+        var migratedUrls = migrateRoomListApiUrls(prefs.roomListApiUrls)
+        if (migratedUrls == DEFAULT_ROOM_LIST_API_URLS) {
+            roomLists
+                .firstOrNull { it.ip.isNotBlank() && !isLegacyMasterserverRoomListUrl(it.ip) }
+                ?.ip
+                ?.let { migratedUrls = normalizeRwListBaseUrl(it) }
         }
-        prefs.allServerConfig.removeAll { it.type == ServerType.RoomList }
+        if (migratedUrls != prefs.roomListApiUrls) {
+            logger.info(
+                "Migrated room list API URLs from legacy masterserver to RWList: " +
+                    "${prefs.roomListApiUrls} -> $migratedUrls"
+            )
+            prefs.roomListApiUrls = migratedUrls
+            prefsChanged = true
+        }
+        if (prefs.allServerConfig.removeAll { it.type == ServerType.RoomList }) {
+            prefsChanged = true
+        }
+        if (prefsChanged) {
+            configIO.saveConfig(prefs)
+        }
 
         roomListHostProtocol["RCN"] = { maxPlayer, enableMods, isPublic ->
             if (enableMods) {

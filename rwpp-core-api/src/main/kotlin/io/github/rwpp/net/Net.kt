@@ -13,9 +13,7 @@ import io.github.rwpp.core.Initialization
 import io.github.rwpp.io.GameInputStream
 import io.github.rwpp.logger
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
 import okhttp3.*
-import org.apache.commons.csv.CSVFormat
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.get
 import java.io.*
@@ -231,207 +229,86 @@ interface Net : KoinComponent, Initialization {
 
 
     /**
-     * Fetch the server-defined label whitelist from the same origin as the room-list API.
-     *
-     * For each candidate URL (semicolon-separated [roomListApiUrls]), the origin
-     * (`scheme://authority`) is derived and `GET /api/labels` is attempted in sequence.
-     * Returns the label list on the first successful + parseable 2xx response.
-     * Returns an empty list if all origins fail or the endpoint does not exist (e.g. the
-     * official masterserver), so callers should treat an empty result as "not supported".
+     * Fetch room types from RWList `GET /servers/room-types` for each configured base URL.
+     * Merges results from all bases; returns empty list if every request fails.
      */
-    suspend fun fetchRoomListLabels(roomListApiUrls: String): List<String> =
+    suspend fun fetchRoomTypes(roomListApiUrls: String): List<String> =
         withContext(Dispatchers.IO) {
-            val origins = roomListApiUrls
-                .split(";")
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-                .mapNotNull { rawUrl ->
-                    runCatching {
-                        val uri = java.net.URI(rawUrl)
-                        if (uri.scheme != null && uri.authority != null)
-                            "${uri.scheme}://${uri.authority}"
-                        else null
-                    }.getOrNull()
-                }
-                .distinct()
+            val bases = parseRwListBaseUrls(roomListApiUrls)
+            if (bases.isEmpty()) return@withContext emptyList()
 
-            for (origin in origins) {
-                val labelsUrl = "$origin/api/labels"
-                val result = runCatching {
-                    val request = okhttp3.Request.Builder().url(labelsUrl).get().build()
-                    val response = client.newCall(request).execute()
-                    if (!response.isSuccessful) return@runCatching null
-                    val body = response.body?.string() ?: return@runCatching null
-                    val obj = com.eclipsesource.json.Json.parse(body).asObject()
-                    val arr = (runCatching { obj.get("label").asArray() }.getOrNull()
-                        ?: runCatching { obj.get("labels").asArray() }.getOrNull())
-                        ?: return@runCatching null
-                    arr.mapNotNull { v ->
-                        if (v.isString) v.asString().trim().takeIf { it.isNotEmpty() } else null
-                    }.distinct().sorted()
-                }.getOrNull()
-                if (!result.isNullOrEmpty()) return@withContext result
-            }
-            emptyList()
-        }
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    suspend fun CoroutineScope.getRoomListFromSourceUrl(url: List<String>): List<RoomDescription> =
-        withContext(Dispatchers.IO) {
-            withTimeout(5000L) {
-                val channel = Channel<Response>()
-
-                url.map {
+            val merged = linkedSetOf<String>()
+            for (base in bases) {
+                runCatching {
                     val request = Request.Builder()
-                        .url(it)
-                        .addHeader("User-Agent", "rw android 176 zh")
-                        .addHeader("Language", "zh")
+                        .url("$base/servers/room-types")
                         .get()
                         .build()
-
-                    client.newCall(request).enqueue(object : Callback {
-                        override fun onFailure(call: Call, e: IOException) {
-                        }
-
-                        override fun onResponse(call: Call, response: Response) {
-                            if (response.isSuccessful && channel.isEmpty) {
-                                val result = channel.trySend(response)
-                                if (result.isFailure) response.close()
-                            } else response.close()
-                        }
-                    })
+                    client.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) return@runCatching
+                        val body = response.body?.string() ?: return@runCatching
+                        merged.addAll(parseRwListRoomTypes(body))
+                    }
+                }.onFailure {
+                    logger.warn("Failed to fetch room types from $base: ${it.message}")
                 }
-
-                val result = channel.receive()
-
-                val roomDescriptions = mutableListOf<RoomDescription>()
-
-                val body = result.body!!.string()
-                result.close()
-                channel.close()
-
-                val headerEnd = body.indexOfAny(charArrayOf('\r', '\n'))
-                val header = if (headerEnd < 0) body else body.substring(0, headerEnd)
-                if (!header.contains("CORRODINGGAMES")) {
-                    throw RuntimeException("Unknown header: $header")
-                }
-                val payload = if (headerEnd < 0) "" else body.substring(headerEnd).trimStart('\r', '\n')
-
-                val records = runCatching {
-                    CSVFormat.RFC4180.builder()
-                        .setIgnoreEmptyLines(true)
-                        .build()
-                        .parse(StringReader(payload))
-                        .records
-                }.getOrElse { e ->
-                    throw RuntimeException("Failed to parse room list CSV body", e)
-                }
-
-                var blankUuidSeq = 0
-                for (record in records) {
-                    val fields = record.toList()
-                    val desc = runCatching {
-                        when (fields.size) {
-                            13, 14 -> parseNewProtocolRecord(fields, blankUuidSeq).also {
-                                if (fields[0].toIntOrNull() == 0) blankUuidSeq++
-                            }
-                            22 -> parseLegacyRecord(fields, blankUuidSeq).also {
-                                if (fields[0].toIntOrNull() == 0) blankUuidSeq++
-                            }
-                            else -> {
-                                logger.warn("Skip room list record with unexpected column count ${fields.size}: $fields")
-                                null
-                            }
-                        }
-                    }.onFailure {
-                        logger.error("Parse error when reading: ${fields.joinToString(",")}", it)
-                    }.getOrNull()
-
-                    if (desc != null) roomDescriptions.add(desc)
-                }
-
-                roomDescriptions
             }
+            merged.sorted()
         }
 
-}
+    /** @see fetchRoomTypes */
+    suspend fun fetchRoomListLabels(roomListApiUrls: String): List<String> =
+        fetchRoomTypes(roomListApiUrls)
 
-private fun parseNewProtocolRecord(f: List<String>, blankUuidSeq: Int): RoomDescription {
-    val rawUuid = f[0]
-    val uuid = if (rawUuid.toIntOrNull() == 0) rawUuid + blankUuidSeq else rawUuid
-    val roomOwner = f[1]
-    val address = f[2]
-    val portStr = f[3].trim()
-    val requiredPassword = f[4].equals("true", ignoreCase = true)
-    val mapName = f[5]
-    val statusRaw = f[6]
-    val status = when (statusRaw) {
-        "pending" -> "battleroom"
-        else -> statusRaw
+    suspend fun CoroutineScope.getRoomListFromSourceUrl(url: List<String>): List<RoomDescription> =
+        withContext(Dispatchers.IO) {
+            if (url.isEmpty()) return@withContext emptyList()
+
+            val allEntries = mutableListOf<RwListServerEntry>()
+            var lastError: Throwable? = null
+
+            for (base in url.map { normalizeRwListBaseUrl(it) }.filter { it.isNotEmpty() }.distinct()) {
+                runCatching {
+                    allEntries.addAll(fetchRwListServersForBase(base))
+                }.onFailure {
+                    lastError = it
+                    logger.error("Failed to fetch RWList servers from $base", it)
+                }
+            }
+
+            if (allEntries.isEmpty() && lastError != null) {
+                throw lastError!!
+            }
+
+            mapRwListEntriesToRoomDescriptions(allEntries)
+        }
+
+    private fun fetchRwListServersForBase(base: String): List<RwListServerEntry> {
+        val pageSize = 100
+        var page = 1
+        val collected = mutableListOf<RwListServerEntry>()
+        var total = Int.MAX_VALUE
+
+        while ((page - 1) * pageSize < total) {
+            val requestUrl = "$base/servers?page=$page&page_size=$pageSize"
+            val request = Request.Builder().url(requestUrl).get().build()
+            val pageData = client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw IOException("HTTP error ${response.code} for $requestUrl")
+                }
+                val body = response.body?.string()
+                    ?: throw IOException("Empty response body for $requestUrl")
+                parseRwListServersPage(body)
+            }
+            if (pageData.list.isEmpty()) break
+            collected.addAll(pageData.list)
+            total = pageData.total
+            if (page * pageData.pageSize >= total) break
+            page++
+        }
+        return collected
     }
-    val roomType = f[7].ifBlank { RoomJoinType.IP }
-    val currentPlayers = f[8].toIntOrNull()
-    val maxPlayers = f[9].toIntOrNull()
-    val isUpperCase = f[10].equals("true", ignoreCase = true)
-    val roomMode = f[11]
-    val mods = f[12]
-    val label = if (f.size >= 14) f[13].trim() else ""
 
-    val port = portStr.toLongOrNull() ?: if (roomType == RoomJoinType.SHORT) 0L else 5123L
-    val versionLabel = when {
-        roomMode.equals("modded", ignoreCase = true) -> "modded"
-        roomMode.equals("vanilla", ignoreCase = true) -> "vanilla"
-        else -> roomMode
-    }
-
-    return RoomDescription(
-        uuid = uuid,
-        roomOwner = roomOwner,
-        netWorkAddress = address,
-        port = port,
-        isOpen = !requiredPassword,
-        creator = roomOwner,
-        requiredPassword = requiredPassword,
-        mapName = mapName,
-        status = status,
-        version = versionLabel,
-        displayMapName = mapName,
-        playerCurrentCount = currentPlayers,
-        playerMaxCount = maxPlayers,
-        isUpperCase = isUpperCase,
-        mods = mods,
-        roomJoinType = roomType,
-        label = label,
-    )
-}
-
-private fun parseLegacyRecord(r: List<String>, blankUuidSeq: Int): RoomDescription {
-    val rawUuid = r[0]
-    val uuid = if (rawUuid.toIntOrNull() == 0) rawUuid + blankUuidSeq else rawUuid
-    return RoomDescription(
-        uuid,
-        r[1],
-        r[2].toInt(),
-        r[3],
-        r[4],
-        r[5].toLong(),
-        r[6].toBooleanStrict(),
-        r[7],
-        r[8].toBooleanStrict(),
-        r[9],
-        r[10],
-        r[11],
-        r[12],
-        r[13].toBooleanStrict(),
-        r[14],
-        r[15].toIntOrNull(),
-        r[16].toIntOrNull(),
-        r[17].toBooleanStrict(),
-        r[18].ifBlank { r[0] },
-        r[19].toBooleanStrict(),
-        r[20],
-        r[21].toInt(),
-    )
 }
 
 @Suppress("UNCHECKED_CAST")

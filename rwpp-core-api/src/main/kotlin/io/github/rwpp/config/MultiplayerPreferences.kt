@@ -10,9 +10,8 @@ package io.github.rwpp.config
 import kotlinx.serialization.Serializable
 import org.koin.core.annotation.Single
 
-/** Default public room list HTTP endpoints (masterserver text protocol); mirror several with `;`. */
-const val DEFAULT_ROOM_LIST_API_URLS =
-    "http://gs1.corrodinggames.com/masterserver/1.4/interface?action=list&game_version=176&game_version_beta=false;http://gs4.corrodinggames.net/masterserver/1.4/interface?action=list&game_version=176&game_version_beta=false"
+/** Default RWList service base URLs (no path); multiple mirrors separated by `;`. */
+const val DEFAULT_ROOM_LIST_API_URLS = "http://192.168.100.45:8080"
 
 /**
  * Multiplayer player preferences
