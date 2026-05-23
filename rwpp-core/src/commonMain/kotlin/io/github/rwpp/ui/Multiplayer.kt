@@ -384,9 +384,7 @@ fun MultiplayerView(
 
             val modManager = koinInject<ModManager>()
             var enableMods by remember { mutableStateOf(false) }
-            var hostByProtocol by remember { mutableStateOf(false) }
             var transferMod by remember { mutableStateOf(false) }
-            val selectedRoomListHostProtocol = "RCN"
             val modSize by remember {
                 mutableLongStateOf(
                     modManager.getAllMods()
@@ -413,21 +411,6 @@ fun MultiplayerView(
                     )
                 }
 
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    RWCheckbox(
-                        hostByProtocol,
-                        onCheckedChange = { hostByProtocol = !hostByProtocol },
-                        modifier = Modifier.padding(5.dp)
-                    )
-                    Text(
-                        readI18n("multiplayer.hostByProtocol", I18nType.RWPP, selectedRoomListHostProtocol),
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(top = 5.dp)
-                    )
-                }
-
-
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RWCheckbox(
                         transferMod,
@@ -448,67 +431,65 @@ fun MultiplayerView(
                     )
                 }
 
-                var password by remember { mutableStateOf("") }
+                var roomId by remember { mutableStateOf("") }
                 RWSingleOutlinedTextField(
-                    readI18n("multiplayer.password"),
-                    password,
+                    readI18n("multiplayer.room.roomId"),
+                    roomId,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 2.dp),
-                    enabled = !hostByProtocol,
-                ) { password = it }
+                    lengthLimitCount = 10,
+                    typeInNumberOnly = true,
+                    typeInOnlyInteger = true,
+                ) { roomId = it }
 
-                var maxPlayer: Int? by remember { mutableStateOf(10) }
+                var maxPlayer: Int? by remember { mutableStateOf(null) }
                 RWSingleOutlinedTextField(
                     readI18n("multiplayer.room.maxPlayer"),
                     maxPlayer?.toString() ?: "",
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 2.dp),
-                    enabled = hostByProtocol,
                     typeInNumberOnly = true,
                     typeInOnlyInteger = true,
                 ) { maxPlayer = it.toIntOrNull()?.coerceAtMost(100) }
 
-                var port by remember { mutableStateOf(configIO.getGameConfig<Int?>("networkPort")) }
+                var unitLimit: Int? by remember { mutableStateOf(null) }
                 RWSingleOutlinedTextField(
-                    readI18n("multiplayer.port"),
-                    port?.toString() ?: "",
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp),
-                    lengthLimitCount = 5,
+                    readI18n("multiplayer.room.unitLimit"),
+                    unitLimit?.toString() ?: "",
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 2.dp),
                     typeInNumberOnly = true,
-                    enabled = !hostByProtocol,
-                ) {
-                    port = it.toIntOrNull()
-                    configIO.setGameConfig("networkPort", port ?: 5123)
-                }
+                    typeInOnlyInteger = true,
+                ) { unitLimit = it.toIntOrNull() }
+
+                var credits: Int? by remember { mutableStateOf(null) }
+                RWSingleOutlinedTextField(
+                    readI18n("multiplayer.room.credits"),
+                    credits?.toString() ?: "",
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 2.dp),
+                    typeInNumberOnly = true,
+                    typeInOnlyInteger = true,
+                ) { credits = it.toIntOrNull() }
+
+                var speedMultiplier: Int? by remember { mutableStateOf(null) }
+                RWSingleOutlinedTextField(
+                    readI18n("multiplayer.room.speedMultiplier"),
+                    speedMultiplier?.toString() ?: "",
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 2.dp),
+                    typeInNumberOnly = true,
+                    typeInOnlyInteger = true,
+                ) { speedMultiplier = it.toIntOrNull() }
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    RWTextButton(readI18n("multiplayer.hostPrivate"), modifier = Modifier.padding(5.dp)) {
+                    RWTextButton(readI18n("multiplayer.host"), modifier = Modifier.padding(5.dp)) {
                         dismiss()
                         game.gameRoom.option = RoomOption(transferMod, modSize.toInt())
-                        if (hostByProtocol) {
-                            serverAddress = net.roomListHostProtocol[selectedRoomListHostProtocol]!!(
-                                maxPlayer?.coerceAtMost(100)?.coerceAtLeast(10) ?: 10, enableMods, false
-                                    )
-                            isConnecting = true
-                        } else {
-                            onHost()
-                            game.hostStartWithPasswordAndMods(
-                                false, password.ifBlank { null }, enableMods,
-                            )
-                        }
-                    }
-                    RWTextButton(readI18n("multiplayer.hostPublic"), modifier = Modifier.padding(5.dp)) {
-                        dismiss()
-                        game.gameRoom.option = RoomOption(transferMod, modSize.toInt())
-                        if (hostByProtocol) {
-                            serverAddress = net.roomListHostProtocol[selectedRoomListHostProtocol]!!(
-                                maxPlayer?.coerceAtMost(100)?.coerceAtLeast(10) ?: 10,  enableMods,true
-                                    )
-                            isConnecting = true
-                        } else {
-                            onHost()
-                            game.hostStartWithPasswordAndMods(
-                                true, password.ifBlank { null }, enableMods,
-                            )
-                        }
+                        serverAddress = net.buildQuickHostCommand(
+                            enableMods = enableMods,
+                            roomId = roomId.ifBlank { null },
+                            maxPlayer = maxPlayer,
+                            unitLimit = unitLimit,
+                            credits = credits,
+                            speedMultiplier = speedMultiplier
+                        )
+                        isConnecting = true
                     }
                 }
             }

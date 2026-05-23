@@ -59,6 +59,25 @@ interface Net : KoinComponent, Initialization {
     val roomListHostProtocol: MutableMap<String, (maxPlayer: Int, enableMods: Boolean, isPublic: Boolean) -> String>
 
     /**
+     * Build a quick-host command string in Q-series format.
+     * @param enableMods whether to enable mods.
+     * @param roomId optional room ID for private rooms (QC/QCM prefix).
+     * @param maxPlayer max player count (P parameter).
+     * @param unitLimit unit limit (U parameter).
+     * @param credits initial credits (C parameter).
+     * @param speedMultiplier game speed multiplier (Z parameter).
+     * @return a command string like "QnewsP20C5000Z5" or "QCM6666P10".
+     */
+    fun buildQuickHostCommand(
+        enableMods: Boolean,
+        roomId: String? = null,
+        maxPlayer: Int? = null,
+        unitLimit: Int? = null,
+        credits: Int? = null,
+        speedMultiplier: Int? = null
+    ): String
+
+    /**
      * Send a packet to the server.
      */
     fun sendPacketToServer(packet: Packet)

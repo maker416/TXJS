@@ -98,13 +98,32 @@ abstract class BaseNetImpl : Net {
             }
         }
 
-        roomListHostProtocol["QN"] = { maxPlayer, enableMods, _ ->
-            if (enableMods) {
-                "Qmodp$maxPlayer"
-            } else {
-                "Qnewp$maxPlayer"
-            }
+        roomListHostProtocol["QN"] = { _, enableMods, _ ->
+            if (enableMods) "Qmods" else "Qnews"
         }
+    }
+
+    override fun buildQuickHostCommand(
+        enableMods: Boolean,
+        roomId: String?,
+        maxPlayer: Int?,
+        unitLimit: Int?,
+        credits: Int?,
+        speedMultiplier: Int?
+    ): String {
+        val base = when {
+            roomId != null && enableMods -> "QCM$roomId"
+            roomId != null -> "QC$roomId"
+            enableMods -> "Qmods"
+            else -> "Qnews"
+        }
+        val params = buildString {
+            maxPlayer?.let { append("P$it") }
+            unitLimit?.let { append("U$it") }
+            credits?.let { append("C$it") }
+            speedMultiplier?.let { append("Z$it") }
+        }
+        return base + params
     }
 }
 
