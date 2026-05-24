@@ -64,6 +64,7 @@ fun SettingsView(
 
 
     var backgroundImagePath by remember { mutableStateOf(settings.backgroundImagePath ?: "") }
+    var showRestartHint by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -172,12 +173,30 @@ fun SettingsView(
                                             SettingsSwitchComp("useMinimapAllyColors")
                                             SettingsSwitchComp("showWarLogOnScreen")
                                             SettingsSwitchComp("smartSelection_v2", "smartSelection") //v2 ???
-                                            SettingsSwitchComp(
-                                                "forceEnglish",
-                                                labelName = readI18n("menus.settings.option.forceEnglish", I18nType.RW)
-                                            ) { value ->
-                                                settings.forceEnglish = value
-                                                configIO.setGameConfig("forceEnglish", value)
+
+                                            val languageKeys = listOf("auto", "zh", "en")
+                                            val languageItems = remember {
+                                                listOf(
+                                                    readI18n("settings.languageAuto"),
+                                                    readI18n("settings.languageZh"),
+                                                    readI18n("settings.languageEn")
+                                                )
+                                            }
+                                            var selectedLanguageIndex by remember {
+                                                mutableIntStateOf(
+                                                    languageKeys.indexOf(settings.language).coerceAtLeast(0)
+                                                )
+                                            }
+                                            SettingsDropDown(
+                                                "language",
+                                                languageItems,
+                                                selectedLanguageIndex
+                                            ) { index, _ ->
+                                                selectedLanguageIndex = index
+                                                settings.language = languageKeys[index]
+                                                settings.forceEnglish = languageKeys[index] == "en"
+                                                configIO.setGameConfig("forceEnglish", languageKeys[index] == "en")
+                                                showRestartHint = true
                                             }
                                             SettingsSwitchComp("showUnitGroups", "unitGroupInterface")
 
@@ -487,6 +506,25 @@ fun SettingsView(
                         }
                     }
                 }
+            }
+            if (showRestartHint) {
+                AlertDialog(
+                    onDismissRequest = { showRestartHint = false },
+                    title = {
+                        Text(
+                            readI18n("settings.language"),
+                            style = MaterialTheme.typography.headlineSmall
+                        )
+                    },
+                    text = {
+                        Text(readI18n("settings.restartHint"))
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showRestartHint = false }) {
+                            Text(readI18n("common.ok", I18nType.RWPP))
+                        }
+                    }
+                )
             }
         }
     }

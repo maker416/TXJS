@@ -34,7 +34,8 @@ data class Settings(
     var mouseMoveView: Boolean = false,
     //var pathfindingOptimization: Boolean = false,
     var boldText: Boolean = false,
-    var forceEnglish: Boolean = false,
+    var forceEnglish: Boolean = false, // @Deprecated: 已由 language 字段替代，保留仅用于旧配置兼容
+    var language: String = "auto", // "auto": 自动检测, "zh": 中文, "en": 英文
     var enableOffscreenPanel: Boolean = false,
     var displayTimeInGame: Boolean = false,
     var effectLimitForAllEffects: String = "Keep", // Zero, Keep, Unlimited

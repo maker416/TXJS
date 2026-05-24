@@ -141,10 +141,15 @@ fog = "Fog"
 mod = "Mod"
 map = "Map"
 filter = "Filter"
+ok = "OK"
 
 [settings]
 setExternalFolder = "Set External Folder"
 manageAllFiles = "Manage All Files"
+language = "Interface Language"
+languageAuto = "Auto"
+languageZh = "中文"
+languageEn = "English"
 client = "Client"
 theme = "Theme"
 autoCheckUpdate = "Auto Check Update"
@@ -181,6 +186,7 @@ enableVolumeKeyMapping = "Enable volume key mapping (+ for waypoint, - for stop)
 enableLargerKeys = "Enable larger keys (Guard, Patrol)"
 inGameOffscreenPanel = "In-Game Offscreen Panel (On PC, please enable the Render panel first)"
 enableQuickSelectMenu = "Enable quick select menu"
+restartHint = "Language change will take effect after restart. Restart now?"
 
 [extension]
 extension = "Extension"

@@ -23,13 +23,39 @@ abstract class BaseGameI18nResolverImpl : GameI18nResolver {
         runBlocking {
             i18nTable = Toml.parseToTomlTable(withContext(Dispatchers.IO) {
                 val settings = get<Settings>()
+                val bundleFile = resolveBundleFile(settings)
                 runCatching {
-                    if (!settings.forceEnglish)
-                        Res.readBytes("files/bundle_${Locale.getDefault().language}.toml")
-                    else
-                        Res.readBytes("files/bundle_en.toml")
+                    Res.readBytes(bundleFile)
                 }.getOrNull() ?: Res.readBytes("files/bundle_en.toml")
             }.decodeToString().replace("\r", "\n"))
         }
+    }
+
+    private fun resolveBundleFile(settings: Settings): String {
+        return when (settings.language) {
+            "zh" -> "files/bundle_zh.toml"
+            "en" -> "files/bundle_en.toml"
+            "auto" -> {
+                if (settings.forceEnglish) return "files/bundle_en.toml"
+                val detected = detectSystemLanguage()
+                if (detected == "zh") "files/bundle_zh.toml"
+                else "files/bundle_en.toml"
+            }
+            else -> {
+                if (settings.forceEnglish) "files/bundle_en.toml"
+                else "files/bundle_zh.toml"
+            }
+        }
+    }
+
+    private fun detectSystemLanguage(): String {
+        val locale = Locale.getDefault()
+        val lang = locale.language
+        if (lang == "zh") return "zh"
+        val country = locale.country
+        if (country == "CN" || country == "TW" || country == "HK" || country == "SG") return "zh"
+        val sysLang = runCatching { System.getProperty("user.language") }.getOrNull() ?: ""
+        if (sysLang == "zh") return "zh"
+        return "en"
     }
 }

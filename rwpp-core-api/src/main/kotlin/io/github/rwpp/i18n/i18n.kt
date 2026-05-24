@@ -18,6 +18,11 @@ import java.text.MessageFormat
 
 private val cacheMap = mutableMapOf<String, String>()
 
+fun reloadI18n() {
+    cacheMap.clear()
+    i18nTable = TomlTable()
+}
+
 fun readI18n(path: String, i18nType: I18nType = I18nType.RWPP, vararg arg: String): String {
     if (i18nType == I18nType.RWPP) {
         // Check if i18nTable is empty and try to initialize it

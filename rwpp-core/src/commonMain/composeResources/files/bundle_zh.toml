@@ -142,10 +142,15 @@ fog = "迷雾"
 mod = "模组"
 map = "地图"
 filter = "过滤器"
+ok = "确定"
 
 [settings]
 setExternalFolder = "设置外部文件权限"
 manageAllFiles = "设置管理所有文件"
+language = "界面语言"
+languageAuto = "跟随系统"
+languageZh = "中文"
+languageEn = "English"
 client = "客户端"
 theme = "主题"
 autoCheckUpdate = "自动检测更新"
@@ -182,6 +187,7 @@ enableVolumeKeyMapping = "启用音量按键映射 (+为路径点,-为停止)"
 enableLargerKeys = "启用更大的按键 (保护, 巡逻)"
 inGameOffscreenPanel = "游戏内离屏界面 (PC端请先启用渲染面板)"
 enableQuickSelectMenu = "启用快速选择菜单"
+restartHint = "语言更改将在重启后生效，是否现在退出重启？"
 
 [extension]
 extension = "扩展"
