@@ -107,14 +107,33 @@ task("packageWixDistribution") {
     dependsOn("createReleaseDistributable")
 
     doLast {
-        val process = Runtime.getRuntime().exec(
-            "dotnet run --project=${rootProject.rootDir.absolutePath + "\\wix"} $guid ${rootProject.version}"
+        val extPath = listOf(
+            "C:\\Program Files\\dotnet",
+            "${System.getProperty("user.home")}\\.dotnet\\tools"
+        ).joinToString(";")
+        val pb = ProcessBuilder(
+            "cmd", "/c",
+            "dotnet run --project=\"${rootProject.rootDir.absolutePath}\\wix\" $guid ${rootProject.version}"
         )
+        pb.directory(rootProject.rootDir)
+        pb.environment()["PATH"] = "${pb.environment()["PATH"]};$extPath"
+        val process = pb.start()
 
-        var line: String?
-        while(true) {
-            line = process.inputReader().readLine() ?: break
-            logger.lifecycle(line)
+        val stdout = Thread {
+            process.inputReader().forEachLine { logger.lifecycle(it) }
+        }
+        val stderr = Thread {
+            process.errorReader().forEachLine { logger.error(it) }
+        }
+        stdout.start()
+        stderr.start()
+
+        val exitCode = process.waitFor()
+        stdout.join()
+        stderr.join()
+
+        if (exitCode != 0) {
+            throw GradleException("dotnet run exited with code $exitCode")
         }
     }
 }

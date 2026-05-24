@@ -12,16 +12,7 @@ namespace RSetup
 {
     public class Program
     {
-        private static string RootDir
-        {
-            get
-            {
-                var current = Directory.GetCurrentDirectory();
-                var splits = current.Split('\\');
-                Array.Resize(ref splits, 2);
-                return splits.JoinBy("\\");
-            }
-        }
+        private static string RootDir => Directory.GetCurrentDirectory();
 
         private static void Main(string[] args)
         {
@@ -42,7 +33,7 @@ namespace RSetup
             var entities = new WixEntity[]
             {
                 new WixSharp.File(appFeature, $@"{appDir}\RWPP.exe"),
-                new WixSharp.File(appFeature, $@"{appDir}\RWPP.ico"),
+                new WixSharp.File(appFeature, @"rwpp-desktop\logo.ico"),
                 new Dir(appFeature, "app", appFiles),
                 new Dir(jvmFeature, "runtime", new Files($@"{appDir}\runtime\*")),
             };
@@ -105,7 +96,7 @@ namespace RSetup
             project.BeforeInstall += Msi_BeforeInstall;
             project.AfterInstall += Msi_AfterInstall;
             
-            //project.MajorUpgradeStrategy = MajorUpgradeStrategy.Default;
+            project.MajorUpgradeStrategy = MajorUpgradeStrategy.Default;
             
             project.DefaultRefAssemblies.Add($@"{RootDir}\wix\bin\debug\net472\Wpf.Ui.dll");
 
@@ -153,7 +144,7 @@ namespace RSetup
                 var sourcePath = $@"{e.InstallDir}\Rusted Warfare - 64.exe";
                 var targetPath = $@"{e.InstallDir}\Rusted Warfare - 64.exe.bak";
                 var launcherPath = $@"{e.InstallDir}\RWPP.exe";
-                var icoPath = $@"{e.InstallDir}\RWPP.ico";
+                var icoPath = $@"{e.InstallDir}\logo.ico";
                 var targetIcoPath = $@"{e.InstallDir}\Rusted Warfare - 64.ico";
                 var cfgPath = $@"{e.InstallDir}\app\RWPP.cfg";
                 var targetCfgPath = $@"{e.InstallDir}\app\Rusted Warfare - 64.cfg";
