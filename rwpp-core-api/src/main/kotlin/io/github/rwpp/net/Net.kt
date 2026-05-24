@@ -291,12 +291,14 @@ interface Net : KoinComponent, Initialization {
                     allEntries.addAll(fetchRwListServersForBase(base))
                 }.onFailure {
                     lastError = it
-                    logger.error("Failed to fetch RWList servers from $base", it)
+                    logger.warn("Failed to fetch RWList servers from $base: ${it.message}")
                 }
             }
 
             if (allEntries.isEmpty() && lastError != null) {
-                throw lastError!!
+                throw RuntimeException(
+                    "无法连接到任何列表服务器。请检查网络连接或房间列表API设置。"
+                )
             }
 
             mapRwListEntriesToRoomDescriptions(allEntries)

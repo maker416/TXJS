@@ -109,7 +109,8 @@ fun parseRwListServersPage(body: String): RwListServersPage {
     }
     val data = root.get("data")?.asObject()
         ?: throw RuntimeException("RWList response missing data")
-    val listArr = data.get("list")?.asArray() ?: Json.array()
+    val listNode = data.get("list")
+    val listArr = if (listNode != null && listNode.isArray) listNode.asArray() else Json.array()
     val entries = listArr.mapNotNull { value ->
         if (value.isObject) parseRwListServerEntry(value.asObject()) else null
     }
@@ -125,7 +126,8 @@ fun parseRwListRoomTypes(body: String): List<String> {
     val root = Json.parse(body).asObject()
     if (root.getInt("code", -1) != 0) return emptyList()
     val data = root.get("data")?.asObject() ?: return emptyList()
-    val arr = data.get("room_types")?.asArray() ?: return emptyList()
+    val roomTypesNode = data.get("room_types")
+    val arr = if (roomTypesNode != null && roomTypesNode.isArray) roomTypesNode.asArray() else return emptyList()
     return arr.mapNotNull { value ->
         if (value.isString) value.asString().trim().takeIf { it.isNotEmpty() } else null
     }.distinct().sorted()

@@ -1399,8 +1399,25 @@ fun MultiplayerView(
 
                                 if (throwable != null) {
                                     item {
-                                        SelectionContainer {
-                                            Text(throwable?.stackTraceToString() ?: "", color = Color.Red)
+                                        Text(
+                                            throwable?.message ?: readI18n("multiplayer.connectionFailed"),
+                                            color = MaterialTheme.colorScheme.error,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            modifier = Modifier.padding(16.dp),
+                                        )
+                                    }
+                                }
+                                if (realList.isEmpty() && allServerData.isEmpty() && throwable == null && !isRefreshing) {
+                                    item {
+                                        Box(
+                                            modifier = Modifier.fillMaxWidth().padding(32.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                readI18n("multiplayer.emptyList"),
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
                                         }
                                     }
                                 }
