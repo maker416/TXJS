@@ -67,3 +67,5 @@ rwpp-android/src/main/res/raw/*
 !rwpp-android/src/main/res/raw/keep.txt
 rwpp-android/src/main/res/values/*
 !rwpp-android/src/main/res/values/themes.xml
+RWPP-Setup.exe
+RWPP-Setup.pdb
