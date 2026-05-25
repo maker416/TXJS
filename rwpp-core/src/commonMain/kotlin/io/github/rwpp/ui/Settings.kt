@@ -21,6 +21,7 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -32,9 +33,13 @@ import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.external.ExternalHandler
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
+import com.eclipsesource.json.Json
 import io.github.rwpp.net.LatestVersionProfile
 import io.github.rwpp.net.Net
+import io.github.rwpp.net.ReleaseAsset
 import io.github.rwpp.platform.BackHandler
+import io.github.rwpp.projectVersion
+import okhttp3.Request
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.*
 import kotlinx.coroutines.Dispatchers
@@ -411,20 +416,151 @@ fun SettingsView(
 
                                     "rwpp-client" -> {
                                         val net = koinInject<Net>()
-                                        var checking by remember { mutableStateOf(false) }
                                         val scope = rememberCoroutineScope()
+                                        var showUpdateLog by remember { mutableStateOf(false) }
+                                        val logLines = remember { mutableStateListOf<String>() }
+                                        val logScrollState = rememberLazyListState()
+                                        var isChecking by remember { mutableStateOf(false) }
+                                        var checkResult by remember { mutableStateOf<LatestVersionProfile?>(null) }
+
+                                        LaunchedEffect(logLines.size) {
+                                            if (logLines.isNotEmpty()) {
+                                                logScrollState.animateScrollToItem(logLines.size - 1)
+                                            }
+                                        }
+
+                                        AnimatedAlertDialog(
+                                            visible = showUpdateLog,
+                                            onDismissRequest = { if (!isChecking) showUpdateLog = false },
+                                            enableDismiss = !isChecking
+                                        ) { dismiss ->
+                                            BorderCard(
+                                                modifier = Modifier.fillMaxWidth(0.85f).fillMaxHeight(0.7f)
+                                            ) {
+                                                Column(modifier = Modifier.padding(12.dp)) {
+                                                    Text(
+                                                        readI18n("settings.updateLogTitle", I18nType.RWPP),
+                                                        style = MaterialTheme.typography.headlineSmall,
+                                                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                                                    )
+                                                    Spacer(Modifier.height(8.dp))
+                                                    BorderCard(
+                                                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                                                        backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.6f)
+                                                    ) {
+                                                        LazyColumn(
+                                                            state = logScrollState,
+                                                            modifier = Modifier.padding(8.dp).fillMaxSize()
+                                                        ) {
+                                                            items(logLines.size) { index ->
+                                                                Text(
+                                                                    logLines[index],
+                                                                    style = MaterialTheme.typography.bodySmall,
+                                                                    color = MaterialTheme.colorScheme.onSurface
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                    Spacer(Modifier.height(8.dp))
+                                                    Row(
+                                                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                    ) {
+                                                        if (checkResult != null) {
+                                                            RWTextButton(readI18n("settings.updateViewUpdate", I18nType.RWPP)) {
+                                                                dismiss()
+                                                                showUpdateLog = false
+                                                                onCheckUpdate(checkResult!!)
+                                                            }
+                                                        }
+                                                        RWTextButton(readI18n("settings.updateClose", I18nType.RWPP)) {
+                                                            dismiss()
+                                                            showUpdateLog = false
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
 
                                         SettingsGroup("", readI18n("settings.client")) {
                                             Row {
                                                 RWTextButton(readI18n("settings.checkUpdate"), modifier = Modifier.padding(5.dp)) {
-                                                    checking = true
+                                                    logLines.clear()
+                                                    checkResult = null
+                                                    showUpdateLog = true
+                                                    isChecking = true
                                                     scope.launch(Dispatchers.IO) {
-                                                        net.getLatestVersionProfile()?.let(onCheckUpdate)
-                                                        checking = false
+                                                        val url = "https://gitee.com/api/v5/repos/maker416/TXJS/releases/latest"
+                                                        val time = java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date(System.currentTimeMillis()))
+                                                        logLines += "[$time] ${readI18n("settings.updateCheckStarted", I18nType.RWPP)}"
+                                                        logLines += readI18n("settings.updateCurrentVersion", I18nType.RWPP, projectVersion)
+                                                        logLines += readI18n("settings.updateRequestUrl", I18nType.RWPP, url)
+
+                                                        try {
+                                                            val request = Request.Builder().url(url).build()
+                                                            net.client.newCall(request).execute().use { response ->
+                                                                logLines += readI18n("settings.updateHttpStatus", I18nType.RWPP, response.code.toString())
+                                                                val contentLength = response.body?.contentLength() ?: 0
+                                                                logLines += readI18n("settings.updateResponseLength", I18nType.RWPP, contentLength.toString())
+
+                                                                if (!response.isSuccessful) {
+                                                                    logLines += readI18n("settings.updateRequestFailed", I18nType.RWPP, response.code.toString())
+                                                                    isChecking = false
+                                                                    return@launch
+                                                                }
+
+                                                                val body = response.body?.string()
+                                                                if (body == null) {
+                                                                    logLines += readI18n("settings.updateEmptyBody", I18nType.RWPP)
+                                                                    isChecking = false
+                                                                    return@launch
+                                                                }
+
+                                                                logLines += readI18n("settings.updateParsing", I18nType.RWPP)
+                                                                val json = Json.parse(body).asObject()
+                                                                val version = json.getString("tag_name", "null")
+                                                                val bodyText = json.getString("body", "")
+                                                                val prerelease = json.getBoolean("prerelease", false)
+                                                                val assets = json.get("assets")?.asArray()?.map {
+                                                                    val obj = it.asObject()
+                                                                    val name = obj.getString("name", "")
+                                                                    val downloadUrl = obj.getString("browser_download_url", "")
+                                                                    ReleaseAsset(name, downloadUrl)
+                                                                }?.filter { asset ->
+                                                                    !asset.name.endsWith(".zip") && !asset.name.endsWith(".tar.gz")
+                                                                } ?: emptyList()
+
+                                                                logLines += readI18n("settings.updateRemoteVersion", I18nType.RWPP, version)
+                                                                logLines += readI18n("settings.updatePrerelease", I18nType.RWPP, prerelease.toString())
+                                                                logLines += readI18n("settings.updateAssetCount", I18nType.RWPP, assets.size.toString())
+                                                                assets.forEach { logLines += readI18n("settings.updateAssetItem", I18nType.RWPP, it.name) }
+
+                                                                if (version == "null") {
+                                                                    logLines += readI18n("settings.updateParseError", I18nType.RWPP)
+                                                                    isChecking = false
+                                                                    return@launch
+                                                                }
+
+                                                                logLines += "--------------------------------------------------"
+                                                                if (version == projectVersion) {
+                                                                    logLines += readI18n("settings.updateLatestVersion", I18nType.RWPP)
+                                                                } else if (settings.ignoreVersion == version) {
+                                                                    logLines += readI18n("settings.updateIgnoredVersion", I18nType.RWPP, version)
+                                                                } else {
+                                                                    logLines += readI18n("settings.updateNewVersionFound", I18nType.RWPP)
+                                                                    checkResult = LatestVersionProfile(version, bodyText, prerelease, assets)
+                                                                }
+                                                                logLines += readI18n("settings.updateCheckCompleted", I18nType.RWPP)
+                                                                isChecking = false
+                                                            }
+                                                        } catch (e: Exception) {
+                                                            logLines += readI18n("settings.updateException", I18nType.RWPP, e.message ?: "Unknown")
+                                                            isChecking = false
+                                                        }
                                                     }
                                                 }
 
-                                                if (checking) CircularProgressIndicator(color = MaterialTheme.colorScheme.onSecondaryContainer)
+                                                if (isChecking) CircularProgressIndicator(color = MaterialTheme.colorScheme.onSecondaryContainer)
                                             }
 
                                             SettingsSwitchComp(

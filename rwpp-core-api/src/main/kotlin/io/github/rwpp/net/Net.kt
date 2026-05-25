@@ -92,19 +92,25 @@ interface Net : KoinComponent, Initialization {
 
     fun getLatestVersionProfile(): LatestVersionProfile? {
         return runCatching {
-            val locale = Locale.getDefault()
             val request = Request.Builder().url(
-                if (locale.country == "CN")
-                    "https://gitee.com/api/v5/repos/minxyzgo/RWPP/releases/latest"
-                else "https://api.github.com/repos/Minxyzgo/RWPP/releases/latest"
+                "https://gitee.com/api/v5/repos/maker416/TXJS/releases/latest"
             ).build()
             val response = client.newCall(request).execute()
 
             response.body?.string()?.let { str ->
-                val version = Json.parse(str).asObject().getString("tag_name", "null")
-                val body = Json.parse(str).asObject().getString("body", "null")
-                val prerelease = Json.parse(str).asObject().getBoolean("prerelease", false)
-                LatestVersionProfile(version, body, prerelease)
+                val json = Json.parse(str).asObject()
+                val version = json.getString("tag_name", "null")
+                val body = json.getString("body", "null")
+                val prerelease = json.getBoolean("prerelease", false)
+                val assets = json.get("assets")?.asArray()?.map {
+                    val obj = it.asObject()
+                    val name = obj.getString("name", "")
+                    val url = obj.getString("browser_download_url", "")
+                    ReleaseAsset(name, url)
+                }?.filter { asset ->
+                    !asset.name.endsWith(".zip") && !asset.name.endsWith(".tar.gz")
+                } ?: emptyList()
+                LatestVersionProfile(version, body, prerelease, assets)
             }
         }.getOrNull()
     }

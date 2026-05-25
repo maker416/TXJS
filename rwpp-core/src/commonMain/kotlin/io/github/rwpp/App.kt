@@ -58,6 +58,7 @@ import io.github.rwpp.event.onDispose
 import io.github.rwpp.game.Game
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.app.AutoUpdater
 import io.github.rwpp.net.LatestVersionProfile
 import io.github.rwpp.net.Net
 import io.github.rwpp.scripts.Render
@@ -75,6 +76,7 @@ import io.github.rwpp.ui.UI.showSettingsView
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.LineSpinFadeLoaderIndicator
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.koin.compose.koinInject
@@ -383,23 +385,13 @@ fun App(
                 ) { dismiss ->
                     BorderCard(modifier = Modifier.fillMaxWidth(GeneralProportion()).verticalScroll(rememberScrollState())) {
 
-                        Row(modifier = Modifier.fillMaxWidth().padding(5.dp)) {
-                            HorizontalDivider(Modifier.weight(1f), thickness = 2.dp, color = Color.DarkGray)
-                            Box {
-                                Icon(
-                                    Icons.Default.Warning,
-                                    null,
-                                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                                    modifier = Modifier.size(50.dp).offset(5.dp, 5.dp).blur(2.dp)
-                                )
-                                Icon(
-                                    Icons.Default.Warning,
-                                    null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(50.dp)
-                                )
-                            }
-                            HorizontalDivider(Modifier.weight(1f), thickness = 2.dp, color = Color.DarkGray)
+                        Row(modifier = Modifier.fillMaxWidth().padding(5.dp), horizontalArrangement = Arrangement.Center) {
+                            Icon(
+                                Icons.Default.Warning,
+                                null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(50.dp)
+                            )
                         }
 
                         Text(
@@ -408,67 +400,74 @@ fun App(
                             style = MaterialTheme.typography.headlineMedium
                         )
 
-                        val annotatedString = buildAnnotatedString {
-                            if (!profile!!.prerelease) {
-                                withLink(
-                                    link = LinkAnnotation
-                                        .Clickable(
-                                            tag = "github",
-                                            linkInteractionListener = { net.openUriInBrowser("https://github.com/Minxyzgo/RWPP/releases") },
-                                            styles = TextLinkStyles(
-                                                style = SpanStyle(
-                                                    color = Color(0, 0, 238),
-                                                    textDecoration = TextDecoration.Underline
+                        val appContextInner = koinInject<AppContext>()
+                        val autoUpdater = remember { appKoin.getOrNull<AutoUpdater>() }
+                        val exeAsset = profile!!.assets.find { it.name.endsWith(".exe") }
+                        val scopeInner = rememberCoroutineScope()
+                        var updating by remember { mutableStateOf(false) }
+                        var downloadProgress by remember { mutableStateOf(0f) }
+
+                        Column(
+                            modifier = Modifier.align(Alignment.CenterHorizontally).padding(2.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            if (profile!!.assets.isNotEmpty()) {
+                                profile!!.assets.forEach { asset ->
+                                    val linkText = buildAnnotatedString {
+                                        withLink(
+                                            link = LinkAnnotation.Clickable(
+                                                tag = asset.name,
+                                                linkInteractionListener = { net.openUriInBrowser(asset.downloadUrl) },
+                                                styles = TextLinkStyles(
+                                                    style = SpanStyle(
+                                                        color = Color(0, 0, 238),
+                                                        textDecoration = TextDecoration.Underline
+                                                    )
                                                 )
                                             )
-                                        )
-                                ) {
-                                    append(readI18n("settings.goToDownload", I18nType.RWPP, "github"))
-                                }
-
-                                append("\n")
-
-                                withLink(
-                                    link = LinkAnnotation
-                                        .Clickable(
-                                            tag = "123pan",
-                                            linkInteractionListener = { net.openUriInBrowser("https://www.123684.com/s/6Rijjv-79Fi?提取码:VtDG") },
-                                            styles = TextLinkStyles(
-                                                style = SpanStyle(
-                                                    color = Color(0, 0, 238),
-                                                    textDecoration = TextDecoration.Underline
-                                                )
-                                            )
-                                        )
-                                ) {
-                                    append(readI18n("settings.goToDownload", I18nType.RWPP, "123pan"))
+                                        ) {
+                                            append(asset.name)
+                                        }
+                                    }
+                                    Text(
+                                        linkText,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        modifier = Modifier.padding(vertical = 2.dp)
+                                    )
                                 }
                             } else {
-                                append(readI18n("settings.prereleaseNote\n"))
+                                Text(
+                                    readI18n("settings.noDownloadAssets", I18nType.RWPP),
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                            }
 
-                                withLink(
-                                    link = LinkAnnotation
-                                        .Clickable(
-                                            tag = "afdian",
-                                            linkInteractionListener = { net.openUriInBrowser("https://afdian.com/a/minxyzgo") },
-                                            styles = TextLinkStyles(
-                                                style = SpanStyle(
-                                                    color = Color(0, 0, 238),
-                                                    textDecoration = TextDecoration.Underline
-                                                )
-                                            )
-                                        )
+                            if (appContextInner.isDesktop() && autoUpdater != null && exeAsset != null && !updating) {
+                                RWTextButton(
+                                    readI18n("settings.autoUpdate", I18nType.RWPP),
+                                    modifier = Modifier.padding(top = 8.dp)
                                 ) {
-                                    append(readI18n("settings.goToDownload", I18nType.RWPP, "爱发电"))
+                                    updating = true
+                                    scopeInner.launch(Dispatchers.IO) {
+                                        autoUpdater.downloadAndInstall(exeAsset.downloadUrl) { progress ->
+                                            downloadProgress = progress
+                                        }
+                                    }
                                 }
                             }
-                        }
 
-                        Text(
-                            annotatedString,
-                            modifier = Modifier.align(Alignment.CenterHorizontally).padding(2.dp),
-                            style = MaterialTheme.typography.bodyLarge
-                        )
+                            if (updating) {
+                                LinearProgressIndicator(
+                                    progress = { downloadProgress.coerceIn(0f, 1f) },
+                                    modifier = Modifier.fillMaxWidth(0.7f).padding(top = 8.dp)
+                                )
+                                Text(
+                                    readI18n("settings.downloadingUpdate", I18nType.RWPP),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
+                        }
 
                         RWTextButton(
                             readI18n("settings.ignoreVersion"),
@@ -478,10 +477,13 @@ fun App(
                             dismiss()
                         }
 
-                        BorderCard(backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.8f)) {
+                        BorderCard(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                            backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.8f)
+                        ) {
                             Markdown(
                                 profile!!.body,
-                                modifier = Modifier.padding(5.dp),
+                                modifier = Modifier.padding(5.dp).fillMaxWidth(),
                                 colors = markdownColor(),
                                 typography = markdownTypography()
                             )

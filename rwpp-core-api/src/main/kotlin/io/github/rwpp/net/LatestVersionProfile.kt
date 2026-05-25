@@ -7,8 +7,14 @@
 
 package io.github.rwpp.net
 
+data class ReleaseAsset(
+    val name: String,
+    val downloadUrl: String,
+)
+
 data class LatestVersionProfile(
     val version: String,
     val body: String,
     val prerelease: Boolean,
+    val assets: List<ReleaseAsset> = emptyList(),
 )

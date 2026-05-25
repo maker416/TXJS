@@ -93,7 +93,6 @@ namespace RSetup
             project.UILoaded += e => e.ManagedUI.SetSize(800, 600);
             project.UILoaded += Msi_UILoad;
             project.Load += Msi_Load;
-            project.BeforeInstall += Msi_BeforeInstall;
             project.AfterInstall += Msi_AfterInstall;
             
             project.MajorUpgradeStrategy = MajorUpgradeStrategy.Default;
@@ -117,22 +116,21 @@ namespace RSetup
 
         private static void Msi_UILoad(SetupEventArgs e)
         {
-            //自动搜寻rw路径
+            // 更新模式：信任 MSI 记录的原安装路径，跳过前面所有向导直接显示进度条
+            if (e.Session.Property("RWPP_UPDATE_MODE") == "1" && !e.IsUninstalling)
+            {
+                var shell = e.ManagedUI.Shell;
+                int progressIndex = shell.Dialogs.IndexOfDialogImplementing<IProgressDialog>();
+                if (progressIndex != -1)
+                    shell.GoTo(progressIndex);
+                return;
+            }
+
+            // 首次安装：自动搜寻 Rusted Warfare 路径作为默认安装目录
             var rwDir = checkInstalled("Rusted Warfare - RTS");
             if (rwDir != null)
             {
                 e.InstallDir = rwDir;
-            }
-        }
-
-        private static void Msi_BeforeInstall(SetupEventArgs e)
-        {
-            
-            //删除旧lib
-            var appPath = $@"{e.InstallDir}\app\";
-            if (Directory.Exists(appPath))
-            {
-                Directory.Delete(appPath, true);
             }
         }
 
@@ -243,9 +241,15 @@ class Program
         {
             // Debug.Assert(false); 
             ExtractMsi(msi);
-           //  string msi_args = args.Any() ? string.Join("" "", args) : ""/i"";
           
-            Process p = Process.Start(""msiexec.exe"", ""/i "" + msi);
+            // 透传命令行参数给 msiexec，支持静默更新等模式
+            var msiArgs = ""/i "" + msi;
+            if (args.Length > 0)
+            {
+                msiArgs += "" "" + string.Join("" "", args);
+            }
+            
+            Process p = Process.Start(""msiexec.exe"", msiArgs);
             p.WaitForExit();
             return p.ExitCode;
         }

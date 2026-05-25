@@ -267,6 +267,13 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 3. **Android 权限**：需要 `INTERNET`、`READ_EXTERNAL_STORAGE`、`WRITE_EXTERNAL_STORAGE`、`MANAGE_EXTERNAL_STORAGE` 等广泛存储与网络权限。
 4. **桌面端运行**：`.jar` 或 `.exe` 必须放置在游戏根目录（与原版游戏同级），以便加载 `mods/`、`maps/` 等资源。
 5. **MSI 打包**：`wix/` 是一个独立的 .NET 控制台项目，通过 Gradle 自定义 task `packageWixDistribution` 调用 `dotnet run` 生成 MSI；依赖 .NET SDK。
+   - 构建产出两个文件：`RWPP.msi`（纯 MSI）与 `RWPP-Setup.exe`（自托管安装器，内部嵌入 MSI）。
+   - **首次安装**：双击 `RWPP-Setup.exe`，走完整向导（Welcome → License → Features → InstallDir → Progress → Exit）。
+   - **更新模式**：`RWPP-Setup.exe` 支持将命令行参数透传给 `msiexec`，实现自动更新：
+     - `RWPP_UPDATE_MODE=1` — 跳过 Welcome/License/Features/InstallDir，直接显示 Progress 进度条；安装路径使用 MSI 注册表中记录的 `INSTALLDIR`，不再重新检测 Rusted Warfare 目录。
+     - `/quiet` — 完全静默，不加载任何 UI。
+     - `/norestart` — 安装完成后不重启系统。
+     - 示例：`RWPP-Setup.exe /quiet /norestart RWPP_UPDATE_MODE=1`
 6. **网络配置**：桌面与 Android 的 `jvmArgs` / manifest 中都设置了 `preferIPv4Stack=true` 与 `usesCleartextTraffic="true"`。
 
 ## 常见问题
