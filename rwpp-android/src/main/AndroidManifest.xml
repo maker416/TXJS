@@ -26,6 +26,7 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
     <uses-permission android:name="com.android.vending.CHECK_LICENSE"/>
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <application
             android:name=".android.MainApplication"
             android:appCategory="game"
@@ -39,6 +40,15 @@
             android:resizeableActivity="true"
             android:requestLegacyExternalStorage="true" android:icon="@drawable/ic_launcher_2">
         <uses-library android:name="org.apache.http.legacy" android:required="false"/>
+        <provider
+                android:name="androidx.core.content.FileProvider"
+                android:authorities="io.github.rwpp.fileprovider"
+                android:exported="false"
+                android:grantUriPermissions="true">
+            <meta-data
+                    android:name="android.support.FILE_PROVIDER_PATHS"
+                    android:resource="@xml/provider_paths" />
+        </provider>
         <activity
                 android:name="io.github.rwpp.android.LoadingScreen"
                 android:exported="true">

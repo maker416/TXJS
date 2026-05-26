@@ -13,6 +13,16 @@ namespace RSetup
     public class Program
     {
         private static string RootDir => Directory.GetCurrentDirectory();
+        private const string RwppRegistryKey = @"SOFTWARE\Minxyzgo\RWPP";
+        private const string RwppInstallDirValue = "InstallDir";
+        private const string RwppInstalledVersionValue = "InstalledVersion";
+        private static readonly (Microsoft.Win32.RegistryHive hive, RegistryView view)[] RegistryViews =
+        {
+            (Microsoft.Win32.RegistryHive.LocalMachine, RegistryView.Registry64),
+            (Microsoft.Win32.RegistryHive.LocalMachine, RegistryView.Registry32),
+            (Microsoft.Win32.RegistryHive.CurrentUser, RegistryView.Registry64),
+            (Microsoft.Win32.RegistryHive.CurrentUser, RegistryView.Registry32),
+        };
 
         private static void Main(string[] args)
         {
@@ -46,9 +56,11 @@ namespace RSetup
             project.Platform = Platform.x64;
             project.DefaultFeature = appFeature;
             //此部分由gradle task执行，提供guid和version
+            // args[0] 为固定 UpgradeCode，ProductCode 基于版本动态生成
             if (args.Length == 2)
             {
-                project.GUID = new Guid(args[0]);
+                project.UpgradeCode = new Guid(args[0]);
+                project.GUID = GenerateDeterministicGuid(args[0] + "#" + args[1]);
                 project.Version = new Version(args[1]);
             }
 
@@ -72,6 +84,14 @@ namespace RSetup
                 info.Manufacturer = "Minxyzgo";
                 info.Comments = "Multiplatform launcher for Rusted Warfare";
             });
+            project.Properties = new[]
+            {
+                new Property("ARPINSTALLLOCATION", "empty")
+            };
+            project.Actions = new WixSharp.Action[]
+            {
+                new SetPropertyAction("ARPINSTALLLOCATION", "[INSTALLDIR]", Return.check, When.Before, Step.WriteRegistryValues, Condition.NOT_Installed)
+            };
 
             project.Language = "zh-CN";
 
@@ -108,6 +128,118 @@ namespace RSetup
                 Console.WriteLine(output);
         }
 
+        private static void WriteInstallLog(string content)
+        {
+            try
+            {
+                var logPath = Path.Combine(Path.GetTempPath(), "RWPP_Install_Log.txt");
+                File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {content}{Environment.NewLine}");
+            }
+            catch { }
+        }
+
+        private static Guid GenerateDeterministicGuid(string input)
+        {
+            using (var md5 = System.Security.Cryptography.MD5.Create())
+            {
+                byte[] hash = md5.ComputeHash(Encoding.UTF8.GetBytes(input));
+                return new Guid(hash);
+            }
+        }
+
+        private static string NormalizeInstallDir(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return null;
+
+            string normalized = path.Trim().Trim('"');
+            try
+            {
+                normalized = Path.GetFullPath(normalized);
+            }
+            catch
+            {
+                return null;
+            }
+
+            return normalized.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+
+        private static bool LooksLikeRwppInstallDir(string path)
+        {
+            string normalized = NormalizeInstallDir(path);
+            if (string.IsNullOrEmpty(normalized) || !Directory.Exists(normalized))
+                return false;
+
+            return File.Exists(Path.Combine(normalized, "RWPP.exe")) &&
+                   File.Exists(Path.Combine(normalized, "logo.ico")) &&
+                   File.Exists(Path.Combine(normalized, "app", "RWPP.cfg"));
+        }
+
+        private static string GetInstallLocationFromRwppRegistry()
+        {
+            foreach (var (hive, view) in RegistryViews)
+            {
+                try
+                {
+                    using (RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, view))
+                    using (RegistryKey key = baseKey.OpenSubKey(RwppRegistryKey))
+                    {
+                        string installDir = NormalizeInstallDir(key?.GetValue(RwppInstallDirValue) as string);
+                        if (LooksLikeRwppInstallDir(installDir))
+                        {
+                            WriteInstallLog($"Custom registry method found dir={installDir} from {hive}/{view}");
+                            return installDir;
+                        }
+                    }
+                }
+                catch
+                {
+                    // 单个注册表视图失败时继续尝试其他视图
+                }
+            }
+
+            return null;
+        }
+
+        private static void PersistInstallLocation(string installDir, string productVersion)
+        {
+            string normalized = NormalizeInstallDir(installDir);
+            if (!LooksLikeRwppInstallDir(normalized))
+            {
+                WriteInstallLog($"Skip persisting install dir because it does not look like RWPP: {installDir}");
+                return;
+            }
+
+            using (RegistryKey baseKey = RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, RegistryView.Registry64))
+            using (RegistryKey key = baseKey.CreateSubKey(RwppRegistryKey))
+            {
+                key?.SetValue(RwppInstallDirValue, normalized, RegistryValueKind.String);
+                key?.SetValue(RwppInstalledVersionValue, productVersion ?? string.Empty, RegistryValueKind.String);
+            }
+
+            WriteInstallLog($"Persisted install dir to custom registry: {normalized}");
+        }
+
+        private static void RemovePersistedInstallLocation()
+        {
+            try
+            {
+                using (RegistryKey baseKey = RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, RegistryView.Registry64))
+                using (RegistryKey key = baseKey.OpenSubKey(RwppRegistryKey, writable: true))
+                {
+                    key?.DeleteValue(RwppInstallDirValue, false);
+                    key?.DeleteValue(RwppInstalledVersionValue, false);
+                }
+
+                WriteInstallLog("Removed persisted install dir from custom registry");
+            }
+            catch
+            {
+                // 纯卸载阶段清理失败不阻断安装器收尾
+            }
+        }
+
         private static void Msi_Load(SetupEventArgs e)
         {
             
@@ -116,13 +248,39 @@ namespace RSetup
 
         private static void Msi_UILoad(SetupEventArgs e)
         {
-            // 更新模式：信任 MSI 记录的原安装路径，跳过前面所有向导直接显示进度条
+            // 更新模式：强制锁定旧版安装路径，跳过前面所有向导直接显示进度条
             if (e.Session.Property("RWPP_UPDATE_MODE") == "1" && !e.IsUninstalling)
             {
                 var shell = e.ManagedUI.Shell;
-                int progressIndex = shell.Dialogs.IndexOfDialogImplementing<IProgressDialog>();
-                if (progressIndex != -1)
-                    shell.GoTo(progressIndex);
+
+                WriteInstallLog("=== UPDATE MODE START ===");
+                WriteInstallLog($"INSTALLDIR={e.Session.Property("INSTALLDIR")}");
+                WriteInstallLog($"APPDIR={e.Session.Property("APPDIR")}");
+                WriteInstallLog($"ProductVersion={e.Session.Property("ProductVersion")}");
+
+                string oldPath = GetInstallLocationFromRwppRegistry();
+                WriteInstallLog($"RWPP registry install dir={oldPath}");
+
+                if (LooksLikeRwppInstallDir(oldPath))
+                {
+                    e.InstallDir = oldPath;
+                    WriteInstallLog($"SUCCESS: e.InstallDir set to {oldPath}");
+                    int progressIndex = shell.Dialogs.IndexOfDialogImplementing<IProgressDialog>();
+                    if (progressIndex != -1)
+                        shell.GoTo(progressIndex);
+                    return;
+                }
+
+                // 路径无效：弹窗提示并中止安装
+                string diagInfo = $"RWPP Registry Path=[{oldPath}]\n"
+                                + $"详细日志请查看:\n{Path.Combine(Path.GetTempPath(), "RWPP_Install_Log.txt")}";
+                WriteInstallLog("UPDATE MODE FAILED - showing error dialog");
+                System.Windows.MessageBox.Show(
+                    "无法从注册表获取 RWPP 的安装路径，请先完成一次正常安装。\n\n诊断信息:\n" + diagInfo,
+                    "升级失败",
+                    System.Windows.MessageBoxButton.OK,
+                    System.Windows.MessageBoxImage.Error);
+                shell.Cancel();
                 return;
             }
 
@@ -136,6 +294,14 @@ namespace RSetup
 
         private static void Msi_AfterInstall(SetupEventArgs e)
         {
+            if (e.IsInstalling && !string.IsNullOrWhiteSpace(e.InstallDir))
+            {
+                PersistInstallLocation(e.InstallDir, e.Session.Property("ProductVersion"));
+            }
+            else if (e.IsUninstalling && !e.IsUpgradingInstalledVersion)
+            {
+                RemovePersistedInstallLocation();
+            }
             
             if (e.Session.IsFeatureEnabled("Steam") && !e.IsUninstalling)
             {
@@ -159,35 +325,51 @@ namespace RSetup
             //MessageBox.Show(e.ToString(), "AfterExecute");
         }
 
-        //根据注册表内的信息获取app安装路径
+        //根据注册表/MSI信息获取app安装路径
         private static string checkInstalled(string findByName)
         {
-            string displayName;
-            string InstallPath;
             string registryKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
 
-            //64 bits computer
-            RegistryKey key64 =
-                RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, RegistryView.Registry64);
-            RegistryKey key = key64.OpenSubKey(registryKey);
-
-            if (key != null)
+            foreach (var (hive, view) in RegistryViews)
             {
-                foreach (RegistryKey subkey in key.GetSubKeyNames().Select(keyName => key.OpenSubKey(keyName)))
+                string path = CheckUninstallKeys(hive, view, registryKey, findByName);
+                if (!string.IsNullOrEmpty(path))
+                    return path;
+            }
+
+            return null;
+        }
+
+        private static string CheckUninstallKeys(Microsoft.Win32.RegistryHive hive, Microsoft.Win32.RegistryView view, string registryKey, string findByName)
+        {
+            try
+            {
+                using (RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, view))
+                using (RegistryKey key = baseKey.OpenSubKey(registryKey))
                 {
-                    displayName = subkey.GetValue("DisplayName") as string;
+                    if (key == null) return null;
 
-                    if (displayName != null && displayName.Contains(findByName))
+                    foreach (string subKeyName in key.GetSubKeyNames())
                     {
+                        using (RegistryKey subkey = key.OpenSubKey(subKeyName))
+                        {
+                            if (subkey == null) continue;
 
-                        InstallPath = subkey.GetValue("InstallLocation").ToString();
+                            string displayName = subkey.GetValue("DisplayName") as string;
+                            if (displayName != null && displayName.Contains(findByName))
+                            {
+                                string installPath = subkey.GetValue("InstallLocation") as string;
 
-                        return InstallPath; //or displayName
-
+                                if (!string.IsNullOrEmpty(installPath))
+                                    return installPath;
+                            }
+                        }
                     }
                 }
-
-                key.Close();
+            }
+            catch
+            {
+                // 忽略单个注册表视图读取失败的情况，继续尝试下一个视图
             }
 
             return null;

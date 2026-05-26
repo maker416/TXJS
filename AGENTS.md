@@ -274,6 +274,10 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
      - `/quiet` — 完全静默，不加载任何 UI。
      - `/norestart` — 安装完成后不重启系统。
      - 示例：`RWPP-Setup.exe /quiet /norestart RWPP_UPDATE_MODE=1`
+   - **升级实现细节**：
+     - `UpgradeCode` 固定为 `abc38343-cdb8-4e3f-aa7f-0ead99385de1`，确保跨版本可被 Windows Installer 识别为同一产品系列。
+     - `ProductCode` 基于 `UpgradeCode + Version` 动态生成（确定性 GUID），每次版本号变化都会改变，满足 Major Upgrade 要求。
+     - 更新模式若无法通过 `WIX_UPGRADE_DETECTED` 获取旧路径，会 fallback 扫描注册表 `Uninstall` 键，覆盖 `HKLM/HKCU × Registry64/Registry32`（含 WOW 重定向），以支持 perUser 安装和 32-bit 卸载项。
 6. **网络配置**：桌面与 Android 的 `jvmArgs` / manifest 中都设置了 `preferIPv4Stack=true` 与 `usesCleartextTraffic="true"`。
 
 ## 常见问题
