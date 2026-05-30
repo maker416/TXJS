@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
@@ -364,12 +365,14 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                     if (LocalWindowManager.current == WindowManager.Large) MapImage(
                                         Modifier.defaultMinSize(minHeight = 200.dp, minWidth = 200.dp).align(Alignment.TopEnd)
                                     )
-                                    Text(
-                                        details,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        modifier = Modifier.padding(start = 10.dp, top = 10.dp, bottom = 10.dp, end = 0.dp).align(Alignment.TopStart)
-                                    )
+                                    SelectionContainer {
+                                        Text(
+                                            details,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            modifier = Modifier.padding(start = 10.dp, top = 10.dp, bottom = 10.dp, end = 0.dp).align(Alignment.TopStart)
+                                        )
+                                    }
                                 }
 
                                 if (LocalWindowManager.current != WindowManager.Large) {
