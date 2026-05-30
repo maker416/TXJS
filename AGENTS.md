@@ -253,6 +253,7 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 6. **日志**：使用 SLF4J API（`rwpp-core-api` 引入 `slf4j-api`）；桌面端运行时提供 `slf4j-simple`，Android 端使用 `logback-android`。
 7. **中文注释**：核心业务逻辑与复杂注入点通常使用中文注释；公开 API 的 KDoc 也大量使用中文。
 8. **资源引用**：Compose Multiplatform 资源通过 generated accessor 访问，如 `Res.drawable.logo`。
+9. **提交信息**：git 提交说明统一使用中文。
 
 ## 国际化
 
