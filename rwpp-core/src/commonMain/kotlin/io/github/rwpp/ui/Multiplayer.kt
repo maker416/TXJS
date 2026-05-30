@@ -282,7 +282,7 @@ fun MultiplayerView(
 
     var selectedRoomDescription by remember { mutableStateOf<RoomDescription?>(null) }
     var showJoinRequestDialog by remember { mutableStateOf(false) }
-    var showWelcomeMessageAdmittingDialog by remember { mutableStateOf(showWelcomeMessage == null) }
+    var showWelcomeMessageAdmittingDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     remember(blacklists.size) {
