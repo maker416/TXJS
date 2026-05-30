@@ -303,7 +303,8 @@ interface Net : KoinComponent, Initialization {
 
             if (allEntries.isEmpty() && lastError != null) {
                 throw RuntimeException(
-                    "无法连接到任何列表服务器。请检查网络连接或房间列表API设置。"
+                    "无法连接到任何列表服务器，请你检查网络连接或更新客户端",
+                    lastError
                 )
             }
 

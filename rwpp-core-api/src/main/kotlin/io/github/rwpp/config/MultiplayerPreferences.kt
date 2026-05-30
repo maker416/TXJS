@@ -11,7 +11,7 @@ import kotlinx.serialization.Serializable
 import org.koin.core.annotation.Single
 
 /** Default RWList service base URLs (no path); multiple mirrors separated by `;`. */
-const val DEFAULT_ROOM_LIST_API_URLS = "http://192.168.100.45:8080"
+const val DEFAULT_ROOM_LIST_API_URLS = "http://210.16.166.71:11450"
 
 /**
  * Multiplayer player preferences

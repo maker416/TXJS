@@ -278,7 +278,6 @@ fun MultiplayerView(
 
     var editingServerConfig by remember { mutableStateOf<ServerConfig?>(null) }
     var showServerInfoConfig by remember { mutableStateOf(false) }
-    var showRoomListApiSettings by remember { mutableStateOf(false) }
 
     var selectedRoomDescription by remember { mutableStateOf<RoomDescription?>(null) }
     var showJoinRequestDialog by remember { mutableStateOf(false) }
@@ -915,68 +914,6 @@ fun MultiplayerView(
         )
     }
 
-    @Composable
-    fun RoomListApiSettingsDialog(
-        visible: Boolean,
-        initialUrls: String,
-        onDismissRequest: () -> Unit,
-        onSave: (String) -> Unit,
-    ) {
-        AnimatedAlertDialog(
-            visible,
-            onDismissRequest = onDismissRequest
-        ) { dismiss ->
-            BorderCard(
-                modifier = Modifier
-                    .width(560.dp)
-                    .padding(10.dp)
-                    .verticalScroll(rememberScrollState())
-                    .autoClearFocus()
-            ) {
-                Box {
-                    ExitButton(dismiss)
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            readI18n("multiplayer.roomListApi.title"),
-                            style = MaterialTheme.typography.headlineSmall,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
-                        Text(
-                            readI18n("multiplayer.roomListApi.hint"),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(bottom = 12.dp)
-                        )
-                        var text by remember { mutableStateOf(initialUrls) }
-                        LaunchedEffect(visible, initialUrls) {
-                            if (visible) text = initialUrls
-                        }
-                        OutlinedTextField(
-                            value = text,
-                            onValueChange = { text = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            minLines = 3,
-                            label = { Text(readI18n("multiplayer.roomListApi.fieldLabel")) },
-                            colors = RWOutlinedTextColors,
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-                            horizontalArrangement = Arrangement.End
-                        ) {
-                            TextButton(onClick = onDismissRequest) {
-                                Text(readI18n("multiplayer.roomListApi.cancel"))
-                            }
-                            TextButton(
-                                onClick = { onSave(text.trim()) }
-                            ) {
-                                Text(readI18n("multiplayer.roomListApi.save"))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     @Composable
     fun FilterSurfaceDialog(
@@ -1176,9 +1113,7 @@ fun MultiplayerView(
                 throwable = null
                 isRefreshing = true
                 try {
-                    val effectiveUrls = parseRwListBaseUrls(
-                        instance.roomListApiUrls.ifBlank { DEFAULT_ROOM_LIST_API_URLS }
-                    )
+                    val effectiveUrls = parseRwListBaseUrls(DEFAULT_ROOM_LIST_API_URLS)
                     currentViewList = getRoomListFromSourceUrl(effectiveUrls)
                     for (s in allServerData) {
                         launch(Dispatchers.IO) {
@@ -1333,17 +1268,6 @@ fun MultiplayerView(
                         editingServerConfig = null
                     }
 
-                    RoomListApiSettingsDialog(
-                        visible = showRoomListApiSettings,
-                        initialUrls = instance.roomListApiUrls,
-                        onDismissRequest = { showRoomListApiSettings = false },
-                        onSave = { urls ->
-                            instance.roomListApiUrls = urls
-                            configIO.saveConfig(instance)
-                            showRoomListApiSettings = false
-                            scope.launch { refresh.send(Unit) }
-                        },
-                    )
 
                     CompositionLocalProvider(
                         LocalContentColor provides MaterialTheme.colorScheme.onSurface
@@ -1389,22 +1313,34 @@ fun MultiplayerView(
                                             modifier = Modifier.padding(5.dp),
                                             size = 50.dp
                                         ) { filterSurfaceDialogVisible = true }
-                                        RWIconButton(
-                                            Icons.Default.Settings,
-                                            modifier = Modifier.padding(5.dp),
-                                            size = 50.dp
-                                        ) { showRoomListApiSettings = true }
+
                                     }
                                 }
 
                                 if (throwable != null) {
                                     item {
-                                        Text(
-                                            throwable?.message ?: readI18n("multiplayer.connectionFailed"),
-                                            color = MaterialTheme.colorScheme.error,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            modifier = Modifier.padding(16.dp),
-                                        )
+                                        var showErrorDetails by remember { mutableStateOf(false) }
+                                        Column(modifier = Modifier.padding(16.dp)) {
+                                            Text(
+                                                readI18n("multiplayer.connectionFailed"),
+                                                color = MaterialTheme.colorScheme.error,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                            )
+                                            Spacer(Modifier.height(8.dp))
+                                            TextButton(onClick = { showErrorDetails = !showErrorDetails }) {
+                                                Text(readI18n("multiplayer.viewDetails"))
+                                            }
+                                            AnimatedVisibility(showErrorDetails) {
+                                                SelectionContainer {
+                                                    Text(
+                                                        throwable?.stackTraceToString() ?: "Unknown error",
+                                                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        modifier = Modifier.padding(top = 8.dp),
+                                                    )
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 if (realList.isEmpty() && allServerData.isEmpty() && throwable == null && !isRefreshing) {

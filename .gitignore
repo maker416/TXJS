@@ -30,6 +30,9 @@ out/
 # Tools
 skills-lock.json
 
+# List server
+/listserver/
+
 # Desktop runtime (user.dir when developing from repo root)
 /generated_lib/
 /extension/
