@@ -59,6 +59,9 @@ import io.github.rwpp.game.map.MapType
 import io.github.rwpp.game.team.TeamMode
 import io.github.rwpp.game.units.UnitType
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.net.Net
+import io.github.rwpp.config.DEFAULT_ROOM_LIST_API_URLS
+import com.eclipsesource.json.Json
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.platform.KickPlayerContextMenuAreaMultiplatform
 import io.github.rwpp.scripts.Render
@@ -83,6 +86,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 
     val externalHandler = koinInject<ExternalHandler>()
     val game = koinInject<Game>()
+    val net = koinInject<Net>()
     val room = game.gameRoom
 
     var update by remember { mutableStateOf(false) }
@@ -92,6 +96,12 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 
     var optionVisible by remember { mutableStateOf(false) }
     var banUnitVisible by remember { mutableStateOf(false) }
+    var showPublishDialog by remember { mutableStateOf(false) }
+    var publishMessage by remember { mutableStateOf("") }
+    var isPublishing by remember { mutableStateOf(false) }
+    var showRoomTypeDialog by remember { mutableStateOf(false) }
+    var availableRoomTypes by remember { mutableStateOf<List<String>>(emptyList()) }
+    var roomIdForPublish by remember { mutableStateOf<String?>(null) }
     //var downloadModViewVisible by remember { mutableStateOf(false) }
     //var loadModViewVisible by remember { mutableStateOf(false) }
     var selectedBanUnits by remember { mutableStateOf(listOf<UnitType>()) }
@@ -182,6 +192,97 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     BanUnitViewDialog(banUnitVisible, { banUnitVisible = false }, selectedBanUnits) {
         selectedBanUnits = it
         game.onBanUnits(it)
+    }
+
+    suspend fun doPublish(roomId: String, roomType: String) {
+        isPublishing = true
+        publishMessage = "正在发布..."
+        val result = with(net) {
+            publishServerToPublicList(
+                DEFAULT_ROOM_LIST_API_URLS,
+                "公开房-$roomId",
+                "$roomId:5123",
+                roomType
+            )
+        }
+        isPublishing = false
+        result.fold(
+            onSuccess = { body ->
+                val json = Json.parse(body)
+                val code = json.asObject().getInt("code", -1)
+                val msg = json.asObject().getString("message", "")
+                if (code == 0) {
+                    val data = json.asObject().get("data")?.asObject()
+                    val serverId = data?.getString("server_id", "") ?: ""
+                    publishMessage = "发布成功！\n服务器ID: $serverId"
+                } else {
+                    publishMessage = "发布失败: $msg (code: $code)"
+                }
+                showPublishDialog = true
+            },
+            onFailure = { e ->
+                publishMessage = "发布失败: ${e.message}"
+                showPublishDialog = true
+            }
+        )
+    }
+
+    AnimatedAlertDialog(
+        showPublishDialog,
+        onDismissRequest = { showPublishDialog = false }
+    ) { dismiss ->
+        BorderCard(
+            modifier = Modifier.width(400.dp).padding(10.dp)
+        ) {
+            Box {
+                ExitButton(dismiss)
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        publishMessage,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        TextButton(onClick = { dismiss() }) {
+                            Text("确定")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    AnimatedAlertDialog(
+        showRoomTypeDialog,
+        onDismissRequest = { showRoomTypeDialog = false }
+    ) { dismiss ->
+        BorderCard(
+            modifier = Modifier.width(300.dp).padding(10.dp)
+        ) {
+            Box {
+                ExitButton(dismiss)
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        "选择房间类型",
+                        style = MaterialTheme.typography.headlineSmall,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+                    availableRoomTypes.forEach { type ->
+                        RWTextButton(
+                            type,
+                            modifier = Modifier.padding(vertical = 4.dp).fillMaxWidth()
+                        ) {
+                            showRoomTypeDialog = false
+                            val roomId = roomIdForPublish ?: return@RWTextButton
+                            scope.launch { doPublish(roomId, type) }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     val chatFocusRequester = remember { FocusRequester() }
@@ -349,9 +450,11 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 
                                 remember(update) {
                                     scope.launch {
-                                        details = room.roomDetails().split("\n")
+                                        val raw = room.roomDetails()
+                                        details = raw.split("\n")
                                             .filter { !it.startsWith("Map:") && it.isNotBlank() }
                                             .joinToString("\n")
+                                        roomIdForPublish = Regex("""Q\d+""").find(raw)?.value
                                     }
                                 }
 
@@ -443,6 +546,32 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                              game.gameRoom.sendSystemMessage(
                                                  "Cannot start game. Because players: ${unpreparedPlayers.joinToString(", ") { it.name }} aren't ready.")
                                         } else if (room.isHostServer) room.sendQuickGameCommand("-start") else room.startGame()
+                                    }
+                                    if (isHost && roomIdForPublish != null && !isPublishing) {
+                                        RWTextButton(
+                                            "公开到列表",
+                                            modifier = Modifier.padding(5.dp),
+                                        ) {
+                                            val roomId = roomIdForPublish ?: return@RWTextButton
+                                            isPublishing = true
+                                            publishMessage = "正在获取房间类型..."
+                                            scope.launch {
+                                                val types = with(net) {
+                                                    fetchRoomTypes(DEFAULT_ROOM_LIST_API_URLS)
+                                                }
+                                                if (types.isEmpty()) {
+                                                    publishMessage = "获取房间类型失败，请检查列表服务器连接"
+                                                    showPublishDialog = true
+                                                    isPublishing = false
+                                                } else if (types.size == 1) {
+                                                    doPublish(roomId, types.first())
+                                                } else {
+                                                    availableRoomTypes = types
+                                                    showRoomTypeDialog = true
+                                                    isPublishing = false
+                                                }
+                                            }
+                                        }
                                     }
                                 }
 

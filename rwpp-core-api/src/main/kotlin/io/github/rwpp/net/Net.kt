@@ -337,6 +337,34 @@ interface Net : KoinComponent, Initialization {
         return collected
     }
 
+    suspend fun publishServerToPublicList(
+        baseUrl: String,
+        name: String,
+        ip: String,
+        roomtype: String
+    ): Result<String> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val jsonBody = """{"name":"$name","ip":"$ip","roomtype":"$roomtype"}"""
+                val url = java.net.URL("$baseUrl/servers/public")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.doOutput = true
+                conn.outputStream.use { os ->
+                    os.write(jsonBody.toByteArray(Charsets.UTF_8))
+                }
+                val responseCode = conn.responseCode
+                val body = if (responseCode in 200..299) {
+                    conn.inputStream.use { it.reader().readText() }
+                } else {
+                    val errorBody = conn.errorStream?.use { it.reader().readText() } ?: ""
+                    throw IOException("HTTP $responseCode: $errorBody")
+                }
+                body
+            }
+        }
+
 }
 
 @Suppress("UNCHECKED_CAST")
