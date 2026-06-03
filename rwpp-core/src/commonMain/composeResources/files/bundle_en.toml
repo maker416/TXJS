@@ -102,6 +102,8 @@ spawnPointTip = "The spawn point controls where on the map this player starts. M
 teamTip = "Players with the same team will be allied together."
 setTeam = "Set Team"
 gameSpeed = "Game Speed (Experimental)"
+listExpiryLabel = "List Expiry"
+listExpiryRenew = "Renew"
 
 [mod]
 update = "Update"

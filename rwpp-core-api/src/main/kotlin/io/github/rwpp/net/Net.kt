@@ -14,6 +14,8 @@ import io.github.rwpp.io.GameInputStream
 import io.github.rwpp.logger
 import kotlinx.coroutines.*
 import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.get
 import java.io.*
@@ -337,6 +339,10 @@ interface Net : KoinComponent, Initialization {
         return collected
     }
 
+    /**
+     * 将本机房间发布到 RWList 公开房间列表。
+     * 对应 `POST /servers/public`。
+     */
     suspend fun publishServerToPublicList(
         baseUrl: String,
         name: String,
@@ -362,6 +368,64 @@ interface Net : KoinComponent, Initialization {
                     throw IOException("HTTP $responseCode: $errorBody")
                 }
                 body
+            }
+        }
+
+    /**
+     * 续期已发布的房间记录，重置 TTL 倒计时。
+     * 对应 `POST /servers/refresh`。
+     */
+    suspend fun refreshServer(
+        baseUrl: String, serverId: String, secretKey: String
+    ): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val jsonBody = """{"server_id":"$serverId","secret_key":"$secretKey"}"""
+                val request = Request.Builder()
+                    .url("$baseUrl/servers/refresh")
+                    .post(jsonBody.toRequestBody("application/json".toMediaType()))
+                    .build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        throw IOException("HTTP ${response.code}: ${response.body?.string()}")
+                    }
+                    val body = response.body?.string() ?: ""
+                    val code = Json.parse(body).asObject().getInt("code", -1)
+                    if (code != 0) {
+                        val msg = Json.parse(body).asObject().getString("message", "unknown")
+                        throw IOException("RWList error $code: $msg")
+                    }
+                }
+            }
+        }
+
+    /**
+     * 查询已发布房间在列表中的剩余存活时间（秒）。
+     * 对应 `POST /servers/expiry`。
+     */
+    suspend fun getServerExpiry(
+        baseUrl: String, serverId: String, secretKey: String
+    ): Result<Int> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val jsonBody = """{"server_id":"$serverId","secret_key":"$secretKey"}"""
+                val request = Request.Builder()
+                    .url("$baseUrl/servers/expiry")
+                    .post(jsonBody.toRequestBody("application/json".toMediaType()))
+                    .build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        throw IOException("HTTP ${response.code}: ${response.body?.string()}")
+                    }
+                    val body = response.body?.string() ?: ""
+                    val root = Json.parse(body).asObject()
+                    val code = root.getInt("code", -1)
+                    if (code != 0) {
+                        val msg = root.getString("message", "unknown")
+                        throw IOException("RWList error $code: $msg")
+                    }
+                    root.get("data")?.asObject()?.getInt("remaining_seconds", 0) ?: 0
+                }
             }
         }
 

@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -43,6 +44,7 @@ import io.github.rwpp.AppContext
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
+import io.github.rwpp.config.PublishedRoomInfo
 import io.github.rwpp.config.Settings
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.broadcastIn
@@ -70,6 +72,8 @@ import io.github.rwpp.ui.color.getTeamColor
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.LazyColumnScrollbar
 import io.github.rwpp.widget.v2.LongPressFloatingActionButton
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import kotlin.math.roundToInt
@@ -106,12 +110,84 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     //var loadModViewVisible by remember { mutableStateOf(false) }
     var selectedBanUnits by remember { mutableStateOf(listOf<UnitType>()) }
 
+    // 发布到列表后的状态
+    val configIO = koinInject<ConfigIO>()
+    val publishedRoomInfo = koinInject<PublishedRoomInfo>()
+    var hasPublishedInfo by remember { mutableStateOf(false) }
+    var remainingSeconds by remember { mutableIntStateOf(0) }
+    var totalSeconds by remember { mutableIntStateOf(0) }
+    var isRefreshingExpiry by remember { mutableStateOf(false) }
+
+    // 从持久化恢复已发布信息（若房间匹配）
+    LaunchedEffect(roomIdForPublish) {
+        val info = configIO.readConfig(PublishedRoomInfo::class) ?: return@LaunchedEffect
+        val currentRoomId = roomIdForPublish ?: return@LaunchedEffect
+        if (info.roomId == currentRoomId && info.isPublished) {
+            hasPublishedInfo = true
+            remainingSeconds = 0
+            totalSeconds = 0
+            // 立即查询一次
+            with(net) {
+                getServerExpiry(info.baseUrl, info.serverId, info.secretKey)
+            }.onSuccess { sec ->
+                remainingSeconds = sec
+                totalSeconds = sec
+            }
+        }
+    }
+
+    // 定时轮询房间在列表的剩余时间
+    LaunchedEffect(hasPublishedInfo) {
+        if (!hasPublishedInfo) return@LaunchedEffect
+        val info = configIO.readConfig(PublishedRoomInfo::class) ?: return@LaunchedEffect
+        if (!info.isPublished) return@LaunchedEffect
+        while (isActive) {
+            with(net) {
+                getServerExpiry(info.baseUrl, info.serverId, info.secretKey)
+            }.onSuccess { sec ->
+                remainingSeconds = sec
+                if (totalSeconds == 0 || sec > totalSeconds) totalSeconds = sec
+            }.onFailure {
+                // 查询失败可能是房间已过期，标记为未发布
+                if (remainingSeconds <= 0) hasPublishedInfo = false
+            }
+            delay(10_000L)
+        }
+    }
+
     var showMapSelectView by remember { mutableStateOf(false) }
     val isHost = remember(update) { room.isHost || room.isHostServer }
 
     val updateAction = { update = !update }
 
     val scope = rememberCoroutineScope()
+
+    val renewPublishedRoom = {
+        if (!isRefreshingExpiry) {
+            isRefreshingExpiry = true
+            scope.launch {
+                try {
+                    val info = configIO.readConfig(PublishedRoomInfo::class)
+                    if (info != null && info.isPublished) {
+                        with(net) {
+                            refreshServer(info.baseUrl, info.serverId, info.secretKey)
+                        }.onSuccess {
+                            remainingSeconds = 0
+                            totalSeconds = 0
+                            with(net) {
+                                getServerExpiry(info.baseUrl, info.serverId, info.secretKey)
+                            }.onSuccess { sec ->
+                                remainingSeconds = sec
+                                totalSeconds = sec
+                            }
+                        }
+                    }
+                } finally {
+                    isRefreshingExpiry = false
+                }
+            }
+        }
+    }
 
     val extensions = remember {
         externalHandler.getAllExtensions().onFailure {
@@ -201,7 +277,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
             publishServerToPublicList(
                 DEFAULT_ROOM_LIST_API_URLS,
                 "公开房-$roomId",
-                "$roomId:5123",
+                "$roomId:5129",
                 roomType
             )
         }
@@ -214,6 +290,17 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                 if (code == 0) {
                     val data = json.asObject().get("data")?.asObject()
                     val serverId = data?.getString("server_id", "") ?: ""
+                    val secretKey = data?.getString("secret_key", "") ?: ""
+                    // 持久化保存发布信息
+                    publishedRoomInfo.roomId = roomId
+                    publishedRoomInfo.serverId = serverId
+                    publishedRoomInfo.secretKey = secretKey
+                    publishedRoomInfo.roomType = roomType
+                    publishedRoomInfo.baseUrl = DEFAULT_ROOM_LIST_API_URLS
+                    configIO.saveConfig(publishedRoomInfo)
+                    hasPublishedInfo = true
+                    remainingSeconds = 0
+                    totalSeconds = 0
                     publishMessage = "发布成功！\n服务器ID: $serverId"
                 } else {
                     publishMessage = "发布失败: $msg (code: $code)"
@@ -456,6 +543,16 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                             .joinToString("\n")
                                         roomIdForPublish = Regex("""Q\d+""").find(raw)?.value
                                     }
+                                }
+
+                                if (hasPublishedInfo) {
+                                    PublishedRoomExpiryBar(
+                                        remainingSeconds = remainingSeconds,
+                                        totalSeconds = totalSeconds,
+                                        isRefreshing = isRefreshingExpiry,
+                                        onRenew = renewPublishedRoom,
+                                        modifier = Modifier.padding(start = 10.dp, top = 8.dp, end = 10.dp)
+                                    )
                                 }
 
 
@@ -1479,5 +1576,77 @@ private fun MultiplayerOption(
                 dismiss()
             }
         }
+    }
+}
+
+
+@Composable
+private fun PublishedRoomExpiryBar(
+    remainingSeconds: Int,
+    totalSeconds: Int,
+    isRefreshing: Boolean,
+    onRenew: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val compact = LocalWindowManager.current != WindowManager.Large
+    val safeRemainingSeconds = remainingSeconds.coerceAtLeast(0)
+    val progress = if (totalSeconds > 0) {
+        (safeRemainingSeconds.toFloat() / totalSeconds.toFloat()).coerceIn(0f, 1f)
+    } else 1f
+    val barColor = when {
+        progress > 0.5f -> Color(0xFF4CAF50)
+        progress > 0.2f -> Color(0xFFFF9800)
+        else -> Color(0xFFF44336)
+    }
+    val minutes = safeRemainingSeconds / 60
+    val seconds = safeRemainingSeconds % 60
+    val timeText = if (safeRemainingSeconds > 0) minutes.toString().padStart(2, '0') + ":" + seconds.toString().padStart(2, '0')
+        else "--:--"
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .border(
+                BorderStroke(1.dp, barColor.copy(alpha = 0.65f)),
+                RoundedCornerShape(12.dp)
+            )
+            .padding(
+                horizontal = if (compact) 8.dp else 10.dp,
+                vertical = if (compact) 5.dp else 7.dp
+            )
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                readI18n("multiplayer.room.listExpiryLabel") + " $timeText",
+                modifier = Modifier.weight(1f),
+                style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
+                color = barColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            TextButton(
+                enabled = !isRefreshing,
+                onClick = onRenew,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                modifier = Modifier.heightIn(min = if (compact) 28.dp else 32.dp)
+            ) {
+                Text(
+                    readI18n("multiplayer.room.listExpiryRenew"),
+                    style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
+                    maxLines = 1
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(if (compact) 3.dp else 4.dp))
+        LinearProgressIndicator(
+            progress = { progress },
+            modifier = Modifier.fillMaxWidth().height(if (compact) 4.dp else 5.dp),
+            color = barColor,
+            trackColor = MaterialTheme.colorScheme.surfaceContainer
+        )
     }
 }
