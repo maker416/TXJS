@@ -14,7 +14,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -65,11 +64,11 @@ import io.github.rwpp.net.Net
 import io.github.rwpp.scripts.Render
 import io.github.rwpp.ui.*
 import io.github.rwpp.ui.UI.selectedColorSchemeName
-import io.github.rwpp.ui.UI.showContributorList
 import io.github.rwpp.ui.UI.showExtensionView
 import io.github.rwpp.ui.UI.showMissionView
 import io.github.rwpp.ui.UI.showModsView
 import io.github.rwpp.ui.UI.showMultiplayerView
+import io.github.rwpp.ui.UI.showOpenSourceInfoView
 import io.github.rwpp.ui.UI.showReplayView
 import io.github.rwpp.ui.UI.showResourceBrowser
 import io.github.rwpp.ui.UI.showRoomView
@@ -140,8 +139,8 @@ fun App(
             || showRoomView
             || showExtensionView
             || showReplayView
-            || showContributorList
-            || showResourceBrowser)
+            || showResourceBrowser
+            || showOpenSourceInfoView)
 
     val game = koinInject<Game>()
 
@@ -174,7 +173,6 @@ fun App(
             ) {
 
                 val enableAnimations = settings.enableAnimations
-                val state = rememberLazyListState()
                 Scaffold(
                     containerColor = Color.Transparent,
                     floatingActionButton = {
@@ -197,7 +195,6 @@ fun App(
                         exit = if(enableAnimations) fadeOut() else ExitTransition.None,
                     ) {
                         UI.UiProvider.MainMenu(
-                            state,
                             multiplayer = {
                                 isSinglePlayerGame = false
                                 showMultiplayerView = true
@@ -227,11 +224,11 @@ fun App(
                             replay = {
                                 showReplayView = true
                             },
-                            contributor = {
-                                showContributorList = true
-                            },
                             resourceBrowser = {
                                 showResourceBrowser = true
+                            },
+                            openSourceInfo = {
+                                showOpenSourceInfoView = true
                             }
                         )
                     }
@@ -313,6 +310,16 @@ fun App(
                 }
 
                 AnimatedVisibility(
+                    showOpenSourceInfoView,
+                    enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
+                    exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
+                ) {
+                    OpenSourceInfoView {
+                        showOpenSourceInfoView = false
+                    }
+                }
+
+                AnimatedVisibility(
                     showRoomView,
                     enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
                     exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
@@ -327,16 +334,6 @@ fun App(
                         game.gameRoom.disconnect()
 
                         showRoomView = false
-                    }
-                }
-
-                AnimatedVisibility(
-                    showContributorList,
-                    enter = fadeIn() + slideInVertically(),
-                    exit = fadeOut() + slideOutVertically()
-                ) {
-                    ContributorList {
-                        showContributorList = false
                     }
                 }
 

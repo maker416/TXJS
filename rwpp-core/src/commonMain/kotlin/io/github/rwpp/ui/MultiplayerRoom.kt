@@ -118,10 +118,29 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     var totalSeconds by remember { mutableIntStateOf(0) }
     var isRefreshingExpiry by remember { mutableStateOf(false) }
 
+    fun updatePublishedExpiry(seconds: Int) {
+        val safeSeconds = seconds.coerceAtLeast(0)
+        remainingSeconds = safeSeconds
+        if (safeSeconds > 0) {
+            hasPublishedInfo = true
+            if (totalSeconds == 0 || safeSeconds > totalSeconds) totalSeconds = safeSeconds
+        } else {
+            hasPublishedInfo = false
+            totalSeconds = 0
+        }
+    }
+
     // 从持久化恢复已发布信息（若房间匹配）
     LaunchedEffect(roomIdForPublish) {
-        val info = configIO.readConfig(PublishedRoomInfo::class) ?: return@LaunchedEffect
-        val currentRoomId = roomIdForPublish ?: return@LaunchedEffect
+        val info = configIO.readConfig(PublishedRoomInfo::class)
+        val currentRoomId = roomIdForPublish
+        if (info == null || currentRoomId == null || info.roomId != currentRoomId || !info.isPublished) {
+            hasPublishedInfo = false
+            remainingSeconds = 0
+            totalSeconds = 0
+            return@LaunchedEffect
+        }
+
         if (info.roomId == currentRoomId && info.isPublished) {
             hasPublishedInfo = true
             remainingSeconds = 0
@@ -130,8 +149,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
             with(net) {
                 getServerExpiry(info.baseUrl, info.serverId, info.secretKey)
             }.onSuccess { sec ->
-                remainingSeconds = sec
-                totalSeconds = sec
+                updatePublishedExpiry(sec)
             }
         }
     }
@@ -145,13 +163,12 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
             with(net) {
                 getServerExpiry(info.baseUrl, info.serverId, info.secretKey)
             }.onSuccess { sec ->
-                remainingSeconds = sec
-                if (totalSeconds == 0 || sec > totalSeconds) totalSeconds = sec
+                updatePublishedExpiry(sec)
             }.onFailure {
                 // 查询失败可能是房间已过期，标记为未发布
                 if (remainingSeconds <= 0) hasPublishedInfo = false
             }
-            delay(10_000L)
+            delay(1_000L)
         }
     }
 
@@ -177,8 +194,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                             with(net) {
                                 getServerExpiry(info.baseUrl, info.serverId, info.secretKey)
                             }.onSuccess { sec ->
-                                remainingSeconds = sec
-                                totalSeconds = sec
+                                updatePublishedExpiry(sec)
                             }
                         }
                     }
@@ -644,7 +660,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                                  "Cannot start game. Because players: ${unpreparedPlayers.joinToString(", ") { it.name }} aren't ready.")
                                         } else if (room.isHostServer) room.sendQuickGameCommand("-start") else room.startGame()
                                     }
-                                    if (isHost && roomIdForPublish != null && !isPublishing) {
+                                    if (isHost && roomIdForPublish != null && !isPublishing && !hasPublishedInfo) {
                                         RWTextButton(
                                             "公开到列表",
                                             modifier = Modifier.padding(5.dp),

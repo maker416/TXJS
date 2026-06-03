@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,17 +24,14 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -45,7 +43,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -55,6 +52,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.rwpp.AppContext
+import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.Settings
@@ -70,25 +68,13 @@ import io.github.rwpp.game.units.MovementType
 import io.github.rwpp.game.world.World
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
-import io.github.rwpp.net.Net
 import io.github.rwpp.projectVersion
 import io.github.rwpp.rwpp_core.generated.resources.Res
-import io.github.rwpp.rwpp_core.generated.resources.destruction_30
-import io.github.rwpp.rwpp_core.generated.resources.dns_30
-import io.github.rwpp.rwpp_core.generated.resources.edit_square_30
 import io.github.rwpp.rwpp_core.generated.resources.exit_30
-import io.github.rwpp.rwpp_core.generated.resources.extension_30
-import io.github.rwpp.rwpp_core.generated.resources.group_30
-import io.github.rwpp.rwpp_core.generated.resources.library_30
-import io.github.rwpp.rwpp_core.generated.resources.octocat_30
-import io.github.rwpp.rwpp_core.generated.resources.public_30
-import io.github.rwpp.rwpp_core.generated.resources.qq
-import io.github.rwpp.rwpp_core.generated.resources.swords_30
 import io.github.rwpp.ui.UI.showQuestion
 import io.github.rwpp.ui.UI.showWarning
 import io.github.rwpp.ui.color.getTeamColor
-import io.github.rwpp.widget.MenuButton
-import io.github.rwpp.widget.lazyRowDesktopScrollable
+import io.github.rwpp.widget.WindowManager
 import io.github.rwpp.widget.v2.RWIconButton
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
@@ -112,8 +98,8 @@ object UI : Initialization, IUserInterface {
     var showModsView by mutableStateOf(false)
     var showRoomView by mutableStateOf(false)
     var showExtensionView by mutableStateOf(false)
-    var showContributorList by mutableStateOf(false)
     var showResourceBrowser by mutableStateOf(false)
+    var showOpenSourceInfoView by mutableStateOf(false)
 
     var roomSelectedPlayer by mutableStateOf<Player?>(null)
         internal set
@@ -197,7 +183,6 @@ open class UIProvider {
 
     @Composable
     open fun MainMenu(
-        state: LazyListState,
         multiplayer: () -> Unit,
         mission: () -> Unit,
         skirmish: () -> Unit,
@@ -206,153 +191,125 @@ open class UIProvider {
         sandbox: () -> Unit,
         extension: () -> Unit,
         replay: () -> Unit,
-        contributor: () -> Unit,
-        resourceBrowser: () -> Unit
+        resourceBrowser: () -> Unit,
+        openSourceInfo: () -> Unit
     ) {
-        Column(
+        val menuWidthModifier = when (LocalWindowManager.current) {
+            WindowManager.Small -> Modifier.fillMaxWidth(0.46f).widthIn(min = 132.dp, max = 190.dp)
+            WindowManager.Middle -> Modifier.fillMaxWidth(0.26f).widthIn(min = 148.dp, max = 210.dp)
+            WindowManager.Large -> Modifier.fillMaxWidth(0.18f).widthIn(min = 156.dp, max = 230.dp)
+        }
+
+        val standardMenuItems: List<@Composable () -> Unit> = listOf(
+            { MainMenuAction(readI18n("menu.mission"), mission) },
+            { MainMenuAction(readI18n("menus.singlePlayer.skirmish", I18nType.RW), skirmish) },
+            { MainMenuAction(readI18n("menu.multiplayer"), multiplayer) },
+            { MainMenuAction(readI18n("menu.mods"), mods) },
+            { MainMenuAction(readI18n("menu.sandbox"), sandbox) },
+            { MainMenuAction(readI18n("menu.settings"), settings) },
+            { MainMenuAction(readI18n("browser.resourceBrowser"), resourceBrowser) },
+            { MainMenuAction(readI18n("menu.extension"), extension) },
+            { MainMenuAction(readI18n("menu.replay"), replay) },
+        )
+
+        BoxWithConstraints(
             modifier = Modifier.fillMaxSize(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            contentAlignment = Alignment.Center
         ) {
-
-            Spacer(modifier = Modifier.weight(1f))
-
-            Text(
-                "RWPP",
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-                style = TextStyle(
-                    fontFamily = MaterialTheme.typography.displayLarge.fontFamily,
-                    brush = Brush.linearGradient(listOf(MaterialTheme.colorScheme.secondary, MaterialTheme.colorScheme.primary)),
-                    fontSize = 100.sp
-                )
-            )
-
-            Text(
-                "$projectVersion (core $coreVersion)",
-                modifier = Modifier.padding(top = 1.dp, bottom = 5.dp).align(Alignment.CenterHorizontally),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.background.copy((UI.backgroundTransparency + 0.1f).coerceAtMost(1f))),
-                border = BorderStroke(4.dp, MaterialTheme.colorScheme.surfaceContainer),
-                shape = RectangleShape
+            val maxMenuHeight = maxHeight * 0.56f
+            val titleSize = when {
+                maxHeight < 650.dp -> 72.sp
+                maxWidth < 700.dp -> 82.sp
+                else -> 92.sp
+            }
+            Column(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 22.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                LazyRow(
-                    state = state,
-                    modifier = Modifier.fillMaxWidth().lazyRowDesktopScrollable(state),
-                    horizontalArrangement = Arrangement.Center
+                Spacer(modifier = Modifier.weight(1f))
+
+                Text(
+                    "RWPP",
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                    style = TextStyle(
+                        fontFamily = MaterialTheme.typography.displayLarge.fontFamily,
+                        brush = Brush.linearGradient(listOf(MaterialTheme.colorScheme.secondary, MaterialTheme.colorScheme.primary)),
+                        fontSize = titleSize
+                    )
+                )
+
+                Text(
+                    "$projectVersion (core $coreVersion)",
+                    modifier = Modifier.padding(top = 1.dp, bottom = 12.dp).align(Alignment.CenterHorizontally),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                Column(
+                    modifier = menuWidthModifier
+                        .heightIn(max = maxMenuHeight)
+                        .verticalScroll(rememberScrollState()),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    item {
-                        MenuButton(
-                            readI18n("menu.mission"),
-                            painterResource(Res.drawable.destruction_30),
-                            onClick = mission
-                        )
+                    val extraItems: List<@Composable () -> Unit> = extraMenuList.map { menu ->
+                        { MainMenuAction(menu.title, menu.onClick) }
                     }
-
-                    item {
-                        MenuButton(
-                            readI18n("menus.singlePlayer.skirmish", I18nType.RW),
-                            painterResource(Res.drawable.swords_30),
-                            onClick = skirmish
-                        )
-                    }
-
-                    item {
-                        MenuButton(
-                            readI18n("menu.multiplayer"),
-                            painterResource(Res.drawable.group_30),
-                            onClick = multiplayer
-                        )
-                    }
-
-                    item {
-                        MenuButton(
-                            readI18n("menu.mods"),
-                            painterResource(Res.drawable.dns_30),
-                            onClick = mods
-                        )
-                    }
-
-                    item {
-                        MenuButton(
-                            readI18n("menu.sandbox"),
-                            painterResource(Res.drawable.edit_square_30),
-                            onClick = sandbox
-                        )
-                    }
-
-                    item {
-                        MenuButton(
-                            readI18n("menu.settings"),
-                            Icons.Default.Settings,
-                            onClick = settings
-                        )
-                    }
-
-                    item {
-                        MenuButton(
-                            readI18n("browser.resourceBrowser"),
-                            painterResource(Res.drawable.public_30),
-                            onClick = resourceBrowser
-                        )
-                    }
-
-                    item {
-                        MenuButton(
-                            readI18n("menu.extension"),
-                            painterResource(Res.drawable.extension_30),
-                            onClick = extension
-                        )
-                    }
-
-
-                    item {
-                        MenuButton(
-                            readI18n("menu.replay"),
-                            Icons.Default.PlayArrow,
-                            onClick = replay
-                        )
-                    }
-
-                    items(extraMenuList, key = { it.title }) {
-                        MenuButton(
-                            it.title,
-                            it.iconModel,
-                            onClick = it.onClick
-                        )
+                    val allItems = standardMenuItems + extraItems
+                    allItems.forEach { menuItem ->
+                        menuItem()
                     }
                 }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RWIconButton(Icons.Default.Info, modifier = Modifier.padding(top = 12.dp, end = 8.dp, bottom = 4.dp)) {
+                        openSourceInfo()
+                    }
+                    with(koinInject<AppContext>()) {
+                        RWIconButton(painterResource(Res.drawable.exit_30), modifier = Modifier.padding(top = 12.dp, start = 8.dp, bottom = 4.dp)) {
+                            exit()
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.weight(1f))
             }
+        }
+    }
 
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                RWIconButton(Icons.Filled.Favorite, modifier = Modifier.padding(10.dp), tint = Color.Red, onClick = contributor)
-
-                val net = koinInject<Net>()
-
-                RWIconButton(painterResource(Res.drawable.qq), modifier = Modifier.padding(10.dp)) {
-                    net.openUriInBrowser("https://qun.qq.com/universal-share/share?ac=1&authKey=QmG6huGEuUos23WJ0WBwh2sUXiP8%2FsLbsX375KEw9HQzdqT2HK2yEY1WS1Me87%2Bw&busi_data=eyJncm91cENvZGUiOiI5Mjc1OTc0OTUiLCJ0b2tlbiI6ImNaZ2dRYXNLd1d3Q0dhS1p0aG9pcVBsOTYxTEJNb0Z4ZDdXT3lmdTljazB2ZEhVQXd5S1dNa0lYVCtwdDZGYXoiLCJ1aW4iOiIxMjI1MzI3ODY2In0%3D&data=ys1-t0OmBONJktYt21HLtehR3nE23CFtG-YUNRRq7Q7aAMmkd-K_EupcjeKeapL9Aob7bXEpuXIp74FsCcUStg&svctype=4&tempid=h5_group_info")
-                }
-
-                RWIconButton(painterResource(Res.drawable.library_30), modifier = Modifier.padding(10.dp)) {
-                    net.openUriInBrowser("https://rwpp.netlify.app/")
-                }
-
-                RWIconButton(painterResource(Res.drawable.octocat_30), modifier = Modifier.padding(10.dp)) {
-                    net.openUriInBrowser("https://github.com/Minxyzgo/RWPP")
-                }
-
-                with(koinInject<AppContext>()) {
-                    RWIconButton(painterResource(Res.drawable.exit_30), modifier = Modifier.padding(10.dp)) {
-                        exit()
-                    }
-                }
+    @Composable
+    private fun MainMenuAction(
+        content: String,
+        onClick: () -> Unit
+    ) {
+        Surface(
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.36f),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            shape = RoundedCornerShape(50),
+            border = BorderStroke(2.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)),
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp,
+            modifier = Modifier.fillMaxWidth(),
+            onClick = onClick
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 38.dp)
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    content,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
             }
-
-            Spacer(modifier = Modifier.weight(1f))
         }
     }
 
