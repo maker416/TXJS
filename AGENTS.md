@@ -156,7 +156,7 @@ Android 端有大量资源需要从原版铁锈战争客户端提取（assets、
 # Android Debug APK
 ./gradlew :rwpp-android:assembleDebug
 
-# Android Release APK（需先配置签名）
+# Android Release APK（签名见 build/key/keystore.properties）
 ./gradlew :rwpp-android:assembleRelease
 ```
 
@@ -168,8 +168,9 @@ Gradle JVM 参数在根目录 `gradle.properties` 中定义（`-Xmx2048M`）。
    - 桌面端需要 `lib/game-lib.jar`
    - Android 端需要 `lib/android-game-lib.jar`
 2. Android 若缺少 assets/res，需从本地已安装的铁锈战争客户端对照补齐。
-3. 桌面端运行/构建 MSI 需要 `.NET SDK`（用于 `wix/Program.cs` 的 WiX 打包）。
-4. 若首次运行或注入配置变更，`rwpp-desktop` 会在启动时进入「应用注入配置」模式，完成后自动重启。
+3. Android Release 签名：`build/key/release.keystore` + `build/key/keystore.properties`（`gradlew clean` 不会删除 `build/key/`）。
+4. 桌面端运行/构建 MSI 需要 `.NET SDK`（用于 `wix/Program.cs` 的 WiX 打包）。
+5. 若首次运行或注入配置变更，`rwpp-desktop` 会在启动时进入「应用注入配置」模式，完成后自动重启。
 
 ### 发布产物
 

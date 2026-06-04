@@ -24,6 +24,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.AnnotatedString
 import android.util.Log
 import io.github.rwpp.AppContext
 import io.github.rwpp.LocalWindowManager
@@ -37,7 +38,9 @@ import io.github.rwpp.generatedLibDir
 import io.github.rwpp.inject.GameLibraries
 import io.github.rwpp.inject.runtime.Builder
 import io.github.rwpp.inject.runtime.Builder.logger
-import io.github.rwpp.ui.InjectConsole
+import io.github.rwpp.ui.InjectBuildUiState
+import io.github.rwpp.ui.InjectSetupScreen
+import io.github.rwpp.ui.logStr
 import io.github.rwpp.utils.Reflect
 import io.github.rwpp.widget.ConstraintWindowManager
 import io.github.rwpp.widget.MenuLoadingView
@@ -98,14 +101,22 @@ class LoadingScreen : ComponentActivity() {
                                 }
                             } else {
                                 if (requireReloadingLib) {
+                                    var buildState by remember {
+                                        mutableStateOf(InjectBuildUiState.starting())
+                                    }
+
                                     LaunchedEffect(Unit) {
-                                        launch(Dispatchers.IO) {
+                                        logStr.value = AnnotatedString("")
+                                        withContext(Dispatchers.IO) {
                                             runCatching {
+                                                withContext(Dispatchers.Main) {
+                                                    buildState = buildState.startBuild()
+                                                }
+
                                                 val resource = Thread
                                                     .currentThread()
                                                     .contextClassLoader!!
                                                     .getResourceAsStream("android-game-lib.jar")
-
 
                                                 val tempJar = File.createTempFile("android-game-lib", ".jar")
                                                 tempJar.deleteOnExit()
@@ -117,7 +128,16 @@ class LoadingScreen : ComponentActivity() {
                                                 }
 
                                                 GameLibraries.defClassPool.appendDalvikClassPath()
+
+                                                withContext(Dispatchers.Main) {
+                                                    buildState = buildState.prepareDone()
+                                                }
+
                                                 Builder.init(GameLibraries.`android-game-lib`, tempJar)
+
+                                                withContext(Dispatchers.Main) {
+                                                    buildState = buildState.applyDone()
+                                                }
 
                                                 val libPath = "$generatedLibDir/android-game-lib.jar"
                                                 logger?.logging("compiling dex: $libPath")
@@ -126,15 +146,30 @@ class LoadingScreen : ComponentActivity() {
                                                 dex.addJarFile(libPath)
                                                 dex.writeFile("${dexFolder.absolutePath}/classes.dex")
                                                 logger?.logging("Successfully compile dex")
-                                                logger?.info("Apply config successfully. Now you can restart game to take effect. (已成功应用配置，请重启游戏以生效。)")
-                                            }.onFailure {
-                                                logger?.error("failed: ${it.stackTraceToString()}")
+
+                                                withContext(Dispatchers.Main) {
+                                                    buildState = buildState.buildSuccess()
+                                                }
+                                            }.onFailure { error ->
+                                                withContext(Dispatchers.Main) {
+                                                    buildState = buildState.buildFailed(error)
+                                                }
+                                                logger?.error("failed: ${error.stackTraceToString()}")
                                             }
                                         }
                                     }
 
+                                    val buildLog by logStr
+
                                     RWPPTheme(true) {
-                                        InjectConsole()
+                                        InjectSetupScreen(
+                                            uiState = buildState,
+                                            log = buildLog,
+                                            onExit = {
+                                                finishAffinity()
+                                                appKoin.get<AppContext>().exit()
+                                            },
+                                        )
                                     }
 
                                 } else {

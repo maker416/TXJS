@@ -64,6 +64,7 @@ import io.github.rwpp.net.Net
 import io.github.rwpp.scripts.Render
 import io.github.rwpp.ui.*
 import io.github.rwpp.ui.UI.selectedColorSchemeName
+import io.github.rwpp.utils.compareVersions
 import io.github.rwpp.ui.UI.showExtensionView
 import io.github.rwpp.ui.UI.showMissionView
 import io.github.rwpp.ui.UI.showModsView
@@ -111,7 +112,7 @@ fun App(
                     if (_profile != null) {
                         coreData.lastAutoCheckUpdateTime = now
 
-                        if (_profile.version != projectVersion && settings.ignoreVersion != _profile.version || coreData.debug) {
+                        if ((compareVersions(_profile.version, projectVersion) > 0 && settings.ignoreVersion != _profile.version) || coreData.debug) {
                             profile = _profile
                             checkUpdateDialogVisible = true
                         }

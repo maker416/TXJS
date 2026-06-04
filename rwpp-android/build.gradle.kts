@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     kotlin("android")
     kotlin("plugin.serialization")
@@ -42,6 +44,14 @@ dependencies {
     ksp(project(":rwpp-ksp"))
 }
 
+val releaseKeystorePropertiesFile = rootProject.file("build/key/keystore.properties")
+val releaseKeystoreProperties = Properties()
+if (releaseKeystorePropertiesFile.exists()) {
+    releaseKeystorePropertiesFile.inputStream().use {
+        releaseKeystoreProperties.load(it)
+    }
+}
+
 android {
     compileSdk = (findProperty("android.compileSdk") as String).toInt()
     buildToolsVersion = "34.0.0"
@@ -57,10 +67,29 @@ android {
         javaMaxHeapSize = "2G"
     }
 
+    signingConfigs {
+        if (releaseKeystorePropertiesFile.exists()) {
+            create("release") {
+                val storePath = releaseKeystoreProperties.getProperty("storeFile")
+                    ?: error("build/key/keystore.properties 缺少 storeFile")
+                keyAlias = releaseKeystoreProperties.getProperty("keyAlias")
+                    ?: error("build/key/keystore.properties 缺少 keyAlias")
+                keyPassword = releaseKeystoreProperties.getProperty("keyPassword")
+                    ?: error("build/key/keystore.properties 缺少 keyPassword")
+                storePassword = releaseKeystoreProperties.getProperty("storePassword")
+                    ?: error("build/key/keystore.properties 缺少 storePassword")
+                storeFile = rootProject.file(storePath)
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
             isShrinkResources = false
+            if (releaseKeystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             // isDebuggable = true
         }
     }

@@ -16,6 +16,7 @@ namespace RSetup
         private const string RwppRegistryKey = @"SOFTWARE\Minxyzgo\RWPP";
         private const string RwppInstallDirValue = "InstallDir";
         private const string RwppInstalledVersionValue = "InstalledVersion";
+        private const string WixUiExtensionName = "WixToolset.UI.wixext";
         private static readonly (Microsoft.Win32.RegistryHive hive, RegistryView view)[] RegistryViews =
         {
             (Microsoft.Win32.RegistryHive.LocalMachine, RegistryView.Registry64),
@@ -119,13 +120,70 @@ namespace RSetup
             
             project.DefaultRefAssemblies.Add($@"{RootDir}\wix\bin\debug\net472\Wpf.Ui.dll");
 
+            EnsureWixPrerequisites();
+
             var msiFile = project.BuildMsi();
+            if (string.IsNullOrEmpty(msiFile) || !File.Exists(msiFile))
+            {
+                Console.Error.WriteLine("Error: BuildMsi failed, no MSI file was produced.");
+                Environment.Exit(1);
+                return;
+            }
+
             var msiExe = Path.GetFullPath($@"{RootDir}\RWPP-Setup.exe");
 
             (int exitCode, string output) = msiFile.CompleSelfHostedMsi(msiExe);
 
             if (exitCode != 0)
-                Console.WriteLine(output);
+            {
+                Console.Error.WriteLine(output);
+                Environment.Exit(exitCode);
+            }
+        }
+
+        private static void EnsureWixPrerequisites()
+        {
+            string wixExe = FindWixExecutable();
+            if (string.IsNullOrEmpty(wixExe))
+                throw new InvalidOperationException("Error: 未检测到 WiX CLI（wix.exe），请先执行 `dotnet tool install --global wix --version 7.0.0`。");
+
+            string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            string eulaFile = Path.Combine(userProfile, ".wix", "wix7-osmf-eula.txt");
+            if (!File.Exists(eulaFile))
+                RunOrThrow(wixExe, "eula accept wix7", "接受 WiX Toolset OSMF EULA");
+
+            string extensionDir = Path.Combine(userProfile, ".wix", "extensions", WixUiExtensionName);
+            if (!Directory.Exists(extensionDir))
+                RunOrThrow(wixExe, $"extension add -g {WixUiExtensionName}", $"安装 WiX 扩展 {WixUiExtensionName}");
+        }
+
+        private static string FindWixExecutable()
+        {
+            string userTool = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".dotnet",
+                "tools",
+                "wix.exe"
+            );
+            if (File.Exists(userTool))
+                return userTool;
+
+            string pathValue = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+            foreach (string entry in pathValue.Split(new[] { Path.PathSeparator }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string candidate = Path.Combine(entry.Trim().Trim('"'), "wix.exe");
+                if (File.Exists(candidate))
+                    return candidate;
+            }
+
+            return null;
+        }
+
+        private static void RunOrThrow(string exe, string arguments, string action)
+        {
+            (int exitCode, string output) = ExeGen.RunProcess(exe, arguments, RootDir);
+            if (exitCode != 0)
+                throw new InvalidOperationException($"Error: {action}失败。{Environment.NewLine}{output}");
         }
 
         private static void WriteInstallLog(string content)
@@ -380,6 +438,9 @@ namespace RSetup
 
 static class ExeGen
 {
+    public static (int exitCode, string output) RunProcess(string exe, string arguments, string workingDir) =>
+        exe.Run(arguments, workingDir);
+
     public static (int exitCode, string output) CompleSelfHostedMsi(this string msiFile, string outFile)
     {
         //System.Diagnostics.Debug.Assert(false);

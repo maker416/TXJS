@@ -136,6 +136,7 @@ mods = "Mods"
 extension = "Extension"
 settings = "Settings"
 exit = "Exit"
+openSourceInfo = "Open Source & License"
 replay = "Watch Replay"
 
 [common]
@@ -254,3 +255,17 @@ SavedGame = "Saved Game"
 
 [app]
 exiting = "Exiting…"
+
+[inject]
+title = "First-time setup"
+restartTitle = "Setup complete"
+restartHint = "Tap Exit below, then open RWPP again from your launcher for changes to take effect."
+failedTitle = "Setup failed"
+viewDetails = "View details"
+hideDetails = "Hide details"
+exit = "Exit"
+
+[inject.step]
+prepare = "Prepare game library"
+apply = "Apply injection config"
+compile = "Compile DEX"

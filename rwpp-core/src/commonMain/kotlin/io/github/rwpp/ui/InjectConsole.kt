@@ -26,8 +26,9 @@ import io.github.rwpp.logger
 import io.github.rwpp.widget.BorderCard
 import io.github.rwpp.widget.RWTextFieldColors
 
-internal var logStr = mutableStateOf(AnnotatedString(""))
+var logStr = mutableStateOf(AnnotatedString(""))
 
+@Deprecated("Use InjectSetupScreen on Android; kept for desktop inject rebuild UI")
 @Composable
 fun InjectConsole() {
     val message by remember(logStr) { logStr }

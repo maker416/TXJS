@@ -137,6 +137,7 @@ mods = "模组"
 extension = "扩展"
 settings = "设置"
 exit = "退出"
+openSourceInfo = "开源说明与许可"
 replay = "观看回放"
 
 [common]
@@ -255,3 +256,17 @@ SavedGame = "保存的游戏"
 
 [app]
 exiting = "正在退出…"
+
+[inject]
+title = "首次初始化"
+restartTitle = "配置已就绪"
+restartHint = "请点击下方「退出」，然后从桌面或启动器重新打开 RWPP，注入才会生效。"
+failedTitle = "初始化失败"
+viewDetails = "查看详情"
+hideDetails = "收起详情"
+exit = "退出"
+
+[inject.step]
+prepare = "准备游戏库"
+apply = "应用注入配置"
+compile = "编译 DEX"

@@ -28,8 +28,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -69,14 +67,10 @@ import io.github.rwpp.game.world.World
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.projectVersion
-import io.github.rwpp.rwpp_core.generated.resources.Res
-import io.github.rwpp.rwpp_core.generated.resources.exit_30
 import io.github.rwpp.ui.UI.showQuestion
 import io.github.rwpp.ui.UI.showWarning
 import io.github.rwpp.ui.color.getTeamColor
 import io.github.rwpp.widget.WindowManager
-import io.github.rwpp.widget.v2.RWIconButton
-import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
 
 object UI : Initialization, IUserInterface {
@@ -210,13 +204,18 @@ open class UIProvider {
             { MainMenuAction(readI18n("browser.resourceBrowser"), resourceBrowser) },
             { MainMenuAction(readI18n("menu.extension"), extension) },
             { MainMenuAction(readI18n("menu.replay"), replay) },
+            { MainMenuAction(readI18n("menu.openSourceInfo"), openSourceInfo) },
+            {
+                val appContext = koinInject<AppContext>()
+                MainMenuAction(readI18n("menu.exit")) { appContext.exit() }
+            },
         )
 
         BoxWithConstraints(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
-            val maxMenuHeight = maxHeight * 0.56f
+            val maxMenuHeight = maxHeight * 0.62f
             val titleSize = when {
                 maxHeight < 650.dp -> 72.sp
                 maxWidth < 700.dp -> 82.sp
@@ -258,21 +257,6 @@ open class UIProvider {
                     val allItems = standardMenuItems + extraItems
                     allItems.forEach { menuItem ->
                         menuItem()
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    RWIconButton(Icons.Default.Info, modifier = Modifier.padding(top = 12.dp, end = 8.dp, bottom = 4.dp)) {
-                        openSourceInfo()
-                    }
-                    with(koinInject<AppContext>()) {
-                        RWIconButton(painterResource(Res.drawable.exit_30), modifier = Modifier.padding(top = 12.dp, start = 8.dp, bottom = 4.dp)) {
-                            exit()
-                        }
                     }
                 }
 

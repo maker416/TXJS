@@ -117,6 +117,7 @@ task("packageWixDistribution") {
         )
         pb.directory(rootProject.rootDir)
         pb.environment()["PATH"] = "${pb.environment()["PATH"]};$extPath"
+        pb.environment()["WIXTOOLS_ACCEPT_OSMF_EULA"] = "true"
         val process = pb.start()
 
         val stdout = Thread {

@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Done
@@ -40,6 +41,7 @@ import io.github.rwpp.net.ReleaseAsset
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.projectVersion
 import okhttp3.Request
+import io.github.rwpp.utils.compareVersions
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.*
 import kotlinx.coroutines.Dispatchers
@@ -448,16 +450,18 @@ fun SettingsView(
                                                         modifier = Modifier.weight(1f).fillMaxWidth(),
                                                         backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.6f)
                                                     ) {
-                                                        LazyColumn(
-                                                            state = logScrollState,
-                                                            modifier = Modifier.padding(8.dp).fillMaxSize()
-                                                        ) {
-                                                            items(logLines.size) { index ->
-                                                                Text(
-                                                                    logLines[index],
-                                                                    style = MaterialTheme.typography.bodySmall,
-                                                                    color = MaterialTheme.colorScheme.onSurface
-                                                                )
+                                                        SelectionContainer {
+                                                            LazyColumn(
+                                                                state = logScrollState,
+                                                                modifier = Modifier.padding(8.dp).fillMaxSize()
+                                                            ) {
+                                                                items(logLines.size) { index ->
+                                                                    Text(
+                                                                        logLines[index],
+                                                                        style = MaterialTheme.typography.bodySmall,
+                                                                        color = MaterialTheme.colorScheme.onSurface
+                                                                    )
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -542,7 +546,7 @@ fun SettingsView(
                                                                 }
 
                                                                 logLines += "--------------------------------------------------"
-                                                                if (version == projectVersion) {
+                                                                if (compareVersions(version, projectVersion) <= 0) {
                                                                     logLines += readI18n("settings.updateLatestVersion", I18nType.RWPP)
                                                                 } else if (settings.ignoreVersion == version) {
                                                                     logLines += readI18n("settings.updateIgnoredVersion", I18nType.RWPP, version)

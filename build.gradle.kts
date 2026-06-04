@@ -6,6 +6,7 @@
  */
 
 plugins {
+    base
     // this is necessary to avoid the plugins to be loaded multiple times
     // in each subproject's classloader
     kotlin("plugin.serialization").apply(false)
@@ -27,5 +28,14 @@ allprojects {
     }
 }
 
-version = "1.8.7"
+version = "1.9.0"
+
+// 保留 build/key 下的 Release 签名文件，避免 gradlew clean 误删
+tasks.named<Delete>("clean") {
+    delete(
+        fileTree(layout.buildDirectory) {
+            exclude("key/**")
+        },
+    )
+}
 
