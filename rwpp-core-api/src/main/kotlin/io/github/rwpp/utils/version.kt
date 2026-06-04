@@ -8,14 +8,31 @@
 package io.github.rwpp.utils
 
 /**
- * Compares two version strings.
+ * Parses the leading numeric component of a version segment (e.g. `"0-beta1"` → `0`).
+ * Non-numeric or empty segments resolve to `0`, so API tags like `v1.9.0-beta1` never throw.
+ */
+internal fun parseVersionPart(part: String): Int {
+    val digits = part.trim().takeWhile { it.isDigit() }
+    if (digits.isEmpty()) return 0
+    return digits.toIntOrNull() ?: 0
+}
+
+private fun versionSegments(version: String): List<Int> =
+    version.trim()
+        .removePrefix("v")
+        .removePrefix("V")
+        .split('.')
+        .map(::parseVersionPart)
+
+/**
+ * Compares two version strings by numeric dot-separated components.
  * @param version1 The first version string to compare.
  * @param version2 The second version string to compare.
  * @return 0 if the versions are equal, 1 if version1 is greater than version2, and -1 if version1 is less than version2.
  */
 fun compareVersions(version1: String, version2: String): Int {
-    val v1Parts = version1.removePrefix("v").split('.').map { it.toInt() }
-    val v2Parts = version2.removePrefix("v").split('.').map { it.toInt() }
+    val v1Parts = versionSegments(version1)
+    val v2Parts = versionSegments(version2)
 
     val maxLength = maxOf(v1Parts.size, v2Parts.size)
 

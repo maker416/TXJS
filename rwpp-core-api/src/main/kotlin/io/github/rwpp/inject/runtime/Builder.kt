@@ -294,6 +294,7 @@ object Builder {
             classes.forEach {
                 zip.putNextEntry(ZipEntry(Descriptor.toJvmName(it) + ".class"))
                 zip.write(it.toBytecode())
+                zip.closeEntry()
             }
 
             originalJar?.let { origJar ->
@@ -305,6 +306,7 @@ object Builder {
                                 origZip.getInputStream(entry).use { input ->
                                     input.copyTo(zip)
                                 }
+                                zip.closeEntry()
                             }
                         }
                     }

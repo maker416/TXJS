@@ -63,7 +63,8 @@ rwpp-android/src/main/res/anim/
 rwpp-android/src/main/res/layout/
 rwpp-android/src/main/res/layout-v11/
 rwpp-android/src/main/res/values-v11/
-rwpp-android/src/main/res/xml/
+rwpp-android/src/main/res/xml/*
+!rwpp-android/src/main/res/xml/provider_paths.xml
 rwpp-android/src/main/res/drawable/*
 !rwpp-android/src/main/res/drawable/ic_launcher_2.xml
 rwpp-android/src/main/res/raw/*
