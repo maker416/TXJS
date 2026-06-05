@@ -208,7 +208,6 @@ open class UIProvider {
             { MainMenuAction(readI18n("menu.sandbox"), sandbox) },
             { MainMenuAction(readI18n("menu.settings"), settings) },
             { MainMenuAction(readI18n("browser.resourceBrowser"), resourceBrowser) },
-            { MainMenuAction(readI18n("menu.extension"), extension) },
             { MainMenuAction(readI18n("menu.replay"), replay) },
             { MainMenuAction(readI18n("menu.openSourceInfo"), openSourceInfo) },
             {

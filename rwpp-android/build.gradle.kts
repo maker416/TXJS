@@ -52,7 +52,14 @@ if (releaseKeystorePropertiesFile.exists()) {
     }
 }
 
-fun requireReleaseSigningConfigured() {
+data class ReleaseSigning(
+    val storeFile: java.io.File,
+    val keyAlias: String,
+    val keyPassword: String,
+    val storePassword: String,
+)
+
+fun requireReleaseSigningConfigured(): ReleaseSigning {
     if (!releaseKeystorePropertiesFile.exists()) {
         error(
             """
@@ -68,13 +75,17 @@ fun requireReleaseSigningConfigured() {
     if (!storeFile.exists()) {
         error("Release 密钥库不存在: ${storeFile.absolutePath}")
     }
-    releaseKeystoreProperties.getProperty("keyAlias")
+    val keyAlias = releaseKeystoreProperties.getProperty("keyAlias")
         ?: error("build/key/keystore.properties 缺少 keyAlias")
-    releaseKeystoreProperties.getProperty("keyPassword")
+    val keyPassword = releaseKeystoreProperties.getProperty("keyPassword")
         ?: error("build/key/keystore.properties 缺少 keyPassword")
-    releaseKeystoreProperties.getProperty("storePassword")
+    val storePassword = releaseKeystoreProperties.getProperty("storePassword")
         ?: error("build/key/keystore.properties 缺少 storePassword")
+    return ReleaseSigning(storeFile, keyAlias, keyPassword, storePassword)
 }
+
+// 配置阶段仅在校验通过时注册签名，避免不完整 keystore.properties 拖垮 assembleDebug / test 等任务
+val releaseSigning = runCatching { requireReleaseSigningConfigured() }.getOrNull()
 
 android {
     compileSdk = (findProperty("android.compileSdk") as String).toInt()
@@ -92,13 +103,12 @@ android {
     }
 
     signingConfigs {
-        if (releaseKeystorePropertiesFile.exists()) {
+        releaseSigning?.let { signing ->
             create("release") {
-                val storePath = releaseKeystoreProperties.getProperty("storeFile")!!
-                keyAlias = releaseKeystoreProperties.getProperty("keyAlias")!!
-                keyPassword = releaseKeystoreProperties.getProperty("keyPassword")!!
-                storePassword = releaseKeystoreProperties.getProperty("storePassword")!!
-                storeFile = rootProject.file(storePath)
+                storeFile = signing.storeFile
+                keyAlias = signing.keyAlias
+                keyPassword = signing.keyPassword
+                storePassword = signing.storePassword
             }
         }
     }
@@ -107,7 +117,7 @@ android {
         release {
             isMinifyEnabled = false
             isShrinkResources = false
-            if (releaseKeystorePropertiesFile.exists()) {
+            if (releaseSigning != null) {
                 signingConfig = signingConfigs.getByName("release")
             }
             // isDebuggable = true
