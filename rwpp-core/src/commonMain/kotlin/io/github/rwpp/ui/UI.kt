@@ -8,6 +8,7 @@
 package io.github.rwpp.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -41,6 +42,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -67,10 +69,13 @@ import io.github.rwpp.game.world.World
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.projectVersion
+import io.github.rwpp.rwpp_core.generated.resources.Res
+import io.github.rwpp.rwpp_core.generated.resources.title
 import io.github.rwpp.ui.UI.showQuestion
 import io.github.rwpp.ui.UI.showWarning
 import io.github.rwpp.ui.color.getTeamColor
 import io.github.rwpp.widget.WindowManager
+import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
 
 object UI : Initialization, IUserInterface {
@@ -188,8 +193,9 @@ open class UIProvider {
         resourceBrowser: () -> Unit,
         openSourceInfo: () -> Unit
     ) {
-        val menuWidthModifier = when (LocalWindowManager.current) {
-            WindowManager.Small -> Modifier.fillMaxWidth(0.46f).widthIn(min = 132.dp, max = 190.dp)
+        val windowManager = LocalWindowManager.current
+        val menuWidthModifier = when (windowManager) {
+            WindowManager.Small -> Modifier.fillMaxWidth(0.40f).widthIn(min = 132.dp, max = 190.dp)
             WindowManager.Middle -> Modifier.fillMaxWidth(0.26f).widthIn(min = 148.dp, max = 210.dp)
             WindowManager.Large -> Modifier.fillMaxWidth(0.18f).widthIn(min = 156.dp, max = 230.dp)
         }
@@ -216,31 +222,52 @@ open class UIProvider {
             contentAlignment = Alignment.Center
         ) {
             val maxMenuHeight = maxHeight * 0.62f
-            val titleSize = when {
-                maxHeight < 650.dp -> 72.sp
-                maxWidth < 700.dp -> 82.sp
-                else -> 92.sp
+            val titleWidth = when (windowManager) {
+                WindowManager.Small -> maxWidth * 0.55f
+                WindowManager.Middle -> maxWidth * 0.50f
+                WindowManager.Large -> maxWidth * 0.48f
             }
+            val titleFillWidth = when (windowManager) {
+                WindowManager.Small -> 0.38f
+                WindowManager.Middle -> 0.45f
+                WindowManager.Large -> 0.50f
+            }
+            val titleMaxHeight = when (windowManager) {
+                WindowManager.Small -> maxHeight * 0.14f
+                WindowManager.Middle -> maxHeight * 0.16f
+                WindowManager.Large -> maxHeight * 0.18f
+            }
+            val buttonSpacing = when (windowManager) {
+                WindowManager.Small -> 6.dp
+                WindowManager.Middle -> 7.dp
+                WindowManager.Large -> 8.dp
+            }
+            val versionStyle = when (windowManager) {
+                WindowManager.Small, WindowManager.Middle -> MaterialTheme.typography.bodySmall
+                WindowManager.Large -> MaterialTheme.typography.bodyLarge
+            }
+            val versionBottomPadding = if (windowManager == WindowManager.Small) 6.dp else 12.dp
             Column(
                 modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 22.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Spacer(modifier = Modifier.weight(1f))
 
-                Text(
-                    "RWPP",
-                    modifier = Modifier.align(Alignment.CenterHorizontally),
-                    style = TextStyle(
-                        fontFamily = MaterialTheme.typography.displayLarge.fontFamily,
-                        brush = Brush.linearGradient(listOf(MaterialTheme.colorScheme.secondary, MaterialTheme.colorScheme.primary)),
-                        fontSize = titleSize
-                    )
+                Image(
+                    painter = painterResource(Res.drawable.title),
+                    contentDescription = "Menu",
+                    modifier = Modifier
+                        .widthIn(max = titleWidth)
+                        .heightIn(max = titleMaxHeight)
+                        .fillMaxWidth(titleFillWidth)
+                        .align(Alignment.CenterHorizontally),
+                    contentScale = ContentScale.Fit
                 )
 
                 Text(
                     "$projectVersion (core $coreVersion)",
-                    modifier = Modifier.padding(top = 1.dp, bottom = 12.dp).align(Alignment.CenterHorizontally),
-                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(top = 1.dp, bottom = versionBottomPadding).align(Alignment.CenterHorizontally),
+                    style = versionStyle,
                     color = MaterialTheme.colorScheme.onSurface
                 )
 
@@ -249,7 +276,7 @@ open class UIProvider {
                         .heightIn(max = maxMenuHeight)
                         .verticalScroll(rememberScrollState()),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(buttonSpacing)
                 ) {
                     val extraItems: List<@Composable () -> Unit> = extraMenuList.map { menu ->
                         { MainMenuAction(menu.title, menu.onClick) }
@@ -270,6 +297,11 @@ open class UIProvider {
         content: String,
         onClick: () -> Unit
     ) {
+        val minButtonHeight = when (LocalWindowManager.current) {
+            WindowManager.Small -> 32.dp
+            WindowManager.Middle -> 34.dp
+            WindowManager.Large -> 38.dp
+        }
         Surface(
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.36f),
             contentColor = MaterialTheme.colorScheme.onSurface,
@@ -283,7 +315,7 @@ open class UIProvider {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 38.dp)
+                    .heightIn(min = minButtonHeight)
                     .padding(horizontal = 14.dp, vertical = 6.dp),
                 contentAlignment = Alignment.Center
             ) {

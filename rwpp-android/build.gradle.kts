@@ -52,6 +52,30 @@ if (releaseKeystorePropertiesFile.exists()) {
     }
 }
 
+fun requireReleaseSigningConfigured() {
+    if (!releaseKeystorePropertiesFile.exists()) {
+        error(
+            """
+            Release APK 需要签名配置。
+            请运行: powershell -File build/generate-keystore.ps1
+            或复制 build/key/keystore.properties.example 为 keystore.properties 并填入密钥信息。
+            """.trimIndent()
+        )
+    }
+    val storePath = releaseKeystoreProperties.getProperty("storeFile")
+        ?: error("build/key/keystore.properties 缺少 storeFile")
+    val storeFile = rootProject.file(storePath)
+    if (!storeFile.exists()) {
+        error("Release 密钥库不存在: ${storeFile.absolutePath}")
+    }
+    releaseKeystoreProperties.getProperty("keyAlias")
+        ?: error("build/key/keystore.properties 缺少 keyAlias")
+    releaseKeystoreProperties.getProperty("keyPassword")
+        ?: error("build/key/keystore.properties 缺少 keyPassword")
+    releaseKeystoreProperties.getProperty("storePassword")
+        ?: error("build/key/keystore.properties 缺少 storePassword")
+}
+
 android {
     compileSdk = (findProperty("android.compileSdk") as String).toInt()
     buildToolsVersion = "34.0.0"
@@ -70,14 +94,10 @@ android {
     signingConfigs {
         if (releaseKeystorePropertiesFile.exists()) {
             create("release") {
-                val storePath = releaseKeystoreProperties.getProperty("storeFile")
-                    ?: error("build/key/keystore.properties 缺少 storeFile")
-                keyAlias = releaseKeystoreProperties.getProperty("keyAlias")
-                    ?: error("build/key/keystore.properties 缺少 keyAlias")
-                keyPassword = releaseKeystoreProperties.getProperty("keyPassword")
-                    ?: error("build/key/keystore.properties 缺少 keyPassword")
-                storePassword = releaseKeystoreProperties.getProperty("storePassword")
-                    ?: error("build/key/keystore.properties 缺少 storePassword")
+                val storePath = releaseKeystoreProperties.getProperty("storeFile")!!
+                keyAlias = releaseKeystoreProperties.getProperty("keyAlias")!!
+                keyPassword = releaseKeystoreProperties.getProperty("keyPassword")!!
+                storePassword = releaseKeystoreProperties.getProperty("storePassword")!!
                 storeFile = rootProject.file(storePath)
             }
         }
@@ -133,6 +153,15 @@ android {
         compilerOptions {
             freeCompilerArgs.add("-Xjvm-default=all")
         }
+    }
+}
+
+tasks.matching {
+    it.name.equals("assembleRelease", ignoreCase = true) ||
+        it.name.equals("bundleRelease", ignoreCase = true)
+}.configureEach {
+    doFirst {
+        requireReleaseSigningConfigured()
     }
 }
 

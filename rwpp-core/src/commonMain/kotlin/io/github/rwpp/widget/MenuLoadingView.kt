@@ -14,8 +14,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.title
@@ -26,19 +26,41 @@ import org.jetbrains.compose.resources.painterResource
 fun MenuLoadingView(
     message: String,
 ) {
-    Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        Image(painter = painterResource(Res.drawable.title), contentDescription = "Menu", modifier = Modifier.scale(1.7f).padding(10.dp))
-        Spacer(modifier = Modifier.size(100.dp))
-        LineSpinFadeLoaderIndicator(
-            radius = 25f,
-            penThickness = 8f,
-            color = Color.White,
-        )
-        Text(
-            message,
-            modifier = Modifier.padding(20.dp).offset(y = 25.dp),
-            color = Color.White,
-            style = MaterialTheme.typography.bodyLarge
-        )
+    BoxWithConstraints(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        val logoMaxWidth = when {
+            maxHeight < 650.dp -> maxWidth * 0.55f
+            maxWidth < 700.dp -> maxWidth * 0.48f
+            else -> maxWidth * 0.38f
+        }
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Image(
+                painter = painterResource(Res.drawable.title),
+                contentDescription = "Menu",
+                modifier = Modifier
+                    .widthIn(max = logoMaxWidth)
+                    .fillMaxWidth(0.42f)
+                    .padding(10.dp),
+                contentScale = ContentScale.Fit
+            )
+            Spacer(modifier = Modifier.size(100.dp))
+            LineSpinFadeLoaderIndicator(
+                radius = 25f,
+                penThickness = 8f,
+                color = Color.White,
+            )
+            Text(
+                message,
+                modifier = Modifier.padding(20.dp).offset(y = 25.dp),
+                color = Color.White,
+                style = MaterialTheme.typography.bodyLarge
+            )
+        }
     }
 }
