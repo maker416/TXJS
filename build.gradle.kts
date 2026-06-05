@@ -28,7 +28,7 @@ allprojects {
     }
 }
 
-version = "1.9.0"
+version = "1.9.2"
 
 // 保留 build/key 下的 Release 签名文件，避免 gradlew clean 误删
 tasks.named<Delete>("clean") {

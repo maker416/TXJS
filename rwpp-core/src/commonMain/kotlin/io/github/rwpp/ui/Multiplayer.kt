@@ -934,8 +934,6 @@ fun MultiplayerView(
                 BlacklistTargetDialog(showBlacklistDialog) { showBlacklistDialog = false }
 
                 Box(modifier = Modifier.fillMaxSize()) {
-                    ExitButton(dismiss)
-
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -943,6 +941,7 @@ fun MultiplayerView(
                             .padding(horizontal = 20.dp, vertical = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
+                        Spacer(Modifier.height(30.dp))
                         Text(
                             readI18n("common.filter"),
                             style = MaterialTheme.typography.headlineSmall,
@@ -1100,6 +1099,8 @@ fun MultiplayerView(
                             }
                         }
                     }
+
+                    ExitButton(dismiss)
                 }
             }
         }
