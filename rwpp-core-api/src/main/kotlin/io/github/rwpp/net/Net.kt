@@ -261,7 +261,7 @@ interface Net : KoinComponent, Initialization {
      */
     suspend fun fetchRoomTypes(roomListApiUrls: String): List<String> =
         withContext(Dispatchers.IO) {
-            val bases = parseRwListBaseUrls(roomListApiUrls)
+            val bases = roomListApiBasesWithDefaultFallback(roomListApiUrls)
             if (bases.isEmpty()) return@withContext emptyList()
 
             val merged = linkedSetOf<String>()

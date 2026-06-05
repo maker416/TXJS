@@ -61,7 +61,7 @@ import io.github.rwpp.io.SizeUtils
 import io.github.rwpp.logger
 import io.github.rwpp.maxModSize
 import io.github.rwpp.net.Net
-import io.github.rwpp.net.parseRwListBaseUrls
+import io.github.rwpp.net.roomListApiBasesWithDefaultFallback
 import io.github.rwpp.net.RoomDescription
 import io.github.rwpp.net.RoomListDegradeReason
 import io.github.rwpp.net.isJoinableFromList
@@ -1152,7 +1152,7 @@ fun MultiplayerView(
                 throwable = null
                 isRefreshing = true
                 try {
-                    val effectiveUrls = parseRwListBaseUrls(instance.roomListApiUrls)
+                    val effectiveUrls = roomListApiBasesWithDefaultFallback(instance.roomListApiUrls)
                     currentViewList = getRoomListFromSourceUrl(effectiveUrls)
                     for (s in allServerData) {
                         launch(Dispatchers.IO) {

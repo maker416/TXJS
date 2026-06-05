@@ -129,6 +129,17 @@ var requireReloadingLib = false
 
 //val cacheModSize = AtomicInteger(0)
 
+private fun resolveLauncherExePath(): String {
+    val dir = System.getProperty("user.dir")
+    val rwjs = "$dir/RWJS.exe"
+    val rwpp = "$dir/RWPP.exe"
+    return when {
+        File(rwjs).exists() -> rwjs
+        File(rwpp).exists() -> rwpp
+        else -> rwjs
+    }
+}
+
 fun main(array: Array<String>) {
     if (array.contains("-localgl") && File("opengl32.dll").exists()) { // for only debug
         System.loadLibrary("opengl32")
@@ -213,7 +224,7 @@ fun swingApplication() = SwingUtilities.invokeLater {
 
                         Builder.logger?.info("Apply config successfully. Now you can restart game to take effect. (已成功应用配置，请重启游戏以生效。)")
                         if (native) {
-                            val processBuilder = ProcessBuilder(System.getProperty("user.dir") + "/RWPP.exe")
+                            val processBuilder = ProcessBuilder(resolveLauncherExePath())
                             processBuilder.start()
                             exitProcess(0)
                         }
@@ -303,7 +314,7 @@ fun swingApplication() = SwingUtilities.invokeLater {
     }
 
     val window = JFrame()
-    val frame = JFrame("退出RWPP")
+    val frame = JFrame("退出RWJS")
     frame.setSize(300, 200)
     if (requireReloadingLib) {
         window.defaultCloseOperation = JFrame.EXIT_ON_CLOSE
@@ -319,14 +330,14 @@ fun swingApplication() = SwingUtilities.invokeLater {
         window.minimumSize = Dimension(800, 600)
         window.isResizable = true
     }
-    window.title = "Rusted Warfare Plus Plus"
+    window.title = "RWJS"
     window.iconImage = ImageIO.read(ClassLoader.getSystemResource("composeResources/io.github.rwpp.rwpp_core.generated.resources/drawable/logo.png"))
     if (!requireReloadingLib) {
         window.addWindowListener(object : WindowAdapter() {
             override fun windowClosing(e: WindowEvent?) {
                 val result = JOptionPane.showConfirmDialog(
                     frame,
-                    "Are you sure to exit RWPP? (确定要退出RWPP吗？)",
+                    "Are you sure to exit RWJS? (确定要退出RWJS吗？)",
                     "提示",
                     JOptionPane.YES_NO_OPTION
                 )

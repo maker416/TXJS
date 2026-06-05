@@ -154,6 +154,18 @@ class RwListParserTest {
     }
 
     @Test
+    fun roomListApiBasesWithDefaultFallbackAppendsBuiltinMirror() {
+        assertEquals(
+            listOf("http://example.com", DEFAULT_ROOM_LIST_API_URLS),
+            roomListApiBasesWithDefaultFallback("http://example.com"),
+        )
+        assertEquals(
+            listOf(DEFAULT_ROOM_LIST_API_URLS),
+            roomListApiBasesWithDefaultFallback(DEFAULT_ROOM_LIST_API_URLS),
+        )
+    }
+
+    @Test
     fun listAvailableRoomsSortBeforeUnavailable() {
         val available = mapRwListEntryToRoomDescription(
             RwListServerEntry(

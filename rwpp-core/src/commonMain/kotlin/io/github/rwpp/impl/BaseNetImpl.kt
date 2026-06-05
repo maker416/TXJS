@@ -9,7 +9,6 @@ package io.github.rwpp.impl
 
 import com.eclipsesource.json.Json
 import io.github.rwpp.config.ConfigIO
-import io.github.rwpp.config.DEFAULT_ROOM_LIST_API_URLS
 import io.github.rwpp.config.MultiplayerPreferences
 import io.github.rwpp.config.ServerType
 import io.github.rwpp.logger
@@ -28,13 +27,13 @@ abstract class BaseNetImpl : Net {
     override val listeners: MutableMap<Int, MutableList<(Client?, Packet) -> Boolean>> = mutableMapOf()
     override val client: OkHttpClient = OkHttpClient.Builder()
         .addNetworkInterceptor(Interceptor { chain ->
-            val request = chain.request()
-            request.newBuilder()
+            val request = chain.request().newBuilder()
                 .removeHeader("Accept-Encoding")
                 .build()
             chain.proceed(request)
         })
-        .readTimeout(5000L, TimeUnit.MILLISECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
     override val scope: CoroutineScope = CoroutineScope(SupervisorJob())
@@ -48,13 +47,7 @@ abstract class BaseNetImpl : Net {
         val roomLists = prefs.allServerConfig.filter { it.type == ServerType.RoomList }
         var prefsChanged = false
 
-        var migratedUrls = migrateRoomListApiUrls(prefs.roomListApiUrls)
-        if (migratedUrls == DEFAULT_ROOM_LIST_API_URLS) {
-            roomLists
-                .firstOrNull { it.ip.isNotBlank() && !isLegacyMasterserverRoomListUrl(it.ip) }
-                ?.ip
-                ?.let { migratedUrls = normalizeRwListBaseUrl(it) }
-        }
+        val migratedUrls = migrateRoomListApiUrls(prefs.roomListApiUrls)
         if (migratedUrls != prefs.roomListApiUrls) {
             logger.info(
                 "Migrated room list API URLs from legacy masterserver to RWList: " +

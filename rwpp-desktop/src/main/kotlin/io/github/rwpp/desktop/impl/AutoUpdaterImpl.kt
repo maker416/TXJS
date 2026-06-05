@@ -26,7 +26,7 @@ class AutoUpdaterImpl : AutoUpdater, KoinComponent {
 
     override fun downloadAndInstall(downloadUrl: String, onProgress: (Float) -> Unit) {
         val tempDir = System.getenv("TEMP") ?: System.getProperty("java.io.tmpdir")
-        val outputFile = File(tempDir, "RWPP-Setup-update.exe")
+        val outputFile = File(tempDir, "RWJS-Setup-update.exe")
 
         val request = Request.Builder().url(downloadUrl).build()
         runCatching {

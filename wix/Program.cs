@@ -13,6 +13,7 @@ namespace RSetup
     public class Program
     {
         private static string RootDir => Directory.GetCurrentDirectory();
+        private const string ProductName = "RWJS";
         private const string RwppRegistryKey = @"SOFTWARE\Minxyzgo\RWPP";
         private const string RwppInstallDirValue = "InstallDir";
         private const string RwppInstalledVersionValue = "InstalledVersion";
@@ -28,11 +29,11 @@ namespace RSetup
         private static void Main(string[] args)
         {
             //使用release的distribution, 需要先运行gradle task
-            var appDir = @"rwpp-desktop\build\compose\binaries\main-release\app\RWPP";
+            var appDir = $@"rwpp-desktop\build\compose\binaries\main-release\app\{ProductName}";
 
-            var appFeature = new Feature("App", "RWPP运行的主要部分", true, false);
-            var jvmFeature = new Feature("Jvm64", "RWPP运行时Jvm", true, true);
-            var steamFeature = new Feature("Steam", "RWPP对Steam的支持", false, true);
+            var appFeature = new Feature("App", $"{ProductName}运行的主要部分", true, false);
+            var jvmFeature = new Feature("Jvm64", $"{ProductName}运行时Jvm", true, true);
+            var steamFeature = new Feature("Steam", $"{ProductName}对Steam的支持", false, true);
             
             appFeature.Add(steamFeature);
 
@@ -43,14 +44,14 @@ namespace RSetup
             };
             var entities = new WixEntity[]
             {
-                new WixSharp.File(appFeature, $@"{appDir}\RWPP.exe"),
+                new WixSharp.File(appFeature, $@"{appDir}\{ProductName}.exe"),
                 new WixSharp.File(appFeature, @"rwpp-desktop\logo.ico"),
                 new Dir(appFeature, "app", appFiles),
                 new Dir(jvmFeature, "runtime", new Files($@"{appDir}\runtime\*")),
             };
 
-            var project = new ManagedProject("RWPP",
-                new Dir( @"%ProgramFiles%\Minxyzgo\RWPP", entities));
+            var project = new ManagedProject(ProductName,
+                new Dir($@"%ProgramFiles%\Minxyzgo\{ProductName}", entities));
 
             project.SourceBaseDir = RootDir;
           //  project.Scope = InstallScope.perMachine;
@@ -81,7 +82,7 @@ namespace RSetup
                 info.Readme = "https://github.com/Minxyzgo/RWPP";
                 info.HelpLink = "https://rwpp.netlify.app/";
                 info.ProductIcon = $@"{RootDir}\rwpp-desktop\logo.ico";
-                info.Contact = "RWPP Contributors";
+                info.Contact = "RWJS Contributors";
                 info.Manufacturer = "Minxyzgo";
                 info.Comments = "Multiplatform launcher for Rusted Warfare";
             });
@@ -130,7 +131,7 @@ namespace RSetup
                 return;
             }
 
-            var msiExe = Path.GetFullPath($@"{RootDir}\RWPP-Setup.exe");
+            var msiExe = Path.GetFullPath($@"{RootDir}\{ProductName}-Setup.exe");
 
             (int exitCode, string output) = msiFile.CompleSelfHostedMsi(msiExe);
 
@@ -223,15 +224,45 @@ namespace RSetup
             return normalized.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         }
 
+        private static bool ExistsLauncherExe(string normalized) =>
+            File.Exists(Path.Combine(normalized, "RWJS.exe")) ||
+            File.Exists(Path.Combine(normalized, "RWPP.exe"));
+
+        private static bool ExistsAppCfg(string normalized) =>
+            File.Exists(Path.Combine(normalized, "app", "RWJS.cfg")) ||
+            File.Exists(Path.Combine(normalized, "app", "RWPP.cfg"));
+
+        private static string ResolveLauncherExePath(string installDir)
+        {
+            string rwjs = Path.Combine(installDir, "RWJS.exe");
+            if (File.Exists(rwjs))
+                return rwjs;
+            string rwpp = Path.Combine(installDir, "RWPP.exe");
+            if (File.Exists(rwpp))
+                return rwpp;
+            return rwjs;
+        }
+
+        private static string ResolveAppCfgPath(string installDir)
+        {
+            string rwjs = Path.Combine(installDir, "app", "RWJS.cfg");
+            if (File.Exists(rwjs))
+                return rwjs;
+            string rwpp = Path.Combine(installDir, "app", "RWPP.cfg");
+            if (File.Exists(rwpp))
+                return rwpp;
+            return rwjs;
+        }
+
         private static bool LooksLikeRwppInstallDir(string path)
         {
             string normalized = NormalizeInstallDir(path);
             if (string.IsNullOrEmpty(normalized) || !Directory.Exists(normalized))
                 return false;
 
-            return File.Exists(Path.Combine(normalized, "RWPP.exe")) &&
+            return ExistsLauncherExe(normalized) &&
                    File.Exists(Path.Combine(normalized, "logo.ico")) &&
-                   File.Exists(Path.Combine(normalized, "app", "RWPP.cfg"));
+                   ExistsAppCfg(normalized);
         }
 
         private static string GetInstallLocationFromRwppRegistry()
@@ -265,7 +296,7 @@ namespace RSetup
             string normalized = NormalizeInstallDir(installDir);
             if (!LooksLikeRwppInstallDir(normalized))
             {
-                WriteInstallLog($"Skip persisting install dir because it does not look like RWPP: {installDir}");
+                WriteInstallLog($"Skip persisting install dir because it does not look like {ProductName}: {installDir}");
                 return;
             }
 
@@ -330,11 +361,11 @@ namespace RSetup
                 }
 
                 // 路径无效：弹窗提示并中止安装
-                string diagInfo = $"RWPP Registry Path=[{oldPath}]\n"
+                string diagInfo = $"Registry Path=[{oldPath}]\n"
                                 + $"详细日志请查看:\n{Path.Combine(Path.GetTempPath(), "RWPP_Install_Log.txt")}";
                 WriteInstallLog("UPDATE MODE FAILED - showing error dialog");
                 System.Windows.MessageBox.Show(
-                    "无法从注册表获取 RWPP 的安装路径，请先完成一次正常安装。\n\n诊断信息:\n" + diagInfo,
+                    $"无法从注册表获取 {ProductName} 的安装路径，请先完成一次正常安装。\n\n诊断信息:\n" + diagInfo,
                     "升级失败",
                     System.Windows.MessageBoxButton.OK,
                     System.Windows.MessageBoxImage.Error);
@@ -365,10 +396,10 @@ namespace RSetup
             {
                 var sourcePath = $@"{e.InstallDir}\Rusted Warfare - 64.exe";
                 var targetPath = $@"{e.InstallDir}\Rusted Warfare - 64.exe.bak";
-                var launcherPath = $@"{e.InstallDir}\RWPP.exe";
+                var launcherPath = ResolveLauncherExePath(e.InstallDir);
                 var icoPath = $@"{e.InstallDir}\logo.ico";
                 var targetIcoPath = $@"{e.InstallDir}\Rusted Warfare - 64.ico";
-                var cfgPath = $@"{e.InstallDir}\app\RWPP.cfg";
+                var cfgPath = ResolveAppCfgPath(e.InstallDir);
                 var targetCfgPath = $@"{e.InstallDir}\app\Rusted Warfare - 64.cfg";
                 
                 if (!File.Exists(targetPath) && File.Exists(sourcePath))
@@ -516,7 +547,7 @@ class Program
     {
         Assembly asm = Assembly.GetExecutingAssembly();//19724634308
 
-        using (Stream stream = asm.GetManifestResourceStream(""RWPP.msi""))
+        using (Stream stream = asm.GetManifestResourceStream(""RWJS.msi""))
         {
             if (stream != null)
             {

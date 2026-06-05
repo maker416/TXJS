@@ -72,10 +72,10 @@ compose.desktop {
 
             modules("jdk.unsupported")
 
-            packageName = "RWPP"
+            packageName = "RWJS"
             packageVersion = rootProject.version.toString()
             mainClass = "io.github.rwpp.desktop.MainKt"
-            vendor = "RWPP Contributors"
+            vendor = "RWJS Contributors"
             description = "Multiplatform launcher for Rusted Warfare"
             copyright = "Copyright 2023-2025 RWPP contributors"
             licenseFile.set(rootProject.file("LICENSE"))

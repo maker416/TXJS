@@ -1,5 +1,2 @@
-# Windows 批处理必须使用 CRLF，否则 cmd 会静默失败
-build/build.bat text eol=crlf
-
-# 构建产物目录仅本地保留
-build/artifacts export-ignore
+# 构建产物目录仅本地保留（build/ 已由 .gitignore 完全排除）
+build/ export-ignore

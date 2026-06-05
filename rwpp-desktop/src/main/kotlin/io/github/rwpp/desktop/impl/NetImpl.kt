@@ -13,12 +13,29 @@ import io.github.rwpp.desktop.asGamePacket
 import io.github.rwpp.impl.BaseNetImpl
 import io.github.rwpp.net.Net
 import io.github.rwpp.net.Packet
+import okhttp3.Interceptor
+import okhttp3.OkHttpClient
 import org.koin.core.annotation.Single
 import java.awt.Desktop
+import java.net.Proxy
 import java.net.URI
+import java.util.concurrent.TimeUnit
 
 @Single(binds = [Net::class, Initialization::class])
 class NetImpl : BaseNetImpl() {
+    // 桌面端绕过系统代理，避免直连列表服务器时 Connect timed out（curl 可达但 OkHttp 走代理失败）
+    override val client: OkHttpClient = OkHttpClient.Builder()
+        .addNetworkInterceptor(Interceptor { chain ->
+            val request = chain.request().newBuilder()
+                .removeHeader("Accept-Encoding")
+                .build()
+            chain.proceed(request)
+        })
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .proxy(Proxy.NO_PROXY)
+        .build()
+
     override fun sendPacketToServer(packet: Packet) {
         GameEngine.B().bX.f(packet.asGamePacket())
     }

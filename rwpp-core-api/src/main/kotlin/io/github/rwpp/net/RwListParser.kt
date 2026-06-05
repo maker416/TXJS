@@ -67,6 +67,13 @@ fun parseRwListBaseUrls(roomListApiUrls: String): List<String> =
         .filter { it.isNotEmpty() }
         .distinct()
 
+/** User-configured bases first, then built-in defaults as fallback mirrors. */
+fun roomListApiBasesWithDefaultFallback(roomListApiUrls: String): List<String> {
+    val configured = parseRwListBaseUrls(roomListApiUrls)
+    val defaults = parseRwListBaseUrls(DEFAULT_ROOM_LIST_API_URLS)
+    return (configured + defaults).distinct()
+}
+
 fun parseRequiredModNames(requiredMod: String): List<String> {
     if (requiredMod.isBlank() || requiredMod == "[]") return emptyList()
     return runCatching {
