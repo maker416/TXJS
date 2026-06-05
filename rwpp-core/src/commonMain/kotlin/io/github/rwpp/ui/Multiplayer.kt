@@ -63,6 +63,9 @@ import io.github.rwpp.maxModSize
 import io.github.rwpp.net.Net
 import io.github.rwpp.net.parseRwListBaseUrls
 import io.github.rwpp.net.RoomDescription
+import io.github.rwpp.net.RoomListDegradeReason
+import io.github.rwpp.net.isJoinableFromList
+import io.github.rwpp.net.listDegradeReason
 import io.github.rwpp.net.sorted
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.platform.readPainterByBytes
@@ -182,6 +185,32 @@ private fun RoomAccessChip(text: String, hasPassword: Boolean) {
             modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
             style = MaterialTheme.typography.labelMedium,
             color = contentColor,
+        )
+    }
+}
+
+/** Status chips for rooms that cannot be joined from the list; password uses [RoomAccessChip] instead. */
+private fun roomListDegradeReasonI18nKey(reason: RoomListDegradeReason): String? = when (reason) {
+    RoomListDegradeReason.Unavailable -> "multiplayer.roomList.statusUnavailable"
+    RoomListDegradeReason.Full -> "multiplayer.roomList.statusFull"
+    RoomListDegradeReason.VersionMismatch -> "multiplayer.roomList.statusVersionMismatch"
+    RoomListDegradeReason.PasswordRequired,
+    RoomListDegradeReason.None -> null
+}
+
+@Composable
+private fun RoomStatusChip(text: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f),
+        shape = RoundedCornerShape(6.dp),
+    ) {
+        Text(
+            text,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onErrorContainer,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -503,17 +532,23 @@ fun MultiplayerView(
             key = { descriptions[it].uuid }
         ) { index ->
             val desc = descriptions[index]
-            val accentUpperCase = desc.isUpperCase && desc.gameVersion == gameVersion
+            val degradeReason = desc.listDegradeReason()
+            val isDegraded = !desc.isJoinableFromList
+            val degradeAlpha = if (isDegraded) 0.65f else 1f
+            val accentUpperCase = !isDegraded && desc.isUpperCase && desc.gameVersion == gameVersion
             val rowFontWeight: FontWeight? = when {
                 accentUpperCase -> FontWeight.Black
-                desc.isUpperCase -> FontWeight.ExtraBold
+                !isDegraded && desc.isUpperCase -> FontWeight.ExtraBold
                 else -> null
             }
             val textColor: Color = when {
-                desc.gameVersion != gameVersion -> MaterialTheme.colorScheme.onSurfaceVariant
+                isDegraded -> MaterialTheme.colorScheme.onSurfaceVariant
                 desc.isLocal -> Color(255, 127, 80)
                 else -> MaterialTheme.colorScheme.onSurface
             }
+            val statusChipText = if (isDegraded) {
+                roomListDegradeReasonI18nKey(degradeReason)?.let { readI18n(it) }
+            } else null
             val modsText = roomListModsColumnText(desc, readI18n("multiplayer.roomList.vanillaDisplay"))
             val playersText = "${desc.playerCurrentCount ?: "?"}/${desc.playerMaxCount ?: "?"}"
             val accessText =
@@ -544,11 +579,14 @@ fun MultiplayerView(
                         if (desc.label.isNotBlank()) {
                             RoomLabelChip(desc.label)
                         }
+                        if (statusChipText != null) {
+                            RoomStatusChip(statusChipText)
+                        }
                         Text(
                             desc.creator,
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.bodyLarge,
-                            color = textColor,
+                            color = textColor.copy(alpha = degradeAlpha),
                             fontWeight = rowFontWeight,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -556,7 +594,7 @@ fun MultiplayerView(
                         Text(
                             playersText,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = textColor.copy(alpha = 0.8f),
+                            color = textColor.copy(alpha = 0.8f * degradeAlpha),
                             fontWeight = rowFontWeight,
                         )
                         RoomAccessChip(accessText, desc.requiredPassword)
@@ -571,7 +609,7 @@ fun MultiplayerView(
                             desc.mapName.removeSuffix(".tmx"),
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.bodySmall,
-                            color = textColor.copy(alpha = 0.85f),
+                            color = textColor.copy(alpha = 0.85f * degradeAlpha),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -580,7 +618,7 @@ fun MultiplayerView(
                                 Text(
                                     modsText,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = textColor.copy(alpha = 0.7f),
+                                    color = textColor.copy(alpha = 0.7f * degradeAlpha),
                                     maxLines = 1,
                                     softWrap = false,
                                 )
@@ -589,7 +627,7 @@ fun MultiplayerView(
                             Text(
                                 modsText,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = textColor.copy(alpha = 0.7f),
+                                color = textColor.copy(alpha = 0.7f * degradeAlpha),
                                 maxLines = 1,
                             )
                         }
@@ -1114,7 +1152,7 @@ fun MultiplayerView(
                 throwable = null
                 isRefreshing = true
                 try {
-                    val effectiveUrls = parseRwListBaseUrls(DEFAULT_ROOM_LIST_API_URLS)
+                    val effectiveUrls = parseRwListBaseUrls(instance.roomListApiUrls)
                     currentViewList = getRoomListFromSourceUrl(effectiveUrls)
                     for (s in allServerData) {
                         launch(Dispatchers.IO) {
@@ -1234,7 +1272,6 @@ fun MultiplayerView(
                         currentViewList.filter { room ->
                             if (blacklists.any { it.uuid == room.uuid }) return@filter false
 
-                            if (room.status.equals("ingame", ignoreCase = true)) return@filter false
                             if (enableModFilter) {
                                 if (room.version.contains("mod", true) || room.mods.isNotBlank()) {
                                     return@filter false
@@ -1634,7 +1671,13 @@ private fun JoinServerRequestDialog(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(Icons.Default.Info, null, modifier = Modifier.size(32.dp).padding(5.dp))
-                        Text("Join Server?", modifier = Modifier.padding(5.dp), style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.onSurface)
+                        Text(
+                            if (roomDescription.isJoinableFromList) "Join Server?"
+                            else readI18n("multiplayer.roomList.roomInfoTitle"),
+                            modifier = Modifier.padding(5.dp),
+                            style = MaterialTheme.typography.headlineLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
                     }
                 }
             }
@@ -1684,20 +1727,22 @@ private fun JoinServerRequestDialog(
                     Text(text = readI18n("multiplayer.addToBlackList"), style = MaterialTheme.typography.bodyLarge)
                 }
 
-                VerticalDivider(modifier = Modifier.padding(2.dp).fillMaxHeight(), thickness = 2.dp)
+                if (roomDescription.isJoinableFromList) {
+                    VerticalDivider(modifier = Modifier.padding(2.dp).fillMaxHeight(), thickness = 2.dp)
 
-                Box(
-                    modifier = Modifier
-                        .padding(8.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable {
-                            onJoin(dismiss)
-                        }
-                        .weight(1f)
-                        .padding(vertical = 20.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(text = readI18n("multiplayer.join"), style = MaterialTheme.typography.bodyLarge)
+                    Box(
+                        modifier = Modifier
+                            .padding(8.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                onJoin(dismiss)
+                            }
+                            .weight(1f)
+                            .padding(vertical = 20.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(text = readI18n("multiplayer.join"), style = MaterialTheme.typography.bodyLarge)
+                    }
                 }
             }
         }

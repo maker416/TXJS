@@ -159,13 +159,12 @@ fun mapRwListEntryToRoomDescription(entry: RwListServerEntry): RoomDescription {
         mods = entry.required_mod,
         customIp = entry.ip,
         label = entry.roomtype,
+        listAvailable = isRwListEntryJoinable(entry),
     )
 }
 
 fun mapRwListEntriesToRoomDescriptions(entries: List<RwListServerEntry>): List<RoomDescription> =
-    entries
-        .filter(::isRwListEntryJoinable)
-        .map(::mapRwListEntryToRoomDescription)
+    entries.map(::mapRwListEntryToRoomDescription)
 
 private fun splitHostPort(ip: String): Pair<String, Long> {
     val idx = ip.lastIndexOf(':')

@@ -66,7 +66,7 @@ class RwListParserTest {
     }
 
     @Test
-    fun filtersUnavailableEntries() {
+    fun keepsUnavailableEntriesWithListAvailableFlag() {
         val joinable = RwListServerEntry(
             name = "A", ip = "1.1.1.1:1", needpass = false, mapname = "m",
             roomtype = "public", max_players = 10, current_players = 1,
@@ -75,9 +75,9 @@ class RwListParserTest {
         val unavailable = joinable.copy(ip = "2.2.2.2:2", available = "0", server_id = "id-b")
         val unknown = joinable.copy(ip = "3.3.3.3:3", available = "", server_id = "id-c")
         val result = mapRwListEntriesToRoomDescriptions(listOf(joinable, unavailable, unknown))
-        assertEquals(1, result.size)
-        assertEquals("id-a", result.first().uuid)
-        assertEquals("1.1.1.1:1", result.first().customIp)
+        assertEquals(3, result.size)
+        assertEquals(listOf(true, false, false), result.map { it.listAvailable })
+        assertEquals(listOf("id-a", "id-b", "id-c"), result.map { it.uuid })
     }
 
     @Test
@@ -124,10 +124,10 @@ class RwListParserTest {
                 entry.copy(name = "C", available = "0", server_id = "id-3"),
             ),
         )
-        assertEquals(2, result.size)
-        assertEquals(listOf("A", "B"), result.map { it.creator })
-        assertEquals(listOf("id-1", "id-2"), result.map { it.uuid })
-        assertEquals(listOf("127.0.0.1:5123", "127.0.0.1:5123"), result.map { it.customIp })
+        assertEquals(3, result.size)
+        assertEquals(listOf("A", "B", "C"), result.map { it.creator })
+        assertEquals(listOf("id-1", "id-2", "id-3"), result.map { it.uuid })
+        assertEquals(listOf(true, true, false), result.map { it.listAvailable })
     }
 
     @Test
@@ -151,6 +151,39 @@ class RwListParserTest {
             parseRwListBaseUrls("${DEFAULT_ROOM_LIST_API_URLS}/; http://example.com"),
         )
         assertEquals(DEFAULT_ROOM_LIST_API_URLS, normalizeRwListBaseUrl("$DEFAULT_ROOM_LIST_API_URLS/"))
+    }
+
+    @Test
+    fun listAvailableRoomsSortBeforeUnavailable() {
+        val available = mapRwListEntryToRoomDescription(
+            RwListServerEntry(
+                name = "Open", ip = "1.1.1.1:1", needpass = false, mapname = "m",
+                roomtype = "public", max_players = 10, current_players = 1,
+                required_mod = "[]", available = "1", server_id = "id-open",
+            ),
+        )
+        val unavailable = mapRwListEntryToRoomDescription(
+            RwListServerEntry(
+                name = "Closed", ip = "2.2.2.2:2", needpass = false, mapname = "m",
+                roomtype = "public", max_players = 10, current_players = 1,
+                required_mod = "[]", available = "0", server_id = "id-closed",
+            ),
+        )
+        val sorted = listOf(unavailable, available).sorted
+        assertEquals(listOf("id-open", "id-closed"), sorted.map { it.uuid })
+        assertEquals(RoomListDegradeReason.Unavailable, unavailable.listDegradeReason())
+        assertEquals(RoomListDegradeReason.None, available.listDegradeReason())
+    }
+
+    @Test
+    fun passwordProtectedRoomRemainsJoinableFromList() {
+        val passwordRoom = RoomDescription(
+            uuid = "pw-1",
+            requiredPassword = true,
+            listAvailable = true,
+        )
+        assertEquals(RoomListDegradeReason.PasswordRequired, passwordRoom.listDegradeReason())
+        assertTrue(passwordRoom.isJoinableFromList)
     }
 
     @Test

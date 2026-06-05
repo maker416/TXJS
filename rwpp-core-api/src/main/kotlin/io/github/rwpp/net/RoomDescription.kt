@@ -45,6 +45,8 @@ data class RoomDescription(
      * - [RoomJoinType.SHORT]: [netWorkAddress] is a short code, [port] is ignored.
      */
     val roomJoinType: String = RoomJoinType.IP,
+    /** RWList `available == "1"`; false covers offline, in-game, and other non-joinable states. */
+    val listAvailable: Boolean = true,
 ) {
     fun addressProvider(): String {
         if (this.roomId != 0) {
@@ -62,6 +64,33 @@ object RoomJoinType {
     const val SHORT = "short"
 }
 
+enum class RoomListDegradeReason {
+    None,
+    VersionMismatch,
+    PasswordRequired,
+    Full,
+    Unavailable,
+}
+
+fun RoomDescription.listDegradeReason(): RoomListDegradeReason {
+    if (!listAvailable) return RoomListDegradeReason.Unavailable
+    if (playerCurrentCount != null && playerMaxCount != null
+        && playerCurrentCount >= playerMaxCount) return RoomListDegradeReason.Full
+    if (requiredPassword) return RoomListDegradeReason.PasswordRequired
+    if (gameVersion != io.github.rwpp.gameVersion) return RoomListDegradeReason.VersionMismatch
+    return RoomListDegradeReason.None
+}
+
+/** Whether the list UI should offer join; password rooms stay joinable (password at connect time). */
+val RoomDescription.isJoinableFromList: Boolean
+    get() = when (listDegradeReason()) {
+        RoomListDegradeReason.Unavailable,
+        RoomListDegradeReason.Full,
+        RoomListDegradeReason.VersionMismatch -> false
+        RoomListDegradeReason.PasswordRequired,
+        RoomListDegradeReason.None -> true
+    }
+
 private fun RoomDescription.battleroomSubRank(): Int {
     if (!status.contains("battleroom", ignoreCase = true)) return 0
     return when {
@@ -77,17 +106,16 @@ private fun RoomDescription.battleroomSubRank(): Int {
 }
 
 /**
- * Room list ordering by joinability first, then special tiers within the same tier:
- * 1. `ingame` always last.
- * 2. Password-required after open rooms.
- * 3. Full rooms (no available slots) after rooms with space.
- * 4. Version-mismatched rooms after version-matched rooms.
- * 5. Within the same tier: uuid relay → local → RELAY tag → other uppercase → normal.
+ * Room list ordering: [listAvailable] first, then within each group:
+ * 1. Password-required after open rooms.
+ * 2. Full rooms (no available slots) after rooms with space.
+ * 3. Version-mismatched rooms after version-matched rooms.
+ * 4. Within the same tier: uuid relay → local → RELAY tag → other uppercase → normal.
  */
 val List<RoomDescription>.sorted
     get() = sortedWith(
         compareBy<RoomDescription>(
-            { if (it.status.contains("ingame", ignoreCase = true)) 1 else 0 },
+            { if (!it.listAvailable) 1 else 0 },
             { if (it.requiredPassword) 1 else 0 },
             {
                 if (it.playerCurrentCount != null && it.playerMaxCount != null

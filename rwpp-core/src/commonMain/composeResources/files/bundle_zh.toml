@@ -48,6 +48,11 @@ vanillaDisplay = "原版"
 accessPassword = "需要密码"
 accessPublic = "公开"
 accessLegend = "最后一列：需要密码表示需密码加入；公开表示无需密码。"
+statusUnavailable = "正在游戏中"
+statusFull = "已满员"
+statusPassword = "需密码"
+statusVersionMismatch = "版本不符"
+roomInfoTitle = "房间信息"
 
 [multiplayer.roomListApi]
 title = "房间列表 API"

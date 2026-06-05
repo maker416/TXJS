@@ -47,6 +47,11 @@ vanillaDisplay = "Vanilla"
 accessPassword = "Password required"
 accessPublic = "Open"
 accessLegend = "Last column: Password required vs Open (no password)."
+statusUnavailable = "In game"
+statusFull = "Full"
+statusPassword = "Password"
+statusVersionMismatch = "Version mismatch"
+roomInfoTitle = "Room info"
 
 [multiplayer.roomListApi]
 title = "Room list API"
