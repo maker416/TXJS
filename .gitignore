@@ -82,5 +82,6 @@ rwpp-android/src/main/res/raw/*
 !rwpp-android/src/main/res/raw/keep.txt
 rwpp-android/src/main/res/values/*
 !rwpp-android/src/main/res/values/themes.xml
-RWJS-Setup.exe
-RWJS-Setup.pdb
+# 桌面安装包构建产物（根目录）
+*-Setup.exe
+*-Setup.pdb
