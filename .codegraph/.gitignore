@@ -14,3 +14,7 @@ cache/
 
 # Hook markers
 .dirty
+
+# Daemon runtime state (machine-specific PID / pipe path)
+daemon.pid
+*.pid

@@ -11,8 +11,15 @@ CLAUDE.md
 .agents/
 .vscode/
 
-# Gradle / build
-build/
+# CodeGraph local daemon state
+.codegraph/daemon.pid
+.codegraph/*.pid
+
+# Gradle / build（根目录 build/ 仅保留 build.bat 构建菜单脚本）
+**/build/
+!/build/
+/build/*
+!/build/build.bat
 **/bin/
 out/
 

@@ -28,13 +28,13 @@ allprojects {
     }
 }
 
-version = "1.9.2"
+version = "1.9.4"
 
-// 保留 build/key 下的 Release 签名文件，避免 gradlew clean 误删
+// 保留 build/key、artifacts 与构建脚本，避免 gradlew clean 误删
 tasks.named<Delete>("clean") {
     delete(
         fileTree(layout.buildDirectory) {
-            exclude("key/**")
+            exclude("key/**", "artifacts/**", "*.bat", "*.cmd", "*.ps1")
         },
     )
 }
