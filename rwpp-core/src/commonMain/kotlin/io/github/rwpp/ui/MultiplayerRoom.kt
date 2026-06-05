@@ -78,6 +78,9 @@ import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import kotlin.math.roundToInt
 
+/** 已发布房间剩余时间与列表服务器同步的间隔（本地每秒递减倒计时） */
+private const val PUBLISHED_ROOM_EXPIRY_SYNC_INTERVAL_MS = 30_000L
+
 @Suppress("UnusedMaterial3ScaffoldPaddingParameter")
 @Composable
 fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
@@ -154,7 +157,22 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
         }
     }
 
-    // 定时轮询房间在列表的剩余时间
+    // 本地每秒递减倒计时，避免高频请求列表服务器
+    LaunchedEffect(hasPublishedInfo) {
+        if (!hasPublishedInfo) return@LaunchedEffect
+        while (isActive) {
+            delay(1_000L)
+            if (remainingSeconds > 0) {
+                remainingSeconds--
+                if (remainingSeconds <= 0) {
+                    hasPublishedInfo = false
+                    totalSeconds = 0
+                }
+            }
+        }
+    }
+
+    // 定期与服务器同步剩余时间（本地倒计时之间校正）
     LaunchedEffect(hasPublishedInfo) {
         if (!hasPublishedInfo) return@LaunchedEffect
         val info = configIO.readConfig(PublishedRoomInfo::class) ?: return@LaunchedEffect
@@ -168,7 +186,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                 // 查询失败可能是房间已过期，标记为未发布
                 if (remainingSeconds <= 0) hasPublishedInfo = false
             }
-            delay(1_000L)
+            delay(PUBLISHED_ROOM_EXPIRY_SYNC_INTERVAL_MS)
         }
     }
 
