@@ -68,7 +68,11 @@ class OnlinePresenceTrackerImpl : OnlinePresenceTracker, KoinComponent {
                     for (backoff in registrationBackoffSec) {
                         if (!isActive) return@launch
                         if (backoff > 0) delay(backoff * 1000L)
-                        if (registerSession()) {
+                        val registeredNow = runCatching { registerSession() }.getOrElse { error ->
+                            logger.debug("Online presence registration failed: ${error.message}")
+                            false
+                        }
+                        if (registeredNow) {
                             registered = true
                             break
                         }
