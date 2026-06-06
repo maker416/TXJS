@@ -88,6 +88,10 @@ fun RoomDescription.listDegradeReason(): RoomListDegradeReason {
     return RoomListDegradeReason.None
 }
 
+/** True when the room requires non-empty mods (RWList `required_mod` or [version] == modded). */
+val RoomDescription.isModdedRoom: Boolean
+    get() = version.equals("modded", ignoreCase = true) || parseRequiredModNames(mods).isNotEmpty()
+
 /** Whether the list UI should offer join; password rooms stay joinable (password at connect time). */
 val RoomDescription.isJoinableFromList: Boolean
     get() = when (listDegradeReason()) {

@@ -65,6 +65,7 @@ import io.github.rwpp.net.roomListApiBasesWithDefaultFallback
 import io.github.rwpp.net.RoomDescription
 import io.github.rwpp.net.RoomListDegradeReason
 import io.github.rwpp.net.isJoinableFromList
+import io.github.rwpp.net.isModdedRoom
 import io.github.rwpp.net.listDegradeReason
 import io.github.rwpp.net.sorted
 import io.github.rwpp.platform.BackHandler
@@ -234,10 +235,7 @@ private fun RoomLabelChip(label: String) {
 
 /** For modded rows, show comma-separated mod names from [RoomDescription.mods] JSON; otherwise [RoomDescription.version] (vanilla → [vanillaLabel]). */
 private fun roomListModsColumnText(desc: RoomDescription, vanillaLabel: String): String {
-    val looksModded = desc.version.equals("modded", ignoreCase = true)
-        || desc.version.contains("mod", ignoreCase = true)
-        || desc.mods.isNotBlank()
-    if (!looksModded) return mapVanillaVersionDisplay(desc.version, vanillaLabel)
+    if (!desc.isModdedRoom) return mapVanillaVersionDisplay(desc.version, vanillaLabel)
     val names = parseModNamesFromJson(desc.mods)
     val joined = names.joinToString(", ").ifBlank { desc.version }
     return mapVanillaVersionDisplay(joined, vanillaLabel)
@@ -1276,10 +1274,8 @@ fun MultiplayerView(
                         currentViewList.filter { room ->
                             if (blacklists.any { it.uuid == room.uuid }) return@filter false
 
-                            if (enableModFilter) {
-                                if (room.version.contains("mod", true) || room.mods.isNotBlank()) {
-                                    return@filter false
-                                }
+                            if (enableModFilter && room.isModdedRoom) {
+                                return@filter false
                             }
 
                             if (roomLabelFilterSelection.isNotEmpty()) {

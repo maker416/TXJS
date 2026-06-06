@@ -167,6 +167,20 @@ class RwListParserTest {
         )
         val desc = mapRwListEntryToRoomDescription(entry)
         assertEquals("modded", desc.version)
+        assertTrue(desc.isModdedRoom)
+    }
+
+    @Test
+    fun emptyRequiredModIsNotModdedRoom() {
+        val vanilla = mapRwListEntryToRoomDescription(
+            RwListServerEntry(
+                name = "SERVER", ip = "127.0.0.1:5123", needpass = false, mapname = "m",
+                roomtype = "官方", max_players = 10, current_players = 1,
+                required_mod = "[]", available = "1",
+            ),
+        )
+        assertFalse(vanilla.isModdedRoom)
+        assertEquals("vanilla", vanilla.version)
     }
 
     @Test
