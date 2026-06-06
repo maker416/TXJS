@@ -58,11 +58,61 @@ class RwListParserTest {
         val desc = mapRwListEntryToRoomDescription(entry)
         assertEquals("c75e1f5a-22aa-4205-a0bb-f889550581cc", desc.uuid)
         assertEquals("127.0.0.1:5123", desc.customIp)
+        assertEquals(RoomJoinType.IP, desc.roomJoinType)
         assertEquals("本地测试服务器", desc.creator)
         assertEquals("公益", desc.label)
         assertNull(desc.playerMaxCount)
         assertEquals(0, desc.playerCurrentCount)
         assertEquals("vanilla", desc.version)
+    }
+
+    @Test
+    fun shortJoinCodeEntryMapsWithoutPortSuffix() {
+        val entry = RwListServerEntry(
+            name = "自定义房间",
+            ip = "Q77182:5129",
+            needpass = false,
+            mapname = "[z;p10]Crossing Large (10p).tmx",
+            roomtype = "公益",
+            max_players = 10,
+            current_players = 1,
+            required_mod = "[]",
+            available = "1",
+            server_id = "e72d379e-b489-480e-b356-cb3251c0c2b6",
+        )
+        val desc = mapRwListEntryToRoomDescription(entry)
+        assertEquals(RoomJoinType.SHORT, desc.roomJoinType)
+        assertEquals("Q77182", desc.netWorkAddress)
+        assertNull(desc.customIp)
+        assertEquals("Q77182", desc.addressProvider())
+    }
+
+    @Test
+    fun directIpEntryKeepsHostPortJoinAddress() {
+        val entry = RwListServerEntry(
+            name = "SERVER",
+            ip = "54.215.144.145:5130",
+            needpass = false,
+            mapname = "Auto Server",
+            roomtype = "官方",
+            max_players = 10,
+            current_players = 5,
+            required_mod = "[]",
+            available = "1",
+            server_id = "cba477df-a190-4278-87ff-b29b9863ff4a",
+        )
+        val desc = mapRwListEntryToRoomDescription(entry)
+        assertEquals(RoomJoinType.IP, desc.roomJoinType)
+        assertEquals("54.215.144.145:5130", desc.addressProvider())
+    }
+
+    @Test
+    fun isDirectNetworkEndpoint() {
+        assertTrue(isDirectNetworkEndpoint("127.0.0.1"))
+        assertTrue(isDirectNetworkEndpoint("54.215.144.145"))
+        assertTrue(isDirectNetworkEndpoint("gs1.corrodinggames.com"))
+        assertFalse(isDirectNetworkEndpoint("Q77182"))
+        assertFalse(isDirectNetworkEndpoint("QC77182"))
     }
 
     @Test

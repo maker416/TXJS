@@ -146,9 +146,17 @@ fun isRwListEntryJoinable(entry: RwListServerEntry): Boolean =
 fun rwListEntryUuid(entry: RwListServerEntry): String =
     entry.server_id.takeIf { it.isNotBlank() } ?: entry.ip
 
+/** True when [host] is a direct TCP endpoint (IPv4 or domain), not a relay short code like Q77182. */
+fun isDirectNetworkEndpoint(host: String): Boolean {
+    if (host.isBlank()) return false
+    if (host.matches(Regex("""^\d{1,3}(\.\d{1,3}){3}$"""))) return true
+    return host.contains('.')
+}
+
 fun mapRwListEntryToRoomDescription(entry: RwListServerEntry): RoomDescription {
     val modNames = parseRequiredModNames(entry.required_mod)
     val (host, port) = splitHostPort(entry.ip)
+    val isShortCode = !isDirectNetworkEndpoint(host)
     return RoomDescription(
         uuid = rwListEntryUuid(entry),
         roomOwner = entry.name,
@@ -164,8 +172,9 @@ fun mapRwListEntryToRoomDescription(entry: RwListServerEntry): RoomDescription {
         playerCurrentCount = entry.current_players,
         playerMaxCount = entry.max_players.takeIf { it >= 0 },
         mods = entry.required_mod,
-        customIp = entry.ip,
+        customIp = if (isShortCode) null else entry.ip,
         label = entry.roomtype,
+        roomJoinType = if (isShortCode) RoomJoinType.SHORT else RoomJoinType.IP,
         listAvailable = isRwListEntryJoinable(entry),
     )
 }

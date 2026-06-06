@@ -53,7 +53,7 @@ data class RoomDescription(
             return "get|" + uuid2.replace("|", ".") + "|" + roomId + "|" + requiredPassword + "|" + port
         }
         return when (roomJoinType) {
-            RoomJoinType.SHORT -> customIp ?: netWorkAddress
+            RoomJoinType.SHORT -> netWorkAddress
             else -> customIp ?: "$netWorkAddress:$port"
         }
     }
