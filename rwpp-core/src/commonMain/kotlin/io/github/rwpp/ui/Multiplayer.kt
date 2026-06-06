@@ -76,6 +76,7 @@ import io.github.rwpp.widget.v2.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
 import sh.calvin.reorderable.ReorderableItem
@@ -1158,13 +1159,13 @@ fun MultiplayerView(
                     currentViewList = getRoomListFromSourceUrl(effectiveUrls)
                     for (s in allServerData) {
                         launch(Dispatchers.IO) {
-                            s.isLoading = true
+                            withContext(Dispatchers.Main.immediate) { s.isLoading = true }
                             s.infoPacket = runCatching {
                                 s.config.getServerInfo()
                             }.onFailure {
                                 logger.error(it.stackTraceToString())
                             }.getOrNull()
-                            s.isLoading = false
+                            withContext(Dispatchers.Main.immediate) { s.isLoading = false }
                         }
                     }
                 } catch (e: Throwable) {

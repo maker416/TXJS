@@ -72,6 +72,7 @@ import io.github.rwpp.ui.color.getTeamColor
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.LazyColumnScrollbar
 import io.github.rwpp.widget.v2.LongPressFloatingActionButton
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -242,11 +243,11 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 //    }
 
     GlobalEventChannel.filter(RefreshUIEvent::class).onDispose {
-        subscribeAlways { updateAction() }
+        subscribeAlways(Dispatchers.Main.immediate) { updateAction() }
     }
 
     GlobalEventChannel.filter(ReturnMainMenuEvent::class).onDispose {
-        subscribeAlways { onExit() }
+        subscribeAlways(Dispatchers.Main.immediate) { onExit() }
     }
 
 

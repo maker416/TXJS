@@ -713,13 +713,13 @@ fun App(
 
                 var reloadingModViewVisible by remember { mutableStateOf(false) }
                 GlobalEventChannel.filter(ReloadModEvent::class).onDispose {
-                    subscribeAlways {
+                    subscribeAlways(Dispatchers.Main.immediate) {
                         reloadingModViewVisible = true
                     }
                 }
 
                 GlobalEventChannel.filter(ReloadModFinishedEvent::class).onDispose {
-                    subscribeAlways {
+                    subscribeAlways(Dispatchers.Main.immediate) {
                         reloadingModViewVisible = false
                     }
                 }

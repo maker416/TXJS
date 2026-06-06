@@ -75,6 +75,7 @@ import io.github.rwpp.ui.UI.showQuestion
 import io.github.rwpp.ui.UI.showWarning
 import io.github.rwpp.ui.color.getTeamColor
 import io.github.rwpp.widget.WindowManager
+import kotlinx.coroutines.Dispatchers
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
 
@@ -171,7 +172,7 @@ object UI : Initialization, IUserInterface {
     class Warning(val reason: String, val isKicked: Boolean = false)
 
     override fun init() {
-        GlobalEventChannel.filter(DisconnectEvent::class).subscribeAlways(priority = EventPriority.MONITOR) {
+        GlobalEventChannel.filter(DisconnectEvent::class).subscribeAlways(Dispatchers.Main.immediate, priority = EventPriority.MONITOR) {
             chatMessages = AnnotatedString("")
         }
     }

@@ -14,6 +14,7 @@ import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
 import io.github.rwpp.inject.InterruptResult
 import io.github.rwpp.utils.Reflect
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 
 @InjectClass(com.corrodinggames.rts.game.units.custom.l::class)
@@ -21,7 +22,7 @@ object UnitEngineInject {
     @Inject("a", InjectMode.InsertBefore)
     fun onCheckUnitData(ab: com.corrodinggames.rts.game.units.custom.ab, map: java.util.HashMap<*, com.corrodinggames.rts.game.units.custom.ac>): Any {
         val requiredMods = map.values.mapNotNull { Reflect.get<String>(it, "a")  }
-        val event = runBlocking { ModCheckEvent(requiredMods).broadcast() }
+        val event = runBlocking(Dispatchers.IO) { ModCheckEvent(requiredMods).broadcast() }
         return if (event.isIntercepted) InterruptResult() else Unit
     }
 }

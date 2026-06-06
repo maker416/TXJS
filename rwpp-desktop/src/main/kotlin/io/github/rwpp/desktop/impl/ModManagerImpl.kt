@@ -20,6 +20,8 @@ import io.github.rwpp.game.mod.Mod
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.io.calculateSize
 import io.github.rwpp.io.zipFolderToByte
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.koin.core.annotation.Single
 import org.koin.core.component.get
 import java.io.File
@@ -47,7 +49,9 @@ class ModManagerImpl : ModManager {
             latch.countDown()
         }
 
-        latch.await()
+        withContext(Dispatchers.IO) {
+            latch.await()
+        }
         appKoin.get<Game>().getAllMaps(true)
         ReloadModFinishedEvent().broadcastIn()
     }

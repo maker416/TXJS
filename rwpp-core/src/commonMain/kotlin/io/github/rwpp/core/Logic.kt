@@ -31,6 +31,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.LinkedList
 
@@ -178,7 +179,9 @@ object Logic : Initialization {
                     modFile.writeBytes(packet.modBytes)
 
                     if (modQueue!!.isEmpty()) {
-                        UI.showNetworkDialog = false
+                        withContext(Dispatchers.Main.immediate) {
+                            UI.showNetworkDialog = false
+                        }
                         val manager = appKoin.get<ModManager>()
                         val mods = manager.getAllMods()
                         mods.forEach { mod ->
@@ -188,17 +191,23 @@ object Logic : Initialization {
                         val mods2 = manager.getAllMods()
                         if (requiredMods!!.any { m -> m !in mods2.map { it.name } }) {
                             room.disconnect("Mod download failed.")
-                            UI.showWarning("Mod download failed: required mods were not found.", true)
+                            withContext(Dispatchers.Main.immediate) {
+                                UI.showWarning("Mod download failed: required mods were not found.", true)
+                            }
                             return@runCatching
                         }
 
                         net.sendPacketToServer(ModPacket.ModReloadFinishPacket())
                     } else {
-                        UI.showNetworkDialog = true
+                        withContext(Dispatchers.Main.immediate) {
+                            UI.showNetworkDialog = true
+                        }
                     }
                 }.onFailure {
                     room.disconnect("Mod download failed.")
-                    UI.showWarning("Mod download failed: ${it.stackTraceToString()}", true)
+                    withContext(Dispatchers.Main.immediate) {
+                        UI.showWarning("Mod download failed: ${it.stackTraceToString()}", true)
+                    }
                 }
             }
 
@@ -246,11 +255,13 @@ object Logic : Initialization {
     }
     */
 
-    private fun setDownloadingTitle(index: Int) {
+    private suspend fun setDownloadingTitle(index: Int) {
         val totalSize = appKoin.get<Game>().gameRoom.option.allModsSize
         val modCount = requiredMods!!.size
-        UI.receivingNetworkDialogTitle =
-            "Downloading ${modQueue!!.peek()}. total: ${SizeUtils.byteToMB(totalSize.toLong())}. ($index/$modCount)"
-        UI.showNetworkDialog = true
+        withContext(Dispatchers.Main.immediate) {
+            UI.receivingNetworkDialogTitle =
+                "Downloading ${modQueue!!.peek()}. total: ${SizeUtils.byteToMB(totalSize.toLong())}. ($index/$modCount)"
+            UI.showNetworkDialog = true
+        }
     }
 }

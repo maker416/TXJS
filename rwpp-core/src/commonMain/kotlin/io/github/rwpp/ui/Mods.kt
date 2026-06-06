@@ -50,7 +50,7 @@ import io.github.rwpp.widget.v2.ExpandedCard
 import io.github.rwpp.widget.v2.LazyColumnScrollbar
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
 import java.io.File
@@ -75,6 +75,15 @@ fun ModsView(onExit: () -> Unit) {
     var updated by remember { mutableStateOf(false) }
     var enabledChanged by remember { mutableStateOf(false) }
     var disableAll by remember { mutableStateOf(false) }
+    var isApplying by remember { mutableStateOf(false) }
+
+    LoadingView(isApplying, onLoaded = {
+        isApplying = false
+        onExit()
+    }) {
+        modManager.modSaveChange()
+        true
+    }
 
     val enabledMods = remember(enabledChanged, filteredMods.size) {
         filteredMods.filter { it.isEnabled }
@@ -89,9 +98,10 @@ fun ModsView(onExit: () -> Unit) {
 //    }
 
     fun reload() {
-        scope.launch(Dispatchers.IO) {
-            modManager.modReload()
-            game.getAllMaps(true)
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                modManager.modReload()
+            }
             mods.clear()
             mods.addAll(modManager.getAllMods())
             updated = !updated
@@ -356,7 +366,7 @@ fun ModsView(onExit: () -> Unit) {
                         )
                     },
                     modifier = Modifier.padding(5.dp),
-                ) { runBlocking { modManager.modSaveChange() }; onExit() }
+                ) { isApplying = true }
             }
         }
     ) { paddingValues ->

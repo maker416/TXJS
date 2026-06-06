@@ -9,7 +9,6 @@ package io.github.rwpp.android.impl
 
 import com.corrodinggames.rts.game.units.custom.ag
 import com.corrodinggames.rts.gameFramework.e.a
-import io.github.rwpp.android.MainActivity
 import io.github.rwpp.appKoin
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.ReloadModEvent
@@ -24,43 +23,80 @@ import kotlinx.coroutines.withContext
 import org.koin.core.annotation.Single
 import org.koin.core.component.get
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicBoolean
 
 @Single
 class ModManagerImpl : ModManager {
     private val game: Game = get()
-    override suspend fun modReload() = withContext(Dispatchers.IO) {
-        ReloadModEvent().broadcastIn()
-        val t = GameEngine.t()
-        modSaveChange()
-        val aVar = t.bW
-        t.bo = true
-        t.f()
-        aVar.a(false, false)
-        t.bo = false
-        t.q()
-        appKoin.get<Game>().getAllMaps(true)
-        ReloadModFinishedEvent().broadcastIn()
-        Unit
+    private val isReloadingMods = AtomicBoolean(false)
+
+    override suspend fun modReload() {
+        if (!isReloadingMods.compareAndSet(false, true)) return
+        try {
+            ReloadModEvent().broadcastIn()
+            val latch = CountDownLatch(1)
+            game.post {
+                try {
+                    val t = GameEngine.t()
+                    t.bW.d()
+                    t.bN.save()
+                    val aVar = t.bW
+                    t.bo = true
+                    try {
+                        t.f()
+                        aVar.a(false, false)
+                    } finally {
+                        t.bo = false
+                    }
+                    t.q()
+                } finally {
+                    latch.countDown()
+                }
+            }
+            withContext(Dispatchers.IO) {
+                awaitGamePost(latch)
+                appKoin.get<Game>().getAllMaps(true)
+            }
+            ReloadModFinishedEvent().broadcastIn()
+        } finally {
+            isReloadingMods.set(false)
+        }
     }
 
     override suspend fun modUpdate() {
-        modReload()
+        val latch = CountDownLatch(1)
+        game.post {
+            GameEngine.t().bW.k()
+            latch.countDown()
+        }
+        awaitGamePost(latch)
+    }
+
+    private suspend fun awaitGamePost(latch: CountDownLatch) {
+        withContext(Dispatchers.IO) {
+            latch.await()
+        }
     }
 
     override suspend fun modSaveChange() {
-        val t = GameEngine.t()
-        t.bW.d()
-        t.bN.save()
-        val a2: Int = t.bW.a()
-        if(t.bU.C) {
-
-        } else if(!ag.b(true)) {
-
-        } else if(a2 == 0) {
-            t.bW.b()
+        val latch = CountDownLatch(1)
+        game.post {
+            try {
+                val t = GameEngine.t()
+                t.bW.d()
+                t.bN.save()
+                val a2: Int = t.bW.a()
+                if (!t.bU.C) {
+                    if (ag.b(true) && a2 == 0) {
+                        t.bW.b()
+                    }
+                }
+            } finally {
+                latch.countDown()
+            }
         }
-
-        MainActivity.activityResume()
+        awaitGamePost(latch)
     }
 
     override fun getModByName(name: String): Mod? {
