@@ -117,8 +117,9 @@ abstract class AbstractGame : Game {
         context.message("Connecting...")
 
         val trim = restrictedString(address.trim())
-        if(uuid == null) l.B().bQ.lastNetworkIP = trim
-        l.B().bX.bw = uuid
+        val relayUuid = io.github.rwpp.net.sanitizeJoinRelayUuid(uuid)
+        if(relayUuid == null) l.B().bQ.lastNetworkIP = trim
+        l.B().bX.bw = relayUuid
         var result: Result<String>? = null
         val resultChannel = Channel<Unit>(1)
         threadConnector = l.B().bX.a(trim, true) {

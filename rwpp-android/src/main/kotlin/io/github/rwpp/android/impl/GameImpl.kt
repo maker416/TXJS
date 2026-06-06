@@ -29,6 +29,7 @@ import io.github.rwpp.game.ui.GUI
 import io.github.rwpp.game.units.UnitType
 import io.github.rwpp.game.world.World
 import io.github.rwpp.logger
+import io.github.rwpp.net.sanitizeJoinRelayUuid
 import kotlinx.coroutines.*
 import org.koin.core.annotation.Single
 import org.koin.core.component.get
@@ -110,10 +111,11 @@ class GameImpl : Game, CoroutineScope {
         GameEngine.t().a(appKoin.get(), gameView)
 
         isCancellingJob.set(false)
+        isSinglePlayerGame = false
 
         initMap()
 
-        GameEngine.t().bU.by = uuid
+        GameEngine.t().bU.by = sanitizeJoinRelayUuid(uuid)
         connectingJob = withContext(Dispatchers.IO) {
             async { GameEngine.t().bU.c(address, false) }
         }
@@ -124,10 +126,14 @@ class GameImpl : Game, CoroutineScope {
 
         return when {
             result.isSuccess && !isCancellingJob.get() -> {
-//                val t = GameEngine.t()
-//                t.bu = 0
-                PlayerJoinEvent(gameRoom.localPlayer).broadcastIn()
-                Result.success("")
+                if (GameEngine.t().G()) {
+                    logger.warn("Join reported success but engine is still in local skirmish mode: $address")
+                    GameEngine.t().bU.b("Connection failed")
+                    Result.failure(IOException("Connection failed."))
+                } else {
+                    PlayerJoinEvent(gameRoom.localPlayer).broadcastIn()
+                    Result.success("")
+                }
             }
             ae.u() -> {
                 isCancellingJob.set(false)

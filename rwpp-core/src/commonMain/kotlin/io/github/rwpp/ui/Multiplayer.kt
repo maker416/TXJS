@@ -358,7 +358,11 @@ fun MultiplayerView(
         game.setUserName(userName)
         configIO.setGameConfig("lastNetworkIP", serverAddress)
 
-        val result = game.directJoinServer(serverAddress, selectedRoomDescription?.uuid2, this)
+        val result = game.directJoinServer(
+            serverAddress,
+            selectedRoomDescription?.joinRelayUuid(),
+            this,
+        )
         selectedRoomDescription = null
         if(result.isSuccess) {
             onExit()

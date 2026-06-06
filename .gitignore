@@ -85,3 +85,12 @@ rwpp-android/src/main/res/values/*
 # 桌面安装包构建产物（根目录）
 *-Setup.exe
 *-Setup.pdb
+* Setup.exe
+* Setup.pdb
+WixSharp*.dll
+CustomAction.config
+EmbeddedUI.config
+*.wxs
+
+# 云同步冲突副本（坚果云 / OneDrive 等）
+*冲突副本*

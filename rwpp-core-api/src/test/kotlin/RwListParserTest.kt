@@ -107,6 +107,27 @@ class RwListParserTest {
     }
 
     @Test
+    fun joinRelayUuidIgnoresPlaceholder() {
+        val desc = mapRwListEntryToRoomDescription(
+            RwListServerEntry(
+                name = "自定义房间",
+                ip = "Q77182:5129",
+                needpass = false,
+                mapname = "m",
+                roomtype = "公益",
+                max_players = 10,
+                current_players = 1,
+                required_mod = "[]",
+                available = "1",
+                server_id = "e72d379e-b489-480e-b356-cb3251c0c2b6",
+            ),
+        )
+        assertNull(desc.joinRelayUuid())
+        assertNull(sanitizeJoinRelayUuid("Unknown"))
+        assertEquals("relay-id", sanitizeJoinRelayUuid("relay-id"))
+    }
+
+    @Test
     fun isDirectNetworkEndpoint() {
         assertTrue(isDirectNetworkEndpoint("127.0.0.1"))
         assertTrue(isDirectNetworkEndpoint("54.215.144.145"))

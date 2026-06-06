@@ -250,7 +250,10 @@ fun App(
                 ) {
                     MultiplayerView(
                         { showMultiplayerView = false },
-                        { showRoomView = true },
+                        {
+                            isSinglePlayerGame = false
+                            showRoomView = true
+                        },
                     )
                 }
 

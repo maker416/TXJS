@@ -57,7 +57,14 @@ data class RoomDescription(
             else -> customIp ?: "$netWorkAddress:$port"
         }
     }
+
+    /** Relay/list join uuid for the game engine; null when unset or placeholder. */
+    fun joinRelayUuid(): String? =
+        uuid2.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }
 }
+
+fun sanitizeJoinRelayUuid(uuid: String?): String? =
+    uuid?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }
 
 object RoomJoinType {
     const val IP = "IP"
