@@ -51,6 +51,7 @@ import io.github.rwpp.App
 import io.github.rwpp.AppContext
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
+import io.github.rwpp.CoreImplModule
 import io.github.rwpp.config.ConfigModule
 import io.github.rwpp.config.Settings
 import io.github.rwpp.event.GlobalEventChannel
@@ -171,7 +172,7 @@ fun main(array: Array<String>) {
     koinInit = true
     appKoin = startKoin {
         logger(org.koin.core.logger.PrintLogger(org.koin.core.logger.Level.ERROR))
-        modules(ConfigModule().module, DesktopModule().module, CompModule().module)
+        modules(ConfigModule().module, CoreImplModule().module, DesktopModule().module, CompModule().module)
     }.koin
 
     appKoin.get<ConfigIO>().readAllConfig()
