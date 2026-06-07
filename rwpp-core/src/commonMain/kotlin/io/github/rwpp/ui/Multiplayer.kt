@@ -61,6 +61,7 @@ import io.github.rwpp.io.SizeUtils
 import io.github.rwpp.logger
 import io.github.rwpp.maxModSize
 import io.github.rwpp.net.Net
+import io.github.rwpp.net.HostCommandPrefix
 import io.github.rwpp.net.roomListApiBasesWithDefaultFallback
 import io.github.rwpp.net.RoomDescription
 import io.github.rwpp.net.RoomListDegradeReason
@@ -429,6 +430,58 @@ fun MultiplayerView(
             }
 
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                var hostPrefix by remember { mutableStateOf(HostCommandPrefix.Q) }
+                var isPublicRoom by remember { mutableStateOf(true) }
+
+                Text(
+                    readI18n("multiplayer.hostPrefix"),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp),
+                )
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    FilterChip(
+                        selected = hostPrefix == HostCommandPrefix.Q,
+                        onClick = { hostPrefix = HostCommandPrefix.Q },
+                        label = { Text(readI18n("multiplayer.hostPrefixQ")) },
+                    )
+                    FilterChip(
+                        selected = hostPrefix == HostCommandPrefix.R,
+                        onClick = { hostPrefix = HostCommandPrefix.R },
+                        label = { Text(readI18n("multiplayer.hostPrefixR")) },
+                    )
+                }
+
+                AnimatedVisibility(hostPrefix == HostCommandPrefix.R) {
+                    Column(modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp)) {
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            FilterChip(
+                                selected = isPublicRoom,
+                                onClick = { isPublicRoom = true },
+                                label = { Text(readI18n("multiplayer.hostPublic")) },
+                            )
+                            FilterChip(
+                                selected = !isPublicRoom,
+                                onClick = { isPublicRoom = false },
+                                label = { Text(readI18n("multiplayer.hostPrivate")) },
+                            )
+                        }
+                        Text(
+                            readI18n("multiplayer.hostPrefixRHint"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                }
+
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RWCheckbox(
                         enableMods,
@@ -470,6 +523,7 @@ fun MultiplayerView(
                     lengthLimitCount = 10,
                     typeInNumberOnly = true,
                     typeInOnlyInteger = true,
+                    enabled = hostPrefix == HostCommandPrefix.Q,
                 ) { roomId = it }
 
                 var maxPlayer: Int? by remember { mutableStateOf(null) }
@@ -514,11 +568,13 @@ fun MultiplayerView(
                         game.gameRoom.option = RoomOption(transferMod, modSize.toInt())
                         serverAddress = net.buildQuickHostCommand(
                             enableMods = enableMods,
-                            roomId = roomId.ifBlank { null },
+                            roomId = roomId.ifBlank { null }.takeIf { hostPrefix == HostCommandPrefix.Q },
                             maxPlayer = maxPlayer,
                             unitLimit = unitLimit,
                             credits = credits,
-                            speedMultiplier = speedMultiplier
+                            speedMultiplier = speedMultiplier,
+                            prefix = hostPrefix,
+                            isPublic = isPublicRoom,
                         )
                         isConnecting = true
                     }
