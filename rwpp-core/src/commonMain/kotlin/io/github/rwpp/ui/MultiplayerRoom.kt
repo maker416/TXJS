@@ -7,10 +7,15 @@
 
 package io.github.rwpp.ui
 
+import androidx.compose.animation.*
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -18,22 +23,27 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.ripple.RippleAlpha
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.FocusState
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -60,8 +70,10 @@ import io.github.rwpp.game.map.FogMode
 import io.github.rwpp.game.map.MapType
 import io.github.rwpp.game.team.TeamMode
 import io.github.rwpp.game.units.UnitType
+import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.net.Net
+import io.github.rwpp.net.roomListPublishAddress
 import io.github.rwpp.config.DEFAULT_ROOM_LIST_API_URLS
 import com.eclipsesource.json.Json
 import io.github.rwpp.platform.BackHandler
@@ -71,7 +83,13 @@ import io.github.rwpp.ui.UI.chatMessages
 import io.github.rwpp.ui.color.getTeamColor
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.LazyColumnScrollbar
-import io.github.rwpp.widget.v2.LongPressFloatingActionButton
+import io.github.rwpp.widget.v2.LineSpinFadeLoaderIndicator
+import io.github.rwpp.widget.v2.ListIndicatorSettings
+import io.github.rwpp.widget.v2.ScrollbarSelectionActionable
+import io.github.rwpp.widget.v2.bounceClick
+import io.github.rwpp.widget.v2.lazyListCanScroll
+import kotlin.time.DurationUnit
+import kotlin.time.toDuration
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -82,7 +100,27 @@ import kotlin.math.roundToInt
 /** 已发布房间剩余时间与列表服务器同步的间隔（本地每秒递减倒计时） */
 private const val PUBLISHED_ROOM_EXPIRY_SYNC_INTERVAL_MS = 30_000L
 
-@Suppress("UnusedMaterial3ScaffoldPaddingParameter")
+private const val PUBLISH_LOADING_MIN_MS = 400L
+
+private const val LIST_DETECTOR_PLAYER_KEYWORD = "列表探测器"
+
+private enum class PublishStep {
+    FetchingTypes,
+    Publishing,
+}
+
+private sealed class PublishToListUiState {
+    data object Hidden : PublishToListUiState()
+
+    data class Loading(val step: PublishStep) : PublishToListUiState()
+
+    data class SelectRoomType(val types: List<String>) : PublishToListUiState()
+
+    data class Success(val roomId: String, val serverId: String) : PublishToListUiState()
+
+    data class Failure(val message: String, val step: PublishStep) : PublishToListUiState()
+}
+
 @Composable
 fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     BackHandler(true, onExit)
@@ -104,12 +142,10 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 
     var optionVisible by remember { mutableStateOf(false) }
     var banUnitVisible by remember { mutableStateOf(false) }
-    var showPublishDialog by remember { mutableStateOf(false) }
-    var publishMessage by remember { mutableStateOf("") }
-    var isPublishing by remember { mutableStateOf(false) }
-    var showRoomTypeDialog by remember { mutableStateOf(false) }
-    var availableRoomTypes by remember { mutableStateOf<List<String>>(emptyList()) }
+    var publishState by remember { mutableStateOf<PublishToListUiState>(PublishToListUiState.Hidden) }
+    var pendingPublishRoomType by remember { mutableStateOf<String?>(null) }
     var roomIdForPublish by remember { mutableStateOf<String?>(null) }
+    val isPublishing = publishState is PublishToListUiState.Loading
     //var downloadModViewVisible by remember { mutableStateOf(false) }
     //var loadModViewVisible by remember { mutableStateOf(false) }
     var selectedBanUnits by remember { mutableStateOf(listOf<UnitType>()) }
@@ -305,18 +341,34 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
         game.onBanUnits(it)
     }
 
-    suspend fun doPublish(roomId: String, roomType: String) {
-        isPublishing = true
-        publishMessage = "正在发布..."
+    suspend fun ensureMinPublishLoading(startMs: Long) {
+        val remaining = PUBLISH_LOADING_MIN_MS - (System.currentTimeMillis() - startMs)
+        if (remaining > 0) delay(remaining)
+    }
+
+    fun kickListDetectorPlayers() {
+        if (!room.isHost && !room.isHostServer) return
+        val detectors = room.getPlayers().filter { it.name.contains(LIST_DETECTOR_PLAYER_KEYWORD) }
+        if (detectors.isEmpty()) return
+        detectors.forEach { player ->
+            runCatching { room.kickPlayer(player) }
+        }
+        updateAction()
+    }
+
+    suspend fun submitPublish(roomId: String, roomType: String) {
+        pendingPublishRoomType = roomType
+        publishState = PublishToListUiState.Loading(PublishStep.Publishing)
+        val startMs = System.currentTimeMillis()
         val result = with(net) {
             publishServerToPublicList(
                 DEFAULT_ROOM_LIST_API_URLS,
                 "公开房-$roomId",
-                "$roomId:5129",
+                roomListPublishAddress(roomId),
                 roomType
             )
         }
-        isPublishing = false
+        ensureMinPublishLoading(startMs)
         result.fold(
             onSuccess = { body ->
                 val json = Json.parse(body)
@@ -326,7 +378,6 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                     val data = json.asObject().get("data")?.asObject()
                     val serverId = data?.getString("server_id", "") ?: ""
                     val secretKey = data?.getString("secret_key", "") ?: ""
-                    // 持久化保存发布信息
                     publishedRoomInfo.roomId = roomId
                     publishedRoomInfo.serverId = serverId
                     publishedRoomInfo.secretKey = secretKey
@@ -336,406 +387,378 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                     hasPublishedInfo = true
                     remainingSeconds = 0
                     totalSeconds = 0
-                    publishMessage = "发布成功！\n服务器ID: $serverId"
+                    kickListDetectorPlayers()
+                    publishState = PublishToListUiState.Success(roomId, serverId)
                 } else {
-                    publishMessage = "发布失败: $msg (code: $code)"
+                    val detail = if (msg.isNotBlank()) "$msg (code: $code)" else "code: $code"
+                    kickListDetectorPlayers()
+                    publishState = PublishToListUiState.Failure(
+                        readI18n("multiplayer.room.publishFailedDetail", I18nType.RWPP, detail),
+                        PublishStep.Publishing,
+                    )
                 }
-                showPublishDialog = true
             },
             onFailure = { e ->
-                publishMessage = "发布失败: ${e.message}"
-                showPublishDialog = true
+                kickListDetectorPlayers()
+                publishState = PublishToListUiState.Failure(
+                    readI18n(
+                        "multiplayer.room.publishFailedDetail",
+                        I18nType.RWPP,
+                        e.message ?: readI18n("multiplayer.room.publishFailed"),
+                    ),
+                    PublishStep.Publishing,
+                )
             }
         )
     }
 
-    AnimatedAlertDialog(
-        showPublishDialog,
-        onDismissRequest = { showPublishDialog = false }
-    ) { dismiss ->
-        BorderCard(
-            modifier = Modifier.width(400.dp).padding(10.dp)
-        ) {
-            Box {
-                ExitButton(dismiss)
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        publishMessage,
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(bottom = 16.dp)
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        TextButton(onClick = { dismiss() }) {
-                            Text("确定")
-                        }
-                    }
-                }
+    suspend fun runPublishFlow(roomId: String) {
+        publishState = PublishToListUiState.Loading(PublishStep.FetchingTypes)
+        val startMs = System.currentTimeMillis()
+        val types = with(net) {
+            fetchRoomTypes(DEFAULT_ROOM_LIST_API_URLS)
+        }
+        ensureMinPublishLoading(startMs)
+        when {
+            types.isEmpty() -> {
+                kickListDetectorPlayers()
+                publishState = PublishToListUiState.Failure(
+                    readI18n("multiplayer.room.publishFetchTypesFailed"),
+                    PublishStep.FetchingTypes,
+                )
             }
+            types.size == 1 -> submitPublish(roomId, types.first())
+            else -> publishState = PublishToListUiState.SelectRoomType(types)
         }
     }
 
-    AnimatedAlertDialog(
-        showRoomTypeDialog,
-        onDismissRequest = { showRoomTypeDialog = false }
-    ) { dismiss ->
-        BorderCard(
-            modifier = Modifier.width(300.dp).padding(10.dp)
-        ) {
-            Box {
-                ExitButton(dismiss)
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        "选择房间类型",
-                        style = MaterialTheme.typography.headlineSmall,
-                        modifier = Modifier.padding(bottom = 12.dp)
-                    )
-                    availableRoomTypes.forEach { type ->
-                        RWTextButton(
-                            type,
-                            modifier = Modifier.padding(vertical = 4.dp).fillMaxWidth()
-                        ) {
-                            showRoomTypeDialog = false
-                            val roomId = roomIdForPublish ?: return@RWTextButton
-                            scope.launch { doPublish(roomId, type) }
-                        }
+    PublishToListDialog(
+        state = publishState,
+        onDismiss = { publishState = PublishToListUiState.Hidden },
+        onSelectRoomType = { roomType ->
+            val roomId = roomIdForPublish ?: return@PublishToListDialog
+            scope.launch { submitPublish(roomId, roomType) }
+        },
+        onRetry = { step ->
+            val roomId = roomIdForPublish ?: return@PublishToListDialog
+            scope.launch {
+                when (step) {
+                    PublishStep.FetchingTypes -> runPublishFlow(roomId)
+                    PublishStep.Publishing -> {
+                        val roomType = pendingPublishRoomType
+                        if (roomType != null) submitPublish(roomId, roomType)
+                        else runPublishFlow(roomId)
                     }
                 }
             }
-        }
-    }
+        },
+    )
 
     val chatFocusRequester = remember { FocusRequester() }
+    var roomDetails by remember { mutableStateOf("Getting details...") }
+
+    LaunchedEffect(update) {
+        val raw = room.roomDetails()
+        roomDetails = raw.split("\n")
+            .filter { !it.startsWith("Map:") && it.isNotBlank() }
+            .joinToString("\n")
+        roomIdForPublish = Regex("""[QR]\d+""").find(raw)?.value
+    }
 
     @Composable
     fun ContentView() {
-        @Composable
-        fun MessageTextField(
-            chatMessage: String,
-            onFocusChanged: (FocusState) -> Unit = {},
-            onChatMessageChange: (String) -> Unit
-        ) {
-            RWSingleOutlinedTextField(
-                label = readI18n("multiplayer.room.sendMessage"),
-                value = chatMessage,
-                focusRequester = chatFocusRequester,
-                onFocusChanged = onFocusChanged,
-                modifier = Modifier.fillMaxWidth().padding(10.dp)
-                    .onKeyEvent {
-                        if ((it.key == Key.Enter || it.key == Key.NumPadEnter) && chatMessage.isNotEmpty()) {
-                            room.sendChatMessageOrCommand(chatMessage)
-                            onChatMessageChange("")
-                        }
-
-                        true
-                    },
-                trailingIcon = {
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowForward,
-                        null,
-                        modifier = Modifier.clickable {
-                            room.sendChatMessageOrCommand(chatMessage)
-                            onChatMessageChange("")
-                        },
-                        tint = MaterialTheme.colorScheme.surfaceTint
-                    )
-                },
-                onValueChange =
-                    {
-                        onChatMessageChange(it)
-                    },
-            )
-        }
-
-
-        @Composable
-        fun MessageView() {
-            var value by remember(chatMessages) { mutableStateOf(TextFieldValue(chatMessages)) }
-
-            if (LocalWindowManager.current == WindowManager.Large) {
-                TextField(
-                    value = value,
-                    onValueChange = { value = it },
-                    readOnly = true,
-                    textStyle = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.fillMaxSize(),
-                    colors = RWTextFieldColors,
-                    maxLines = 100
-                )
-            } else {
-                TextField(
-                    value = value,
-                    onValueChange = { value = it },
-                    readOnly = true,
-                    textStyle = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = RWTextFieldColors,
-                    maxLines = 100
-                )
-            }
-        }
-
         val globalFocusRequester = remember { FocusRequester() }
         val keyboardController = LocalSoftwareKeyboardController.current
         val interactionSource = remember { MutableInteractionSource() }
         val isDesktop = remember { appKoin.get<AppContext>().isDesktop() }
+        val isCompact = LocalWindowManager.current != WindowManager.Large
 
-        BorderCard(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(5.dp)
-                .focusRequester(globalFocusRequester)
-                .clickable(
-                    interactionSource,
-                    null
-                ) {
-                    globalFocusRequester.requestFocus()
-                    keyboardController?.hide()
-                }.onKeyEvent {
-                    if (it.type == KeyEventType.KeyDown && !it.isCtrlPressed && !it.isShiftPressed) {
-                        when (it.key) {
-                            Key.Enter, Key.NumPadEnter -> {
-                                chatFocusRequester.requestFocus()
-                                true
-                            }
+        val onPlayerClick: (Player) -> Unit = { player ->
+            selectedPlayer = player
+            playerOverrideVisible = true
+        }
 
-                            Key.M -> {
-                                showMapSelectView = true
-                                true
-                            }
+        val startGame: () -> Unit = {
+            val unpreparedPlayers = game.gameRoom.getPlayers().filter { !it.data.ready }
+            if (unpreparedPlayers.isNotEmpty()) {
+                game.gameRoom.sendSystemMessage(
+                    "Cannot start game. Because players: ${unpreparedPlayers.joinToString(", ") { it.name }} aren't ready.",
+                )
+            } else if (room.isHostServer) {
+                room.sendQuickGameCommand("-start")
+            } else {
+                room.startGame()
+            }
+        }
 
-                            Key.O -> {
-                                optionVisible = true
-                                true
-                            }
-
-                            Key.A -> {
-                                room.addAI()
-                                true
-                            }
-
-                            Key.C -> {
-                                if (players.isNotEmpty()) {
-                                    selectedPlayer =
-                                        room.localPlayer
-                                    playerOverrideVisible = true
-                                }
-                                true
-                            }
-
-                            else -> false
+        val roomSurfaceModifier = Modifier
+            .fillMaxSize()
+            .padding(
+                start = if (isCompact) 4.dp else 5.dp,
+                end = if (isCompact) 4.dp else 5.dp,
+                top = if (isCompact) 2.dp else 5.dp,
+                bottom = if (isCompact) 4.dp else 5.dp,
+            )
+            .focusRequester(globalFocusRequester)
+            .clickable(interactionSource, null) {
+                globalFocusRequester.requestFocus()
+                keyboardController?.hide()
+            }
+            .onKeyEvent {
+                if (it.type == KeyEventType.KeyDown && !it.isCtrlPressed && !it.isShiftPressed) {
+                    when (it.key) {
+                        Key.Enter, Key.NumPadEnter -> {
+                            chatFocusRequester.requestFocus()
+                            true
                         }
-                    } else false
+
+                        Key.M -> {
+                            showMapSelectView = true
+                            true
+                        }
+
+                        Key.O -> {
+                            optionVisible = true
+                            true
+                        }
+
+                        Key.A -> {
+                            room.addAI()
+                            true
+                        }
+
+                        Key.C -> {
+                            if (players.isNotEmpty()) {
+                                selectedPlayer = room.localPlayer
+                                playerOverrideVisible = true
+                            }
+                            true
+                        }
+
+                        else -> false
+                    }
+                } else {
+                    false
                 }
-        ) {
+            }
+
+        @Composable
+        fun CompactRoomContent() {
+            val playerListState = rememberLazyListState()
+            var chatMessage by remember { mutableStateOf("") }
+            var roomDetailsDialogVisible by remember { mutableStateOf(false) }
+            var isLocked by remember(update) { mutableStateOf(room.lockedRoom) }
+            val mapType = remember(update) { room.mapType }
+            val compactRowShape = RoundedCornerShape(6.dp)
+            val scrollState = rememberScrollState()
+            val enableAnimations = koinInject<Settings>().enableAnimations
+
+            if (roomDetailsDialogVisible) {
+                RoomDetailsDialog(
+                    details = roomDetails,
+                    onDismiss = { roomDetailsDialogVisible = false },
+                )
+            }
+
+            Box(modifier = roomSurfaceModifier) {
+                ExitButton(onExit)
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(start = 2.dp, top = 2.dp, end = 36.dp, bottom = 2.dp),
+                ) {
+                    if (hasPublishedInfo) {
+                        PublishedRoomExpiryBar(
+                            remainingSeconds = remainingSeconds,
+                            totalSeconds = totalSeconds,
+                            isRefreshing = isRefreshingExpiry,
+                            onRenew = renewPublishedRoom,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                        )
+                    }
+
+                    CompactRoomDetailsBar(
+                        roomDetails = roomDetails,
+                        onShowDetails = { roomDetailsDialogVisible = true },
+                    )
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(scrollState),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                            val stackVertically = maxWidth < 480.dp
+                            if (stackVertically) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    CompactPlayerPanel(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        players = players,
+                                        room = room,
+                                        game = game,
+                                        update = update,
+                                        playerListState = playerListState,
+                                        rowShape = compactRowShape,
+                                        onPlayerClick = onPlayerClick,
+                                        enableAnimations = enableAnimations,
+                                        expandVertically = false,
+                                    )
+                                    CompactMapSettingsPanel(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        expandVertically = false,
+                                        mapType = mapType,
+                                        displayMapName = displayMapName,
+                                        selectedMap = selectedMap,
+                                        isHost = isHost,
+                                        isSandboxGame = isSandboxGame,
+                                        isLocked = isLocked,
+                                        onLockToggle = {
+                                            isLocked = !isLocked
+                                            room.lockedRoom = isLocked
+                                        },
+                                        isDesktop = isDesktop,
+                                        showPublishButton = roomIdForPublish != null && !isPublishing && !hasPublishedInfo,
+                                        onOption = { optionVisible = true },
+                                        onStart = startGame,
+                                        onAddAI = { room.addAI() },
+                                        onAddAIMany = { room.addAI(10) },
+                                        onPublish = {
+                                            val roomId = roomIdForPublish ?: return@CompactMapSettingsPanel
+                                            scope.launch { runPublishFlow(roomId) }
+                                        },
+                                        onMapClick = { showMapSelectView = true },
+                                    )
+                                }
+                            } else {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(CompactTopPanelHeight),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    CompactPlayerPanel(
+                                        modifier = Modifier
+                                            .weight(0.55f)
+                                            .fillMaxHeight(),
+                                        players = players,
+                                        room = room,
+                                        game = game,
+                                        update = update,
+                                        playerListState = playerListState,
+                                        rowShape = compactRowShape,
+                                        onPlayerClick = onPlayerClick,
+                                        enableAnimations = enableAnimations,
+                                        expandVertically = true,
+                                    )
+                                    CompactMapSettingsPanel(
+                                        modifier = Modifier
+                                            .weight(0.45f)
+                                            .fillMaxHeight(),
+                                        expandVertically = true,
+                                        mapType = mapType,
+                                        displayMapName = displayMapName,
+                                        selectedMap = selectedMap,
+                                        isHost = isHost,
+                                        isSandboxGame = isSandboxGame,
+                                        isLocked = isLocked,
+                                        onLockToggle = {
+                                            isLocked = !isLocked
+                                            room.lockedRoom = isLocked
+                                        },
+                                        isDesktop = isDesktop,
+                                        showPublishButton = roomIdForPublish != null && !isPublishing && !hasPublishedInfo,
+                                        onOption = { optionVisible = true },
+                                        onStart = startGame,
+                                        onAddAI = { room.addAI() },
+                                        onAddAIMany = { room.addAI(10) },
+                                        onPublish = {
+                                            val roomId = roomIdForPublish ?: return@CompactMapSettingsPanel
+                                            scope.launch { runPublishFlow(roomId) }
+                                        },
+                                        onMapClick = { showMapSelectView = true },
+                                    )
+                                }
+                            }
+                        }
+
+                        if (!isSandboxGame) {
+                            CompactRoomPanel(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = CompactChatPanelMinHeight),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = CompactChatMessageAreaMinHeight),
+                                ) {
+                                    RoomChatMessageView(modifier = Modifier.fillMaxSize())
+                                }
+                                RoomChatMessageTextField(
+                                    chatMessage = chatMessage,
+                                    focusRequester = chatFocusRequester,
+                                    onChatMessageChange = { chatMessage = it },
+                                    onSend = room::sendChatMessageOrCommand,
+                                    compact = true,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (isCompact) {
+            CompactRoomContent()
+            return
+        }
+
+        BorderCard(modifier = roomSurfaceModifier) {
             Box {
                 ExitButton(onExit)
                 Column {
                     Column(modifier = Modifier.fillMaxWidth().weight(1f)) {
                         Row(modifier = Modifier.fillMaxWidth()) {
+                            val mapType = remember(update) { room.mapType }
                             BorderCard(
                                 modifier = Modifier
-                                    .weight(.4f)
-                                    .padding(10.dp)
-                                    .then(
-                                        if (LocalWindowManager.current != WindowManager.Large)
-                                            Modifier.verticalScroll(rememberScrollState()).align(Alignment.CenterVertically)
-                                        else Modifier
-                                    ),
+                                    .weight(.48f)
+                                    .padding(10.dp),
                                 backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(
                                     .7f
                                 )
                             ) {
-                                var details by remember { mutableStateOf("Getting details...") }
-
-                                @Composable
-                                fun MapImage(modifier: Modifier = Modifier) {
-                                    AsyncImage(
-                                        ImageRequest.Builder(LocalPlatformContext.current)
-                                            .data(selectedMap)
-                                            .precision(Precision.INEXACT)
-                                            .build(),
-                                        null,
-                                        contentScale = ContentScale.Fit,
-                                        modifier = Modifier.then(modifier).padding(top = 10.dp, bottom = 10.dp, end = 5.dp)
-                                            .border(
-                                                BorderStroke(
-                                                    2.dp,
-                                                    MaterialTheme.colorScheme.surfaceContainer
-                                                )
-                                            )
-                                            .clickable(isHost) { showMapSelectView = true }
-                                    )
-                                }
-
-                                remember(update) {
-                                    scope.launch {
-                                        val raw = room.roomDetails()
-                                        details = raw.split("\n")
-                                            .filter { !it.startsWith("Map:") && it.isNotBlank() }
-                                            .joinToString("\n")
-                                        roomIdForPublish = Regex("""Q\d+""").find(raw)?.value
-                                    }
-                                }
-
-                                if (hasPublishedInfo) {
-                                    PublishedRoomExpiryBar(
-                                        remainingSeconds = remainingSeconds,
-                                        totalSeconds = totalSeconds,
-                                        isRefreshing = isRefreshingExpiry,
-                                        onRenew = renewPublishedRoom,
-                                        modifier = Modifier.padding(start = 10.dp, top = 8.dp, end = 10.dp)
-                                    )
-                                }
-
-
-                                Box(
-                                    modifier = Modifier.fillMaxWidth().then(
-                                        if (LocalWindowManager.current == WindowManager.Large)
-                                            Modifier.weight(1f) else Modifier
-                                    )
-                                ) {
-                                    if (LocalWindowManager.current == WindowManager.Large) MapImage(
-                                        Modifier.defaultMinSize(minHeight = 200.dp, minWidth = 200.dp).align(Alignment.TopEnd)
-                                    )
-                                    SelectionContainer {
-                                        Text(
-                                            details,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            modifier = Modifier.padding(start = 10.dp, top = 10.dp, bottom = 10.dp, end = 0.dp).align(Alignment.TopStart)
-                                        )
-                                    }
-                                }
-
-                                if (LocalWindowManager.current != WindowManager.Large) {
-                                    MapImage(
-                                        Modifier.defaultMinSize(minHeight = 200.dp).fillMaxWidth()
-                                    )
-                                }
-
-                                val mapType = remember(update) { room.mapType }
-
-                                Text(
-                                    mapType.displayName(),
-                                    modifier = Modifier.padding(5.dp)
-                                        .align(Alignment.CenterHorizontally),
-                                    style = MaterialTheme.typography.headlineLarge,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    color = MaterialTheme.colorScheme.primary
+                                DesktopMapSettingsCard(
+                                    mapType = mapType,
+                                    displayMapName = displayMapName,
+                                    selectedMap = selectedMap,
+                                    roomDetails = roomDetails,
+                                    isHost = isHost,
+                                    isDesktop = isDesktop,
+                                    hasPublishedInfo = hasPublishedInfo,
+                                    remainingSeconds = remainingSeconds,
+                                    totalSeconds = totalSeconds,
+                                    isRefreshingExpiry = isRefreshingExpiry,
+                                    onRenew = renewPublishedRoom,
+                                    showPublishButton = roomIdForPublish != null && !isPublishing && !hasPublishedInfo,
+                                    onMapClick = { showMapSelectView = true },
+                                    onOption = { optionVisible = true },
+                                    onStart = startGame,
+                                    onPublish = {
+                                        val roomId = roomIdForPublish ?: return@DesktopMapSettingsCard
+                                        scope.launch { runPublishFlow(roomId) }
+                                    },
                                 )
-
-                                Text(
-                                    displayMapName,
-                                    modifier = Modifier.padding(5.dp)
-                                        .align(Alignment.CenterHorizontally),
-                                    style = MaterialTheme.typography.headlineMedium,
-                                    //    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-
-                                @Composable
-                                fun OptionButtons() {
-                                    if (LocalWindowManager.current == WindowManager.Large) RWTextButton(
-                                        readI18n("multiplayer.room.selectMap") + if (isDesktop) "(M)" else "",
-                                        modifier = Modifier.padding(5.dp)
-                                    ) { showMapSelectView = true }
-                                    if (LocalWindowManager.current != WindowManager.Large && !isSandboxGame) {
-                                        var isLocked by remember { mutableStateOf(false) }
-                                        IconButton(
-                                            { isLocked = !isLocked; room.lockedRoom = isLocked },
-                                            modifier = Modifier.padding(
-                                                horizontal = 5.dp,
-                                                vertical = 5.dp
-                                            ),
-                                            enabled = room.isHost,
-                                        ) {
-                                            Icon(
-                                                Icons.Default.Lock,
-                                                null,
-                                                tint = if (isLocked) Color(
-                                                    237,
-                                                    112,
-                                                    20
-                                                ) else MaterialTheme.colorScheme.onSurface
-                                            )
-                                        }
-                                    }
-                                    RWTextButton(
-                                        readI18n("multiplayer.room.option") + if (isDesktop) "(O)" else "",
-                                        modifier = Modifier.padding(5.dp)
-                                    ) { optionVisible = true }
-                                    RWTextButton(
-                                        readI18n("multiplayer.room.start"),
-                                        modifier = Modifier.padding(5.dp)
-                                    ) {
-                                         val unpreparedPlayers = game.gameRoom.getPlayers().filter { !it.data.ready }
-                                         if(unpreparedPlayers.isNotEmpty()) {
-                                             game.gameRoom.sendSystemMessage(
-                                                 "Cannot start game. Because players: ${unpreparedPlayers.joinToString(", ") { it.name }} aren't ready.")
-                                        } else if (room.isHostServer) room.sendQuickGameCommand("-start") else room.startGame()
-                                    }
-                                    if (isHost && roomIdForPublish != null && !isPublishing && !hasPublishedInfo) {
-                                        RWTextButton(
-                                            "公开到列表",
-                                            modifier = Modifier.padding(5.dp),
-                                        ) {
-                                            val roomId = roomIdForPublish ?: return@RWTextButton
-                                            isPublishing = true
-                                            publishMessage = "正在获取房间类型..."
-                                            scope.launch {
-                                                val types = with(net) {
-                                                    fetchRoomTypes(DEFAULT_ROOM_LIST_API_URLS)
-                                                }
-                                                if (types.isEmpty()) {
-                                                    publishMessage = "获取房间类型失败，请检查列表服务器连接"
-                                                    showPublishDialog = true
-                                                    isPublishing = false
-                                                } else if (types.size == 1) {
-                                                    doPublish(roomId, types.first())
-                                                } else {
-                                                    availableRoomTypes = types
-                                                    showRoomTypeDialog = true
-                                                    isPublishing = false
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-
-                                if (isHost) {
-                                    if (LocalWindowManager.current == WindowManager.Small) {
-                                        Column(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalAlignment = Alignment.CenterHorizontally
-                                        ) {
-                                            OptionButtons()
-                                        }
-                                    } else {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.Center
-                                        ) {
-                                            OptionButtons()
-                                        }
-                                    }
-                                }
                             }
-
-                            val playerNameWeight = .6f
-                            val playerSpawnWeight = .1f
-                            val playerTeamWeight = .1f
-                            val playerPingWeight = .2f
 
                             val state = rememberLazyListState()
 
                             Column(
-                                modifier = Modifier.weight(.7f).padding(10.dp).then(
+                                modifier = Modifier.weight(.52f).padding(10.dp).then(
                                     /*if(LocalWindowManager.current != WindowManager.Large) Modifier.verticalScroll(rememberScrollState())
                                 else*/ Modifier
                                 ),
@@ -747,249 +770,117 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                         .7f
                                     )
                                 ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .padding(5.dp)
-                                            .border(
-                                                BorderStroke(
-                                                    2.dp,
-                                                    MaterialTheme.colorScheme.secondary
-                                                ), CircleShape
-                                            )
-                                            .fillMaxWidth()
-                                    ) {
-                                        TableCell(
-                                            "name",
-                                            playerNameWeight,
-                                            drawStroke = false,
-                                            strokeColor = MaterialTheme.colorScheme.secondaryContainer
-                                        )
-                                        TableCell(
-                                            "spawn",
-                                            playerSpawnWeight,
-                                            strokeColor = MaterialTheme.colorScheme.secondaryContainer
-                                        )
-                                        TableCell(
-                                            "team",
-                                            playerTeamWeight,
-                                            strokeColor = MaterialTheme.colorScheme.secondaryContainer
-                                        )
-                                        TableCell(
-                                            "ping",
-                                            playerPingWeight,
-                                            drawStroke = false,
-                                            strokeColor = MaterialTheme.colorScheme.secondaryContainer
-                                        )
-                                    }
-
-                                    @Composable
-                                    fun PlayerTable(
-                                        index: Int,
-                                        modifier: Modifier = Modifier
-                                        //animateItem: (Modifier.() -> Unit)? = null
-                                    ) {
-                                        val options = remember {
-                                            game.getStartingUnitOptions()
-                                        }
-                                        val player = players.getOrNull(index)
-
-                                        if (player != null) {
-                                            Box(modifier) {
-                                                KickPlayerContextMenuAreaMultiplatform(player) {
-                                                    Row(
-                                                        modifier = Modifier
-                                                            .height(IntrinsicSize.Max)
-                                                            .padding(5.dp)
-                                                            .border(
-                                                                BorderStroke(
-                                                                    2.dp,
-                                                                    MaterialTheme.colorScheme.primary
-                                                                ), CircleShape
-                                                            )
-                                                            .fillMaxWidth()
-                                                            .clickable(room.isHost || room.isHostServer || room.localPlayer == player) {
-                                                                selectedPlayer = player
-                                                                playerOverrideVisible = true
-                                                            }
-                                                    ) {
-                                                        TableCell(
-                                                            player.name + if (player.startingUnit != -1) " - ${options.firstOrNull { it.first == player.startingUnit }?.second ?: "Unknown"}" else "",
-                                                            color = if (player.color != -1) Player.getTeamColor(
-                                                                player.color
-                                                            ) else MaterialTheme.colorScheme.onSurface,
-                                                            weight = playerNameWeight, drawStroke = false,
-                                                            modifier = Modifier.fillMaxHeight()
-                                                        ) {
-                                                            if (!player.data.ready) {
-                                                                CircularProgressIndicator(
-                                                                    color = MaterialTheme.colorScheme.primary,
-                                                                    modifier = Modifier.size(15.dp)
-                                                                        .padding(0.dp, 2.dp, 0.dp, 2.dp)
-                                                                )
-                                                            }
-                                                        }
-                                                        TableCell(
-                                                            if (player.isSpectator)
-                                                                "S"
-                                                            else (player.spawnPoint + 1).toString(),
-                                                            playerSpawnWeight,
-                                                            color = if (player.isSpectator)
-                                                                Color.Black
-                                                            else Player.getTeamColor(player.spawnPoint),
-                                                            modifier = Modifier.fillMaxHeight()
-                                                        )
-                                                        TableCell(
-                                                            player.teamAlias(),
-                                                            playerTeamWeight,
-                                                            color = Player.getTeamColor(player.team),
-                                                            modifier = Modifier.fillMaxHeight()
-                                                        )
-                                                        val ping = remember(update) { player.ping }
-                                                        TableCell(
-                                                            ping,
-                                                            playerPingWeight,
-                                                            drawStroke = false,
-                                                            modifier = Modifier.fillMaxHeight()
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
-//                                if(LocalWindowManager.current != WindowManager.Large) {
-//                                    for(i in players.indices) {
-//                                        PlayerTable(i)
-//                                    }
-//                                } else {
-
+                                    RoomPlayerTableHeader()
                                     LazyColumnScrollbar(
                                         listState = state,
-                                        modifier = Modifier.fillMaxWidth()
+                                        modifier = Modifier.fillMaxWidth(),
                                     ) {
-                                        var chatMessage by remember { mutableStateOf("") }
                                         LazyColumn(
                                             modifier = Modifier.fillMaxWidth(),
-                                            state = state
+                                            state = state,
                                         ) {
                                             items(
                                                 count = players.size,
-                                                key = { players[it].connectHexId }
+                                                key = { players[it].connectHexId },
                                             ) { index ->
-                                                PlayerTable(
-                                                    index,
-                                                    if (koinInject<Settings>().enableAnimations)
+                                                RoomPlayerTableRow(
+                                                    player = players[index],
+                                                    room = room,
+                                                    game = game,
+                                                    update = update,
+                                                    onPlayerClick = onPlayerClick,
+                                                    modifier = if (koinInject<Settings>().enableAnimations) {
                                                         Modifier.animateItem()
-                                                    else Modifier
+                                                    } else {
+                                                        Modifier
+                                                    },
                                                 )
-                                            }
-
-                                            item(key = "chat-field") {
-                                                if (LocalWindowManager.current != WindowManager.Large && !isSandboxGame) {
-                                                    BorderCard(
-                                                        modifier = Modifier.fillMaxWidth()
-                                                            .defaultMinSize(minHeight = 200.dp)
-                                                            .padding(5.dp),
-                                                        backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(
-                                                            .7f
-                                                        )
-                                                    ) {
-                                                        Row(modifier = Modifier.fillMaxWidth()) {
-                                                            RWTextButton(
-                                                                readI18n("multiplayer.room.changeSite") + if (isDesktop) "(C)" else "",
-                                                                modifier = Modifier.padding(
-                                                                    horizontal = 5.dp,
-                                                                    vertical = 30.dp
-                                                                )
-                                                            ) {
-                                                                if (players.isNotEmpty()) {
-                                                                    selectedPlayer =
-                                                                        room.localPlayer
-                                                                    playerOverrideVisible = true
-                                                                }
-                                                            }
-
-                                                            MessageTextField(chatMessage) { chatMessage = it }
-                                                        }
-
-                                                        MessageView()
-                                                    }
-                                                }
                                             }
                                         }
                                     }
-                                    //}
                                 }
                             }
                         }
                     }
 
-                    if (LocalWindowManager.current == WindowManager.Large) {
-                        BorderCard(
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(10.dp),
-                            backgroundColor = MaterialTheme.colorScheme.surfaceContainer
-                        ) {
-                            Column {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth()
-                                        .height(IntrinsicSize.Max)
-                                        .padding(5.dp)
+                    BorderCard(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(10.dp),
+                        backgroundColor = MaterialTheme.colorScheme.surfaceContainer,
+                    ) {
+                        Column {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(IntrinsicSize.Max)
+                                    .padding(5.dp),
+                            ) {
+                                RWTextButton(
+                                    readI18n("multiplayer.room.changeSite") + if (isDesktop) "(C)" else "",
+                                    modifier = Modifier.padding(
+                                        horizontal = 5.dp,
+                                        vertical = 30.dp,
+                                    ),
                                 ) {
+                                    if (players.isNotEmpty()) {
+                                        selectedPlayer = room.localPlayer
+                                        playerOverrideVisible = true
+                                    }
+                                }
+                                if (isHost) {
                                     RWTextButton(
-                                        readI18n("multiplayer.room.changeSite") + if (isDesktop) "(C)" else "",
+                                        readI18n("multiplayer.room.addAI") + if (isDesktop) "(A)" else "",
                                         modifier = Modifier.padding(
                                             horizontal = 5.dp,
-                                            vertical = 30.dp
-                                        )
-                                    ) {
-                                        if (players.isNotEmpty()) {
-                                            selectedPlayer = room.localPlayer
-                                            playerOverrideVisible = true
-                                        }
-                                    }
-                                    if (isHost) {
-                                        RWTextButton(
-                                            readI18n("multiplayer.room.addAI") + if (isDesktop) "(A)" else "",
-                                            modifier = Modifier.padding(
-                                                horizontal = 5.dp,
-                                                vertical = 30.dp
-                                            ),
-                                            onLongClick = { room.addAI(10) }
-                                        ) { room.addAI() }
-                                    }
+                                            vertical = 30.dp,
+                                        ),
+                                        onLongClick = { room.addAI(10) },
+                                    ) { room.addAI() }
+                                }
 
-                                    var isLocked by remember(update) { mutableStateOf(room.lockedRoom) }
-                                    if (!isSandboxGame) IconButton(
-                                        { isLocked = !isLocked; room.lockedRoom = isLocked },
+                                var isLocked by remember(update) { mutableStateOf(room.lockedRoom) }
+                                if (!isSandboxGame) {
+                                    IconButton(
+                                        onClick = {
+                                            isLocked = !isLocked
+                                            room.lockedRoom = isLocked
+                                        },
                                         enabled = isHost,
                                         modifier = Modifier.padding(
                                             horizontal = 5.dp,
-                                            vertical = 30.dp
-                                        )
+                                            vertical = 30.dp,
+                                        ),
                                     ) {
                                         Icon(
                                             Icons.Default.Lock,
                                             null,
-                                            tint = if (isLocked) Color(
-                                                237,
-                                                112,
-                                                20
-                                            ) else MaterialTheme.colorScheme.surfaceTint
+                                            tint = if (isLocked) {
+                                                Color(237, 112, 20)
+                                            } else {
+                                                MaterialTheme.colorScheme.surfaceTint
+                                            },
                                         )
                                     }
-
-                                    var chatMessage by remember { mutableStateOf("") }
-                                    if (!isSandboxGame) MessageTextField(chatMessage) { chatMessage = it }
                                 }
 
-                                if (!isSandboxGame) BorderCard(
-                                    modifier = Modifier
-                                        .padding(5.dp),
-                                    backgroundColor = MaterialTheme.colorScheme.surface.copy(.7f)
+                                var chatMessage by remember { mutableStateOf("") }
+                                if (!isSandboxGame) {
+                                    RoomChatMessageTextField(
+                                        chatMessage = chatMessage,
+                                        focusRequester = chatFocusRequester,
+                                        onChatMessageChange = { chatMessage = it },
+                                        onSend = room::sendChatMessageOrCommand,
+                                    )
+                                }
+                            }
+
+                            if (!isSandboxGame) {
+                                BorderCard(
+                                    modifier = Modifier.padding(5.dp),
+                                    backgroundColor = MaterialTheme.colorScheme.surface.copy(.7f),
                                 ) {
-                                    MessageView()
+                                    RoomChatMessageView(modifier = Modifier.fillMaxSize())
                                 }
                             }
                         }
@@ -999,26 +890,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
         }
     }
 
-    if (LocalWindowManager.current != WindowManager.Large) {
-        Scaffold(
-            containerColor = Color.Transparent,
-            floatingActionButton = {
-                if (isHost) {
-                    LongPressFloatingActionButton(
-                        Icons.Default.Add,
-                        modifier = Modifier.padding(5.dp),
-                        onClick = { room.addAI() },
-                        onLongClick = { room.addAI(10) }
-                    )
-                }
-            },
-            floatingActionButtonPosition = FabPosition.End
-        ) {
-            ContentView()
-        }
-    } else {
-        ContentView()
-    }
+    ContentView()
 }
 
 @Composable
@@ -1614,6 +1486,943 @@ private fun MultiplayerOption(
     }
 }
 
+
+@Composable
+private fun PublishToListDialog(
+    state: PublishToListUiState,
+    onDismiss: () -> Unit,
+    onSelectRoomType: (String) -> Unit,
+    onRetry: (PublishStep) -> Unit,
+) {
+    val settings = koinInject<Settings>()
+    val enableAnimations = settings.enableAnimations
+
+    AnimatedAlertDialog(
+        visible = state != PublishToListUiState.Hidden,
+        onDismissRequest = {
+            if (state !is PublishToListUiState.Loading) onDismiss()
+        },
+        enableDismiss = state !is PublishToListUiState.Loading,
+    ) { dismiss ->
+        BorderCard(
+            modifier = Modifier
+                .fillMaxWidth(LargeProportion())
+                .widthIn(max = 360.dp)
+                .padding(10.dp),
+        ) {
+            val showExit = state is PublishToListUiState.SelectRoomType
+                || state is PublishToListUiState.Success
+                || state is PublishToListUiState.Failure
+            Box {
+                if (showExit) ExitButton(dismiss)
+                AnimatedContent(
+                    targetState = state,
+                    transitionSpec = {
+                        if (enableAnimations) {
+                            (fadeIn() + scaleIn(initialScale = 0.92f)) togetherWith fadeOut()
+                        } else {
+                            EnterTransition.None togetherWith ExitTransition.None
+                        }
+                    },
+                    label = "publishToListContent",
+                ) { current ->
+                    when (current) {
+                        PublishToListUiState.Hidden -> Unit
+                        is PublishToListUiState.Loading -> {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 20.dp, vertical = 28.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                LineSpinFadeLoaderIndicator(MaterialTheme.colorScheme.onSecondaryContainer)
+                                Text(
+                                    readI18n("multiplayer.room.publishLoading"),
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    textAlign = TextAlign.Center,
+                                )
+                                Text(
+                                    readI18n(
+                                        if (current.step == PublishStep.FetchingTypes) {
+                                            "multiplayer.room.publishFetchingTypes"
+                                        } else {
+                                            "multiplayer.room.publishSubmitting"
+                                        }
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
+                        }
+                        is PublishToListUiState.SelectRoomType -> {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 20.dp),
+                            ) {
+                                Text(
+                                    readI18n("multiplayer.room.publishSelectType"),
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(bottom = 12.dp),
+                                )
+                                current.types.forEach { type ->
+                                    RWTextButton(
+                                        type,
+                                        modifier = Modifier
+                                            .padding(vertical = 4.dp)
+                                            .fillMaxWidth(),
+                                    ) { onSelectRoomType(type) }
+                                }
+                            }
+                        }
+                        is PublishToListUiState.Success -> {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 20.dp, vertical = 24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Icon(
+                                    Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(48.dp),
+                                    tint = Color(0xFF4CAF50),
+                                )
+                                Text(
+                                    readI18n("multiplayer.room.publishSuccess"),
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    textAlign = TextAlign.Center,
+                                )
+                                Text(
+                                    readI18n("multiplayer.room.publishSuccessHint"),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center,
+                                )
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 8.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                ) {
+                                    RWTextButton(readI18n("common.ok"), onClick = dismiss)
+                                }
+                            }
+                        }
+                        is PublishToListUiState.Failure -> {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 20.dp, vertical = 24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Icon(
+                                    Icons.Default.Warning,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(48.dp),
+                                    tint = Color(0xFFFF9800),
+                                )
+                                Text(
+                                    readI18n("multiplayer.room.publishFailed"),
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    textAlign = TextAlign.Center,
+                                )
+                                Text(
+                                    current.message,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center,
+                                )
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 8.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(
+                                        8.dp,
+                                        Alignment.CenterHorizontally,
+                                    ),
+                                ) {
+                                    RWTextButton(readI18n("settings.retry")) {
+                                        onRetry(current.step)
+                                    }
+                                    RWTextButton(readI18n("common.close"), onClick = dismiss)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+private val RoomPlayerNameWeight = 0.6f
+private val RoomPlayerSpawnWeight = 0.1f
+private val RoomPlayerTeamWeight = 0.1f
+private val RoomPlayerPingWeight = 0.2f
+
+private val CompactChatPanelMinHeight = 220.dp
+private val CompactChatMessageAreaMinHeight = 160.dp
+private val CompactMapPreviewHeight = 140.dp
+private val CompactPlayerListMinHeight = 140.dp
+private val CompactScrollbarReservedWidth = 14.dp
+private const val CompactScrollbarFadeInMillis = 280
+private const val CompactScrollbarFadeOutMillis = 400
+private const val CompactScrollbarHideDelayMillis = 350
+/** 横屏左右面板等高时的固定高度（避免 Row + IntrinsicSize.Max 与 LazyColumn 冲突） */
+private val CompactTopPanelHeight = 320.dp
+private val CompactHostButtonMinHeight = 36.dp
+
+@Composable
+private fun CompactPlayerPanel(
+    players: List<Player>,
+    room: GameRoom,
+    game: Game,
+    update: Boolean,
+    playerListState: LazyListState,
+    rowShape: Shape,
+    onPlayerClick: (Player) -> Unit,
+    enableAnimations: Boolean,
+    expandVertically: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val playerListCanScroll by remember {
+        derivedStateOf { lazyListCanScroll(playerListState) }
+    }
+    val reserveScrollbarSpace = playerListCanScroll && playerListState.isScrollInProgress
+    val animatedScrollbarReservedWidth by animateDpAsState(
+        targetValue = if (reserveScrollbarSpace) CompactScrollbarReservedWidth else 0.dp,
+        animationSpec = tween(
+            durationMillis = if (reserveScrollbarSpace) {
+                CompactScrollbarFadeInMillis
+            } else {
+                CompactScrollbarFadeOutMillis
+            },
+            delayMillis = if (reserveScrollbarSpace) 0 else CompactScrollbarHideDelayMillis,
+            easing = FastOutSlowInEasing,
+        ),
+        label = "compact player scrollbar reserved width",
+    )
+
+    CompactRoomPanel(
+        modifier = modifier
+            .then(
+                if (expandVertically) {
+                    Modifier.fillMaxHeight()
+                } else {
+                    Modifier.heightIn(min = 150.dp)
+                },
+            ),
+    ) {
+        RoomPlayerTableHeader(compact = true, rowShape = rowShape)
+        LazyColumnScrollbar(
+            listState = playerListState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(
+                    if (expandVertically) {
+                        Modifier.weight(1f)
+                    } else {
+                        Modifier.heightIn(min = CompactPlayerListMinHeight)
+                    },
+                ),
+            thickness = 4.dp,
+            padding = 4.dp,
+            alwaysShowScrollBar = false,
+            selectionActionable = ScrollbarSelectionActionable.WhenVisible,
+            showItemIndicator = ListIndicatorSettings.Disabled,
+            hideDelay = CompactScrollbarHideDelayMillis.toDuration(DurationUnit.MILLISECONDS),
+        ) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                state = playerListState,
+                contentPadding = PaddingValues(end = animatedScrollbarReservedWidth),
+            ) {
+                items(
+                    count = players.size,
+                    key = { players[it].connectHexId },
+                ) { index ->
+                    val player = players[index]
+                    RoomPlayerTableRow(
+                        player = player,
+                        room = room,
+                        game = game,
+                        update = update,
+                        onPlayerClick = onPlayerClick,
+                        compact = true,
+                        rowShape = rowShape,
+                        modifier = if (enableAnimations) {
+                            Modifier.animateItem()
+                        } else {
+                            Modifier
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactMapSettingsPanel(
+    mapType: MapType,
+    displayMapName: String,
+    selectedMap: io.github.rwpp.game.map.GameMap,
+    isHost: Boolean,
+    isSandboxGame: Boolean,
+    isLocked: Boolean,
+    onLockToggle: () -> Unit,
+    isDesktop: Boolean,
+    showPublishButton: Boolean,
+    onOption: () -> Unit,
+    onStart: () -> Unit,
+    onAddAI: () -> Unit,
+    onAddAIMany: () -> Unit,
+    onPublish: () -> Unit,
+    onMapClick: () -> Unit,
+    expandVertically: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    CompactRoomPanel(
+        modifier = if (expandVertically) {
+            modifier.fillMaxHeight()
+        } else {
+            modifier
+        },
+    ) {
+        Text(
+            mapType.displayName(),
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            displayMapName,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        RoomMapPreview(
+            selectedMap = selectedMap,
+            isHost = isHost,
+            onMapClick = onMapClick,
+            modifier = if (expandVertically) {
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .heightIn(min = 64.dp, max = CompactMapPreviewHeight)
+            } else {
+                Modifier
+                    .fillMaxWidth()
+                    .height(CompactMapPreviewHeight)
+            },
+        )
+        if (!isSandboxGame && isHost) {
+            IconButton(
+                onClick = onLockToggle,
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+                enabled = isHost,
+            ) {
+                Icon(
+                    Icons.Default.Lock,
+                    null,
+                    tint = if (isLocked) {
+                        Color(237, 112, 20)
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                )
+            }
+        }
+        if (isHost) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .wrapContentHeight(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    CompactRoomTextButton(
+                        readI18n("multiplayer.room.option") + if (isDesktop) "(O)" else "",
+                        modifier = Modifier
+                            .weight(1f)
+                            .defaultMinSize(minHeight = CompactHostButtonMinHeight),
+                        onClick = onOption,
+                    )
+                    CompactRoomTextButton(
+                        readI18n("multiplayer.room.start"),
+                        modifier = Modifier
+                            .weight(1f)
+                            .defaultMinSize(minHeight = CompactHostButtonMinHeight),
+                        onClick = onStart,
+                    )
+                    if (!isSandboxGame) {
+                        CompactRoomTextButton(
+                            readI18n("multiplayer.room.addAI") + if (isDesktop) "(A)" else "",
+                            modifier = Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = CompactHostButtonMinHeight),
+                            onLongClick = onAddAIMany,
+                            onClick = onAddAI,
+                        )
+                    }
+                }
+                if (showPublishButton) {
+                    CompactRoomTextButton(
+                        readI18n("multiplayer.room.publishToList"),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = CompactHostButtonMinHeight),
+                        onClick = onPublish,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun parseRoomDetailEntries(details: String): List<Pair<String, String>> {
+    return details.split("\n")
+        .mapNotNull { line ->
+            val trimmed = line.trim()
+            if (trimmed.isEmpty()) return@mapNotNull null
+            val separatorIndex = trimmed.indexOf(':')
+            if (separatorIndex <= 0) return@mapNotNull null
+            val label = trimmed.substring(0, separatorIndex).trim()
+            val value = trimmed.substring(separatorIndex + 1).trim()
+            if (label.isEmpty() || value.isEmpty()) return@mapNotNull null
+            label to value
+        }
+}
+
+@Composable
+private fun RoomDetailsPanel(
+    details: String,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+) {
+    val entries = remember(details) { parseRoomDetailEntries(details) }
+    if (entries.isEmpty()) {
+        if (details.isNotBlank()) {
+            SelectionContainer {
+                Text(
+                    details,
+                    style = if (compact) {
+                        MaterialTheme.typography.bodySmall
+                    } else {
+                        MaterialTheme.typography.bodyMedium
+                    },
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = modifier.fillMaxWidth(),
+                )
+            }
+        }
+        return
+    }
+
+    val labelStyle = if (compact) {
+        MaterialTheme.typography.labelSmall
+    } else {
+        MaterialTheme.typography.bodySmall
+    }
+    val valueStyle = if (compact) {
+        MaterialTheme.typography.bodySmall
+    } else {
+        MaterialTheme.typography.bodyMedium
+    }
+
+    SelectionContainer {
+        FlowRow(
+            modifier = modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp),
+        ) {
+            entries.forEach { (label, value) ->
+                Column(
+                    modifier = Modifier.widthIn(min = 96.dp, max = 180.dp),
+                ) {
+                    Text(
+                        label,
+                        style = labelStyle,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        value,
+                        style = valueStyle,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DesktopMapSettingsCard(
+    mapType: MapType,
+    displayMapName: String,
+    selectedMap: io.github.rwpp.game.map.GameMap,
+    roomDetails: String,
+    isHost: Boolean,
+    isDesktop: Boolean,
+    hasPublishedInfo: Boolean,
+    remainingSeconds: Int,
+    totalSeconds: Int,
+    isRefreshingExpiry: Boolean,
+    onRenew: () -> Unit,
+    showPublishButton: Boolean,
+    onMapClick: () -> Unit,
+    onOption: () -> Unit,
+    onStart: () -> Unit,
+    onPublish: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.fillMaxSize(),
+    ) {
+        if (hasPublishedInfo) {
+            PublishedRoomExpiryBar(
+                remainingSeconds = remainingSeconds,
+                totalSeconds = totalSeconds,
+                isRefreshing = isRefreshingExpiry,
+                onRenew = onRenew,
+                modifier = Modifier.padding(start = 10.dp, top = 8.dp, end = 10.dp),
+            )
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                mapType.displayName(),
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                displayMapName,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(horizontal = 12.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            RoomMapPreview(
+                selectedMap = selectedMap,
+                isHost = isHost,
+                onMapClick = onMapClick,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+
+        RoomDetailsPanel(
+            details = roomDetails,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+        )
+
+        if (isHost) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                RWTextButton(
+                    readI18n("multiplayer.room.selectMap") + if (isDesktop) "(M)" else "",
+                    modifier = Modifier.padding(5.dp),
+                    onClick = onMapClick,
+                )
+                RWTextButton(
+                    readI18n("multiplayer.room.option") + if (isDesktop) "(O)" else "",
+                    modifier = Modifier.padding(5.dp),
+                    onClick = onOption,
+                )
+                RWTextButton(
+                    readI18n("multiplayer.room.start"),
+                    modifier = Modifier.padding(5.dp),
+                    onClick = onStart,
+                )
+                if (showPublishButton) {
+                    RWTextButton(
+                        readI18n("multiplayer.room.publishToList"),
+                        modifier = Modifier.padding(5.dp),
+                        onClick = onPublish,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CompactRoomDetailsBar(
+    roomDetails: String,
+    onShowDetails: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    SelectionContainer {
+        Text(
+            roomDetails,
+            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 2.dp)
+                .clickable(onClick = onShowDetails),
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun RoomDetailsDialog(
+    details: String,
+    onDismiss: () -> Unit,
+) {
+    val scrollState = rememberScrollState()
+    AnimatedAlertDialog(
+        visible = true,
+        onDismissRequest = onDismiss,
+    ) { dismiss ->
+        BorderCard(
+            modifier = Modifier
+                .fillMaxWidth(LargeProportion())
+                .widthIn(max = 480.dp)
+                .padding(10.dp),
+        ) {
+            Box {
+                ExitButton(dismiss)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, top = 28.dp, end = 12.dp, bottom = 12.dp),
+                ) {
+                    Text(
+                        readI18n("multiplayer.room.roomDetails"),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                    RoomDetailsPanel(
+                        details = details,
+                        compact = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 280.dp)
+                            .verticalScroll(scrollState),
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp),
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        RWTextButton(readI18n("common.close"), onClick = dismiss)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CompactRoomTextButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null,
+) {
+    CompositionLocalProvider(
+        LocalRippleConfiguration provides RippleConfiguration(Color.Transparent, RippleAlpha(0f, 0f, 0f, 0f)),
+    ) {
+        Card(
+            border = BorderStroke(2.dp, MaterialTheme.colorScheme.surfaceContainer),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            shape = RoundedCornerShape(8.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+            modifier = modifier.bounceClick(onLongClick = onLongClick, onClick = onClick),
+        ) {
+            Text(
+                label,
+                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 8.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun CompactRoomPanel(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .border(
+                BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)),
+                RoundedCornerShape(8.dp),
+            )
+            .background(
+                MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.4f),
+                RoundedCornerShape(8.dp),
+            )
+            .padding(4.dp),
+        content = content,
+    )
+}
+
+@Composable
+private fun RoomPlayerTableHeader(
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+    rowShape: Shape = CircleShape,
+) {
+    val strokeColor = MaterialTheme.colorScheme.secondaryContainer
+    Row(
+        modifier = modifier
+            .padding(if (compact) 2.dp else 5.dp)
+            .border(
+                BorderStroke(2.dp, MaterialTheme.colorScheme.secondary),
+                rowShape,
+            )
+            .fillMaxWidth(),
+    ) {
+        TableCell(readI18n("multiplayer.room.colName"), RoomPlayerNameWeight, drawStroke = false, strokeColor = strokeColor)
+        TableCell(readI18n("multiplayer.room.colSpawn"), RoomPlayerSpawnWeight, strokeColor = strokeColor)
+        TableCell(readI18n("multiplayer.room.colTeam"), RoomPlayerTeamWeight, strokeColor = strokeColor)
+        TableCell(readI18n("multiplayer.room.colPing"), RoomPlayerPingWeight, drawStroke = false, strokeColor = strokeColor)
+    }
+}
+
+@Composable
+private fun RoomPlayerTableRow(
+    player: Player,
+    room: GameRoom,
+    game: Game,
+    update: Boolean,
+    onPlayerClick: (Player) -> Unit,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+    rowShape: Shape = CircleShape,
+) {
+    val options = remember { game.getStartingUnitOptions() }
+    val rowPadding = if (compact) 2.dp else 5.dp
+    Box(modifier) {
+        KickPlayerContextMenuAreaMultiplatform(player) {
+            Row(
+                modifier = Modifier
+                    .height(IntrinsicSize.Max)
+                    .padding(rowPadding)
+                    .border(
+                        BorderStroke(2.dp, MaterialTheme.colorScheme.primary),
+                        rowShape,
+                    )
+                    .fillMaxWidth()
+                    .clickable(room.isHost || room.isHostServer || room.localPlayer == player) {
+                        onPlayerClick(player)
+                    },
+            ) {
+                TableCell(
+                    player.name + if (player.startingUnit != -1) {
+                        " - ${options.firstOrNull { it.first == player.startingUnit }?.second ?: "Unknown"}"
+                    } else "",
+                    color = if (player.color != -1) {
+                        Player.getTeamColor(player.color)
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                    weight = RoomPlayerNameWeight,
+                    drawStroke = false,
+                    modifier = Modifier.fillMaxHeight(),
+                ) {
+                    if (!player.data.ready) {
+                        CircularProgressIndicator(
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(if (compact) 12.dp else 15.dp)
+                                .padding(0.dp, 2.dp, 0.dp, 2.dp),
+                        )
+                    }
+                }
+                TableCell(
+                    if (player.isSpectator) "S" else (player.spawnPoint + 1).toString(),
+                    RoomPlayerSpawnWeight,
+                    color = if (player.isSpectator) Color.Black else Player.getTeamColor(player.spawnPoint),
+                    modifier = Modifier.fillMaxHeight(),
+                )
+                TableCell(
+                    player.teamAlias(),
+                    RoomPlayerTeamWeight,
+                    color = Player.getTeamColor(player.team),
+                    modifier = Modifier.fillMaxHeight(),
+                )
+                val ping = remember(update) { player.ping }
+                TableCell(
+                    ping,
+                    RoomPlayerPingWeight,
+                    drawStroke = false,
+                    modifier = Modifier.fillMaxHeight(),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RoomChatMessageTextField(
+    chatMessage: String,
+    focusRequester: FocusRequester,
+    onChatMessageChange: (String) -> Unit,
+    onSend: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+) {
+    val sendAction = {
+        if (chatMessage.isNotEmpty()) {
+            onSend(chatMessage)
+            onChatMessageChange("")
+        }
+    }
+    val keyModifier = Modifier.onKeyEvent {
+        if ((it.key == Key.Enter || it.key == Key.NumPadEnter) && chatMessage.isNotEmpty()) {
+            sendAction()
+        }
+        true
+    }
+    val trailingIcon: @Composable () -> Unit = {
+        Icon(
+            Icons.AutoMirrored.Filled.ArrowForward,
+            null,
+            modifier = Modifier.clickable(onClick = sendAction),
+            tint = MaterialTheme.colorScheme.surfaceTint,
+        )
+    }
+
+    if (compact) {
+        OutlinedTextField(
+            value = chatMessage,
+            onValueChange = onChatMessageChange,
+            placeholder = {
+                Text(
+                    readI18n("multiplayer.room.sendMessage"),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            },
+            textStyle = MaterialTheme.typography.bodySmall,
+            singleLine = true,
+            trailingIcon = trailingIcon,
+            colors = RWOutlinedTextColors,
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 2.dp)
+                .defaultMinSize(minHeight = 52.dp)
+                .focusRequester(focusRequester)
+                .then(keyModifier),
+        )
+    } else {
+        RWSingleOutlinedTextField(
+            label = readI18n("multiplayer.room.sendMessage"),
+            value = chatMessage,
+            focusRequester = focusRequester,
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(10.dp)
+                .then(keyModifier),
+            trailingIcon = trailingIcon,
+            onValueChange = onChatMessageChange,
+        )
+    }
+}
+
+@Composable
+private fun RoomChatMessageView(modifier: Modifier = Modifier) {
+    var value by remember(chatMessages) { mutableStateOf(TextFieldValue(chatMessages)) }
+    LaunchedEffect(chatMessages) {
+        value = TextFieldValue(
+            annotatedString = chatMessages,
+            selection = TextRange(chatMessages.length),
+        )
+    }
+    TextField(
+        value = value,
+        onValueChange = { value = it },
+        readOnly = true,
+        textStyle = MaterialTheme.typography.bodyMedium,
+        modifier = modifier,
+        colors = RWTextFieldColors,
+        maxLines = Int.MAX_VALUE,
+    )
+}
+
+@Composable
+private fun RoomMapPreview(
+    selectedMap: io.github.rwpp.game.map.GameMap,
+    isHost: Boolean,
+    onMapClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val previewShape = RoundedCornerShape(8.dp)
+    Box(
+        modifier = modifier
+            .padding(vertical = 4.dp)
+            .clip(previewShape)
+            .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.35f))
+            .border(BorderStroke(1.5.dp, MaterialTheme.colorScheme.surfaceContainer), previewShape)
+            .clickable(isHost, onClick = onMapClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        AsyncImage(
+            ImageRequest.Builder(LocalPlatformContext.current)
+                .data(selectedMap)
+                .precision(Precision.INEXACT)
+                .build(),
+            null,
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+}
 
 @Composable
 private fun PublishedRoomExpiryBar(

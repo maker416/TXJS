@@ -104,31 +104,19 @@ abstract class BaseNetImpl : Net {
         credits: Int?,
         speedMultiplier: Int?,
         prefix: HostCommandPrefix,
-        isPublic: Boolean,
     ): String {
-        val base = when (prefix) {
-            HostCommandPrefix.Q -> when {
-                roomId != null && enableMods -> "QCM$roomId"
-                roomId != null -> "QC$roomId"
-                enableMods -> "Qmods"
-                else -> "Qnews"
-            }
-            HostCommandPrefix.R -> {
-                val playerCount = maxPlayer ?: DEFAULT_R_HOST_MAX_PLAYERS
-                roomListHostProtocol["RCN"]?.invoke(playerCount, enableMods, isPublic)
-                    ?: if (enableMods) {
-                        if (isPublic) "Rmodupp$playerCount" else "Rmodp$playerCount"
-                    } else if (isPublic) {
-                        "Rnewupp$playerCount"
-                    } else {
-                        "Rnewp$playerCount"
-                    }
-            }
+        val letter = when (prefix) {
+            HostCommandPrefix.Q -> 'Q'
+            HostCommandPrefix.R -> 'R'
+        }
+        val base = when {
+            roomId != null && enableMods -> "${letter}CM$roomId"
+            roomId != null -> "${letter}C$roomId"
+            enableMods -> "${letter}mods"
+            else -> "${letter}news"
         }
         val params = buildString {
-            if (prefix == HostCommandPrefix.Q) {
-                maxPlayer?.let { append("P$it") }
-            }
+            maxPlayer?.let { append("P$it") }
             unitLimit?.let { append("U$it") }
             credits?.let { append("C$it") }
             speedMultiplier?.let { append("Z$it") }

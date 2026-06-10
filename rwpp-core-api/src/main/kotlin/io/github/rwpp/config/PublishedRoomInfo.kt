@@ -17,7 +17,7 @@ import org.koin.core.annotation.Single
 @Single
 @Serializable
 data class PublishedRoomInfo(
-    /** 房间RoomId (Q编号)，用于关联当前房间 */
+    /** 房间 RoomId（Q/R 编号），用于关联当前房间 */
     var roomId: String = "",
     /** 列表服务器分配的服务端ID */
     var serverId: String = "",

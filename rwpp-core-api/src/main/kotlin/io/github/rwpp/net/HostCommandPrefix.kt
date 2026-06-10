@@ -7,13 +7,24 @@
 
 package io.github.rwpp.net
 
+/** Default join port for Q-series rooms (e.g. Q77182). */
+const val Q_ROOM_JOIN_PORT = 5129
+
+/** Default join port for R-series rooms (e.g. R77182). */
+const val R_ROOM_JOIN_PORT = 5123
+
+/** Resolve list/join port from a room short code such as Q77182 or R77182. */
+fun roomJoinPortForId(roomId: String): Int =
+    if (roomId.startsWith('Q')) Q_ROOM_JOIN_PORT else R_ROOM_JOIN_PORT
+
+/** Address payload for publishing a room to RWList (`roomId:port`). */
+fun roomListPublishAddress(roomId: String): String =
+    "$roomId:${roomJoinPortForId(roomId)}"
+
 /** Quick-host command family used when creating a multiplayer room from the UI. */
 enum class HostCommandPrefix {
-    /** Q-series: Qnews / Qmods / QC / QCM with optional P/U/C/Z suffix params. */
+    /** Q-series: Qnews / Qmods / QC / QCM; join port [Q_ROOM_JOIN_PORT]. */
     Q,
-    /** R-series: Rnewp / Rnewupp / Rmodp / Rmodupp with max player embedded in the prefix. */
+    /** R-series: Rnews / Rmods / RC / RCM; join port [R_ROOM_JOIN_PORT]. */
     R,
 }
-
-/** Default max players when hosting with [HostCommandPrefix.R] and no value is entered. */
-const val DEFAULT_R_HOST_MAX_PLAYERS = 10

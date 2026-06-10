@@ -80,6 +80,8 @@ fun AnimatedTransitionDialog(
     val coroutineScope: CoroutineScope = rememberCoroutineScope()
     val animateTrigger = remember { mutableStateOf(false) }
     val enableAnimations = koinInject<Settings>().enableAnimations
+    val currentOnDismissRequest by rememberUpdatedState(onDismissRequest)
+    val currentEnableDismiss by rememberUpdatedState(enableDismiss)
 
     LaunchedEffect(key1 = Unit) {
         launch {
@@ -88,7 +90,7 @@ fun AnimatedTransitionDialog(
         }
         launch {
             onDismissSharedFlow.asSharedFlow().collectLatest {
-                startDismissWithExitAnimation(animateTrigger, onDismissRequest)
+                startDismissWithExitAnimation(animateTrigger, currentOnDismissRequest)
             }
         }
     }
@@ -116,9 +118,9 @@ fun AnimatedTransitionDialog(
 
     Dialog(
         onDismissRequest = {
-            if (enableDismiss) {
+            if (currentEnableDismiss) {
                 coroutineScope.launch {
-                    startDismissWithExitAnimation(animateTrigger, onDismissRequest)
+                    startDismissWithExitAnimation(animateTrigger, currentOnDismissRequest)
                 }
             }
         },

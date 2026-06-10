@@ -63,14 +63,13 @@ interface Net : KoinComponent, Initialization {
     /**
      * Build a quick-host command string.
      * @param enableMods whether to enable mods.
-     * @param roomId optional room ID for private rooms (QC/QCM prefix, [HostCommandPrefix.Q] only).
-     * @param maxPlayer max player count (P suffix for Q; embedded in prefix for R).
+     * @param roomId optional room ID for private rooms ([prefix]C/[prefix]CM).
+     * @param maxPlayer max player count (P suffix).
      * @param unitLimit unit limit (U parameter).
      * @param credits initial credits (C parameter).
      * @param speedMultiplier game speed multiplier (Z parameter).
      * @param prefix command family: Q (default) or R.
-     * @param isPublic whether the room is public ([HostCommandPrefix.R] only).
-     * @return a command string like "QnewsP20C5000Z5", "QCM6666P10", or "Rnewupp10U500".
+     * @return a command string like "QnewsP20C5000Z5", "QCM6666P10", or "RnewsP10U500".
      */
     fun buildQuickHostCommand(
         enableMods: Boolean,
@@ -80,7 +79,6 @@ interface Net : KoinComponent, Initialization {
         credits: Int? = null,
         speedMultiplier: Int? = null,
         prefix: HostCommandPrefix = HostCommandPrefix.Q,
-        isPublic: Boolean = true,
     ): String
 
     /**

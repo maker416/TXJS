@@ -385,35 +385,12 @@ fun MultiplayerView(
     ) { dismiss ->
         BorderCard(
             modifier = Modifier
-                .width(500.dp)
+                .fillMaxWidth(LargeProportion())
+                .widthIn(max = 500.dp)
+                .fillMaxHeight(LargeProportion())
                 .padding(10.dp)
                 .autoClearFocus(),
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(75.dp)
-                    .background(
-                        brush = Brush.linearGradient(
-                            listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary)
-                        )
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        Text(
-                            "Host Game",
-                            modifier = Modifier.padding(5.dp),
-                            style = MaterialTheme.typography.headlineLarge,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                }
-            }
-
-            LargeDividingLine { 0.dp }
-
             val modManager = koinInject<ModManager>()
             var enableMods by remember { mutableStateOf(false) }
             var transferMod by remember { mutableStateOf(false) }
@@ -424,157 +401,144 @@ fun MultiplayerView(
                         .sumOf { it.getSize() }
                 )
             }
+            var hostPrefix by remember { mutableStateOf(HostCommandPrefix.Q) }
+            var roomId by remember { mutableStateOf("") }
+            var maxPlayer: Int? by remember { mutableStateOf(null) }
+            var unitLimit: Int? by remember { mutableStateOf(null) }
+            var credits: Int? by remember { mutableStateOf(null) }
+            var speedMultiplier: Int? by remember { mutableStateOf(null) }
 
             remember(enableMods) {
                 if (!enableMods) transferMod = false
             }
 
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                var hostPrefix by remember { mutableStateOf(HostCommandPrefix.Q) }
-                var isPublicRoom by remember { mutableStateOf(true) }
-
+            Column(modifier = Modifier.fillMaxSize()) {
                 Text(
-                    readI18n("multiplayer.hostPrefix"),
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp),
+                    readI18n("multiplayer.host"),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.primary,
                 )
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    FilterChip(
-                        selected = hostPrefix == HostCommandPrefix.Q,
-                        onClick = { hostPrefix = HostCommandPrefix.Q },
-                        label = { Text(readI18n("multiplayer.hostPrefixQ")) },
-                    )
-                    FilterChip(
-                        selected = hostPrefix == HostCommandPrefix.R,
-                        onClick = { hostPrefix = HostCommandPrefix.R },
-                        label = { Text(readI18n("multiplayer.hostPrefixR")) },
-                    )
-                }
+                LargeDividingLine { 0.dp }
 
-                AnimatedVisibility(hostPrefix == HostCommandPrefix.R) {
-                    Column(modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp)) {
-                        FlowRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            FilterChip(
-                                selected = isPublicRoom,
-                                onClick = { isPublicRoom = true },
-                                label = { Text(readI18n("multiplayer.hostPublic")) },
-                            )
-                            FilterChip(
-                                selected = !isPublicRoom,
-                                onClick = { isPublicRoom = false },
-                                label = { Text(readI18n("multiplayer.hostPrivate")) },
-                            )
-                        }
-                        Text(
-                            readI18n("multiplayer.hostPrefixRHint"),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp),
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        readI18n("multiplayer.hostPrefix"),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        FilterChip(
+                            selected = hostPrefix == HostCommandPrefix.Q,
+                            onClick = { hostPrefix = HostCommandPrefix.Q },
+                            label = { Text(readI18n("multiplayer.hostPrefixQ")) },
+                        )
+                        FilterChip(
+                            selected = hostPrefix == HostCommandPrefix.R,
+                            onClick = { hostPrefix = HostCommandPrefix.R },
+                            label = { Text(readI18n("multiplayer.hostPrefixR")) },
                         )
                     }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RWCheckbox(
+                            enableMods,
+                            onCheckedChange = { enableMods = !enableMods },
+                            modifier = Modifier.padding(end = 4.dp),
+                        )
+                        Text(
+                            readI18n("multiplayer.enableMods"),
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RWCheckbox(
+                            transferMod,
+                            onCheckedChange = { transferMod = !transferMod },
+                            modifier = Modifier.padding(end = 4.dp),
+                            enabled = enableMods && modSize <= maxModSize,
+                        )
+                        Text(
+                            "${readI18n("multiplayer.transferMod")} ${
+                                if (modSize > maxModSize) "(Disabled for total mods size: ${
+                                    SizeUtils.byteToMB(
+                                        modSize
+                                    )
+                                }MB > ${SizeUtils.byteToMB(maxModSize)}MB)" else ""
+                            }",
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                    }
+
+                    RWSingleOutlinedTextField(
+                        readI18n("multiplayer.room.roomId"),
+                        roomId,
+                        modifier = Modifier.fillMaxWidth(),
+                        lengthLimitCount = 10,
+                        typeInNumberOnly = true,
+                        typeInOnlyInteger = true,
+                    ) { roomId = it }
+
+                    RWSingleOutlinedTextField(
+                        readI18n("multiplayer.room.maxPlayer"),
+                        maxPlayer?.toString() ?: "",
+                        modifier = Modifier.fillMaxWidth(),
+                        typeInNumberOnly = true,
+                        typeInOnlyInteger = true,
+                    ) { maxPlayer = it.toIntOrNull()?.coerceAtMost(100) }
+
+                    RWSingleOutlinedTextField(
+                        readI18n("multiplayer.room.unitLimit"),
+                        unitLimit?.toString() ?: "",
+                        modifier = Modifier.fillMaxWidth(),
+                        typeInNumberOnly = true,
+                        typeInOnlyInteger = true,
+                    ) { unitLimit = it.toIntOrNull() }
+
+                    RWSingleOutlinedTextField(
+                        readI18n("multiplayer.room.credits"),
+                        credits?.toString() ?: "",
+                        modifier = Modifier.fillMaxWidth(),
+                        typeInNumberOnly = true,
+                        typeInOnlyInteger = true,
+                    ) { credits = it.toIntOrNull() }
+
+                    RWSingleOutlinedTextField(
+                        readI18n("multiplayer.room.speedMultiplier"),
+                        speedMultiplier?.toString() ?: "",
+                        modifier = Modifier.fillMaxWidth(),
+                        typeInNumberOnly = true,
+                        typeInOnlyInteger = true,
+                    ) { speedMultiplier = it.toIntOrNull() }
                 }
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    RWCheckbox(
-                        enableMods,
-                        onCheckedChange = { enableMods = !enableMods },
-                        modifier = Modifier.padding(5.dp)
-                    )
-                    Text(
-                        readI18n("multiplayer.enableMods"),
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(top = 5.dp)
-                    )
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    RWCheckbox(
-                        transferMod,
-                        onCheckedChange = { transferMod = !transferMod },
-                        modifier = Modifier.padding(5.dp),
-                        enabled = enableMods && modSize <= maxModSize
-                    )
-                    Text(
-                        "${readI18n("multiplayer.transferMod")} ${
-                            if (modSize > maxModSize) "(Disabled for total mods size: ${
-                                SizeUtils.byteToMB(
-                                    modSize
-                                )
-                            }MB > ${SizeUtils.byteToMB(maxModSize)}MB)" else ""
-                        }",
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(top = 5.dp),
-                    )
-                }
-
-                var roomId by remember { mutableStateOf("") }
-                RWSingleOutlinedTextField(
-                    readI18n("multiplayer.room.roomId"),
-                    roomId,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 2.dp),
-                    lengthLimitCount = 10,
-                    typeInNumberOnly = true,
-                    typeInOnlyInteger = true,
-                    enabled = hostPrefix == HostCommandPrefix.Q,
-                ) { roomId = it }
-
-                var maxPlayer: Int? by remember { mutableStateOf(null) }
-                RWSingleOutlinedTextField(
-                    readI18n("multiplayer.room.maxPlayer"),
-                    maxPlayer?.toString() ?: "",
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 2.dp),
-                    typeInNumberOnly = true,
-                    typeInOnlyInteger = true,
-                ) { maxPlayer = it.toIntOrNull()?.coerceAtMost(100) }
-
-                var unitLimit: Int? by remember { mutableStateOf(null) }
-                RWSingleOutlinedTextField(
-                    readI18n("multiplayer.room.unitLimit"),
-                    unitLimit?.toString() ?: "",
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 2.dp),
-                    typeInNumberOnly = true,
-                    typeInOnlyInteger = true,
-                ) { unitLimit = it.toIntOrNull() }
-
-                var credits: Int? by remember { mutableStateOf(null) }
-                RWSingleOutlinedTextField(
-                    readI18n("multiplayer.room.credits"),
-                    credits?.toString() ?: "",
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 2.dp),
-                    typeInNumberOnly = true,
-                    typeInOnlyInteger = true,
-                ) { credits = it.toIntOrNull() }
-
-                var speedMultiplier: Int? by remember { mutableStateOf(null) }
-                RWSingleOutlinedTextField(
-                    readI18n("multiplayer.room.speedMultiplier"),
-                    speedMultiplier?.toString() ?: "",
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 2.dp),
-                    typeInNumberOnly = true,
-                    typeInOnlyInteger = true,
-                ) { speedMultiplier = it.toIntOrNull() }
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    RWTextButton(readI18n("multiplayer.host"), modifier = Modifier.padding(5.dp)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    RWTextButton(readI18n("multiplayer.host"), modifier = Modifier.padding(4.dp)) {
                         dismiss()
                         game.gameRoom.option = RoomOption(transferMod, modSize.toInt())
                         serverAddress = net.buildQuickHostCommand(
                             enableMods = enableMods,
-                            roomId = roomId.ifBlank { null }.takeIf { hostPrefix == HostCommandPrefix.Q },
+                            roomId = roomId.ifBlank { null },
                             maxPlayer = maxPlayer,
                             unitLimit = unitLimit,
                             credits = credits,
                             speedMultiplier = speedMultiplier,
                             prefix = hostPrefix,
-                            isPublic = isPublicRoom,
                         )
                         isConnecting = true
                     }

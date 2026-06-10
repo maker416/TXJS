@@ -8,6 +8,8 @@
 package io.github.rwpp.widget.v2
 
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -431,15 +433,20 @@ private fun InternalLazyColumnScrollbar(
         }
     }
 
-    val isInAction = listState.isScrollInProgress || isSelected || alwaysShowScrollBar
+    val canScroll by remember {
+        derivedStateOf { lazyListCanScroll(listState) }
+    }
+
+    val isInAction = canScroll && (listState.isScrollInProgress || isSelected || alwaysShowScrollBar)
 
     val isInActionSelectable = remember { mutableStateOf(isInAction) }
-    val durationAnimationMillis = 500
+    val fadeOutDurationMillis = 400
+    val fadeInDurationMillis = if (alwaysShowScrollBar) 75 else 280
     LaunchedEffect(isInAction) {
         if (isInAction) {
             isInActionSelectable.value = true
         } else {
-            delay(timeMillis = durationAnimationMillis.toLong() + hideDelay.toLong(DurationUnit.MILLISECONDS))
+            delay(timeMillis = fadeOutDurationMillis.toLong() + hideDelay.toLong(DurationUnit.MILLISECONDS))
             isInActionSelectable.value = false
         }
     }
@@ -447,10 +454,11 @@ private fun InternalLazyColumnScrollbar(
     val alpha by animateFloatAsState(
         targetValue = if (isInAction) oneHundredPercentDecimal else 0f,
         animationSpec = tween(
-            durationMillis = if (isInAction) 75 else durationAnimationMillis,
-            delayMillis = if (isInAction) isEmpty else hideDelay.toInt(DurationUnit.MILLISECONDS)
+            durationMillis = if (isInAction) fadeInDurationMillis else fadeOutDurationMillis,
+            delayMillis = if (isInAction) isEmpty else hideDelay.toInt(DurationUnit.MILLISECONDS),
+            easing = if (alwaysShowScrollBar) LinearEasing else FastOutSlowInEasing,
         ),
-        label = "scrollbar alpha value"
+        label = "scrollbar alpha value",
     )
 
     BoxWithConstraints(
@@ -560,6 +568,18 @@ private fun InternalLazyColumnScrollbar(
     }
 }
 
+
+internal fun lazyListCanScroll(listState: LazyListState): Boolean {
+    val layoutInfo = listState.layoutInfo
+    if (layoutInfo.totalItemsCount == 0) return false
+    val visibleItems = layoutInfo.visibleItemsInfo
+    if (visibleItems.isEmpty()) return false
+    val first = visibleItems.first()
+    val last = visibleItems.last()
+    if (first.index > 0 || listState.firstVisibleItemScrollOffset > 0) return true
+    if (last.index < layoutInfo.totalItemsCount - 1) return true
+    return last.offset + last.size > layoutInfo.viewportEndOffset - layoutInfo.afterContentPadding
+}
 
 internal fun calculateVisibilityStates(
     listState: LazyListState,
