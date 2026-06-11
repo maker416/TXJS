@@ -10,6 +10,7 @@ package io.github.rwpp.desktop.impl
 import io.github.rwpp.core.Initialization
 import io.github.rwpp.external.Extension
 import io.github.rwpp.external.ExternalHandler
+import io.github.rwpp.external.FileChooseProgress
 import io.github.rwpp.impl.BaseExternalHandlerImpl
 import io.github.rwpp.io.unzipTo
 import io.github.rwpp.resOutputDir
@@ -55,7 +56,10 @@ class ExternalHandlerImpl : BaseExternalHandlerImpl() {
         resource.file.unzipTo(File(resourceOutputDir))
     }
 
-    override fun openFileChooser(onChooseFile: (File) -> Unit) {
+    override fun openFileChooser(
+        onProgress: ((FileChooseProgress) -> Unit)?,
+        onChooseFile: (File) -> Unit
+    ) {
         val fileChooser = JFileChooser()
         val result = fileChooser.showOpenDialog(null)
         if (result == JFileChooser.APPROVE_OPTION) {

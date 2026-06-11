@@ -38,10 +38,12 @@ import io.github.rwpp.config.Settings
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.external.ExternalHandler
+import io.github.rwpp.external.FileChooseProgress
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.mod.Mod
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.io.copyToWithProgress
 import io.github.rwpp.modDir
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.rwpp_core.generated.resources.*
@@ -54,6 +56,98 @@ import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
 import java.io.File
+import kotlin.math.roundToInt
+
+private enum class ModImportStage {
+    Preparing,
+    Importing
+}
+
+private data class ModImportProgress(
+    val stage: ModImportStage,
+    val fileName: String?,
+    val copiedBytes: Long = 0L,
+    val totalBytes: Long? = null
+)
+
+@Composable
+private fun ModImportProgressDialog(progress: ModImportProgress?) {
+    AnimatedAlertDialog(
+        visible = progress != null,
+        onDismissRequest = {},
+        enableDismiss = false
+    ) {
+        val current = progress ?: return@AnimatedAlertDialog
+        BorderCard(modifier = Modifier.width(420.dp).wrapContentHeight()) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                val title = when (current.stage) {
+                    ModImportStage.Preparing -> readI18n("mod.importPreparing")
+                    ModImportStage.Importing -> readI18n("mod.importing")
+                }
+
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                current.fileName?.let {
+                    Text(
+                        it,
+                        modifier = Modifier.padding(top = 10.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1
+                    )
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                val totalBytes = current.totalBytes
+                if (totalBytes != null && totalBytes > 0) {
+                    val progressValue = (current.copiedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
+                    LinearProgressIndicator(
+                        progress = { progressValue },
+                        trackColor = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        "${formatBytes(current.copiedBytes)} / ${formatBytes(totalBytes)} (${(progressValue * 100).roundToInt()}%)",
+                        modifier = Modifier.padding(top = 10.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        trackColor = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (current.copiedBytes > 0) {
+                        Text(
+                            formatBytes(current.copiedBytes),
+                            modifier = Modifier.padding(top = 10.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatBytes(bytes: Long): String {
+    val kb = bytes / 1024.0
+    if (kb < 1024.0) {
+        return "${kb.roundToInt()} KB"
+    }
+
+    val mb = kb / 1024.0
+    return "${(mb * 10).roundToInt() / 10.0} MB"
+}
 
 @Suppress("UnusedMaterial3ScaffoldPaddingParameter")
 @Composable
@@ -76,6 +170,7 @@ fun ModsView(onExit: () -> Unit) {
     var enabledChanged by remember { mutableStateOf(false) }
     var disableAll by remember { mutableStateOf(false) }
     var isApplying by remember { mutableStateOf(false) }
+    var importProgress by remember { mutableStateOf<ModImportProgress?>(null) }
 
     LoadingView(isApplying, onLoaded = {
         isApplying = false
@@ -84,6 +179,8 @@ fun ModsView(onExit: () -> Unit) {
         modManager.modSaveChange()
         true
     }
+
+    ModImportProgressDialog(importProgress)
 
     val enabledMods = remember(enabledChanged, filteredMods.size) {
         filteredMods.filter { it.isEnabled }
@@ -97,14 +194,75 @@ fun ModsView(onExit: () -> Unit) {
 //        permissionHelper.requestExternalStoragePermission()
 //    }
 
+    suspend fun reloadMods() {
+        withContext(Dispatchers.IO) {
+            modManager.modReload()
+        }
+        mods.clear()
+        mods.addAll(modManager.getAllMods())
+        updated = !updated
+    }
+
     fun reload() {
         scope.launch {
-            withContext(Dispatchers.IO) {
-                modManager.modReload()
+            reloadMods()
+        }
+    }
+
+    fun updateFileChooseProgress(progress: FileChooseProgress) {
+        importProgress = ModImportProgress(
+            stage = ModImportStage.Preparing,
+            fileName = progress.fileName,
+            copiedBytes = progress.copiedBytes,
+            totalBytes = progress.totalBytes
+        )
+    }
+
+    fun importModFile(file: File) {
+        if (importProgress?.stage == ModImportStage.Importing) return
+
+        scope.launch {
+            if (!file.extension.equals("rwmod", ignoreCase = true)) {
+                importProgress = null
+                UI.showWarning(readI18n("mod.loadInfo"))
+                return@launch
             }
-            mods.clear()
-            mods.addAll(modManager.getAllMods())
-            updated = !updated
+
+            val target = File(modDir, file.name)
+
+            runCatching {
+                importProgress = ModImportProgress(
+                    stage = ModImportStage.Importing,
+                    fileName = file.name,
+                    totalBytes = file.length().takeIf { it > 0 }
+                )
+
+                var lastProgressUpdate = 0L
+                withContext(Dispatchers.IO) {
+                    file.copyToWithProgress(target, overwrite = false) { copiedBytes, totalBytes ->
+                        val now = System.currentTimeMillis()
+                        if (now - lastProgressUpdate >= 100L || copiedBytes == totalBytes) {
+                            lastProgressUpdate = now
+                            withContext(Dispatchers.Main) {
+                                importProgress = ModImportProgress(
+                                    stage = ModImportStage.Importing,
+                                    fileName = file.name,
+                                    copiedBytes = copiedBytes,
+                                    totalBytes = totalBytes.takeIf { it > 0 }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                importProgress = null
+                reloadMods()
+            }.onSuccess {
+                importProgress = null
+            }.onFailure {
+                importProgress = null
+                UI.showWarning(it.message ?: "Unknown error")
+            }
         }
     }
 
@@ -330,17 +488,12 @@ fun ModsView(onExit: () -> Unit) {
                     },
                     modifier = Modifier.padding(5.dp)
                 ) {
-                    appKoin.get<ExternalHandler>().openFileChooser { file ->
-                        runCatching {
-                            if (file.extension == "rwmod") {
-                                file.copyTo(File("$modDir/${file.name}"))
-                                reload()
-                            } else {
-                                UI.showWarning(readI18n("mod.loadInfo"))
-                            }
-                        }.onFailure {
-                            UI.showWarning(it.message ?: "Unknown error")
-                        }
+                    if (importProgress != null) return@RWTextButton
+
+                    appKoin.get<ExternalHandler>().openFileChooser(
+                        onProgress = { updateFileChooseProgress(it) }
+                    ) { file ->
+                        importModFile(file)
                     }
                 }
 

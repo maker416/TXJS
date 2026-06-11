@@ -51,6 +51,7 @@
         </provider>
         <activity
                 android:name="io.github.rwpp.android.LoadingScreen"
+                android:alwaysRetainTaskState="true"
                 android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -61,6 +62,7 @@
                 android:name="io.github.rwpp.android.MainActivity"
                 android:screenOrientation="behind"
                 android:configChanges="screenSize|orientation|keyboardHidden"
+                android:launchMode="singleTop"
                 android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>

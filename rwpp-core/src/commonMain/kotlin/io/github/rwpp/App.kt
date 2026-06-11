@@ -78,12 +78,15 @@ import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.LineSpinFadeLoaderIndicator
 import io.github.rwpp.widget.v2.bounceClick
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.koin.compose.koinInject
 
 var LocalWindowManager = staticCompositionLocalOf { WindowManager.Large }
+
+private const val ROOM_EXIT_DISCONNECT_DELAY_MS = 120L
 
 @Suppress("UnusedBoxWithConstraintsScope", "UnusedMaterial3ScaffoldPaddingParameter")
 @Composable
@@ -96,6 +99,8 @@ fun App(
     val settings = koinInject<Settings>()
     val net = koinInject<Net>()
     var isSinglePlayerGame by remember { mutableStateOf(false) }
+    var roomExitInProgress by remember { mutableStateOf(false) }
+    val appScope = rememberCoroutineScope()
 
     var checkUpdateDialogVisible by remember { mutableStateOf(false) }
     var profile by remember { mutableStateOf<LatestVersionProfile?>(null) }
@@ -329,15 +334,31 @@ fun App(
                     exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
                 ) {
                     MultiplayerRoomView(isSinglePlayerGame) {
-                        if(!isSinglePlayerGame) {
-                            game.cancelJoinServer()
-                            showMultiplayerView = true
-                        }
+                        if (roomExitInProgress) return@MultiplayerRoomView
 
-                        game.onBanUnits(listOf())
-                        game.gameRoom.disconnect()
+                        val returnToMultiplayerView = !isSinglePlayerGame
+                        roomExitInProgress = true
 
                         showRoomView = false
+                        if (returnToMultiplayerView) showMultiplayerView = true
+
+                        appScope.launch {
+                            try {
+                                withFrameNanos { }
+                                if (settings.enableAnimations) {
+                                    delay(ROOM_EXIT_DISCONNECT_DELAY_MS)
+                                }
+
+                                if (returnToMultiplayerView) {
+                                    game.cancelJoinServer()
+                                }
+
+                                game.onBanUnits(listOf())
+                                game.gameRoom.disconnect()
+                            } finally {
+                                roomExitInProgress = false
+                            }
+                        }
                     }
                 }
 

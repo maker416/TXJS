@@ -10,6 +10,7 @@ package io.github.rwpp.android.impl
 import android.content.Context
 import android.content.Intent
 import io.github.rwpp.R
+import io.github.rwpp.android.PickFileAction
 import io.github.rwpp.android.dexFolder
 import io.github.rwpp.android.fileChooser
 import io.github.rwpp.android.loadDex
@@ -17,6 +18,7 @@ import io.github.rwpp.android.pickFileActions
 import io.github.rwpp.core.Initialization
 import io.github.rwpp.external.Extension
 import io.github.rwpp.external.ExternalHandler
+import io.github.rwpp.external.FileChooseProgress
 import io.github.rwpp.impl.BaseExternalHandlerImpl
 import io.github.rwpp.io.unzipTo
 import io.github.rwpp.logger
@@ -74,8 +76,11 @@ class ExternalHandlerImpl : BaseExternalHandlerImpl() {
         resource.file.unzipTo(File(resourceOutputDir))
     }
 
-    override fun openFileChooser(onChooseFile: (File) -> Unit) {
-        pickFileActions += onChooseFile
+    override fun openFileChooser(
+        onProgress: ((FileChooseProgress) -> Unit)?,
+        onChooseFile: (File) -> Unit
+    ) {
+        pickFileActions += PickFileAction(onProgress, onChooseFile)
         val intent = Intent(Intent.ACTION_GET_CONTENT)
         intent.setType("*/*") // 设置文件类型为任意类型
         intent.addCategory(Intent.CATEGORY_OPENABLE) // 添加可打开的文件分类

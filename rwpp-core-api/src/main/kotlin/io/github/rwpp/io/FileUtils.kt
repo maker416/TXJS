@@ -23,6 +23,44 @@ fun File.calculateSize(): Long {
     return size
 }
 
+suspend fun File.copyToWithProgress(
+    target: File,
+    overwrite: Boolean = false,
+    bufferSize: Int = DEFAULT_BUFFER_SIZE,
+    onProgress: suspend (copiedBytes: Long, totalBytes: Long) -> Unit
+): File {
+    if (!exists()) {
+        throw kotlin.io.NoSuchFileException(this, reason = "The source file does not exist.")
+    }
+    if (target.exists()) {
+        if (!overwrite) {
+            throw kotlin.io.FileAlreadyExistsException(this, target, "The destination file already exists.")
+        } else if (!target.delete()) {
+            throw kotlin.io.FileAlreadyExistsException(this, target, "Tried to overwrite the destination, but could not delete it.")
+        }
+    }
+
+    target.parentFile?.mkdirs()
+
+    val totalBytes = length()
+    var copiedBytes = 0L
+    onProgress(copiedBytes, totalBytes)
+
+    inputStream().use { input ->
+        target.outputStream().use { output ->
+            val buffer = ByteArray(bufferSize)
+            var read: Int
+            while (input.read(buffer).also { read = it } != -1) {
+                output.write(buffer, 0, read)
+                copiedBytes += read
+                onProgress(copiedBytes, totalBytes)
+            }
+        }
+    }
+
+    return target
+}
+
 fun File.unzipTo(targetFile: File, from: String = "") {
     val zipFile = ZipFile(this)
     for(entry in zipFile.entries()) {

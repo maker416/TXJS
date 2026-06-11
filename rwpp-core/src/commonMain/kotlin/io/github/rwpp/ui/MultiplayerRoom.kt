@@ -1871,16 +1871,14 @@ private fun CompactMapSettingsPanel(
                             .defaultMinSize(minHeight = CompactHostButtonMinHeight),
                         onClick = onStart,
                     )
-                    if (!isSandboxGame) {
-                        CompactRoomTextButton(
-                            readI18n("multiplayer.room.addAI") + if (isDesktop) "(A)" else "",
-                            modifier = Modifier
-                                .weight(1f)
-                                .defaultMinSize(minHeight = CompactHostButtonMinHeight),
-                            onLongClick = onAddAIMany,
-                            onClick = onAddAI,
-                        )
-                    }
+                    CompactRoomTextButton(
+                        readI18n("multiplayer.room.addAI") + if (isDesktop) "(A)" else "",
+                        modifier = Modifier
+                            .weight(1f)
+                            .defaultMinSize(minHeight = CompactHostButtonMinHeight),
+                        onLongClick = onAddAIMany,
+                        onClick = onAddAI,
+                    )
                 }
                 if (showPublishButton) {
                     CompactRoomTextButton(

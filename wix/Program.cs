@@ -12,7 +12,8 @@ namespace RSetup
 {
     public class Program
     {
-        private static string RootDir => Directory.GetCurrentDirectory();
+        private static readonly string RootDir = ResolveRootDir();
+        private static readonly string WixOutputDir = Path.Combine(RootDir, "build", "tmp", "wix");
         private const string ProductName = "RWJS";
         private const string RwppRegistryKey = @"SOFTWARE\Minxyzgo\RWPP";
         private const string RwppInstallDirValue = "InstallDir";
@@ -54,6 +55,7 @@ namespace RSetup
                 new Dir($@"%ProgramFiles%\Minxyzgo\{ProductName}", entities));
 
             project.SourceBaseDir = RootDir;
+            project.OutDir = WixOutputDir;
           //  project.Scope = InstallScope.perMachine;
             project.Platform = Platform.x64;
             project.DefaultFeature = appFeature;
@@ -122,8 +124,9 @@ namespace RSetup
             project.DefaultRefAssemblies.Add($@"{RootDir}\wix\bin\debug\net472\Wpf.Ui.dll");
 
             EnsureWixPrerequisites();
+            ResetOutputDirectory();
 
-            var msiFile = project.BuildMsi();
+            var msiFile = project.BuildMsi(Path.Combine(WixOutputDir, $"{ProductName}.msi"));
             if (string.IsNullOrEmpty(msiFile) || !File.Exists(msiFile))
             {
                 Console.Error.WriteLine("Error: BuildMsi failed, no MSI file was produced.");
@@ -131,7 +134,7 @@ namespace RSetup
                 return;
             }
 
-            var msiExe = Path.GetFullPath($@"{RootDir}\{ProductName}-Setup.exe");
+            var msiExe = Path.Combine(WixOutputDir, $"{ProductName}-Setup.exe");
 
             (int exitCode, string output) = msiFile.CompleSelfHostedMsi(msiExe);
 
@@ -139,6 +142,56 @@ namespace RSetup
             {
                 Console.Error.WriteLine(output);
                 Environment.Exit(exitCode);
+            }
+        }
+
+        private static string ResolveRootDir()
+        {
+            string root = FindRepoRoot(Directory.GetCurrentDirectory()) ?? FindRepoRoot(AppContext.BaseDirectory);
+            if (!string.IsNullOrEmpty(root))
+                return root;
+
+            throw new DirectoryNotFoundException("Error: 无法定位项目根目录。");
+        }
+
+        private static string FindRepoRoot(string startPath)
+        {
+            if (string.IsNullOrWhiteSpace(startPath))
+                return null;
+
+            DirectoryInfo current = new DirectoryInfo(Path.GetFullPath(startPath));
+            while (current != null)
+            {
+                bool looksLikeRepoRoot =
+                    File.Exists(Path.Combine(current.FullName, "settings.gradle.kts")) &&
+                    Directory.Exists(Path.Combine(current.FullName, "wix")) &&
+                    Directory.Exists(Path.Combine(current.FullName, "rwpp-desktop"));
+
+                if (looksLikeRepoRoot)
+                    return current.FullName;
+
+                current = current.Parent;
+            }
+
+            return null;
+        }
+
+        private static void ResetOutputDirectory()
+        {
+            string outputDir = Path.GetFullPath(WixOutputDir);
+            string buildTmpDir = Path.GetFullPath(Path.Combine(RootDir, "build", "tmp"));
+
+            if (!outputDir.StartsWith(buildTmpDir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"Error: 非法输出目录: {outputDir}");
+
+            Directory.CreateDirectory(outputDir);
+
+            foreach (string entry in Directory.GetFileSystemEntries(outputDir))
+            {
+                if (Directory.Exists(entry))
+                    Directory.Delete(entry, true);
+                else
+                    File.Delete(entry);
             }
         }
 

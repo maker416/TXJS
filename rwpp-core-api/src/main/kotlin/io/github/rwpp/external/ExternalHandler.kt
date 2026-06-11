@@ -28,7 +28,10 @@ interface ExternalHandler : KoinComponent, Initialization {
 
     fun getUsingResource(): Extension?
 
-    fun openFileChooser(onChooseFile: (File) -> Unit)
+    fun openFileChooser(
+        onProgress: ((FileChooseProgress) -> Unit)? = null,
+        onChooseFile: (File) -> Unit
+    )
 
   //  fun loadExtensionClass(extension: Extension): ClassLoader?
 

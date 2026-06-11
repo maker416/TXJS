@@ -15,12 +15,18 @@ import android.os.Build
 import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import android.text.TextUtils
+import io.github.rwpp.external.FileChooseProgress
 import java.io.File
 import java.io.FileOutputStream
 
 object FileHelper {
-    fun getRealPathFromURI(context: Context, uri: Uri): String? {
+    fun getRealPathFromURI(
+        context: Context,
+        uri: Uri,
+        onProgress: ((FileChooseProgress) -> Unit)? = null
+    ): String? {
         var path: String? = ""
         try {
             path = processUri(context, uri)
@@ -28,7 +34,7 @@ object FileHelper {
             exception.printStackTrace()
         }
         if (TextUtils.isEmpty(path)) {
-            path = copyFile(context, uri)
+            path = copyFile(context, uri, onProgress)
         }
         return path
     }
@@ -99,7 +105,11 @@ object FileHelper {
         return path
     }
 
-    fun copyFile(context: Context, uri: Uri): String? {
+    fun copyFile(
+        context: Context,
+        uri: Uri,
+        onProgress: ((FileChooseProgress) -> Unit)? = null
+    ): String? {
         try {
             val attachment = context.contentResolver.openInputStream(uri)
             if (attachment != null) {
@@ -107,9 +117,16 @@ object FileHelper {
                 if (filename != null) {
                     val file = File(context.cacheDir, filename)
                     val tmp = FileOutputStream(file)
-                    val buffer = ByteArray(1024)
-                    while (attachment.read(buffer) > 0) {
-                        tmp.write(buffer)
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    val totalBytes = getContentLength(context.contentResolver, uri)
+                    var copiedBytes = 0L
+                    onProgress?.invoke(FileChooseProgress(filename, copiedBytes, totalBytes))
+
+                    var read: Int
+                    while (attachment.read(buffer).also { read = it } != -1) {
+                        tmp.write(buffer, 0, read)
+                        copiedBytes += read
+                        onProgress?.invoke(FileChooseProgress(filename, copiedBytes, totalBytes))
                     }
                     tmp.close()
                     attachment.close()
@@ -120,6 +137,22 @@ object FileHelper {
             return null
         }
         return null
+    }
+
+    private fun getContentLength(resolver: ContentResolver, uri: Uri): Long? {
+        resolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) {
+                    val size = cursor.getLong(sizeIndex)
+                    if (size >= 0) return size
+                }
+            }
+        }
+
+        return resolver.openAssetFileDescriptor(uri, "r")?.use { descriptor ->
+            descriptor.length.takeIf { it >= 0 }
+        }
     }
 
     private fun getContentName(resolver: ContentResolver, uri: Uri): String? {

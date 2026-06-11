@@ -34,6 +34,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.lifecycleScope
 import com.corrodinggames.rts.appFramework.d
 import io.github.rwpp.App
 import io.github.rwpp.android.impl.GameEngine
@@ -44,6 +45,10 @@ import io.github.rwpp.config.Settings
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.QuitGameEvent
 import io.github.rwpp.event.events.ReturnMainMenuEvent
+import io.github.rwpp.ui.UI
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.koin.compose.KoinContext
 import java.io.File
 
@@ -76,13 +81,28 @@ class MainActivity : ComponentActivity() {
             ActivityResultContracts.StartActivityForResult()
         ) { result ->
             val uri = result.data?.data
+            val actions = pickFileActions.toList()
+            pickFileActions.clear()
+
             appKoin.get<PermissionHelper>().requestManageFilePermission {
-                if (uri != null) {
-                    pickFileActions.forEach { it(File(FileHelper.getRealPathFromURI(this, uri))) }
+                if (uri != null && actions.isNotEmpty()) {
+                    lifecycleScope.launch {
+                        val file = withContext(Dispatchers.IO) {
+                            FileHelper.getRealPathFromURI(this@MainActivity, uri) { progress ->
+                                runOnUiThread {
+                                    actions.forEach { it.onProgress?.invoke(progress) }
+                                }
+                            }?.let { File(it) }
+                        }
+
+                        if (file != null) {
+                            actions.forEach { it.onChooseFile(file) }
+                        } else {
+                            UI.showWarning("Unable to open selected file")
+                        }
+                    }
                 }
             }
-
-            pickFileActions.clear()
         }
 
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
@@ -109,7 +129,6 @@ class MainActivity : ComponentActivity() {
 
         if(d.b(this, true, true)) {
             gameView = d.b(this)
-            activityResume()
         }
 
         setContent {
@@ -167,11 +186,10 @@ class MainActivity : ComponentActivity() {
         super.onPause()
         if(gameView != null) GameEngine.t()?.b(gameView)
     }
-//
-//    override fun onResume() {
-//        super.onResume()
-//        activityResume()
-//    }
+    override fun onResume() {
+        super.onResume()
+        if(gameView != null) activityResume()
+    }
 
     override fun onStop() {
         super.onStop()

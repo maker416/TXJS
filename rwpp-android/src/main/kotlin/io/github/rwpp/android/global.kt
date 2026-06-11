@@ -21,6 +21,7 @@ import io.github.rwpp.android.impl.GameEngine
 import io.github.rwpp.android.impl.GamePaintImpl
 import io.github.rwpp.android.impl.PlayerInternal
 import io.github.rwpp.android.impl.RectImpl
+import io.github.rwpp.external.FileChooseProgress
 import io.github.rwpp.game.base.GamePaint
 import io.github.rwpp.game.base.Rect
 import io.github.rwpp.utils.Reflect
@@ -49,7 +50,12 @@ var roomMods = arrayOf<String>()
 var bannedUnitList: List<String> = listOf()
 lateinit var koinApplication: KoinApplication
 lateinit var dexFolder: File
-val pickFileActions = mutableListOf<(File) -> Unit>()
+data class PickFileAction(
+    val onProgress: ((FileChooseProgress) -> Unit)?,
+    val onChooseFile: (File) -> Unit
+)
+
+val pickFileActions = mutableListOf<PickFileAction>()
 var gameLoaded = false
 val uiHandler by lazy {
     Handler(Looper.getMainLooper())
@@ -57,14 +63,26 @@ val uiHandler by lazy {
 val cachePlayerSet = CopyOnWriteArraySet<PlayerInternal>()
 val loadingThread by lazy {
     Thread({
-        while (true) {
-            val msg = GameEngine.t()?.dF
-            if (msg != null) {
-                message = msg
-                loadingMessage = msg
+        var lastMessage: String? = null
+        while (!Thread.currentThread().isInterrupted) {
+            val msg = runCatching { GameEngine.t()?.dF }.getOrNull()
+            if (msg != null && msg != lastMessage) {
+                lastMessage = msg
+                uiHandler.post {
+                    message = msg
+                    loadingMessage = msg
+                }
+            }
+            try {
+                Thread.sleep(100L)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
             }
         }
-    }, "LoadingContextThread").apply { start() }
+    }, "LoadingContextThread").apply {
+        isDaemon = true
+        start()
+    }
 }
 
 

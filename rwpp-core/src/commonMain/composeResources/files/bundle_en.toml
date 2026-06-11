@@ -139,6 +139,11 @@ enabled = "Enabled"
 disabled = "Disabled"
 inputFile = "Input File"
 loadInfo = "Please load file with extension '.rwmod'"
+importPreparing = "Preparing import"
+importing = "Importing mod"
+loadingUnits = "Loading units"
+loadingMods = "Loading mods"
+loadingStage = "Loading {0}"
 removeInfo = "The deletion of the mod has failed, please disable it and restart rwpp to try again"
 
 [browser]

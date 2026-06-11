@@ -140,6 +140,11 @@ enabled = "已启用"
 disabled = "已禁用"
 inputFile = "导入文件"
 loadInfo = "请导入.rwmod文件"
+importPreparing = "正在准备导入"
+importing = "正在导入模组"
+loadingUnits = "正在加载单位"
+loadingMods = "正在加载模组"
+loadingStage = "正在加载 {0}"
 removeInfo = "删除模组失败，请禁用后并重启重试"
 
 [browser]

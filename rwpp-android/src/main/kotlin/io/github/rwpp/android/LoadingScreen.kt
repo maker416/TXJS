@@ -49,8 +49,6 @@ import io.github.rwpp.widget.RWSelectionColors
 import io.github.rwpp.widget.v2.TitleBrush
 import javassist.android.DexFile
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.compose.KoinContext
 import java.io.File
@@ -58,6 +56,18 @@ import kotlin.system.exitProcess
 
 
 class LoadingScreen : ComponentActivity() {
+    private fun isGameEngineReady(): Boolean {
+        return gameLoaded && runCatching { GameEngine.t() }.getOrNull() != null
+    }
+
+    private fun openMainActivity() {
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        )
+        finish()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
@@ -100,7 +110,13 @@ class LoadingScreen : ComponentActivity() {
                                     }
                                 }
                             } else {
-                                if (requireReloadingLib) {
+                                if (isGameEngineReady()) {
+                                    MenuLoadingView(message)
+
+                                    LaunchedEffect(Unit) {
+                                        openMainActivity()
+                                    }
+                                } else if (requireReloadingLib) {
                                     var buildState by remember {
                                         mutableStateOf(InjectBuildUiState.starting())
                                     }
@@ -176,7 +192,8 @@ class LoadingScreen : ComponentActivity() {
                                     MenuLoadingView(message)
 
                                     LaunchedEffect(Unit) {
-                                        withContext(Dispatchers.IO) {
+                                        message = "loading"
+                                        val engineInitSuccess = withContext(Dispatchers.IO) {
                                             appKoin.get<AppContext>().init()
                                             runCatching {
                                                 val mapsDir = File(
@@ -191,8 +208,9 @@ class LoadingScreen : ComponentActivity() {
                                                 Log.e("RWPP", "cleanup generated_ maps failed", it)
                                             }
 
-                                            var engineInitSuccess = false
-                                            async {
+                                            if (isGameEngineReady()) {
+                                                true
+                                            } else {
                                                 try {
                                                     val engineImpl = GameEngine.dv.a(this@LoadingScreen)
                                                     Reflect.reifiedSet<GameEngine>(null, "ak", engineImpl)
@@ -203,23 +221,21 @@ class LoadingScreen : ComponentActivity() {
                                                         configIO.setGameConfig("hasSelectedAStorageType", true)
                                                         configIO.setGameConfig("storageType", 0)
                                                     }
-                                                    engineInitSuccess = true
+                                                    true
                                                 } catch (e: Exception) {
+                                                    Reflect.reifiedSet<GameEngine>(null, "ak", null)
                                                     Log.e("RWPP", "GameEngine init failed", e)
+                                                    false
                                                 }
-                                            }.await()
-
-                                            if (engineInitSuccess) {
-                                                gameLoaded = true
-                                                GameLoadedEvent().broadcastIn()
-                                                startActivityForResult(
-                                                    Intent(this@LoadingScreen, MainActivity::class.java),
-                                                    0
-                                                )
-                                                finish()
-                                            } else {
-                                                message = "Game engine init failed, please restart"
                                             }
+                                        }
+
+                                        if (engineInitSuccess) {
+                                            gameLoaded = true
+                                            GameLoadedEvent().broadcastIn()
+                                            openMainActivity()
+                                        } else {
+                                            message = "Game engine init failed, please restart"
                                         }
                                     }
                                 }
