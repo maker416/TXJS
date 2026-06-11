@@ -6,6 +6,7 @@ using System.Text;
 using Microsoft.Win32;
 using RSetup.RDialogs;
 using WixSharp;
+using WixToolset.Dtf.WindowsInstaller;
 using File = System.IO.File;
 
 namespace RSetup
@@ -117,6 +118,7 @@ namespace RSetup
             project.UILoaded += e => e.ManagedUI.SetSize(800, 600);
             project.UILoaded += Msi_UILoad;
             project.Load += Msi_Load;
+            project.BeforeInstall += Msi_BeforeInstall;
             project.AfterInstall += Msi_AfterInstall;
             
             project.MajorUpgradeStrategy = MajorUpgradeStrategy.Default;
@@ -260,22 +262,7 @@ namespace RSetup
         }
 
         private static string NormalizeInstallDir(string path)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-                return null;
-
-            string normalized = path.Trim().Trim('"');
-            try
-            {
-                normalized = Path.GetFullPath(normalized);
-            }
-            catch
-            {
-                return null;
-            }
-
-            return normalized.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        }
+            => RustedWarfareInstallDir.Normalize(path);
 
         private static bool ExistsLauncherExe(string normalized) =>
             File.Exists(Path.Combine(normalized, "RWJS.exe")) ||
@@ -387,6 +374,44 @@ namespace RSetup
             
         }
 
+        private static void Msi_BeforeInstall(SetupEventArgs e)
+        {
+            if (e.IsUninstalling || e.Session.Property("RWPP_UPDATE_MODE") == "1")
+                return;
+
+            if (!e.IsInstalling && !e.IsModifying && !e.IsRepairing)
+                return;
+
+            string installDir = ResolveSessionInstallDir(e);
+            if (RustedWarfareInstallDir.TryFindOriginalFeature(installDir, out string normalized, out string feature, out string reason))
+            {
+                WriteInstallLog($"Install dir validation passed: {normalized}, feature={feature}");
+                e.InstallDir = normalized;
+                return;
+            }
+
+            string message = RustedWarfareInstallDir.BuildInvalidPathMessage(installDir, reason);
+            WriteInstallLog($"Install dir validation failed: {message.Replace(Environment.NewLine, " | ")}");
+            e.Result = ActionResult.Failure;
+        }
+
+        private static string ResolveSessionInstallDir(SetupEventArgs e)
+        {
+            string installDir = e.InstallDir;
+            if (!string.IsNullOrWhiteSpace(installDir))
+                return installDir;
+
+            string uiInstallDirProperty = e.Session.Property("WixSharp_UI_INSTALLDIR");
+            if (!string.IsNullOrWhiteSpace(uiInstallDirProperty))
+            {
+                installDir = e.Session.Property(uiInstallDirProperty);
+                if (!string.IsNullOrWhiteSpace(installDir))
+                    return installDir;
+            }
+
+            installDir = e.Session.Property("INSTALLDIR");
+            return installDir;
+        }
 
         private static void Msi_UILoad(SetupEventArgs e)
         {
@@ -428,9 +453,14 @@ namespace RSetup
 
             // 首次安装：自动搜寻 Rusted Warfare 路径作为默认安装目录
             var rwDir = checkInstalled("Rusted Warfare - RTS");
-            if (rwDir != null)
+            if (RustedWarfareInstallDir.TryFindOriginalFeature(rwDir, out string normalizedRwDir, out string feature, out string reason))
             {
-                e.InstallDir = rwDir;
+                e.InstallDir = normalizedRwDir;
+                WriteInstallLog($"Detected Rusted Warfare install dir: {normalizedRwDir}, feature={feature}");
+            }
+            else if (!string.IsNullOrWhiteSpace(rwDir))
+            {
+                WriteInstallLog($"Ignored Rusted Warfare registry dir because validation failed: {rwDir}; {reason}");
             }
         }
 

@@ -7,11 +7,11 @@
     xmlns:wixsharp="clr-namespace:WixSharp.UI.WPF;assembly=WixSharp.UI.WPF"
     d:DesignHeight="408"
     d:DesignWidth="512"
-    DialogTitle="[ProductName] Setup"
+    DialogTitle="选择原版铁锈战争游戏目录"
     mc:Ignorable="d">
     <Grid x:Name="Root">
         <Grid.RowDefinitions>
-            <RowDefinition Height="60" />
+            <RowDefinition Height="88" />
             <RowDefinition Height="*" />
             <RowDefinition Height="53" />
         </Grid.RowDefinitions>
@@ -39,24 +39,23 @@
                     <TextBlock
                         Grid.Column="0"
                         FontSize="12"
-                        FontWeight="Bold">
-                        [InstallDirDlgTitle]
-                    </TextBlock>
+                        FontWeight="Bold"
+                        Text="选择原版铁锈战争游戏目录" />
                     <TextBlock
                         x:Name="DialogDescription"
                         Margin="17,5"
                         VerticalAlignment="Stretch"
-                        TextWrapping="WrapWithOverflow">
-                        [InstallDirDlgDescription]
-                    </TextBlock>
+                        Text="RWJS 是启动器，请把它安装到原版 Rusted Warfare 根目录。示例：D:\APP\Steam\steamapps\common\Rusted Warfare"
+                        TextWrapping="Wrap" />
                 </StackPanel>
             </Grid>
         </Border>
 
         <StackPanel Grid.Row="1" Margin="20,10">
-            <TextBlock MinHeight="35" TextWrapping="WrapWithOverflow">
-                [InstallDirDlgFolderLabel]
-            </TextBlock>
+            <TextBlock
+                MinHeight="58"
+                Text="请确认下面路径是原版游戏目录。安装器会检测 steam_appid、原版 exe、game-lib.jar、assets/res/libs 等特征；至少命中一个即可继续。"
+                TextWrapping="Wrap" />
             <TextBox
                 x:Name="InstallDirPath"
                 Height="33"
@@ -69,7 +68,7 @@
                 MinWidth="140"
                 HorizontalAlignment="Left"
                 Click="ChangeInstallDir_Click"
-                Content="[InstallDirDlgChange]" />
+                Content="浏览..." />
         </StackPanel>
 
         <Border
