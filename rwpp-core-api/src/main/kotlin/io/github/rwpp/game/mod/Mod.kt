@@ -7,7 +7,56 @@
 
 package io.github.rwpp.game.mod
 
+import io.github.rwpp.modDir
 import java.io.File
+
+enum class ModSourceType {
+    RwMod,
+    Folder,
+    Ini,
+    Unknown
+}
+
+fun detectModSourceType(file: File): ModSourceType {
+    return when {
+        file.extension.equals("rwmod", ignoreCase = true) -> ModSourceType.RwMod
+        file.isDirectory -> ModSourceType.Folder
+        file.extension.equals("ini", ignoreCase = true) -> ModSourceType.Ini
+        else -> ModSourceType.Unknown
+    }
+}
+
+fun deleteModFileSafely(
+    file: File,
+    allowedRoots: List<File> = listOf(File(modDir), File("mods/units"), File("units"))
+): Boolean {
+    return runCatching {
+        if (!file.exists()) return@runCatching false
+
+        val target = file.canonicalFile
+        val isInAllowedRoot = allowedRoots.any { root ->
+            val allowedRoot = root.canonicalFile
+            target != allowedRoot && target.isInside(allowedRoot)
+        }
+
+        if (!isInAllowedRoot) return@runCatching false
+
+        if (target.isDirectory) {
+            target.deleteRecursively()
+        } else {
+            target.delete()
+        }
+    }.getOrDefault(false)
+}
+
+private fun File.isInside(parent: File): Boolean {
+    var current: File? = this
+    while (current != null) {
+        if (current == parent) return true
+        current = current.parentFile
+    }
+    return false
+}
 
 interface Mod {
     val id: Int
@@ -17,12 +66,12 @@ interface Mod {
     val errorMessage: String?
     var isEnabled: Boolean
     val path: String
+    val sourceType: ModSourceType
+        get() = detectModSourceType(File(path))
     //var isNetworkMod: Boolean
 
     fun tryDelete(): Boolean {
-        return runCatching {
-            File(path).delete()
-        }.getOrNull() == true
+        return deleteModFileSafely(File(path))
     }
 
     fun getRamUsed(): String

@@ -153,6 +153,10 @@ empty = "No matching mods"
 ramUsage = "RAM: {0}"
 showMore = "... More"
 showLess = " Less"
+sourceTypeRwMod = ".rwmod"
+sourceTypeFolder = "Folder"
+sourceTypeIni = ".ini"
+sourceTypeUnknown = "Unknown"
 
 [browser]
 user = "User"
@@ -296,10 +300,16 @@ exiting = "Exiting…"
 [inject]
 title = "First-time setup"
 restartTitle = "Setup complete"
-restartHint = "Tap Exit below, then open RWPP again from your launcher for changes to take effect."
+restartHint = "Setup is ready. Restarting automatically to apply changes."
+restarting = "Restarting automatically in {0}s…"
+restartNow = "Restart now"
 failedTitle = "Setup failed"
+failedHint = "Tap Copy to save the full log and send it to the developers."
+engineFailedTitle = "Game engine failed to start"
 viewDetails = "View details"
 hideDetails = "Hide details"
+copyDetails = "Copy"
+copied = "Copied"
 exit = "Exit"
 
 [inject.step]

@@ -35,11 +35,16 @@ import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.GameLoadedEvent
 import io.github.rwpp.generatedLibDir
+import io.github.rwpp.i18n.I18nType
+import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.inject.GameLibraries
 import io.github.rwpp.inject.runtime.Builder
 import io.github.rwpp.inject.runtime.Builder.logger
+import io.github.rwpp.ui.InjectBuildOverall
 import io.github.rwpp.ui.InjectBuildUiState
 import io.github.rwpp.ui.InjectSetupScreen
+import io.github.rwpp.ui.clearInjectLog
+import io.github.rwpp.ui.injectLogText
 import io.github.rwpp.ui.logStr
 import io.github.rwpp.utils.Reflect
 import io.github.rwpp.widget.ConstraintWindowManager
@@ -57,6 +62,18 @@ import kotlin.system.exitProcess
 
 
 class LoadingScreen : ComponentActivity() {
+    private fun logGeneratedArtifactState() {
+        val generatedLib = File(generatedLibDir, "android-game-lib.jar")
+        val generatedDex = File(dexFolder, "classes.dex")
+        logger?.info(
+            "Generated artifact state: " +
+                    "libExists=${generatedLib.exists()}, libSize=${generatedLib.length()}, " +
+                    "dexExists=${generatedDex.exists()}, dexSize=${generatedDex.length()}, " +
+                    "generatedLibDir=$generatedLibDir, dexFolder=${dexFolder.absolutePath}, " +
+                    "requireReloadingLib=$requireReloadingLib"
+        )
+    }
+
     private fun isGameEngineReady(): Boolean {
         return gameLoaded && runCatching { GameEngine.t() }.getOrNull() != null
     }
@@ -110,6 +127,11 @@ class LoadingScreen : ComponentActivity() {
                             LocalTextSelectionColors provides RWSelectionColors,
                             LocalWindowManager provides ConstraintWindowManager(maxWidth, maxHeight)
                         ) {
+                            // 失败诊断状态：构建失败或引擎初始化失败时填充，驱动统一的可复制日志界面。
+                            var diagnosticsReport by remember { mutableStateOf<String?>(null) }
+                            var engineInitError by remember { mutableStateOf<Throwable?>(null) }
+                            var showEngineFailure by remember { mutableStateOf(false) }
+
                             if (!hasPermission) {
                                 LaunchedEffect(Unit) {
                                     Toast.makeText(
@@ -131,13 +153,13 @@ class LoadingScreen : ComponentActivity() {
                                     LaunchedEffect(Unit) {
                                         openMainActivity()
                                     }
-                                } else if (requireReloadingLib) {
+                                } else if (requireReloadingLib && !showEngineFailure) {
                                     var buildState by remember {
                                         mutableStateOf(InjectBuildUiState.starting())
                                     }
 
                                     LaunchedEffect(Unit) {
-                                        logStr.value = AnnotatedString("")
+                                        clearInjectLog()
                                         withContext(Dispatchers.IO) {
                                             runCatching {
                                                 withContext(Dispatchers.Main) {
@@ -154,8 +176,7 @@ class LoadingScreen : ComponentActivity() {
                                                 tempJar.writeBytes(resource.readBytes())
                                                 resource.close()
 
-                                                // Application init can short-circuit this while storage permission is missing.
-                                                // Always reload the root inject config before applying it.
+                                                // Always reload the root inject config from the APK before applying it.
                                                 Builder.prepareReloadingLib()
 
                                                 GameLibraries.defClassPool.appendDalvikClassPath()
@@ -177,25 +198,44 @@ class LoadingScreen : ComponentActivity() {
                                                 dex.addJarFile(libPath)
                                                 dex.writeFile("${dexFolder.absolutePath}/classes.dex")
                                                 logger?.logging("Successfully compile dex")
+                                                logGeneratedArtifactState()
 
+                                                // 防死循环：记录连续重建次数，超过上限则停在诊断界面而非继续自动重启。
+                                                val attempts = incrementRebuildAttemptCount()
                                                 withContext(Dispatchers.Main) {
-                                                    buildState = buildState.buildSuccess()
+                                                    buildState = if (attempts > MAX_REBUILD_ATTEMPTS) {
+                                                        diagnosticsReport = buildDiagnosticsReport(
+                                                            "injectLoopGuard",
+                                                            IllegalStateException("连续重建 $attempts 次仍未成功，已停止自动重启")
+                                                        )
+                                                        buildState.buildFailed(
+                                                            IllegalStateException("Rebuild loop guard tripped after $attempts attempts")
+                                                        )
+                                                    } else {
+                                                        buildState.buildSuccess()
+                                                    }
                                                 }
                                             }.onFailure { error ->
+                                                diagnosticsReport = buildDiagnosticsReport("inject", error)
                                                 withContext(Dispatchers.Main) {
                                                     buildState = buildState.buildFailed(error)
                                                 }
                                                 logger?.error("failed: ${error.stackTraceToString()}")
+                                                logGeneratedArtifactState()
                                             }
                                         }
                                     }
 
                                     val buildLog by logStr
+                                    val copyLogText by injectLogText
 
                                     RWPPTheme(true) {
                                         InjectSetupScreen(
                                             uiState = buildState,
                                             log = buildLog,
+                                            copyLogText = diagnosticsReport ?: copyLogText,
+                                            autoRestart = true,
+                                            onRestart = { scheduleAppRestart(this@LoadingScreen) },
                                             onExit = {
                                                 finishAffinity()
                                                 exitProcess(0)
@@ -203,6 +243,28 @@ class LoadingScreen : ComponentActivity() {
                                         )
                                     }
 
+                                } else if (showEngineFailure) {
+                                    val failureLog = remember(diagnosticsReport) {
+                                        AnnotatedString(diagnosticsReport.orEmpty())
+                                    }
+                                    RWPPTheme(true) {
+                                        InjectSetupScreen(
+                                            uiState = InjectBuildUiState(
+                                                overall = InjectBuildOverall.Failed,
+                                                errorSummary = engineInitError?.message?.take(200)
+                                                    ?: engineInitError?.let { it::class.simpleName },
+                                            ),
+                                            log = failureLog,
+                                            copyLogText = diagnosticsReport.orEmpty(),
+                                            title = readI18n("inject.engineFailedTitle", I18nType.RWPP),
+                                            showSteps = false,
+                                            onRestart = { scheduleAppRestart(this@LoadingScreen) },
+                                            onExit = {
+                                                finishAffinity()
+                                                exitProcess(0)
+                                            },
+                                        )
+                                    }
                                 } else {
                                     MenuLoadingView(message)
 
@@ -227,21 +289,32 @@ class LoadingScreen : ComponentActivity() {
                                                 true
                                             } else {
                                                 try {
-                                                    val engineImpl = GameEngine.dv.a(this@LoadingScreen)
-                                                    Reflect.reifiedSet<GameEngine>(null, "ak", engineImpl)
-                                                    loadingThread
-                                                    prepareDefaultStorageType()
-                                                    engineImpl.a(this@LoadingScreen as Context)
-                                                    val configIO = appKoin.get<ConfigIO>()
-                                                    if (!configIO.getGameConfig<Boolean>("hasSelectedAStorageType")) {
-                                                        configIO.setGameConfig("hasSelectedAStorageType", true)
-                                                        configIO.setGameConfig("storageType", 0)
+                                                    // 引擎可能已被上一轮初始化创建（例如 Activity 因配置变更被重建，
+                                                    // 上一轮已 new 出引擎但未及置 gameLoaded 即被取消）。此时再次调用
+                                                    // GameEngine.dv.a(...) 必抛 "gameEngine already created"，因此优先复用已存在实例。
+                                                    val existingEngine = runCatching { GameEngine.t() }.getOrNull()
+                                                    if (existingEngine != null) {
+                                                        logger?.info("Reusing existing GameEngine instance; skip re-creation.")
+                                                        loadingThread
+                                                        prepareDefaultStorageType()
+                                                    } else {
+                                                        val engineImpl = GameEngine.dv.a(this@LoadingScreen)
+                                                        Reflect.reifiedSet<GameEngine>(null, "ak", engineImpl)
+                                                        loadingThread
+                                                        prepareDefaultStorageType()
+                                                        engineImpl.a(this@LoadingScreen as Context)
+                                                        val configIO = appKoin.get<ConfigIO>()
+                                                        if (!configIO.getGameConfig<Boolean>("hasSelectedAStorageType")) {
+                                                            configIO.setGameConfig("hasSelectedAStorageType", true)
+                                                            configIO.setGameConfig("storageType", 0)
+                                                        }
                                                     }
                                                     true
                                                 } catch (e: Exception) {
                                                     Reflect.reifiedSet<GameEngine>(null, "ak", null)
                                                     invalidateGeneratedGameDex()
                                                     Log.e("RWPP", "GameEngine init failed", e)
+                                                    engineInitError = e
                                                     false
                                                 }
                                             }
@@ -252,7 +325,8 @@ class LoadingScreen : ComponentActivity() {
                                             GameLoadedEvent().broadcastIn()
                                             openMainActivity()
                                         } else {
-                                            message = "Game engine init failed, please restart"
+                                            diagnosticsReport = buildDiagnosticsReport("engineInit", engineInitError)
+                                            showEngineFailure = true
                                         }
                                     }
                                 }

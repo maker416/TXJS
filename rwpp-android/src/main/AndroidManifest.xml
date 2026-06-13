@@ -52,6 +52,8 @@
         <activity
                 android:name="io.github.rwpp.android.LoadingScreen"
                 android:alwaysRetainTaskState="true"
+                android:screenOrientation="landscape"
+                android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden"
                 android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>

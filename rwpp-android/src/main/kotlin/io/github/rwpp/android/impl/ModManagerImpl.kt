@@ -16,6 +16,7 @@ import io.github.rwpp.event.events.ReloadModFinishedEvent
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.mod.Mod
 import io.github.rwpp.game.mod.ModManager
+import io.github.rwpp.game.mod.deleteModFileSafely
 import io.github.rwpp.io.calculateSize
 import io.github.rwpp.io.zipFolderToByte
 import kotlinx.coroutines.Dispatchers
@@ -124,21 +125,10 @@ class ModManagerImpl : ModManager {
                         get() = !it.f
                         set(value) { it.f = !value }
                     override val path: String
-                        get() = it.d()
-
+                        get() = modFile().path
 
                     override fun tryDelete(): Boolean {
-                        val e = it.e()
-                        return if (!it.l()) {
-                            false
-                        } else {
-                            val file = File(e)
-                            if (!a.i(file.absolutePath)) {
-                                false
-                            } else {
-                                a.b(file)
-                            }
-                        }
+                        return deleteModFileSafely(modFile())
                     }
 
                     override fun getRamUsed(): String {
@@ -147,19 +137,23 @@ class ModManagerImpl : ModManager {
 
                     override fun getSize(): Long {
                         return kotlin.runCatching {
-                            File(modPath()).calculateSize()
+                            modFile().calculateSize()
                         }.getOrNull() ?: 0L
                     }
 
                     override fun getBytes(): ByteArray {
-                        val file = File(modPath())
+                        val file = modFile()
                         return if(file.isDirectory)
                             file.zipFolderToByte()
                         else file.readBytes()
                     }
 
-                    private fun modPath(): String =
-                        ("/storage/emulated/0/" + com.corrodinggames.rts.gameFramework.e.a.q(it.g()).removePrefix("/SD/"))
+                    private fun modFile(): File {
+                        val sourceFile = File(it.e())
+                        if (sourceFile.exists()) return sourceFile
+
+                        return File("/storage/emulated/0/" + a.q(it.g()).removePrefix("/SD/"))
+                    }
                 })
             }
         }

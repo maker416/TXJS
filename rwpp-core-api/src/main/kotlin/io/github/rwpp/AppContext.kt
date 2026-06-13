@@ -21,6 +21,9 @@ interface AppContext : KoinComponent {
 
     fun externalStoragePath(path: String): String
 
+    /** 注入产物目录（Android 为应用私有目录，桌面端为运行目录下的 generated_lib/） */
+    fun generatedLibPath(): String
+
     fun exit()
 
     /** Emits `true` once [exit] has been called; drives the full-screen "exiting" overlay. */

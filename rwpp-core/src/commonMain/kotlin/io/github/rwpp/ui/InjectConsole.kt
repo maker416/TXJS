@@ -27,6 +27,32 @@ import io.github.rwpp.widget.BorderCard
 import io.github.rwpp.widget.RWTextFieldColors
 
 var logStr = mutableStateOf(AnnotatedString(""))
+var injectLogText = mutableStateOf("")
+private val injectLogLock = Any()
+
+fun clearInjectLog() {
+    synchronized(injectLogLock) {
+        logStr.value = AnnotatedString("")
+        injectLogText.value = ""
+    }
+}
+
+private fun appendInjectLog(
+    level: String,
+    message: String,
+    color: Color,
+) {
+    synchronized(injectLogLock) {
+        val line = "[$level] $message"
+        injectLogText.value += "$line\n"
+        logStr.value = logStr.value + buildAnnotatedString {
+            withStyle(style = SpanStyle(color = color)) {
+                append(line)
+            }
+            append("\n")
+        }
+    }
+}
 
 @Deprecated("Use InjectSetupScreen on Android; kept for desktop inject rebuild UI")
 @Composable
@@ -69,53 +95,26 @@ fun InjectConsole() {
 val defaultBuildLogger: BuildLogger = object : BuildLogger {
     override fun logging(message: String) {
         logger.trace(message)
-        logStr.value = logStr.value + buildAnnotatedString {
-            withStyle(style = SpanStyle(color = Color.Gray)) {
-                append("[L] $message")
-            }
-            append("\n")
-        }
+        appendInjectLog("L", message, Color.Gray)
     }
 
     override fun info(message: String) {
         logger.info(message)
-        logStr.value = logStr.value + buildAnnotatedString {
-            withStyle(style = SpanStyle(color = Color.Green)) {
-                append("[I] $message")
-            }
-            append("\n")
-        }
+        appendInjectLog("I", message, Color.Green)
     }
 
     override fun warn(message: String) {
         logger.warn(message)
-        logStr.value = logStr.value + buildAnnotatedString {
-            withStyle(style = SpanStyle(color = Color.Yellow)) {
-                append("[W] $message")
-            }
-            append("\n")
-        }
+        appendInjectLog("W", message, Color.Yellow)
     }
 
     override fun error(message: String) {
         logger.error(message)
-        logStr.value = logStr.value + buildAnnotatedString {
-            withStyle(style = SpanStyle(color = Color.Red)) {
-                append("[E] $message")
-            }
-            append("\n")
-        }
+        appendInjectLog("E", message, Color.Red)
     }
 
     override fun exception(e: Throwable) {
         logger.error(e.message, e)
-        logStr.value = logStr.value + buildAnnotatedString {
-            withStyle(style = SpanStyle(color = Color.Red)) {
-                append("[E] " + e.message.toString())
-                append("\n")
-                append(e.stackTraceToString())
-            }
-            append("\n")
-        }
+        appendInjectLog("E", "${e.message}\n${e.stackTraceToString()}", Color.Red)
     }
 }

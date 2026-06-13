@@ -10,9 +10,6 @@ package io.github.rwpp.android
 import android.app.Application
 import android.content.Context
 import android.content.pm.ApplicationInfo
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.LoggerContext
 import ch.qos.logback.classic.android.LogcatAppender
@@ -116,15 +113,32 @@ class MainApplication : Application() {
         if (!init) {
             appKoin.get<ConfigIO>().readAllConfig()
             val permissionHelper = appKoin.get<PermissionHelper>()
-            var hasPermission by mutableStateOf(permissionHelper.hasManageFilePermission())
+            val hasPermission = permissionHelper.hasManageFilePermission()
             Builder.outputDir = generatedLibDir
             Builder.logger = defaultBuildLogger
             init = true
             dexFolder = getDir("dexfiles", MODE_PRIVATE)
-            requireReloadingLib = !hasPermission || Builder.prepareReloadingLib() || !File("${dexFolder.absolutePath}/classes.dex").exists()
-            logger.info("hasPermission: $hasPermission, requireReloadingLib: $requireReloadingLib exist: ${File("${dexFolder.absolutePath}/classes.dex").exists()}")
+            requireReloadingLib = Builder.prepareReloadingLib() || !File(dexFolder, "classes.dex").exists()
+            logger.info("hasPermission: $hasPermission, requireReloadingLib: $requireReloadingLib, generatedLibDir: $generatedLibDir, dexExists: ${File(dexFolder, "classes.dex").exists()}")
             if (!requireReloadingLib) {
-                loadDex(this, "${dexFolder.absolutePath}/classes.dex")
+                // 加载阶段：在全新进程的启动早期干净加载已构建好的 DEX，并校验其确实可用。
+                // 任何游戏类被真正触达之前必须完成加载（GameSoundPoolImpl 仅在方法体内引用游戏类，安全）。
+                val loadResult = runCatching {
+                    loadDex(this, "${dexFolder.absolutePath}/classes.dex")
+                    // 校验：尝试解析一个已知游戏类，确认注入后的 DEX 真正加载成功。
+                    Class.forName("com.corrodinggames.rts.gameFramework.k", false, classLoader)
+                }
+                if (loadResult.isSuccess) {
+                    // 已进入良好状态，清除重建循环计数。
+                    resetRebuildAttemptCount()
+                } else {
+                    val error = loadResult.exceptionOrNull()
+                    logger.error("Clean DEX load/verify failed, will rebuild.\n${buildDiagnosticsReport("dexLoad", error)}")
+                    // 作废已生成产物，转入重建流程交由 LoadingScreen 处理。
+                    runCatching { File(dexFolder, "classes.dex").delete() }
+                    runCatching { File(generatedLibDir, "android-game-lib.jar").delete() }
+                    requireReloadingLib = true
+                }
             }
         }
     }

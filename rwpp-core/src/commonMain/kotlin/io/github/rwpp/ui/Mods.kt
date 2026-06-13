@@ -41,6 +41,7 @@ import io.github.rwpp.external.ExternalHandler
 import io.github.rwpp.external.FileChooseProgress
 import io.github.rwpp.game.mod.Mod
 import io.github.rwpp.game.mod.ModManager
+import io.github.rwpp.game.mod.ModSourceType
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.io.copyToWithProgress
@@ -365,7 +366,12 @@ fun ModsView(onExit: () -> Unit) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 16.dp, top = 14.dp, end = 46.dp, bottom = 10.dp),
+                .padding(
+                    start = 16.dp,
+                    top = 14.dp,
+                    end = if (compact) 10.dp else 46.dp,
+                    bottom = 10.dp
+                ),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             if (compact) {
@@ -401,6 +407,12 @@ fun ModsView(onExit: () -> Unit) {
         val isEnabled = mod.isEnabled
         val statusText = readI18n("mod.${if (isEnabled) "enabled" else "disabled"}")
         val statusColor = if (isEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+        val sourceTypeText = when (mod.sourceType) {
+            ModSourceType.RwMod -> readI18n("mod.sourceTypeRwMod")
+            ModSourceType.Folder -> readI18n("mod.sourceTypeFolder")
+            ModSourceType.Ini -> readI18n("mod.sourceTypeIni")
+            ModSourceType.Unknown -> readI18n("mod.sourceTypeUnknown")
+        }
         val ramUsed = remember(updated, enabledChanged, mod.id) { mod.getRamUsed() }
         val errorMessage = remember(updated, enabledChanged, mod.id) { mod.errorMessage }
         val description = remember(updated, mod.id) { mod.description.trim() }
@@ -411,6 +423,23 @@ fun ModsView(onExit: () -> Unit) {
                 fontStyle = FontStyle.Italic,
                 textDecoration = TextDecoration.Underline
             )
+        }
+
+        @Composable
+        fun MetadataPill(text: String, color: Color) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = color.copy(alpha = .14f),
+                border = BorderStroke(1.dp, color.copy(alpha = .35f))
+            ) {
+                Text(
+                    text,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = color,
+                    maxLines = 1
+                )
+            }
         }
 
         Row(
@@ -449,19 +478,14 @@ fun ModsView(onExit: () -> Unit) {
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
+                }
 
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = statusColor.copy(alpha = .14f),
-                    ) {
-                        Text(
-                            statusText,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = statusColor,
-                            maxLines = 1
-                        )
-                    }
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    MetadataPill(statusText, statusColor)
+                    MetadataPill(sourceTypeText, MaterialTheme.colorScheme.tertiary)
                 }
 
                 Text(
@@ -708,10 +732,6 @@ fun ModsView(onExit: () -> Unit) {
                     .padding(paddingValues)
             ) {
                 Box {
-                    ExitButton {
-                        if (deletedMod) reload()
-                        onExit()
-                    }
                     Column(Modifier.fillMaxSize()) {
                         ModsTopBar(compact = false)
 
@@ -741,19 +761,21 @@ fun ModsView(onExit: () -> Unit) {
                             )
                         }
                     }
+                    ExitButton {
+                        if (deletedMod) reload()
+                        onExit()
+                    }
                 }
             }
         } else {
             ExpandedCard(modifier = Modifier.padding(paddingValues)) {
                 Box {
-                    ExitButton {
-                        if (deletedMod) reload()
-                        onExit()
-                    }
                     val state = rememberLazyListState()
                     LazyColumnScrollbar(
                         listState = state,
-                        modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp)
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(start = 8.dp, end = 40.dp)
                     ) {
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
@@ -769,6 +791,10 @@ fun ModsView(onExit: () -> Unit) {
                             }
                             ModList(disabledMods)
                         }
+                    }
+                    ExitButton {
+                        if (deletedMod) reload()
+                        onExit()
                     }
                 }
             }

@@ -7,6 +7,7 @@
 
 package io.github.rwpp.android.impl
 
+import android.content.Context
 import android.os.Environment
 import io.github.rwpp.AppContext
 import io.github.rwpp.config.ConfigIO
@@ -36,6 +37,10 @@ class AppContextImpl : BaseAppContextImpl() {
     override fun isDesktop(): Boolean = false
     override fun externalStoragePath(path: String): String {
         return Environment.getExternalStorageDirectory().absolutePath + "/rustedWarfare/$path"
+    }
+
+    override fun generatedLibPath(): String {
+        return get<Context>().filesDir.absolutePath + "/generated_lib/"
     }
 
     override fun init() {

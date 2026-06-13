@@ -7,7 +7,6 @@
 
 package io.github.rwpp.desktop.impl
 
-import com.corrodinggames.rts.gameFramework.e.a
 import com.corrodinggames.rts.gameFramework.i.b
 import io.github.rwpp.appKoin
 import io.github.rwpp.desktop.GameEngine
@@ -102,7 +101,7 @@ class ModManagerImpl : ModManager {
                         get() = !it.f
                         set(value) { it.f = !value }
                     override val path: String
-                        get() = a.e(it.q)
+                        get() = it.h()
 
 //                    override var isNetworkMod: Boolean
 //                        get() = it.c.contains(".network")
@@ -122,12 +121,12 @@ class ModManagerImpl : ModManager {
 
                     override fun getSize(): Long {
                         return runCatching {
-                            File(it.g()).calculateSize()
+                            File(path).calculateSize()
                         }.getOrNull() ?: 0L
                     }
 
                     override fun getBytes(): ByteArray {
-                        val file = File(it.g())
+                        val file = File(path)
                         return if(file.isDirectory)
                             file.zipFolderToByte()
                         else file.readBytes()

@@ -154,6 +154,10 @@ empty = "没有匹配的模组"
 ramUsage = "RAM: {0}"
 showMore = "... 展开"
 showLess = " 收起"
+sourceTypeRwMod = ".rwmod"
+sourceTypeFolder = "文件夹型"
+sourceTypeIni = ".ini"
+sourceTypeUnknown = "未知"
 
 [browser]
 user = "用户"
@@ -297,10 +301,16 @@ exiting = "正在退出…"
 [inject]
 title = "首次初始化"
 restartTitle = "配置已就绪"
-restartHint = "请点击下方「退出」，然后从桌面或启动器重新打开 RWPP，注入才会生效。"
+restartHint = "配置已就绪，即将自动重启以生效。"
+restarting = "{0} 秒后将自动重启…"
+restartNow = "立即重启"
 failedTitle = "初始化失败"
+failedHint = "请点击「复制」保存完整日志并反馈给开发者。"
+engineFailedTitle = "游戏引擎初始化失败"
 viewDetails = "查看详情"
 hideDetails = "收起详情"
+copyDetails = "复制"
+copied = "已复制"
 exit = "退出"
 
 [inject.step]

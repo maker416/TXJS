@@ -127,5 +127,5 @@ val modDir by lazy {
 }
 
 val generatedLibDir by lazy {
-    appKoin.get<AppContext>().externalStoragePath("generated_lib/")
+    appKoin.get<AppContext>().generatedLibPath()
 }

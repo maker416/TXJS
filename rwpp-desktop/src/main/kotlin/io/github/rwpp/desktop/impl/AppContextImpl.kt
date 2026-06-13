@@ -39,6 +39,8 @@ class AppContextImpl : BaseAppContextImpl() {
         return System.getProperty("user.dir") + "/$path"
     }
 
+    override fun generatedLibPath(): String = externalStoragePath("generated_lib/")
+
     override fun init() {
         super.init()
         GL.gameCanvas = GameCanvasImpl()
