@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,9 +27,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -75,6 +79,8 @@ import io.github.rwpp.ui.UI.showQuestion
 import io.github.rwpp.ui.UI.showWarning
 import io.github.rwpp.ui.color.getTeamColor
 import io.github.rwpp.widget.WindowManager
+import io.github.rwpp.widget.v2.LazyColumnScrollbar
+import io.github.rwpp.widget.v2.ListIndicatorSettings
 import kotlinx.coroutines.Dispatchers
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
@@ -238,10 +244,16 @@ open class UIProvider {
                 WindowManager.Large -> maxHeight * 0.18f
             }
             val buttonSpacing = when (windowManager) {
-                WindowManager.Small -> 6.dp
-                WindowManager.Middle -> 7.dp
-                WindowManager.Large -> 8.dp
+                WindowManager.Small -> 4.dp
+                WindowManager.Middle -> 5.dp
+                WindowManager.Large -> 6.dp
             }
+            val menuEdgeCueHeight = when (windowManager) {
+                WindowManager.Small -> 18.dp
+                WindowManager.Middle -> 22.dp
+                WindowManager.Large -> 26.dp
+            }
+            val menuScrollState = rememberLazyListState()
             val versionStyle = when (windowManager) {
                 WindowManager.Small, WindowManager.Middle -> MaterialTheme.typography.bodySmall
                 WindowManager.Large -> MaterialTheme.typography.bodyLarge
@@ -271,19 +283,40 @@ open class UIProvider {
                     color = MaterialTheme.colorScheme.onSurface
                 )
 
-                Column(
-                    modifier = menuWidthModifier
-                        .heightIn(max = maxMenuHeight)
-                        .verticalScroll(rememberScrollState()),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(buttonSpacing)
-                ) {
-                    val extraItems: List<@Composable () -> Unit> = extraMenuList.map { menu ->
-                        { MainMenuAction(menu.title, menu.onClick) }
+                val extraItems: List<@Composable () -> Unit> = extraMenuList.map { menu ->
+                    { MainMenuAction(menu.title, menu.onClick) }
+                }
+                val allItems = standardMenuItems + extraItems
+                LazyColumnScrollbar(
+                    listState = menuScrollState,
+                    modifier = menuWidthModifier.heightIn(max = maxMenuHeight),
+                    thickness = 4.dp,
+                    padding = 2.dp,
+                    thumbMinHeight = 0.24f,
+                    thumbColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
+                    thumbSelectedColor = MaterialTheme.colorScheme.primary,
+                    showItemIndicator = ListIndicatorSettings.EnabledMirrored(
+                        indicatorHeight = menuEdgeCueHeight,
+                        indicatorColor = Color.Black.copy(alpha = 0.42f)
+                    ) { modifier, alpha ->
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowUp,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha * 0.82f),
+                            modifier = modifier.size(menuEdgeCueHeight)
+                        )
                     }
-                    val allItems = standardMenuItems + extraItems
-                    allItems.forEach { menuItem ->
-                        menuItem()
+                ) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().padding(end = 10.dp),
+                        state = menuScrollState,
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(buttonSpacing),
+                        contentPadding = PaddingValues(vertical = 2.dp)
+                    ) {
+                        items(allItems.size) { index ->
+                            allItems[index]()
+                        }
                     }
                 }
 

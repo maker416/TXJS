@@ -84,6 +84,6 @@ class ConfigIOImpl : ConfigIO {
 
     override fun saveAllConfig() {
         super.saveAllConfig()
-        GameEngine.t().bN.save()
+        runCatching { GameEngine.t() }.getOrNull()?.bN?.save()
     }
 }

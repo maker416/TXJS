@@ -65,6 +65,7 @@ fun OpenSourceInfoView(
                 title = "项目来源",
                 lines = listOf(
                     "铁锈战争极速版基于上游 RWPP 体系 fork 并独立维护。",
+                    "本项目开源仓库：maker416/TXJS（https://github.com/maker416/TXJS）。",
                     "项目面向萌新云生态与更清爽的铁锈战争联机体验，在 RWPP 能力之上继续优化上手流程、服务器列表与公开房间曝光。",
                     "本项目不是 Rusted Warfare 官方项目，也不代表原游戏开发者。"
                 )
@@ -106,6 +107,7 @@ fun OpenSourceInfoView(
                 )
             )
 
+            LinkCard("开源仓库 maker416/TXJS", "https://github.com/maker416/TXJS", net)
             LinkCard("上游 RWPP", "https://github.com/Minxyzgo/RWPP", net)
             LinkCard("相关生态 RW-HPS", "https://github.com/deng-rui/RW-HPS", net)
             LinkCard("AGPL-3.0 许可证文本", "https://www.gnu.org/licenses/agpl-3.0.html", net)

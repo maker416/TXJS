@@ -46,7 +46,7 @@ class AppContextImpl : BaseAppContextImpl() {
     override fun exit() {
         markExitOverlayVisible()
         get<ConfigIO>().saveAllConfig()
-        GameEngine.t().bN.apply {
+        runCatching { GameEngine.t() }.getOrNull()?.bN?.apply {
             numLoadsSinceRunningGameOrNormalExit = 0
             numIncompleteLoadAttempts = 0
             save()

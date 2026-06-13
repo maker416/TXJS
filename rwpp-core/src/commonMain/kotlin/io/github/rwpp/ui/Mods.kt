@@ -13,11 +13,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -25,23 +26,22 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.LocalWindowManager
-import io.github.rwpp.app.PermissionHelper
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.external.ExternalHandler
 import io.github.rwpp.external.FileChooseProgress
-import io.github.rwpp.game.Game
 import io.github.rwpp.game.mod.Mod
 import io.github.rwpp.game.mod.ModManager
+import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.io.copyToWithProgress
 import io.github.rwpp.modDir
@@ -149,26 +149,20 @@ private fun formatBytes(bytes: Long): String {
     return "${(mb * 10).roundToInt() / 10.0} MB"
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Suppress("UnusedMaterial3ScaffoldPaddingParameter")
 @Composable
 fun ModsView(onExit: () -> Unit) {
-    val permissionHelper = koinInject<PermissionHelper>()
     val modManager = koinInject<ModManager>()
-    val game = koinInject<Game>()
+    val settings = koinInject<Settings>()
 
     var deletedMod by remember { mutableStateOf(false) }
     val mods = remember { SnapshotStateList<Mod>().apply { addAll(modManager.getAllMods()) } }
     var filter by remember { mutableStateOf("") }
-    val filteredMods = remember(mods.size, filter) {
-        mods.filter {
-            it.name.uppercase().contains(filter.uppercase())
-        }
-    }
 
     val scope = rememberCoroutineScope()
     var updated by remember { mutableStateOf(false) }
     var enabledChanged by remember { mutableStateOf(false) }
-    var disableAll by remember { mutableStateOf(false) }
     var isApplying by remember { mutableStateOf(false) }
     var importProgress by remember { mutableStateOf<ModImportProgress?>(null) }
 
@@ -182,17 +176,27 @@ fun ModsView(onExit: () -> Unit) {
 
     ModImportProgressDialog(importProgress)
 
-    val enabledMods = remember(enabledChanged, filteredMods.size) {
+    val filteredMods = remember(mods.size, updated, enabledChanged, filter) {
+        val keyword = filter.trim()
+        if (keyword.isBlank()) {
+            mods.toList()
+        } else {
+            mods.filter { it.name.contains(keyword, ignoreCase = true) }
+        }
+    }
+
+    val enabledMods = remember(enabledChanged, filteredMods) {
         filteredMods.filter { it.isEnabled }
     }
 
-    val disabledMods = remember(enabledChanged, filteredMods.size) {
+    val disabledMods = remember(enabledChanged, filteredMods) {
         filteredMods.filter { !it.isEnabled }
     }
 
-//    LaunchedEffect(Unit) {
-//        permissionHelper.requestExternalStoragePermission()
-//    }
+    val enabledTotal = remember(enabledChanged, mods.size) {
+        mods.count { it.isEnabled }
+    }
+    val disabledTotal = mods.size - enabledTotal
 
     suspend fun reloadMods() {
         withContext(Dispatchers.IO) {
@@ -277,127 +281,274 @@ fun ModsView(onExit: () -> Unit) {
         }
     }
 
+    fun changeModEnabled(mod: Mod, enabled: Boolean) {
+        if (mod.isEnabled == enabled) return
+        mod.isEnabled = enabled
+        enabledChanged = !enabledChanged
+    }
+
+    fun deleteMod(mod: Mod) {
+        if (mod.isEnabled) {
+            UI.showWarning(readI18n("mod.removeEnabledInfo"))
+        } else if (mod.tryDelete()) {
+            mods.remove(mod)
+            deletedMod = true
+        } else {
+            UI.showWarning(readI18n("mod.removeInfo"))
+        }
+    }
+
+    @Composable
+    fun StatPill(label: String, value: String, color: Color) {
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = color.copy(alpha = .14f),
+            border = BorderStroke(1.dp, color.copy(alpha = .45f))
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    label,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1
+                )
+                Text(
+                    value,
+                    color = color,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1
+                )
+            }
+        }
+    }
+
+    @Composable
+    fun SummaryStrip() {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            StatPill(readI18n("mod.total"), mods.size.toString(), MaterialTheme.colorScheme.onSurfaceVariant)
+            StatPill(readI18n("mod.enabled"), enabledTotal.toString(), MaterialTheme.colorScheme.primary)
+            StatPill(readI18n("mod.disabled"), disabledTotal.toString(), MaterialTheme.colorScheme.secondary)
+        }
+    }
+
+    @Composable
+    fun FilterField(modifier: Modifier = Modifier) {
+        RWSingleOutlinedTextField(
+            readI18n("mod.search"),
+            filter,
+            modifier = modifier,
+            leadingIcon = { Icon(Icons.Default.Search, null, tint = MaterialTheme.colorScheme.surfaceTint) },
+            trailingIcon = if (filter.isNotBlank()) {
+                {
+                    IconButton(
+                        onClick = { filter = "" },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(Icons.Default.Close, null, tint = MaterialTheme.colorScheme.surfaceTint)
+                    }
+                }
+            } else null
+        ) {
+            filter = it
+        }
+    }
+
+    @Composable
+    fun ModsTopBar(compact: Boolean) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, top = 14.dp, end = 46.dp, bottom = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            if (compact) {
+                Text(
+                    readI18n("menu.mods"),
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1
+                )
+                SummaryStrip()
+                FilterField(Modifier.fillMaxWidth())
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text(
+                        readI18n("menu.mods"),
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1
+                    )
+                    FilterField(Modifier.weight(1f).widthIn(min = 240.dp))
+                    SummaryStrip()
+                }
+            }
+        }
+    }
+
     @Composable
     fun ModCard(mod: Mod) {
-        Column {
-            var isEnabled by remember { mutableStateOf(mod.isEnabled) }
-            remember(disableAll) {
-                if (disableAll) {
-                    mod.isEnabled = false
-                    disableAll = false
-                }
+        val isEnabled = mod.isEnabled
+        val statusText = readI18n("mod.${if (isEnabled) "enabled" else "disabled"}")
+        val statusColor = if (isEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+        val ramUsed = remember(updated, enabledChanged, mod.id) { mod.getRamUsed() }
+        val errorMessage = remember(updated, enabledChanged, mod.id) { mod.errorMessage }
+        val description = remember(updated, mod.id) { mod.description.trim() }
+        val expandedStyle = remember {
+            SpanStyle(
+                fontWeight = FontWeight.W500,
+                color = Color(173, 216, 230),
+                fontStyle = FontStyle.Italic,
+                textDecoration = TextDecoration.Underline
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(10.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Surface(
+                modifier = Modifier.size(72.dp),
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(2.dp, statusColor.copy(alpha = .75f))
+            ) {
+                Image(
+                    painterResource(Res.drawable.error_missingmap),
+                    null,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
 
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Card(
-                    Modifier.padding(5.dp),
-                    shape = RectangleShape,
-                    border = BorderStroke(3.dp, MaterialTheme.colorScheme.secondary)
-                ) {
-                    Image(
-                        painterResource(Res.drawable.error_missingmap),
-                        null,
-                        modifier = Modifier.size(100.dp)
-                    )
-                }
+            Spacer(Modifier.width(10.dp))
 
-                Column(modifier = Modifier.height(IntrinsicSize.Max).weight(1f)) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Text(
                         mod.name,
-                        modifier = Modifier.padding(5.dp).align(Alignment.Start),
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.primary,
                         maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
                     )
 
-                    val ramUsed = remember(updated) {
-                        mod.getRamUsed()
-                    }
-
-                    Text(
-                        "(RAM: $ramUsed)",
-                        modifier = Modifier.padding(start = 2.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.Green
-                    )
-
-                    val errorMessage = remember(updated) {
-                        mod.errorMessage
-                    }
-
-                    if (errorMessage != null) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = statusColor.copy(alpha = .14f),
+                    ) {
                         Text(
-                            errorMessage,
-                            modifier = Modifier.padding(start = 2.dp),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.Red
+                            statusText,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = statusColor,
+                            maxLines = 1
                         )
                     }
                 }
 
-                VerticalDivider(
-                    modifier = Modifier
-                        .height(100.dp)
-                        .padding(2.dp)
-                        .align(Alignment.CenterVertically),
-                    thickness = 4.dp,
+                Text(
+                    readI18n("mod.ramUsage", I18nType.RWPP, ramUsed),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF62E35F),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
 
-                Column(Modifier.align(Alignment.CenterVertically).padding(end = 10.dp)) {
-                    IconButton(onClick = {
-                        mod.isEnabled = !mod.isEnabled
-                        enabledChanged = !enabledChanged
-                    }, modifier = Modifier.size(45.dp)) {
-                        Icon(
-                            if (isEnabled) Icons.AutoMirrored.Filled.ArrowForward else Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.surfaceTint
-                        )
-                    }
-
-                    IconButton(onClick = {
-                        if (mod.tryDelete()) {
-                            mods.remove(mod)
-                            deletedMod = true
-                        } else {
-                            UI.showWarning(readI18n("mod.removeInfo"))
-                        }
-                    }, modifier = Modifier.size(45.dp)) {
-                        Icon(
-                            Icons.Default.Delete,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.surfaceTint
-                        )
-                    }
-                }
-            }
-
-            if (isEnabled) {
-                val expandedStyle = remember {
-                    SpanStyle(
-                        fontWeight = FontWeight.W500,
-                        color = Color(173, 216, 230),
-                        fontStyle = FontStyle.Italic,
-                        textDecoration = TextDecoration.Underline
+                if (errorMessage != null) {
+                    Text(
+                        errorMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
-                ExpandableText(
-                    text = mod.description,
-                    modifier = Modifier.padding(start = 2.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    textModifier = Modifier.padding(top = 5.dp),
-                    showMoreStyle = expandedStyle,
-                    showLessStyle = expandedStyle
-                )
+                if (description.isNotBlank()) {
+                    ExpandableText(
+                        text = description,
+                        collapsedMaxLine = 2,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        ),
+                        showMoreText = readI18n("mod.showMore"),
+                        showLessText = readI18n("mod.showLess"),
+                        showMoreStyle = expandedStyle,
+                        showLessStyle = expandedStyle
+                    )
+                }
             }
-            //  loadSvgPainter()
-            //painterResource(Res.drawable.)
-            Spacer(modifier = Modifier.size(10.dp))
+
+            Spacer(Modifier.width(8.dp))
+
+            Column(
+                modifier = Modifier.width(70.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Switch(
+                    checked = isEnabled,
+                    onCheckedChange = { changeModEnabled(mod, it) },
+                    colors = SwitchDefaults.colors(
+                        checkedTrackColor = MaterialTheme.colorScheme.primary,
+                        checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                        uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+                        uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                )
+
+                IconButton(
+                    onClick = { deleteMod(mod) },
+                    modifier = Modifier.size(42.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = null,
+                        tint = if (isEnabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun EmptyModList() {
+        Box(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 28.dp, horizontal = 12.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                readI18n("mod.empty"),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium
+            )
         }
     }
 
     fun LazyListScope.ModList(data: List<Mod>) {
+        if (data.isEmpty()) {
+            item { EmptyModList() }
+            return
+        }
+
         items(
             count = data.size,
             key = { data[it].id }
@@ -405,16 +556,17 @@ fun ModsView(onExit: () -> Unit) {
             val mod = data[index]
             BorderCard(
                 backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(
-                    .6f
+                    if (mod.isEnabled) .72f else .5f
                 ),
+                shape = RoundedCornerShape(8.dp),
                 modifier = Modifier.then(
-                    if (koinInject<Settings>().enableAnimations)
+                    if (settings.enableAnimations)
                         Modifier.animateItem()
                     else Modifier
                 )
                     .fillMaxWidth()
                     .wrapContentHeight()
-                    .padding(5.dp)
+                    .padding(horizontal = 4.dp, vertical = 5.dp)
             ) {
                 ModCard(mod)
             }
@@ -422,109 +574,135 @@ fun ModsView(onExit: () -> Unit) {
     }
 
     @Composable
-    fun Header(isEnabledList: Boolean) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                readI18n("mod.${if (isEnabledList) "enabled" else "disabled"}"),
-                style = MaterialTheme.typography.headlineLarge,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(start = 5.dp)
-                    .align(Alignment.CenterHorizontally)
-            )
+    fun Header(isEnabledList: Boolean, count: Int) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    readI18n("mod.${if (isEnabledList) "enabled" else "disabled"}"),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+
+                Text(
+                    readI18n("mod.count", I18nType.RWPP, count.toString()),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
             HorizontalDivider(
-                thickness = 3.dp,
-                modifier = Modifier.padding(top = 2.dp, bottom = 5.dp),
-                color = MaterialTheme.colorScheme.primary
+                thickness = 2.dp,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = .85f)
             )
         }
     }
 
     @Composable
-    fun Filter() {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(5.dp),
-            horizontalArrangement = Arrangement.Center
-        ) {
-            RWSingleOutlinedTextField(
-                "Filter",
-                filter,
-                modifier = Modifier.fillMaxWidth(.5f),
-                leadingIcon = { Icon(Icons.Default.Search, null) }
+    fun ModListPanel(
+        isEnabledList: Boolean,
+        data: List<Mod>,
+        modifier: Modifier = Modifier
+    ) {
+        val state = rememberLazyListState()
+        Column(modifier = modifier.fillMaxHeight()) {
+            Header(isEnabledList, data.size)
+            LazyColumnScrollbar(
+                listState = state,
+                modifier = Modifier.fillMaxWidth().weight(1f).padding(top = 3.dp)
             ) {
-                filter = it
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    state = state,
+                    contentPadding = PaddingValues(bottom = 8.dp)
+                ) {
+                    ModList(data)
+                }
             }
+        }
+    }
+
+    @Composable
+    fun ActionBar() {
+        FlowRow(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            RWTextButton(
+                readI18n("mod.reload"),
+                leadingIcon = {
+                    Icon(
+                        Icons.Default.Refresh,
+                        null,
+                        modifier = Modifier.size(28.dp)
+                    )
+                },
+                modifier = Modifier.padding(horizontal = 4.dp),
+            ) { reload() }
+
+            RWTextButton(
+                readI18n("mod.inputFile"),
+                leadingIcon = {
+                    Icon(
+                        painterResource(Res.drawable.file_open),
+                        null,
+                        modifier = Modifier.size(28.dp)
+                    )
+                },
+                modifier = Modifier.padding(horizontal = 4.dp)
+            ) {
+                if (importProgress != null) return@RWTextButton
+
+                appKoin.get<ExternalHandler>().openFileChooser(
+                    onProgress = { updateFileChooseProgress(it) }
+                ) { file ->
+                    importModFile(file)
+                }
+            }
+
+            RWTextButton(
+                readI18n("mod.disableAll"),
+                leadingIcon = {
+                    Icon(
+                        painterResource(Res.drawable.cancel),
+                        null,
+                        modifier = Modifier.size(28.dp)
+                    )
+                },
+                modifier = Modifier.padding(horizontal = 4.dp)
+            ) {
+                mods.forEach { it.isEnabled = false }
+                enabledChanged = !enabledChanged
+            }
+
+            RWTextButton(
+                readI18n("mod.apply"),
+                leadingIcon = {
+                    Icon(
+                        Icons.Default.Done,
+                        null,
+                        modifier = Modifier.size(28.dp)
+                    )
+                },
+                modifier = Modifier.padding(horizontal = 4.dp),
+            ) { isApplying = true }
         }
     }
 
     Scaffold(
         modifier = Modifier.padding(if (LocalWindowManager.current != WindowManager.Small) 10.dp else 0.dp),
         containerColor = Color.Transparent,
-        bottomBar = {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(10.dp),
-                horizontalArrangement = Arrangement.Center
-            ) {
-                RWTextButton(
-                    readI18n("mod.reload"),
-                    leadingIcon = {
-                        Icon(
-                            painter = painterResource(Res.drawable.replay_30),
-                            null,
-                            modifier = Modifier.size(30.dp)
-                        )
-                    },
-                    modifier = Modifier.padding(5.dp),
-                ) { reload() }
-
-                RWTextButton(
-                    readI18n("mod.inputFile"),
-                    leadingIcon = {
-                        Icon(
-                            painterResource(Res.drawable.file_open),
-                            null,
-                            modifier = Modifier.size(30.dp)
-                        )
-                    },
-                    modifier = Modifier.padding(5.dp)
-                ) {
-                    if (importProgress != null) return@RWTextButton
-
-                    appKoin.get<ExternalHandler>().openFileChooser(
-                        onProgress = { updateFileChooseProgress(it) }
-                    ) { file ->
-                        importModFile(file)
-                    }
-                }
-
-                RWTextButton(
-                    readI18n("mod.disableAll"),
-                    leadingIcon = {
-                        Icon(
-                            painterResource(Res.drawable.cancel),
-                            null,
-                            modifier = Modifier.size(30.dp)
-                        )
-                    },
-                    modifier = Modifier.padding(5.dp)
-                ) { disableAll = true }
-
-                RWTextButton(
-                    readI18n("mod.apply"),
-                    leadingIcon = {
-                        Icon(
-                            Icons.Default.Done,
-                            null,
-                            modifier = Modifier.size(30.dp)
-                        )
-                    },
-                    modifier = Modifier.padding(5.dp),
-                ) { isApplying = true }
-            }
-        }
+        bottomBar = { ActionBar() }
     ) { paddingValues ->
         if (LocalWindowManager.current != WindowManager.Small) {
             BorderCard(
+                shape = RoundedCornerShape(8.dp),
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues)
@@ -534,52 +712,39 @@ fun ModsView(onExit: () -> Unit) {
                         if (deletedMod) reload()
                         onExit()
                     }
-                    Column {
-                        Filter()
-                        Spacer(modifier = Modifier.size(20.dp))
+                    Column(Modifier.fillMaxSize()) {
+                        ModsTopBar(compact = false)
 
-                        @Composable
-                        fun RowScope.ModListColumn(isEnabledList: Boolean) {
-                            Column(
-                                modifier = Modifier
-                                    .padding(top = 5.dp, start = 5.dp, end = 2.dp, bottom = 5.dp)
-                                    .weight(1f)
-                            ) {
-                                Header(isEnabledList)
-
-                                val state = rememberLazyListState()
-                                LazyColumnScrollbar(
-                                    listState = state,
-                                    modifier = Modifier.padding(start = 5.dp, bottom = 5.dp)
-                                ) {
-                                    LazyColumn(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        state = state
-                                    ) {
-                                        val data = if (isEnabledList) enabledMods else disabledMods
-                                        ModList(data)
-                                    }
-                                }
-                            }
-                        }
-
-                        Row(modifier = Modifier.fillMaxWidth()) {
-                            ModListColumn(true)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            ModListPanel(
+                                isEnabledList = true,
+                                data = enabledMods,
+                                modifier = Modifier.weight(1f)
+                            )
                             VerticalDivider(
                                 modifier = Modifier
                                     .fillMaxHeight()
-                                    .padding(2.dp)
                                     .align(Alignment.CenterVertically),
-                                thickness = 4.dp,
+                                thickness = 2.dp,
+                                color = MaterialTheme.colorScheme.surfaceContainerHighest
                             )
-                            ModListColumn(false)
+                            ModListPanel(
+                                isEnabledList = false,
+                                data = disabledMods,
+                                modifier = Modifier.weight(1f)
+                            )
                         }
                     }
                 }
-
             }
         } else {
-            ExpandedCard {
+            ExpandedCard(modifier = Modifier.padding(paddingValues)) {
                 Box {
                     ExitButton {
                         if (deletedMod) reload()
@@ -588,18 +753,21 @@ fun ModsView(onExit: () -> Unit) {
                     val state = rememberLazyListState()
                     LazyColumnScrollbar(
                         listState = state,
-                        modifier = Modifier.padding(start = 5.dp, bottom = 5.dp, top = 30.dp)
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp)
                     ) {
                         LazyColumn(
-                            modifier = Modifier.fillMaxWidth(),
-                            state = state
+                            modifier = Modifier.fillMaxSize(),
+                            state = state,
+                            contentPadding = PaddingValues(bottom = 12.dp)
                         ) {
-                            item { Filter() }
-                            item { Header(true) }
+                            item { ModsTopBar(compact = true) }
+                            item { Header(true, enabledMods.size) }
                             ModList(enabledMods)
-                            item { Header(false) }
+                            item {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Header(false, disabledMods.size)
+                            }
                             ModList(disabledMods)
-                            item { Spacer(modifier = Modifier.size(50.dp)) }
                         }
                     }
                 }

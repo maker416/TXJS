@@ -47,6 +47,7 @@ import io.github.rwpp.widget.MenuLoadingView
 import io.github.rwpp.widget.RWPPTheme
 import io.github.rwpp.widget.RWSelectionColors
 import io.github.rwpp.widget.v2.TitleBrush
+import com.corrodinggames.rts.gameFramework.SettingsEngine
 import javassist.android.DexFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -58,6 +59,21 @@ import kotlin.system.exitProcess
 class LoadingScreen : ComponentActivity() {
     private fun isGameEngineReady(): Boolean {
         return gameLoaded && runCatching { GameEngine.t() }.getOrNull() != null
+    }
+
+    private fun prepareDefaultStorageType() {
+        val settingsEngine = SettingsEngine.getInstance(this)
+        if (!settingsEngine.hasSelectedAStorageType) {
+            settingsEngine.hasSelectedAStorageType = true
+            settingsEngine.storageType = 0
+            settingsEngine.save()
+        }
+    }
+
+    private fun invalidateGeneratedGameDex() {
+        runCatching { File(dexFolder, "classes.dex").delete() }
+        runCatching { File(generatedLibDir, "android-game-lib.jar").delete() }
+        requireReloadingLib = true
     }
 
     private fun openMainActivity() {
@@ -75,7 +91,6 @@ class LoadingScreen : ComponentActivity() {
 
         val permissionHelper = appKoin.get<PermissionHelper>()
         var hasPermission by mutableStateOf(permissionHelper.hasManageFilePermission())
-        val hasPermissionPast = hasPermission
 
         setContent {
             KoinContext {
@@ -139,9 +154,9 @@ class LoadingScreen : ComponentActivity() {
                                                 tempJar.writeBytes(resource.readBytes())
                                                 resource.close()
 
-                                                if (!hasPermissionPast) {
-                                                    Builder.prepareReloadingLib()
-                                                }
+                                                // Application init can short-circuit this while storage permission is missing.
+                                                // Always reload the root inject config before applying it.
+                                                Builder.prepareReloadingLib()
 
                                                 GameLibraries.defClassPool.appendDalvikClassPath()
 
@@ -183,7 +198,7 @@ class LoadingScreen : ComponentActivity() {
                                             log = buildLog,
                                             onExit = {
                                                 finishAffinity()
-                                                appKoin.get<AppContext>().exit()
+                                                exitProcess(0)
                                             },
                                         )
                                     }
@@ -215,6 +230,7 @@ class LoadingScreen : ComponentActivity() {
                                                     val engineImpl = GameEngine.dv.a(this@LoadingScreen)
                                                     Reflect.reifiedSet<GameEngine>(null, "ak", engineImpl)
                                                     loadingThread
+                                                    prepareDefaultStorageType()
                                                     engineImpl.a(this@LoadingScreen as Context)
                                                     val configIO = appKoin.get<ConfigIO>()
                                                     if (!configIO.getGameConfig<Boolean>("hasSelectedAStorageType")) {
@@ -224,6 +240,7 @@ class LoadingScreen : ComponentActivity() {
                                                     true
                                                 } catch (e: Exception) {
                                                     Reflect.reifiedSet<GameEngine>(null, "ak", null)
+                                                    invalidateGeneratedGameDex()
                                                     Log.e("RWPP", "GameEngine init failed", e)
                                                     false
                                                 }

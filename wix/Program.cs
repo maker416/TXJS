@@ -13,8 +13,9 @@ namespace RSetup
 {
     public class Program
     {
-        private static readonly string RootDir = ResolveRootDir();
-        private static readonly string WixOutputDir = Path.Combine(RootDir, "build", "tmp", "wix");
+        private static readonly Lazy<string> RootDirValue = new Lazy<string>(ResolveRootDir);
+        private static string RootDir => RootDirValue.Value;
+        private static string WixOutputDir => Path.Combine(RootDir, "build", "tmp", "wix");
         private const string ProductName = "RWJS";
         private const string RwppRegistryKey = @"SOFTWARE\Minxyzgo\RWPP";
         private const string RwppInstallDirValue = "InstallDir";

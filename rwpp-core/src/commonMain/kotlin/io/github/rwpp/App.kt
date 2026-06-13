@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.*
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import coil3.ImageLoader
@@ -378,27 +379,32 @@ fun App(
                     warningDialogVisible,
                     onDismissRequest = { warningDialogVisible = false }) { dismiss ->
                     BorderCard(
-                       modifier = Modifier.size(500.dp).autoClearFocus(),
+                        modifier = Modifier
+                            .fillMaxWidth(0.72f)
+                            .widthIn(max = 420.dp)
+                            .wrapContentHeight()
+                            .autoClearFocus(),
+                        backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
                     ) {
-                        Row(modifier = Modifier.fillMaxWidth().padding(5.dp), horizontalArrangement = Arrangement.Center) {
-                            Box {
-                                Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(50.dp))
-                            }
-                        }
-
-                        LargeDividingLine { 0.dp }
-
                         Column(
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
-                            verticalArrangement = Arrangement.Center,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
+                            Icon(
+                                Icons.Default.Warning,
+                                null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(46.dp)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
                             Text(
                                 UI.warning?.reason ?: "",
-                                modifier = Modifier.padding(5.dp),
                                 color = MaterialTheme.colorScheme.onSurface,
+                                textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.bodyLarge
                             )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            RWTextButton(readI18n("common.ok"), onClick = dismiss)
                         }
                     }
                 }
