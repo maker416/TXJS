@@ -691,13 +691,6 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                     .fillMaxWidth()
                                     .heightIn(min = CompactChatPanelMinHeight),
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(min = CompactChatMessageAreaMinHeight),
-                                ) {
-                                    RoomChatMessageView(modifier = Modifier.fillMaxSize())
-                                }
                                 RoomChatMessageTextField(
                                     chatMessage = chatMessage,
                                     focusRequester = chatFocusRequester,
@@ -705,6 +698,13 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                     onSend = room::sendChatMessageOrCommand,
                                     compact = true,
                                 )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = CompactChatMessageAreaMinHeight),
+                                ) {
+                                    RoomChatMessageView(modifier = Modifier.fillMaxSize())
+                                }
                             }
                         }
                     }

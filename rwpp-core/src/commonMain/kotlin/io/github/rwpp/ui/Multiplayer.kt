@@ -101,6 +101,8 @@ private fun parseModNamesFromJson(modsJson: String): List<String> {
 private fun mapVanillaVersionDisplay(raw: String, vanillaLabel: String): String =
     if (raw.equals("vanilla", ignoreCase = true)) vanillaLabel else raw
 
+private const val LIST_POSITION_APPLICATION_URL = "http://listup.xn--rhqr8xvr4ahqsgka.com/"
+
 @Composable
 private fun FilterSectionCard(
     title: String,
@@ -1230,6 +1232,14 @@ fun MultiplayerView(
                             serverAddress = lastIp
                             isConnecting = true
                         }
+                    }
+
+                    RWTextButton(
+                        label = readI18n("multiplayer.apply24HourListPosition"),
+                        leadingIcon = { Icon(painter = painterResource(Res.drawable.public_30), null, modifier = Modifier.size(30.dp)) },
+                        modifier = Modifier.padding(10.dp)
+                    ) {
+                        net.openUriInBrowser(LIST_POSITION_APPLICATION_URL)
                     }
                 }
 
