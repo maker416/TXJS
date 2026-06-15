@@ -157,6 +157,15 @@ object NetInject {
         isReturnToBattleRoom = true
     }
 
+    // 网络引擎每帧执行前执行，将 112 包强制推迟到注册完成之后
+    @Inject("a", injectMode = InjectMode.InsertBefore)
+    fun ae.guardAcceptStartGameUntilRegistered(delta: Float) {
+        if (!this.D && Reflect.get<Boolean>(this, "bB") != true) {
+            // 如果 110 包还没发，抑制 112 包的发送
+            Reflect.set(this, "bI", true)
+        }
+    }
+
     @Inject("a", InjectMode.InsertBefore)
     fun onProcessPacket(packet: com.corrodinggames.rts.gameFramework.j.bi): Any {
         return when (val type = packet.b) {
@@ -190,6 +199,8 @@ object NetInject {
                     r14.X = r0.b.readInt();
                 }
 
+                // 允许 112 包的发送
+                Reflect.set(r14, "bI", true)
                 r14::class.java.getDeclaredMethod("f", r1::class.java).apply {
                     isAccessible = true
                 }.invoke(r14, r1)

@@ -19,12 +19,11 @@ lastName=""
 while IFS= read -r file; do
     filename=$(basename "$file")
 
-    prefix="${filename:0:10}"
-
-    if [[ "$prefix" == "RWPP-multiplatform" ]]; then
+    if [[ "$filename" == RWJS*.jar ]]; then
         count=$((count + 1))
         lastName="$file"
     fi
+
 done < <(find "$DestPath" -type f -name "$DestExt")
 
 if [[ "$count" -eq 0 ]]; then
