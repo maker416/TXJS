@@ -51,6 +51,8 @@ import io.github.rwpp.rwpp_core.generated.resources.*
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.ExpandedCard
 import io.github.rwpp.widget.v2.LazyColumnScrollbar
+import io.github.rwpp.widget.v2.ListIndicatorSettings
+import io.github.rwpp.widget.v2.ScrollbarSelectionActionable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -70,6 +72,10 @@ private data class ModImportProgress(
     val copiedBytes: Long = 0L,
     val totalBytes: Long? = null
 )
+
+private val ModListScrollbarThickness = 4.dp
+private val ModListScrollbarPadding = 3.dp
+private val ModListScrollbarReservedWidth = 18.dp
 
 @Composable
 private fun ModImportProgressDialog(progress: ModImportProgress?) {
@@ -638,12 +644,20 @@ fun ModsView(onExit: () -> Unit) {
             Header(isEnabledList, data.size)
             LazyColumnScrollbar(
                 listState = state,
-                modifier = Modifier.fillMaxWidth().weight(1f).padding(top = 3.dp)
+                modifier = Modifier.fillMaxWidth().weight(1f).padding(top = 3.dp),
+                thickness = ModListScrollbarThickness,
+                padding = ModListScrollbarPadding,
+                alwaysShowScrollBar = false,
+                selectionActionable = ScrollbarSelectionActionable.WhenVisible,
+                showItemIndicator = ListIndicatorSettings.Disabled
             ) {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     state = state,
-                    contentPadding = PaddingValues(bottom = 8.dp)
+                    contentPadding = PaddingValues(
+                        end = ModListScrollbarReservedWidth,
+                        bottom = 8.dp
+                    )
                 ) {
                     ModList(data)
                 }
@@ -775,12 +789,20 @@ fun ModsView(onExit: () -> Unit) {
                         listState = state,
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(start = 8.dp, end = 40.dp)
+                            .padding(start = 8.dp, end = 40.dp),
+                        thickness = ModListScrollbarThickness,
+                        padding = ModListScrollbarPadding,
+                        alwaysShowScrollBar = false,
+                        selectionActionable = ScrollbarSelectionActionable.WhenVisible,
+                        showItemIndicator = ListIndicatorSettings.Disabled
                     ) {
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
                             state = state,
-                            contentPadding = PaddingValues(bottom = 12.dp)
+                            contentPadding = PaddingValues(
+                                end = ModListScrollbarReservedWidth,
+                                bottom = 12.dp
+                            )
                         ) {
                             item { ModsTopBar(compact = true) }
                             item { Header(true, enabledMods.size) }

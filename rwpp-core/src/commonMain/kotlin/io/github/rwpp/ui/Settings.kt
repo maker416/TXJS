@@ -191,7 +191,9 @@ fun SettingsView(
                                             }
                                             var selectedLanguageIndex by remember {
                                                 mutableIntStateOf(
-                                                    languageKeys.indexOf(settings.language).coerceAtLeast(0)
+                                                    languageKeys.indexOf(settings.language)
+                                                        .takeIf { it >= 0 }
+                                                        ?: languageKeys.indexOf("zh")
                                                 )
                                             }
                                             SettingsDropDown(
@@ -548,8 +550,6 @@ fun SettingsView(
                                                                 logLines += "--------------------------------------------------"
                                                                 if (compareVersions(version, projectVersion) <= 0) {
                                                                     logLines += readI18n("settings.updateLatestVersion", I18nType.RWPP)
-                                                                } else if (settings.ignoreVersion == version) {
-                                                                    logLines += readI18n("settings.updateIgnoredVersion", I18nType.RWPP, version)
                                                                 } else {
                                                                     logLines += readI18n("settings.updateNewVersionFound", I18nType.RWPP)
                                                                     checkResult = LatestVersionProfile(version, bodyText, prerelease, assets)

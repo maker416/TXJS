@@ -196,12 +196,6 @@ open class UIProvider {
         openSourceInfo: () -> Unit
     ) {
         val windowManager = LocalWindowManager.current
-        val menuWidthModifier = when (windowManager) {
-            WindowManager.Small -> Modifier.fillMaxWidth(0.40f).widthIn(min = 132.dp, max = 190.dp)
-            WindowManager.Middle -> Modifier.fillMaxWidth(0.26f).widthIn(min = 148.dp, max = 210.dp)
-            WindowManager.Large -> Modifier.fillMaxWidth(0.18f).widthIn(min = 156.dp, max = 230.dp)
-        }
-
         val standardMenuItems: List<@Composable () -> Unit> = listOf(
             { MainMenuAction(readI18n("menu.mission"), mission) },
             { MainMenuAction(readI18n("menus.singlePlayer.skirmish", I18nType.RW), skirmish) },
@@ -222,27 +216,35 @@ open class UIProvider {
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
-            val titleAreaHeight = maxHeight * (1f / 3f)
+            val titleAreaHeight = maxHeight * 0.39f
             val titleWidth = when (windowManager) {
-                WindowManager.Small -> maxWidth * 0.55f
-                WindowManager.Middle -> maxWidth * 0.50f
-                WindowManager.Large -> maxWidth * 0.48f
+                WindowManager.Small -> maxWidth * 0.64f
+                WindowManager.Middle -> maxWidth * 0.56f
+                WindowManager.Large -> maxWidth * 0.50f
             }
             val buttonSpacing = when (windowManager) {
-                WindowManager.Small -> 4.dp
-                WindowManager.Middle -> 5.dp
-                WindowManager.Large -> 6.dp
+                WindowManager.Small -> 8.dp
+                WindowManager.Middle -> 9.dp
+                WindowManager.Large -> 10.dp
             }
             val menuScrollState = rememberLazyListState()
             val versionStyle = when (windowManager) {
                 WindowManager.Small, WindowManager.Middle -> MaterialTheme.typography.bodySmall
                 WindowManager.Large -> MaterialTheme.typography.bodyLarge
             }
-            val versionBottomPadding = if (windowManager == WindowManager.Small) 8.dp else 14.dp
             val extraItems: List<@Composable () -> Unit> = extraMenuList.map { menu ->
                 { MainMenuAction(menu.title, menu.onClick) }
             }
             val allItems = standardMenuItems + extraItems
+
+            Text(
+                "$projectVersion (core $coreVersion)",
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 8.dp, end = 10.dp),
+                style = versionStyle,
+                color = Color.White
+            )
 
             LazyColumn(
                 modifier = Modifier
@@ -270,17 +272,8 @@ open class UIProvider {
                         )
                     }
                 }
-                item {
-                    Text(
-                        "$projectVersion (core $coreVersion)",
-                        modifier = Modifier.padding(top = 1.dp, bottom = versionBottomPadding),
-                        style = versionStyle,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
                 items(allItems.size) { index ->
                     Box(
-                        modifier = menuWidthModifier,
                         contentAlignment = Alignment.Center
                     ) {
                         allItems[index]()
@@ -295,31 +288,36 @@ open class UIProvider {
         content: String,
         onClick: () -> Unit
     ) {
-        val minButtonHeight = when (LocalWindowManager.current) {
-            WindowManager.Small -> 32.dp
-            WindowManager.Middle -> 34.dp
-            WindowManager.Large -> 38.dp
+        val windowManager = LocalWindowManager.current
+        val buttonHeight = when (windowManager) {
+            WindowManager.Small -> 34.dp
+            WindowManager.Middle -> 38.dp
+            WindowManager.Large -> 42.dp
+        }
+        val buttonWidthModifier = when (windowManager) {
+            WindowManager.Small -> Modifier.widthIn(min = 88.dp, max = 138.dp)
+            WindowManager.Middle -> Modifier.widthIn(min = 96.dp, max = 152.dp)
+            WindowManager.Large -> Modifier.widthIn(min = 104.dp, max = 168.dp)
         }
         Surface(
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.36f),
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            shape = RoundedCornerShape(50),
-            border = BorderStroke(2.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)),
+            color = Color(0x7A2A2A2A),
+            contentColor = Color.White,
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(2.dp, Color.White.copy(alpha = 0.72f)),
             tonalElevation = 0.dp,
             shadowElevation = 0.dp,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = buttonWidthModifier,
             onClick = onClick
         ) {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = minButtonHeight)
+                    .heightIn(min = buttonHeight)
                     .padding(horizontal = 14.dp, vertical = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     content,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = Color.White,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )

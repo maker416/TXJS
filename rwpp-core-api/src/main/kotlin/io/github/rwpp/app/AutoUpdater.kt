@@ -8,14 +8,21 @@
 package io.github.rwpp.app
 
 interface AutoUpdater {
-    /** 当前平台是否支持自动更新 */
-    fun isSupported(): Boolean
+  companion object {
+    const val PROGRESS_FAILED = -1f
+    const val PROGRESS_NEED_INSTALL_PERMISSION = -2f
+  }
 
-    /**
-     * 下载安装包并启动更新，然后退出当前进程。
-     * 此方法不会返回（成功后会调用 exitProcess）。
-     * @param downloadUrl 安装包下载地址
-     * @param onProgress 进度回调，0.0~1.0 为正常进度，-1.0 表示失败
-     */
-    fun downloadAndInstall(downloadUrl: String, onProgress: (Float) -> Unit)
+  /** 当前平台是否支持自动更新 */
+  fun isSupported(): Boolean
+
+  /**
+   * 下载安装包并启动系统安装界面（桌面端成功后会退出当前进程）。
+   * @param downloadUrl 安装包下载地址
+   * @param onProgress 进度回调：0.0~1.0 为下载进度；[PROGRESS_NEED_INSTALL_PERMISSION] 需授予安装权限；[PROGRESS_FAILED] 表示失败
+   */
+  fun downloadAndInstall(downloadUrl: String, onProgress: (Float) -> Unit)
+
+  /** 取消挂起的更新流程（如等待安装权限时的自动重试） */
+  fun cancelPendingUpdate() {}
 }

@@ -38,6 +38,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.ImageLoader
 import coil3.compose.setSingletonImageLoaderFactory
@@ -60,6 +61,7 @@ import io.github.rwpp.game.Game
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.app.AutoUpdater
+import io.github.rwpp.app.AutoUpdater.Companion.PROGRESS_NEED_INSTALL_PERMISSION
 import io.github.rwpp.net.LatestVersionProfile
 import io.github.rwpp.net.Net
 import io.github.rwpp.scripts.Render
@@ -109,20 +111,18 @@ fun App(
     LaunchedEffect(Unit) {
         val now = System.currentTimeMillis()
         coreData.lastPlayTime = now
-        // per day
-        if ((now - (coreData.lastAutoCheckUpdateTime + 1000 * 60 * 60 * 24) > 0) || coreData.debug) {
-            withContext(Dispatchers.IO) {
-                if (settings.autoCheckUpdate) {
-                    val _profile = net.getLatestVersionProfile()
 
-                    if (_profile != null) {
-                        coreData.lastAutoCheckUpdateTime = now
+        if (settings.autoCheckUpdate) {
+            val latestProfile = withContext(Dispatchers.IO) {
+                net.getLatestVersionProfile()
+            }
 
-                        if ((compareVersions(_profile.version, projectVersion) > 0 && settings.ignoreVersion != _profile.version) || coreData.debug) {
-                            profile = _profile
-                            checkUpdateDialogVisible = true
-                        }
-                    }
+            if (latestProfile != null) {
+                coreData.lastAutoCheckUpdateTime = now
+
+                if (compareVersions(latestProfile.version, projectVersion) > 0 || coreData.debug) {
+                    profile = latestProfile
+                    checkUpdateDialogVisible = true
                 }
             }
         }
@@ -270,7 +270,7 @@ fun App(
                 ) {
                     SettingsView(
                         {
-                            if (it.version == projectVersion || settings.ignoreVersion == it.version) return@SettingsView
+                            if (compareVersions(it.version, projectVersion) <= 0) return@SettingsView
                             profile = it
                             checkUpdateDialogVisible = true
                         },
@@ -411,113 +411,112 @@ fun App(
 
                 AnimatedAlertDialog(
                     checkUpdateDialogVisible,
-                    onDismissRequest = { checkUpdateDialogVisible = false }
+                    onDismissRequest = {
+                        appKoin.getOrNull<AutoUpdater>()?.cancelPendingUpdate()
+                        checkUpdateDialogVisible = false
+                    }
                 ) { dismiss ->
                     BorderCard(
-                        modifier = Modifier.fillMaxWidth(GeneralProportion()).verticalScroll(rememberScrollState()),
+                        modifier = Modifier
+                            .fillMaxWidth(GeneralProportion())
+                            .heightIn(max = maxHeight * 0.88f)
+                            .verticalScroll(rememberScrollState()),
                         backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
                     ) {
                         Box(modifier = Modifier.fillMaxWidth()) {
+                            val appContextInner = koinInject<AppContext>()
+                            val autoUpdater = remember { appKoin.getOrNull<AutoUpdater>() }
+                            val exeAsset = profile!!.assets.find { it.name.endsWith(".exe") }
+                            val apkAsset = profile!!.assets.find { it.name.endsWith(".apk") }
+                            val autoUpdateAsset = if (appContextInner.isDesktop()) exeAsset else apkAsset
+                            val scopeInner = rememberCoroutineScope()
+                            var updating by remember { mutableStateOf(false) }
+                            var downloadProgress by remember { mutableStateOf(0f) }
+
                             Column(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Info,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(48.dp)
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    readI18n("settings.updateAvailable", I18nType.RWPP),
-                                    style = MaterialTheme.typography.headlineLarge,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Surface(
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    shape = RoundedCornerShape(16.dp)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(end = 28.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        (if (profile!!.prerelease) "Pre-release " else "") + profile!!.version,
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.height(16.dp))
-                                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceContainer)
-                                Spacer(modifier = Modifier.height(12.dp))
-
-                                val appContextInner = koinInject<AppContext>()
-                                val autoUpdater = remember { appKoin.getOrNull<AutoUpdater>() }
-                                val exeAsset = profile!!.assets.find { it.name.endsWith(".exe") }
-                                val apkAsset = profile!!.assets.find { it.name.endsWith(".apk") }
-                                val autoUpdateAsset = if (appContextInner.isDesktop()) exeAsset else apkAsset
-                                val scopeInner = rememberCoroutineScope()
-                                var updating by remember { mutableStateOf(false) }
-                                var downloadProgress by remember { mutableStateOf(0f) }
-
-                                if (profile!!.assets.isNotEmpty()) {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.primaryContainer,
+                                        shape = CircleShape
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Info,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.padding(8.dp).size(22.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(12.dp))
                                     Column(
-                                        modifier = Modifier.fillMaxWidth(),
+                                        modifier = Modifier.weight(1f),
                                         verticalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        profile!!.assets.forEach { asset ->
+                                        Text(
+                                            readI18n("settings.updateAvailable", I18nType.RWPP),
+                                            style = MaterialTheme.typography.headlineSmall,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
                                             Surface(
-                                                color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.5f),
-                                                shape = RoundedCornerShape(10.dp),
-                                                modifier = Modifier.fillMaxWidth().bounceClick {
-                                                    net.openUriInBrowser(asset.downloadUrl)
-                                                }
+                                                color = MaterialTheme.colorScheme.primaryContainer,
+                                                shape = RoundedCornerShape(8.dp),
+                                                modifier = Modifier.weight(1f, fill = false)
                                             ) {
-                                                Row(
-                                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                Text(
+                                                    profile!!.version,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                                                )
+                                            }
+                                            if (profile!!.prerelease) {
+                                                Surface(
+                                                    color = MaterialTheme.colorScheme.secondaryContainer,
+                                                    shape = RoundedCornerShape(8.dp)
                                                 ) {
                                                     Text(
-                                                        asset.name,
-                                                        style = MaterialTheme.typography.bodyMedium,
-                                                        color = MaterialTheme.colorScheme.onSurface
-                                                    )
-                                                    Icon(
-                                                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                                        contentDescription = null,
-                                                        tint = MaterialTheme.colorScheme.primary,
-                                                        modifier = Modifier.size(18.dp)
+                                                        "Pre-release",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
                                                     )
                                                 }
                                             }
                                         }
                                     }
-                                } else {
-                                    Text(
-                                        readI18n("settings.noDownloadAssets", I18nType.RWPP),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                                    )
                                 }
-
-                                Spacer(modifier = Modifier.height(16.dp))
 
                                 if (autoUpdater != null && autoUpdater.isSupported() && autoUpdateAsset != null && !updating) {
                                     Surface(
                                         color = MaterialTheme.colorScheme.primary,
-                                        shape = RoundedCornerShape(12.dp),
+                                        shape = RoundedCornerShape(8.dp),
                                         modifier = Modifier.fillMaxWidth().bounceClick {
                                             updating = true
                                             scopeInner.launch(Dispatchers.IO) {
                                                 autoUpdater.downloadAndInstall(autoUpdateAsset.downloadUrl) { progress ->
-                                                    downloadProgress = progress
+                                                    scopeInner.launch(Dispatchers.Main) {
+                                                        downloadProgress = progress
+                                                    }
                                                 }
                                             }
                                         }
                                     ) {
                                         Row(
-                                            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                                            modifier = Modifier.fillMaxWidth().padding(vertical = 11.dp),
                                             horizontalArrangement = Arrangement.Center,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
@@ -538,26 +537,36 @@ fun App(
                                 }
 
                                 if (updating) {
-                                    Spacer(modifier = Modifier.height(12.dp))
                                     if (downloadProgress < 0f) {
-                                        Column(
-                                            horizontalAlignment = Alignment.CenterHorizontally,
-                                            modifier = Modifier.fillMaxWidth()
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                                         ) {
                                             Text(
-                                                readI18n("settings.downloadFailed", I18nType.RWPP),
+                                                if (downloadProgress == PROGRESS_NEED_INSTALL_PERMISSION) {
+                                                    readI18n("settings.installPermissionRequired", I18nType.RWPP)
+                                                } else {
+                                                    readI18n("settings.downloadFailed", I18nType.RWPP)
+                                                },
                                                 style = MaterialTheme.typography.bodyMedium,
-                                                color = MaterialTheme.colorScheme.error
+                                                color = if (downloadProgress == PROGRESS_NEED_INSTALL_PERMISSION) {
+                                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
+                                                } else {
+                                                    MaterialTheme.colorScheme.error
+                                                },
+                                                modifier = Modifier.weight(1f)
                                             )
-                                            Spacer(modifier = Modifier.height(8.dp))
                                             Surface(
                                                 color = MaterialTheme.colorScheme.surfaceContainer,
-                                                shape = RoundedCornerShape(10.dp),
+                                                shape = RoundedCornerShape(8.dp),
                                                 modifier = Modifier.bounceClick {
                                                     downloadProgress = 0f
                                                     scopeInner.launch(Dispatchers.IO) {
                                                         autoUpdater!!.downloadAndInstall(autoUpdateAsset!!.downloadUrl) { progress ->
-                                                            downloadProgress = progress
+                                                            scopeInner.launch(Dispatchers.Main) {
+                                                                downloadProgress = progress
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -566,7 +575,7 @@ fun App(
                                                     readI18n("settings.retry", I18nType.RWPP),
                                                     style = MaterialTheme.typography.bodyMedium,
                                                     color = MaterialTheme.colorScheme.onSurface,
-                                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                                                 )
                                             }
                                         }
@@ -602,24 +611,51 @@ fun App(
                                     }
                                 }
 
-                                Spacer(modifier = Modifier.height(6.dp))
-                                TextButton(
-                                    onClick = {
-                                        settings.ignoreVersion = profile!!.version
-                                        dismiss()
-                                    },
-                                    modifier = Modifier.align(Alignment.CenterHorizontally)
-                                ) {
+                                if (profile!!.assets.isNotEmpty()) {
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        profile!!.assets.forEach { asset ->
+                                            Surface(
+                                                color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.5f),
+                                                shape = RoundedCornerShape(8.dp),
+                                                modifier = Modifier.fillMaxWidth().bounceClick {
+                                                    net.openUriInBrowser(asset.downloadUrl)
+                                                }
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    Text(
+                                                        asset.name,
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        color = MaterialTheme.colorScheme.onSurface,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        modifier = Modifier.weight(1f)
+                                                    )
+                                                    Icon(
+                                                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                                        contentDescription = null,
+                                                        tint = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
                                     Text(
-                                        readI18n("settings.ignoreVersion"),
+                                        readI18n("settings.noDownloadAssets", I18nType.RWPP),
                                         style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                                     )
                                 }
 
-                                Spacer(modifier = Modifier.height(12.dp))
                                 HorizontalDivider(color = MaterialTheme.colorScheme.surfaceContainer)
-                                Spacer(modifier = Modifier.height(10.dp))
 
                                 Text(
                                     readI18n("settings.updateContent", I18nType.RWPP),
@@ -627,7 +663,6 @@ fun App(
                                     color = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.align(Alignment.Start)
                                 )
-                                Spacer(modifier = Modifier.height(6.dp))
                                 BorderCard(
                                     modifier = Modifier.fillMaxWidth(),
                                     backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.5f)
@@ -638,6 +673,19 @@ fun App(
                                         colors = markdownColor(),
                                         typography = markdownTypography()
                                     )
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End
+                                ) {
+                                    TextButton(onClick = dismiss) {
+                                        Text(
+                                            readI18n("settings.remindLater", I18nType.RWPP),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                        )
+                                    }
                                 }
                             }
 

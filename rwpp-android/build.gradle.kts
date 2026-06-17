@@ -148,7 +148,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "io.github.rwpp"
+        applicationId = "io.github.rwjs"
         minSdk = (findProperty("android.minSdk") as String).toInt()
         targetSdk = (findProperty("android.targetSdk") as String).toInt()
         versionCode = 1

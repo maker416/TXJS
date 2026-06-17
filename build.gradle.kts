@@ -28,10 +28,12 @@ allprojects {
     }
 }
 
-version = "1.12.31"
+version = "1.12.40"
 
 // 保留 build/key、artifacts 与构建脚本，避免 gradlew clean 误删
-tasks.named<Delete>("clean") {
+tasks.named<Delete>("clean").configure {
+    // 必须 clear 后重设：Base 插件默认会删除整个 build/，仅 append exclude 无效
+    delete.clear()
     delete(
         fileTree(layout.buildDirectory) {
             exclude("key/**", "artifacts/**", "*.bat", "*.cmd", "*.ps1")
