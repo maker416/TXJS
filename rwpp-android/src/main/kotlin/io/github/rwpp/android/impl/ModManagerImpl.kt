@@ -59,8 +59,8 @@ class ModManagerImpl : ModManager {
                 awaitGamePost(latch)
                 appKoin.get<Game>().getAllMaps(true)
             }
-            ReloadModFinishedEvent().broadcastIn()
         } finally {
+            ReloadModFinishedEvent().broadcastIn()
             isReloadingMods.set(false)
         }
     }

@@ -25,34 +25,44 @@ import org.koin.core.annotation.Single
 import org.koin.core.component.get
 import java.io.File
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicBoolean
 
 @Single
 class ModManagerImpl : ModManager {
     private val game: Game = get()
+    private val isReloadingMods = AtomicBoolean(false)
 
     override suspend fun modReload() {
-        ReloadModEvent().broadcastIn()
-        val latch = CountDownLatch(1)
-        game.post {
-            val B = GameEngine.B()
-            B.bZ.e()
-            B.bQ.save()
-            try {
-                B.br = true
-                B.e()
-                B.bZ.a(false, false)
-                B.x()
-            } finally {
-                B.br = false
+        if (!isReloadingMods.compareAndSet(false, true)) return
+        try {
+            ReloadModEvent().broadcastIn()
+            val latch = CountDownLatch(1)
+            game.post {
+                try {
+                    val B = GameEngine.B()
+                    B.bZ.e()
+                    B.bQ.save()
+                    try {
+                        B.br = true
+                        B.e()
+                        B.bZ.a(false, false)
+                        B.x()
+                    } finally {
+                        B.br = false
+                    }
+                } finally {
+                    latch.countDown()
+                }
             }
-            latch.countDown()
-        }
 
-        withContext(Dispatchers.IO) {
-            latch.await()
+            withContext(Dispatchers.IO) {
+                latch.await()
+            }
+            appKoin.get<Game>().getAllMaps(true)
+        } finally {
+            ReloadModFinishedEvent().broadcastIn()
+            isReloadingMods.set(false)
         }
-        appKoin.get<Game>().getAllMaps(true)
-        ReloadModFinishedEvent().broadcastIn()
     }
 
     override suspend fun modUpdate() {
