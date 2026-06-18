@@ -53,6 +53,7 @@ import io.github.rwpp.widget.v2.ExpandedCard
 import io.github.rwpp.widget.v2.LazyColumnScrollbar
 import io.github.rwpp.widget.v2.ListIndicatorSettings
 import io.github.rwpp.widget.v2.ScrollbarSelectionActionable
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -171,14 +172,33 @@ fun ModsView(onExit: () -> Unit) {
     var updated by remember { mutableStateOf(false) }
     var enabledChanged by remember { mutableStateOf(false) }
     var isApplying by remember { mutableStateOf(false) }
+    var applySucceeded by remember { mutableStateOf(false) }
+    var isClosingAfterDelete by remember { mutableStateOf(false) }
     var importProgress by remember { mutableStateOf<ModImportProgress?>(null) }
+    var pendingDeleteMod by remember { mutableStateOf<Mod?>(null) }
 
     LoadingView(isApplying, onLoaded = {
         isApplying = false
-        onExit()
+        if (applySucceeded) {
+            applySucceeded = false
+            onExit()
+        }
     }) {
-        modManager.modSaveChange()
-        true
+        try {
+            modManager.modSaveChange()
+            withContext(Dispatchers.Main) {
+                applySucceeded = true
+            }
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            message(e.message ?: "Unknown error")
+            withContext(Dispatchers.Main) {
+                applySucceeded = false
+            }
+            false
+        }
     }
 
     ModImportProgressDialog(importProgress)
@@ -216,11 +236,45 @@ fun ModsView(onExit: () -> Unit) {
 
     fun reload() {
         scope.launch {
-            reloadMods()
+            try {
+                reloadMods()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                UI.showWarning(e.message ?: "Unknown error")
+            }
+        }
+    }
+
+    fun exit() {
+        if (isClosingAfterDelete) return
+
+        if (!deletedMod) {
+            onExit()
+            return
+        }
+
+        isClosingAfterDelete = true
+        scope.launch {
+            try {
+                reloadMods()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                UI.showWarning(e.message ?: "Unknown error")
+            } finally {
+                isClosingAfterDelete = false
+            }
+            onExit()
         }
     }
 
     fun updateFileChooseProgress(progress: FileChooseProgress) {
+        if (progress.fileName == null) {
+            importProgress = null
+            return
+        }
+
         importProgress = ModImportProgress(
             stage = ModImportStage.Preparing,
             fileName = progress.fileName,
@@ -241,7 +295,7 @@ fun ModsView(onExit: () -> Unit) {
 
             val target = File(modDir, file.name)
 
-            runCatching {
+            try {
                 importProgress = ModImportProgress(
                     stage = ModImportStage.Importing,
                     fileName = file.name,
@@ -266,20 +320,19 @@ fun ModsView(onExit: () -> Unit) {
                     }
                 }
 
-                importProgress = null
                 reloadMods()
-            }.onSuccess {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                UI.showWarning(e.message ?: "Unknown error")
+            } finally {
                 importProgress = null
-            }.onFailure {
-                importProgress = null
-                UI.showWarning(it.message ?: "Unknown error")
             }
         }
     }
 
     BackHandler(true) {
-        if (deletedMod) reload()
-        onExit()
+        exit()
     }
 
     DisposableEffect(Unit) {
@@ -546,7 +599,7 @@ fun ModsView(onExit: () -> Unit) {
                 )
 
                 IconButton(
-                    onClick = { deleteMod(mod) },
+                    onClick = { pendingDeleteMod = mod },
                     modifier = Modifier.size(42.dp)
                 ) {
                     Icon(
@@ -729,7 +782,79 @@ fun ModsView(onExit: () -> Unit) {
                     )
                 },
                 modifier = Modifier.padding(horizontal = 4.dp),
-            ) { isApplying = true }
+            ) {
+                applySucceeded = false
+                loadingMessage = ""
+                isApplying = true
+            }
+        }
+    }
+
+    @Composable
+    fun DeleteModConfirmDialog() {
+        AnimatedAlertDialog(
+            visible = pendingDeleteMod != null,
+            onDismissRequest = { pendingDeleteMod = null },
+            enableDismiss = true
+        ) { dismiss ->
+            val mod = pendingDeleteMod ?: return@AnimatedAlertDialog
+            BorderCard(modifier = Modifier.fillMaxWidth(0.86f).widthIn(max = 420.dp).wrapContentHeight()) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text(
+                        readI18n("mod.deleteConfirmTitle"),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    Text(
+                        readI18n("mod.deleteConfirmMessage", I18nType.RWPP, mod.name),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 4,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RWTextButton(
+                            readI18n("mod.cancel"),
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Default.Close,
+                                    null,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            },
+                            modifier = Modifier.padding(end = 8.dp),
+                            onClick = dismiss
+                        )
+
+                        RWTextButton(
+                            readI18n("mod.delete"),
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    null,
+                                    modifier = Modifier.size(24.dp),
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            },
+                            onClick = {
+                                pendingDeleteMod = null
+                                deleteMod(mod)
+                            }
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -776,8 +901,7 @@ fun ModsView(onExit: () -> Unit) {
                         }
                     }
                     ExitButton {
-                        if (deletedMod) reload()
-                        onExit()
+                        exit()
                     }
                 }
             }
@@ -815,11 +939,12 @@ fun ModsView(onExit: () -> Unit) {
                         }
                     }
                     ExitButton {
-                        if (deletedMod) reload()
-                        onExit()
+                        exit()
                     }
                 }
             }
         }
     }
+
+    DeleteModConfirmDialog()
 }

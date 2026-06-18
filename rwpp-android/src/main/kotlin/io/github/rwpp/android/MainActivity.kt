@@ -45,6 +45,7 @@ import io.github.rwpp.config.Settings
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.QuitGameEvent
 import io.github.rwpp.event.events.ReturnMainMenuEvent
+import io.github.rwpp.external.FileChooseProgress
 import io.github.rwpp.ui.UI
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -98,6 +99,7 @@ class MainActivity : ComponentActivity() {
                         if (file != null) {
                             actions.forEach { it.onChooseFile(file) }
                         } else {
+                            actions.forEach { it.onProgress?.invoke(FileChooseProgress(null, 0L, null)) }
                             UI.showWarning("Unable to open selected file")
                         }
                     }
