@@ -295,6 +295,7 @@ fun MultiplayerView(
 
 
     var enableModFilter by remember { mutableStateOf(false) }
+    var hideNonJoinableRooms by remember { mutableStateOf(false) }
     var mapNameFilter by remember { mutableStateOf(instance.mapNameFilter) }
     var creatorNameFilter by remember { mutableStateOf(instance.creatorNameFilter) }
     var playerLimitRange by remember { mutableStateOf(instance.playerLimitRangeFrom..instance.playerLimitRangeTo) }
@@ -403,7 +404,7 @@ fun MultiplayerView(
         BorderCard(
             modifier = Modifier
                 .fillMaxWidth(LargeProportion())
-                .widthIn(max = 500.dp)
+                .widthIn(max = 760.dp)
                 .fillMaxHeight(LargeProportion())
                 .padding(10.dp)
                 .autoClearFocus(),
@@ -430,26 +431,131 @@ fun MultiplayerView(
                 if (!enableMods) transferMod = false
             }
 
-            Column(modifier = Modifier.fillMaxSize()) {
-                Text(
-                    readI18n("multiplayer.host"),
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                LargeDividingLine { 0.dp }
-
+            @Composable
+            fun SectionPanel(
+                title: String,
+                modifier: Modifier = Modifier,
+                content: @Composable ColumnScope.() -> Unit,
+            ) {
                 Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    modifier = modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = .32f))
+                        .border(
+                            BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .36f)),
+                            RoundedCornerShape(10.dp)
+                        )
+                        .padding(horizontal = 10.dp, vertical = 9.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text(
-                        readI18n("multiplayer.hostPrefix"),
-                        style = MaterialTheme.typography.titleMedium,
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(3.dp)
+                                .height(18.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(MaterialTheme.colorScheme.primary)
+                        )
+                        Text(
+                            title,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+
+                    content()
+                }
+            }
+
+            @Composable
+            fun ToggleLine(
+                label: String,
+                checked: Boolean,
+                enabled: Boolean = true,
+                clickableWhenDisabled: Boolean = false,
+                supportingText: String? = null,
+                onToggle: () -> Unit,
+            ) {
+                val borderColor = if (checked && enabled) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = .72f)
+                } else {
+                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f)
+                }
+                val textColor = if (enabled) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .62f)
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 42.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .border(BorderStroke(1.dp, borderColor), RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = if (checked && enabled) .42f else .18f))
+                        .clickable(enabled = enabled || clickableWhenDisabled) { onToggle() }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RWCheckbox(
+                        checked,
+                        onCheckedChange = null,
+                        modifier = Modifier.padding(end = 6.dp),
+                        enabled = enabled,
                     )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = textColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (!supportingText.isNullOrBlank()) {
+                            Text(
+                                supportingText,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            }
+
+            @Composable
+            fun NumberField(
+                label: String,
+                value: String,
+                modifier: Modifier = Modifier,
+                lengthLimitCount: Int = Int.MAX_VALUE,
+                onValueChange: (String) -> Unit,
+            ) {
+                RWSingleOutlinedTextField(
+                    label,
+                    value,
+                    modifier = modifier,
+                    lengthLimitCount = lengthLimitCount,
+                    typeInNumberOnly = true,
+                    typeInOnlyInteger = true,
+                    onValueChange = onValueChange,
+                )
+            }
+
+            @Composable
+            fun ProtocolSelector(modifier: Modifier = Modifier) {
+                SectionPanel(
+                    title = readI18n("multiplayer.hostPrefix"),
+                    modifier = modifier,
+                ) {
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -462,96 +568,206 @@ fun MultiplayerView(
                         )
                         FilterChip(
                             selected = hostPrefix == HostCommandPrefix.R,
-                            onClick = { hostPrefix = HostCommandPrefix.R },
+                            onClick = {
+                                hostPrefix = HostCommandPrefix.R
+                                roomId = ""
+                            },
                             label = { Text(readI18n("multiplayer.hostPrefixR")) },
                         )
                     }
-
                     if (hostPrefix == HostCommandPrefix.Q) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            RWCheckbox(
-                                disableDefaultPublish,
-                                onCheckedChange = { disableDefaultPublish = !disableDefaultPublish },
-                                modifier = Modifier.padding(end = 4.dp),
-                            )
-                            Text(
-                                readI18n("multiplayer.disableDefaultPublish"),
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
+                        ToggleLine(
+                            label = readI18n("multiplayer.disableDefaultPublish"),
+                            checked = disableDefaultPublish,
+                        ) {
+                            disableDefaultPublish = !disableDefaultPublish
                         }
                     }
+                }
+            }
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RWCheckbox(
-                            enableMods,
-                            onCheckedChange = { enableMods = !enableMods },
-                            modifier = Modifier.padding(end = 4.dp),
-                        )
-                        Text(
-                            readI18n("multiplayer.enableMods"),
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
+            @Composable
+            fun ModOptions(modifier: Modifier = Modifier) {
+                val transferDisabledReason = if (modSize > maxModSize) {
+                    "${SizeUtils.byteToMB(modSize)}MB > ${SizeUtils.byteToMB(maxModSize)}MB"
+                } else null
+
+                SectionPanel(
+                    title = readI18n("multiplayer.room.option"),
+                    modifier = modifier,
+                ) {
+                    ToggleLine(
+                        label = readI18n("multiplayer.enableMods"),
+                        checked = enableMods,
+                    ) {
+                        enableMods = !enableMods
                     }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RWCheckbox(
-                            transferMod,
-                            onCheckedChange = { transferMod = !transferMod },
-                            modifier = Modifier.padding(end = 4.dp),
-                            enabled = enableMods && modSize <= maxModSize,
-                        )
-                        Text(
-                            "${readI18n("multiplayer.transferMod")} ${
-                                if (modSize > maxModSize) "(Disabled for total mods size: ${
-                                    SizeUtils.byteToMB(
-                                        modSize
-                                    )
-                                }MB > ${SizeUtils.byteToMB(maxModSize)}MB)" else ""
-                            }",
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
+                    ToggleLine(
+                        label = readI18n("multiplayer.transferMod"),
+                        checked = false,
+                        enabled = false,
+                        clickableWhenDisabled = true,
+                        supportingText = transferDisabledReason,
+                    ) {
+                        transferMod = false
+                        UI.showWarning(readI18n("multiplayer.transferModUnavailable"))
                     }
+                }
+            }
 
-                    RWSingleOutlinedTextField(
-                        readI18n("multiplayer.room.roomId"),
-                        roomId,
-                        modifier = Modifier.fillMaxWidth(),
-                        lengthLimitCount = 10,
-                        typeInNumberOnly = true,
-                        typeInOnlyInteger = true,
-                    ) { roomId = it }
+            @Composable
+            fun RoomFields(
+                twoColumns: Boolean,
+                canSetRoomId: Boolean,
+                modifier: Modifier = Modifier,
+            ) {
+                SectionPanel(
+                    title = readI18n("multiplayer.room.roomDetails"),
+                    modifier = modifier,
+                ) {
+                    if (twoColumns) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (canSetRoomId) {
+                                    NumberField(
+                                        readI18n("multiplayer.room.roomId"),
+                                        roomId,
+                                        modifier = Modifier.weight(1f),
+                                        lengthLimitCount = 10,
+                                    ) { roomId = it }
+                                }
+                                NumberField(
+                                    readI18n("multiplayer.room.maxPlayer"),
+                                    maxPlayer?.toString() ?: "",
+                                    modifier = Modifier.weight(1f),
+                                ) { maxPlayer = it.toIntOrNull()?.coerceAtMost(100) }
+                                NumberField(
+                                    readI18n("multiplayer.room.unitLimit"),
+                                    unitLimit?.toString() ?: "",
+                                    modifier = Modifier.weight(1f),
+                                ) { unitLimit = it.toIntOrNull() }
+                                if (!canSetRoomId) {
+                                    NumberField(
+                                        readI18n("multiplayer.room.credits"),
+                                        credits?.toString() ?: "",
+                                        modifier = Modifier.weight(1f),
+                                    ) { credits = it.toIntOrNull() }
+                                }
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (canSetRoomId) {
+                                    NumberField(
+                                        readI18n("multiplayer.room.credits"),
+                                        credits?.toString() ?: "",
+                                        modifier = Modifier.weight(1f),
+                                    ) { credits = it.toIntOrNull() }
+                                }
+                                NumberField(
+                                    readI18n("multiplayer.room.speedMultiplier"),
+                                    speedMultiplier?.toString() ?: "",
+                                    modifier = Modifier.weight(1f),
+                                ) { speedMultiplier = it.toIntOrNull() }
+                                if (canSetRoomId) {
+                                    Spacer(Modifier.weight(1f))
+                                } else {
+                                    Spacer(Modifier.weight(2f))
+                                }
+                            }
+                        }
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (canSetRoomId) {
+                                NumberField(
+                                    readI18n("multiplayer.room.roomId"),
+                                    roomId,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    lengthLimitCount = 10,
+                                ) { roomId = it }
+                            }
+                            NumberField(
+                                readI18n("multiplayer.room.maxPlayer"),
+                                maxPlayer?.toString() ?: "",
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { maxPlayer = it.toIntOrNull()?.coerceAtMost(100) }
+                            NumberField(
+                                readI18n("multiplayer.room.unitLimit"),
+                                unitLimit?.toString() ?: "",
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { unitLimit = it.toIntOrNull() }
+                            NumberField(
+                                readI18n("multiplayer.room.credits"),
+                                credits?.toString() ?: "",
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { credits = it.toIntOrNull() }
+                            NumberField(
+                                readI18n("multiplayer.room.speedMultiplier"),
+                                speedMultiplier?.toString() ?: "",
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { speedMultiplier = it.toIntOrNull() }
+                        }
+                    }
+                }
+            }
 
-                    RWSingleOutlinedTextField(
-                        readI18n("multiplayer.room.maxPlayer"),
-                        maxPlayer?.toString() ?: "",
-                        modifier = Modifier.fillMaxWidth(),
-                        typeInNumberOnly = true,
-                        typeInOnlyInteger = true,
-                    ) { maxPlayer = it.toIntOrNull()?.coerceAtMost(100) }
+            Column(modifier = Modifier.fillMaxSize()) {
+                Text(
+                    readI18n("multiplayer.host"),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                LargeDividingLine { 0.dp }
 
-                    RWSingleOutlinedTextField(
-                        readI18n("multiplayer.room.unitLimit"),
-                        unitLimit?.toString() ?: "",
-                        modifier = Modifier.fillMaxWidth(),
-                        typeInNumberOnly = true,
-                        typeInOnlyInteger = true,
-                    ) { unitLimit = it.toIntOrNull() }
-
-                    RWSingleOutlinedTextField(
-                        readI18n("multiplayer.room.credits"),
-                        credits?.toString() ?: "",
-                        modifier = Modifier.fillMaxWidth(),
-                        typeInNumberOnly = true,
-                        typeInOnlyInteger = true,
-                    ) { credits = it.toIntOrNull() }
-
-                    RWSingleOutlinedTextField(
-                        readI18n("multiplayer.room.speedMultiplier"),
-                        speedMultiplier?.toString() ?: "",
-                        modifier = Modifier.fillMaxWidth(),
-                        typeInNumberOnly = true,
-                        typeInOnlyInteger = true,
-                    ) { speedMultiplier = it.toIntOrNull() }
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                ) {
+                    val twoColumns = maxWidth >= 620.dp
+                    val canSetRoomId = hostPrefix == HostCommandPrefix.Q
+                    val hostOptionsListState = rememberLazyListState()
+                    LazyColumnScrollbar(
+                        listState = hostOptionsListState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(end = 4.dp),
+                        alwaysShowScrollBar = true,
+                        thickness = 4.dp,
+                        padding = 2.dp,
+                        thumbColor = MaterialTheme.colorScheme.primary.copy(alpha = .78f),
+                        showItemIndicator = ListIndicatorSettings.EnabledMirrored(
+                            12.dp,
+                            MaterialTheme.colorScheme.surface.copy(alpha = .72f)
+                        ),
+                    ) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            state = hostOptionsListState,
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            contentPadding = PaddingValues(end = 10.dp, bottom = 18.dp),
+                        ) {
+                            item {
+                                if (twoColumns) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                    ) {
+                                        ProtocolSelector(Modifier.weight(1f))
+                                        ModOptions(Modifier.weight(1f))
+                                    }
+                                } else {
+                                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        ProtocolSelector(Modifier.fillMaxWidth())
+                                        ModOptions(Modifier.fillMaxWidth())
+                                    }
+                                }
+                            }
+                            item {
+                                RoomFields(twoColumns, canSetRoomId)
+                            }
+                        }
+                    }
                 }
 
                 Row(
@@ -571,7 +787,7 @@ fun MultiplayerView(
                         game.gameRoom.option = RoomOption(transferMod, modSize.toInt())
                         serverAddress = net.buildQuickHostCommand(
                             enableMods = enableMods,
-                            roomId = roomId.ifBlank { null },
+                            roomId = if (hostPrefix == HostCommandPrefix.Q) roomId.ifBlank { null } else null,
                             maxPlayer = maxPlayer,
                             unitLimit = unitLimit,
                             credits = credits,
@@ -923,6 +1139,7 @@ fun MultiplayerView(
 
     fun resetFilter() {
         enableModFilter = false
+        hideNonJoinableRooms = false
         playerLimitRange = 0..100
         mapNameFilter = ""
         creatorNameFilter = ""
@@ -1093,6 +1310,12 @@ fun MultiplayerView(
                                 hint = readI18n("multiplayer.filter.hideModdedRoomsHint"),
                                 checked = enableModFilter,
                                 onCheckedChange = { enableModFilter = it }
+                            )
+                            FilterSwitchRow(
+                                label = readI18n("multiplayer.filter.hideNonJoinableRooms"),
+                                hint = readI18n("multiplayer.filter.hideNonJoinableRoomsHint"),
+                                checked = hideNonJoinableRooms,
+                                onCheckedChange = { hideNonJoinableRooms = it }
                             )
                         }
 
@@ -1332,6 +1555,7 @@ fun MultiplayerView(
                     val realList = remember(
                         currentViewList,
                         enableModFilter,
+                        hideNonJoinableRooms,
                         playerLimitRange,
                         mapNameFilter,
                         creatorNameFilter,
@@ -1342,6 +1566,10 @@ fun MultiplayerView(
                             if (blacklists.any { it.uuid == room.uuid }) return@filter false
 
                             if (enableModFilter && room.isModdedRoom) {
+                                return@filter false
+                            }
+
+                            if (hideNonJoinableRooms && !room.isJoinableFromList) {
                                 return@filter false
                             }
 
