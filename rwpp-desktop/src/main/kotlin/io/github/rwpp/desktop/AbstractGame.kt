@@ -104,6 +104,7 @@ abstract class AbstractGame : Game {
             MapChangedEvent(gameRoom.selectedMap.displayName()).broadcastIn()
             HostGameEvent().broadcastIn()
             PlayerJoinEvent(gameRoom.localPlayer).broadcastIn()
+            RefreshUIEvent().broadcastIn(delay = 200L)
         }
     }
 
@@ -137,6 +138,7 @@ abstract class AbstractGame : Game {
                 l.B().bX.b("staring new")
                 l.B().bX.a(threadConnector!!.g)
                 PlayerJoinEvent(gameRoom.localPlayer).broadcastIn()
+                RefreshUIEvent().broadcastIn(delay = 200L)
             } catch(e: IOException) {
                 logger.error(e.stackTraceToString())
                 result = Result.failure(IOException("Connection failed"))
