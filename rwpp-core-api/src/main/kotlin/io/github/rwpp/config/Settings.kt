@@ -25,7 +25,7 @@ data class Settings(
     var showExtraButton: Boolean = false,
     /** @see unitAttackRangeTypes */
     var showAttackRangeUnit: String = "Never",
-    var enableAnimations: Boolean = true,
+    var enableAnimations: Boolean = false,
     var maxDisplayUnitGroupCount: Int = 7,
     var displayUnitGroupXOffset: Int = 0,
     var changeGameTheme: Boolean = false,
@@ -54,9 +54,22 @@ data class Settings(
     // ---------------
 
     // Offscreen Panel
-    var enableQuickSelectMenu: Boolean = false
+    var enableQuickSelectMenu: Boolean = false,
+
+    /**
+     * 配置版本号，用于迁移旧配置。null 表示旧版本配置（迁移前）。
+     */
+    var configVersion: Int? = null
 ) : Config {
     companion object {
         val unitAttackRangeTypes = listOf("Never", "Land", "Air", "All")
+    }
+
+    override fun migrate() {
+        if (configVersion == null) {
+            // v1: enableAnimations 默认值由 true 改为 false，重置旧配置中由旧默认值写入的值
+            enableAnimations = false
+            configVersion = 1
+        }
     }
 }

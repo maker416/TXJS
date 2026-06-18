@@ -15,4 +15,11 @@ package io.github.rwpp.config
  * @see ConfigIO
  * @see ConfigModule
  */
-interface Config
+interface Config {
+    /**
+     * 从磁盘读取配置后调用，用于将旧版本配置中的值迁移到新默认值。
+     *
+     * 仅在 [ConfigIO.readAllConfig] 中于 `setPropertyFromObject` 之后调用一次。
+     */
+    fun migrate() {}
+}

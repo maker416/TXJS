@@ -77,6 +77,7 @@ interface ConfigIO : KoinComponent {
             runCatching {
                 logger.info("Reading config ${config::class.simpleName}...")
                 readConfig(config::class)?.let { config.setPropertyFromObject(it) }
+                config.migrate()
             }.onFailure {
                 logger.error("Failed to read config ${config::class.simpleName}. Delete it.", it)
                 deleteConfig(config::class)
