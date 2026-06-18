@@ -309,6 +309,37 @@ interface Net : KoinComponent, Initialization {
             merged.sorted()
         }
 
+    /**
+     * Fetch RWList `GET /health`.
+     * Returns the safe default when every request fails.
+     */
+    suspend fun fetchRwListHealth(roomListApiUrls: String): RwListHealth =
+        withContext(Dispatchers.IO) {
+            val bases = roomListApiBasesWithDefaultFallback(roomListApiUrls)
+            if (bases.isEmpty()) return@withContext RwListHealth()
+
+            for (base in bases) {
+                runCatching {
+                    val request = Request.Builder()
+                        .url("$base/health")
+                        .get()
+                        .build()
+                    client.executeCancellable(request).use { response ->
+                        if (!response.isSuccessful) return@runCatching null
+                        val body = response.body?.string() ?: return@runCatching null
+                        parseRwListHealth(body)
+                    }
+                }.onFailure {
+                    coroutineContext.ensureActive()
+                    logger.warn("Failed to fetch RWList health from $base: ${it.message}")
+                }.getOrNull()?.let {
+                    return@withContext it
+                }
+            }
+
+            RwListHealth()
+        }
+
     /** @see fetchRoomTypes */
     suspend fun fetchRoomListLabels(roomListApiUrls: String): List<String> =
         fetchRoomTypes(roomListApiUrls)
@@ -384,7 +415,11 @@ interface Net : KoinComponent, Initialization {
             }
             try {
                 runCatching {
-                    val jsonBody = """{"name":"$name","ip":"$ip","roomtype":"$roomtype"}"""
+                    val jsonBody = Json.`object`()
+                        .add("name", name)
+                        .add("ip", ip)
+                        .add("roomtype", roomtype)
+                        .toString()
                     val url = java.net.URL("$baseUrl/servers/public")
                     val conn = url.openConnection() as java.net.HttpURLConnection
                     connRef.set(conn)

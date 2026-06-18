@@ -31,6 +31,11 @@ data class RwListServersPage(
     val list: List<RwListServerEntry>,
 )
 
+data class RwListHealth(
+    val status: String = "",
+    val allowCustomName: Boolean = false,
+)
+
 fun normalizeRwListBaseUrl(url: String): String =
     url.trim().trimEnd('/')
 
@@ -138,6 +143,16 @@ fun parseRwListRoomTypes(body: String): List<String> {
     return arr.mapNotNull { value ->
         if (value.isString) value.asString().trim().takeIf { it.isNotEmpty() } else null
     }.distinct().sorted()
+}
+
+fun parseRwListHealth(body: String): RwListHealth {
+    val root = Json.parse(body).asObject()
+    if (root.getInt("code", -1) != 0) return RwListHealth()
+    val data = root.get("data")?.asObject() ?: return RwListHealth()
+    return RwListHealth(
+        status = data.getString("status", ""),
+        allowCustomName = data.getBoolean("allow_custom_name", false),
+    )
 }
 
 fun isRwListEntryJoinable(entry: RwListServerEntry): Boolean =

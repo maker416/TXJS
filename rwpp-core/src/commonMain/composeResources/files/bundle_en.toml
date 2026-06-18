@@ -129,7 +129,12 @@ publishSuccessHint = "Your room is on the public list. Other players can find an
 publishFailed = "Publish failed"
 publishFetchTypesFailed = "Failed to load room types. Check your list server connection."
 publishFailedDetail = "Publish failed: {0}"
-publishSelectType = "Select room type"
+publishSelectType = "Select room tag"
+publishRoomNameLabel = "Room name"
+publishRoomNameHint = "Custom room names are not supported yet; the default name is used automatically. Support will be added later."
+publishSelectTypeHint = "Choose a room name and tag, then confirm publishing."
+publishSelectedType = "Selected: {0}"
+publishTypeRequired = "Select a tag"
 
 [mod]
 update = "Update"
@@ -190,6 +195,7 @@ fog = "Fog"
 mod = "Mod"
 map = "Map"
 filter = "Filter"
+cancel = "Cancel"
 ok = "OK"
 close = "Close"
 

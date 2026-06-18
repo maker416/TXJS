@@ -92,6 +92,8 @@ import kotlin.time.DurationUnit
 import kotlin.time.toDuration
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -117,7 +119,10 @@ private sealed class PublishToListUiState {
 
     data class Loading(val step: PublishStep) : PublishToListUiState()
 
-    data class SelectRoomType(val types: List<String>) : PublishToListUiState()
+    data class SelectRoomType(
+        val types: List<String>,
+        val allowCustomRoomName: Boolean,
+    ) : PublishToListUiState()
 
     data class Success(val roomId: String, val serverId: String) : PublishToListUiState()
 
@@ -148,8 +153,10 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     var banUnitVisible by remember { mutableStateOf(false) }
     var publishState by remember { mutableStateOf<PublishToListUiState>(PublishToListUiState.Hidden) }
     var pendingPublishRoomType by remember { mutableStateOf<String?>(null) }
+    var pendingPublishRoomName by remember { mutableStateOf<String?>(null) }
     var roomIdForPublish by remember { mutableStateOf<String?>(null) }
     var publishJob by remember { mutableStateOf<Job?>(null) }
+    var publishDialogCloseExitsRoom by remember { mutableStateOf(false) }
     val isPublishing = publishState is PublishToListUiState.Loading || publishJob?.isActive == true
     //var downloadModViewVisible by remember { mutableStateOf(false) }
     //var loadModViewVisible by remember { mutableStateOf(false) }
@@ -361,14 +368,16 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
         updateAction()
     }
 
-    suspend fun submitPublish(roomId: String, roomType: String) {
+    suspend fun submitPublish(roomId: String, roomType: String, roomName: String) {
         pendingPublishRoomType = roomType
+        val effectiveName = roomName.trim().ifBlank { "公开房-$roomId" }
+        pendingPublishRoomName = effectiveName
         publishState = PublishToListUiState.Loading(PublishStep.Publishing)
         val startMs = System.currentTimeMillis()
         val result = with(net) {
             publishServerToPublicList(
                 DEFAULT_ROOM_LIST_API_URLS,
-                "公开房-$roomId",
+                effectiveName,
                 roomListPublishAddress(roomId),
                 roomType
             )
@@ -422,8 +431,18 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     suspend fun runPublishFlow(roomId: String) {
         publishState = PublishToListUiState.Loading(PublishStep.FetchingTypes)
         val startMs = System.currentTimeMillis()
-        val types = with(net) {
-            fetchRoomTypes(DEFAULT_ROOM_LIST_API_URLS)
+        val (types, health) = coroutineScope {
+            val typesDeferred = async {
+                with(net) {
+                    fetchRoomTypes(DEFAULT_ROOM_LIST_API_URLS)
+                }
+            }
+            val healthDeferred = async {
+                with(net) {
+                    fetchRwListHealth(DEFAULT_ROOM_LIST_API_URLS)
+                }
+            }
+            typesDeferred.await() to healthDeferred.await()
         }
         currentCoroutineContext().ensureActive()
         ensureMinPublishLoading(startMs)
@@ -436,8 +455,10 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                     PublishStep.FetchingTypes,
                 )
             }
-            types.size == 1 -> submitPublish(roomId, types.first())
-            else -> publishState = PublishToListUiState.SelectRoomType(types)
+            else -> publishState = PublishToListUiState.SelectRoomType(
+                types = types,
+                allowCustomRoomName = health.allowCustomName,
+            )
         }
     }
 
@@ -456,21 +477,36 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
         publishJob?.cancel()
         publishJob = null
         pendingPublishRoomType = null
+        pendingPublishRoomName = null
+        publishDialogCloseExitsRoom = false
         publishState = PublishToListUiState.Hidden
     }
 
-    fun publishToList(roomId: String) {
+    fun publishToList(roomId: String, closeExitsRoom: Boolean = false) {
         if (isPublishing || hasPublishedInfo) return
+        publishDialogCloseExitsRoom = closeExitsRoom
         launchPublish { runPublishFlow(roomId) }
     }
 
     PublishToListDialog(
         state = publishState,
-        onDismiss = { publishState = PublishToListUiState.Hidden },
+        defaultRoomName = roomIdForPublish?.let { "公开房-$it" } ?: "",
+        onDismiss = {
+            publishDialogCloseExitsRoom = false
+            publishState = PublishToListUiState.Hidden
+        },
         onCancel = ::cancelPublishRequest,
-        onSelectRoomType = { roomType ->
+        onCloseButtonClick = {
+            if (publishDialogCloseExitsRoom) {
+                onExit()
+            } else {
+                publishDialogCloseExitsRoom = false
+                publishState = PublishToListUiState.Hidden
+            }
+        },
+        onPublish = { roomType, roomName ->
             val roomId = roomIdForPublish ?: return@PublishToListDialog
-            launchPublish { submitPublish(roomId, roomType) }
+            launchPublish { submitPublish(roomId, roomType, roomName) }
         },
         onRetry = { step ->
             val roomId = roomIdForPublish ?: return@PublishToListDialog
@@ -479,7 +515,8 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                     PublishStep.FetchingTypes -> runPublishFlow(roomId)
                     PublishStep.Publishing -> {
                         val roomType = pendingPublishRoomType
-                        if (roomType != null) submitPublish(roomId, roomType)
+                        val roomName = pendingPublishRoomName
+                        if (roomType != null && roomName != null) submitPublish(roomId, roomType, roomName)
                         else runPublishFlow(roomId)
                     }
                 }
@@ -511,7 +548,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
             return@LaunchedEffect
         }
         if (UI.consumeAutoPublishQRoom()) {
-            publishToList(roomId)
+            publishToList(roomId, closeExitsRoom = true)
         }
     }
 
@@ -1540,9 +1577,11 @@ private fun MultiplayerOption(
 @Composable
 private fun PublishToListDialog(
     state: PublishToListUiState,
+    defaultRoomName: String,
     onDismiss: () -> Unit,
     onCancel: () -> Unit,
-    onSelectRoomType: (String) -> Unit,
+    onCloseButtonClick: () -> Unit,
+    onPublish: (String, String) -> Unit,
     onRetry: (PublishStep) -> Unit,
 ) {
     val settings = koinInject<Settings>()
@@ -1558,14 +1597,13 @@ private fun PublishToListDialog(
         BorderCard(
             modifier = Modifier
                 .fillMaxWidth(LargeProportion())
-                .widthIn(max = 360.dp)
+                .widthIn(max = 540.dp)
                 .padding(10.dp),
         ) {
             val showExit = state is PublishToListUiState.SelectRoomType
                 || state is PublishToListUiState.Success
                 || state is PublishToListUiState.Failure
             Box {
-                if (showExit) ExitButton(dismiss)
                 AnimatedContent(
                     targetState = state,
                     transitionSpec = {
@@ -1614,24 +1652,184 @@ private fun PublishToListDialog(
                             }
                         }
                         is PublishToListUiState.SelectRoomType -> {
+                            var selectedRoomType by remember(current.types) {
+                                mutableStateOf(current.types.singleOrNull())
+                            }
+                            var roomName by remember(defaultRoomName, current.allowCustomRoomName) {
+                                mutableStateOf(defaultRoomName)
+                            }
+                            var roomNameHintFlashTick by remember { mutableIntStateOf(0) }
+                            var roomNameHintHighlighted by remember { mutableStateOf(false) }
+                            val effectiveRoomName = if (current.allowCustomRoomName) {
+                                roomName.trim().ifBlank { defaultRoomName }
+                            } else {
+                                defaultRoomName
+                            }
+                            val canPublish = selectedRoomType != null && effectiveRoomName.isNotBlank()
+                            val roomNameHintColor by animateColorAsState(
+                                targetValue = if (roomNameHintHighlighted) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                animationSpec = tween(120),
+                                label = "roomNameHintColor",
+                            )
+
+                            LaunchedEffect(roomNameHintFlashTick) {
+                                if (roomNameHintFlashTick == 0) return@LaunchedEffect
+                                roomNameHintHighlighted = true
+                                delay(120)
+                                roomNameHintHighlighted = false
+                                delay(80)
+                                roomNameHintHighlighted = true
+                                delay(120)
+                                roomNameHintHighlighted = false
+                            }
+
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 20.dp),
+                                    .heightIn(max = 520.dp),
                             ) {
-                                Text(
-                                    readI18n("multiplayer.room.publishSelectType"),
-                                    style = MaterialTheme.typography.headlineSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.padding(bottom = 12.dp),
-                                )
-                                current.types.forEach { type ->
-                                    RWTextButton(
-                                        type,
-                                        modifier = Modifier
-                                            .padding(vertical = 4.dp)
-                                            .fillMaxWidth(),
-                                    ) { onSelectRoomType(type) }
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.14f),
+                                    contentColor = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                                    ) {
+                                        Text(
+                                            readI18n("multiplayer.room.publishToList"),
+                                            style = MaterialTheme.typography.headlineSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                        Text(
+                                            readI18n("multiplayer.room.publishSelectTypeHint"),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 340.dp)
+                                        .verticalScroll(rememberScrollState())
+                                        .padding(horizontal = 20.dp, vertical = 16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                                ) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Box(modifier = Modifier.fillMaxWidth()) {
+                                            RWSingleOutlinedTextField(
+                                                label = readI18n("multiplayer.room.publishRoomNameLabel"),
+                                                value = roomName,
+                                                lengthLimitCount = 32,
+                                                modifier = Modifier.fillMaxWidth(),
+                                                enabled = current.allowCustomRoomName,
+                                                onValueChange = { roomName = it },
+                                            )
+                                            if (!current.allowCustomRoomName) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .matchParentSize()
+                                                        .clickable(
+                                                            indication = null,
+                                                            interactionSource = remember { MutableInteractionSource() },
+                                                        ) {
+                                                            roomNameHintFlashTick++
+                                                        },
+                                                )
+                                            }
+                                        }
+                                        if (!current.allowCustomRoomName) {
+                                            Text(
+                                                readI18n("multiplayer.room.publishRoomNameHint"),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = roomNameHintColor,
+                                            )
+                                        }
+                                    }
+
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Column(
+                                                modifier = Modifier.weight(1f),
+                                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                                            ) {
+                                                Text(
+                                                    readI18n("multiplayer.room.publishSelectType"),
+                                                    style = MaterialTheme.typography.titleMedium,
+                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                )
+                                                Text(
+                                                    if (selectedRoomType == null) {
+                                                        readI18n("multiplayer.room.publishTypeRequired")
+                                                    } else {
+                                                        readI18n(
+                                                            "multiplayer.room.publishSelectedType",
+                                                            I18nType.RWPP,
+                                                            selectedRoomType.orEmpty(),
+                                                        )
+                                                    },
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = if (selectedRoomType == null) {
+                                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                                    } else {
+                                                        MaterialTheme.colorScheme.primary
+                                                    },
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                )
+                                            }
+                                            Button(
+                                                enabled = canPublish,
+                                                onClick = {
+                                                    selectedRoomType?.let { onPublish(it, effectiveRoomName) }
+                                                },
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.CheckCircle,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(18.dp),
+                                                )
+                                                Spacer(Modifier.width(6.dp))
+                                                Text(readI18n("multiplayer.room.publishToList"))
+                                            }
+                                        }
+                                        FlowRow(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                                        ) {
+                                            current.types.forEach { type ->
+                                                val selected = selectedRoomType == type
+                                                FilterChip(
+                                                    selected = selected,
+                                                    onClick = { selectedRoomType = type },
+                                                    label = { Text(type) },
+                                                    leadingIcon = if (selected) {
+                                                        {
+                                                            Icon(
+                                                                Icons.Default.CheckCircle,
+                                                                contentDescription = null,
+                                                                modifier = Modifier.size(18.dp),
+                                                            )
+                                                        }
+                                                    } else {
+                                                        null
+                                                    },
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1715,6 +1913,7 @@ private fun PublishToListDialog(
                         }
                     }
                 }
+                if (showExit) ExitButton(onCloseButtonClick)
             }
         }
     }

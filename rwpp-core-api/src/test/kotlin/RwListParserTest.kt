@@ -196,6 +196,44 @@ class RwListParserTest {
     }
 
     @Test
+    fun parseHealthAllowsCustomRoomName() {
+        val body = """
+            {
+              "code": 0,
+              "message": "success",
+              "data": { "status": "ok", "allow_custom_name": true }
+            }
+        """.trimIndent()
+        val health = parseRwListHealth(body)
+        assertEquals("ok", health.status)
+        assertTrue(health.allowCustomName)
+    }
+
+    @Test
+    fun parseHealthDisallowsCustomRoomName() {
+        val body = """
+            {
+              "code": 0,
+              "message": "success",
+              "data": { "status": "ok", "allow_custom_name": false }
+            }
+        """.trimIndent()
+        assertFalse(parseRwListHealth(body).allowCustomName)
+    }
+
+    @Test
+    fun parseHealthFallsBackToFixedNameOnError() {
+        val body = """
+            {
+              "code": 500,
+              "message": "server error",
+              "data": {}
+            }
+        """.trimIndent()
+        assertFalse(parseRwListHealth(body).allowCustomName)
+    }
+
+    @Test
     fun keepsAllJoinableEntriesWithSameIp() {
         val entry = RwListServerEntry(
             name = "A", ip = "127.0.0.1:5123", needpass = false, mapname = "m",
