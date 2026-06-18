@@ -69,19 +69,21 @@ skills-lock.json
 Thumbs.db
 
 # Game resources extracted from original APK
+# 整个 res 目录默认排除，仅保留项目自有文件（图标/主题/Provider配置/keep占位）
 rwpp-android/src/main/assets/
-rwpp-android/src/main/res/anim/
-rwpp-android/src/main/res/layout/
-rwpp-android/src/main/res/layout-v11/
-rwpp-android/src/main/res/values-v11/
-rwpp-android/src/main/res/xml/*
-!rwpp-android/src/main/res/xml/provider_paths.xml
+rwpp-android/src/main/res/*
+!rwpp-android/src/main/res/drawable/
+!rwpp-android/src/main/res/values/
+!rwpp-android/src/main/res/xml/
+!rwpp-android/src/main/res/raw/
 rwpp-android/src/main/res/drawable/*
 !rwpp-android/src/main/res/drawable/ic_launcher_2.png
-rwpp-android/src/main/res/raw/*
-!rwpp-android/src/main/res/raw/keep.txt
 rwpp-android/src/main/res/values/*
 !rwpp-android/src/main/res/values/themes.xml
+rwpp-android/src/main/res/xml/*
+!rwpp-android/src/main/res/xml/provider_paths.xml
+rwpp-android/src/main/res/raw/*
+!rwpp-android/src/main/res/raw/keep.txt
 # 桌面安装包构建产物（根目录）
 *-Setup.exe
 *-Setup.pdb
