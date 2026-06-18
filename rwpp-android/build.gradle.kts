@@ -151,7 +151,7 @@ android {
         applicationId = "io.github.rwjs"
         minSdk = (findProperty("android.minSdk") as String).toInt()
         targetSdk = (findProperty("android.targetSdk") as String).toInt()
-        versionCode = 1
+        versionCode = (System.currentTimeMillis() / 60000).toInt()
         versionName = rootProject.version.toString()
     }
     compileOptions {
