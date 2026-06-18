@@ -91,7 +91,10 @@ import io.github.rwpp.widget.v2.lazyListCanScroll
 import kotlin.time.DurationUnit
 import kotlin.time.toDuration
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
@@ -127,6 +130,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     DisposableEffect(Unit) {
         onDispose {
             CloseUIPanelEvent("multiplayerRoom").broadcastIn()
+            UI.clearAutoPublishQRoom()
         }
     }
 
@@ -145,7 +149,8 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     var publishState by remember { mutableStateOf<PublishToListUiState>(PublishToListUiState.Hidden) }
     var pendingPublishRoomType by remember { mutableStateOf<String?>(null) }
     var roomIdForPublish by remember { mutableStateOf<String?>(null) }
-    val isPublishing = publishState is PublishToListUiState.Loading
+    var publishJob by remember { mutableStateOf<Job?>(null) }
+    val isPublishing = publishState is PublishToListUiState.Loading || publishJob?.isActive == true
     //var downloadModViewVisible by remember { mutableStateOf(false) }
     //var loadModViewVisible by remember { mutableStateOf(false) }
     var selectedBanUnits by remember { mutableStateOf(listOf<UnitType>()) }
@@ -368,7 +373,9 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                 roomType
             )
         }
+        currentCoroutineContext().ensureActive()
         ensureMinPublishLoading(startMs)
+        currentCoroutineContext().ensureActive()
         result.fold(
             onSuccess = { body ->
                 val json = Json.parse(body)
@@ -418,7 +425,9 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
         val types = with(net) {
             fetchRoomTypes(DEFAULT_ROOM_LIST_API_URLS)
         }
+        currentCoroutineContext().ensureActive()
         ensureMinPublishLoading(startMs)
+        currentCoroutineContext().ensureActive()
         when {
             types.isEmpty() -> {
                 kickListDetectorPlayers()
@@ -432,16 +441,40 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
         }
     }
 
+    fun launchPublish(block: suspend () -> Unit) {
+        if (publishJob?.isActive == true) return
+        val job = scope.launch { block() }
+        publishJob = job
+        job.invokeOnCompletion {
+            scope.launch {
+                if (publishJob == job) publishJob = null
+            }
+        }
+    }
+
+    fun cancelPublishRequest() {
+        publishJob?.cancel()
+        publishJob = null
+        pendingPublishRoomType = null
+        publishState = PublishToListUiState.Hidden
+    }
+
+    fun publishToList(roomId: String) {
+        if (isPublishing || hasPublishedInfo) return
+        launchPublish { runPublishFlow(roomId) }
+    }
+
     PublishToListDialog(
         state = publishState,
         onDismiss = { publishState = PublishToListUiState.Hidden },
+        onCancel = ::cancelPublishRequest,
         onSelectRoomType = { roomType ->
             val roomId = roomIdForPublish ?: return@PublishToListDialog
-            scope.launch { submitPublish(roomId, roomType) }
+            launchPublish { submitPublish(roomId, roomType) }
         },
         onRetry = { step ->
             val roomId = roomIdForPublish ?: return@PublishToListDialog
-            scope.launch {
+            launchPublish {
                 when (step) {
                     PublishStep.FetchingTypes -> runPublishFlow(roomId)
                     PublishStep.Publishing -> {
@@ -463,6 +496,23 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
             .filter { !it.startsWith("Map:") && it.isNotBlank() }
             .joinToString("\n")
         roomIdForPublish = Regex("""[QR]\d+""").find(raw)?.value
+    }
+
+    LaunchedEffect(roomIdForPublish, isHost, hasPublishedInfo) {
+        val roomId = roomIdForPublish ?: return@LaunchedEffect
+        if (!roomId.startsWith('Q') || hasPublishedInfo) {
+            UI.clearAutoPublishQRoom()
+            return@LaunchedEffect
+        }
+        if (!isHost) return@LaunchedEffect
+        val publishedInfo = configIO.readConfig(PublishedRoomInfo::class)
+        if (publishedInfo?.roomId == roomId && publishedInfo.isPublished) {
+            UI.clearAutoPublishQRoom()
+            return@LaunchedEffect
+        }
+        if (UI.consumeAutoPublishQRoom()) {
+            publishToList(roomId)
+        }
     }
 
     @Composable
@@ -628,7 +678,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                         onAddAIMany = { room.addAI(10) },
                                         onPublish = {
                                             val roomId = roomIdForPublish ?: return@CompactMapSettingsPanel
-                                            scope.launch { runPublishFlow(roomId) }
+                                            publishToList(roomId)
                                         },
                                         onMapClick = { showMapSelectView = true },
                                     )
@@ -677,7 +727,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                         onAddAIMany = { room.addAI(10) },
                                         onPublish = {
                                             val roomId = roomIdForPublish ?: return@CompactMapSettingsPanel
-                                            scope.launch { runPublishFlow(roomId) }
+                                            publishToList(roomId)
                                         },
                                         onMapClick = { showMapSelectView = true },
                                     )
@@ -750,7 +800,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                     onStart = startGame,
                                     onPublish = {
                                         val roomId = roomIdForPublish ?: return@DesktopMapSettingsCard
-                                        scope.launch { runPublishFlow(roomId) }
+                                        publishToList(roomId)
                                     },
                                 )
                             }
@@ -1491,6 +1541,7 @@ private fun MultiplayerOption(
 private fun PublishToListDialog(
     state: PublishToListUiState,
     onDismiss: () -> Unit,
+    onCancel: () -> Unit,
     onSelectRoomType: (String) -> Unit,
     onRetry: (PublishStep) -> Unit,
 ) {
@@ -1554,6 +1605,11 @@ private fun PublishToListDialog(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = TextAlign.Center,
+                                )
+                                RWTextButton(
+                                    readI18n("multiplayer.room.cancelPublish"),
+                                    modifier = Modifier.padding(top = 4.dp),
+                                    onClick = onCancel,
                                 )
                             }
                         }

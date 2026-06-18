@@ -306,6 +306,7 @@ fun MultiplayerView(
 
     var serverAddress by remember { mutableStateOf("") }
     var isConnecting by remember { mutableStateOf(false) }
+    var keepAutoPublishAfterLoading by remember { mutableStateOf(false) }
 
     var editingServerConfig by remember { mutableStateOf<ServerConfig?>(null) }
     var showServerInfoConfig by remember { mutableStateOf(false) }
@@ -349,9 +350,21 @@ fun MultiplayerView(
         dismiss()
     }
 
-    LoadingView(isConnecting, onLoaded = { game.cancelJoinServer(); isConnecting = false }, cancellable = true) {
+    LoadingView(
+        isConnecting,
+        onLoaded = {
+            game.cancelJoinServer()
+            if (!keepAutoPublishAfterLoading) {
+                UI.clearAutoPublishQRoom()
+            }
+            keepAutoPublishAfterLoading = false
+            isConnecting = false
+        },
+        cancellable = true,
+    ) {
         if(serverAddress.isBlank()) {
             message("That server no longer exists")
+            UI.clearAutoPublishQRoom()
             return@LoadingView false
         }
 
@@ -367,11 +380,13 @@ fun MultiplayerView(
         )
         selectedRoomDescription = null
         if(result.isSuccess) {
+            keepAutoPublishAfterLoading = true
             onExit()
             onOpenRoomView()
             JoinGameEvent(serverAddress).broadcastIn()
             true
         } else {
+            UI.clearAutoPublishQRoom()
             message(result.exceptionOrNull()!!.message!!)
             false
         }
@@ -404,6 +419,7 @@ fun MultiplayerView(
                 )
             }
             var hostPrefix by remember { mutableStateOf(HostCommandPrefix.Q) }
+            var disableDefaultPublish by remember { mutableStateOf(false) }
             var roomId by remember { mutableStateOf("") }
             var maxPlayer: Int? by remember { mutableStateOf(null) }
             var unitLimit: Int? by remember { mutableStateOf(null) }
@@ -449,6 +465,20 @@ fun MultiplayerView(
                             onClick = { hostPrefix = HostCommandPrefix.R },
                             label = { Text(readI18n("multiplayer.hostPrefixR")) },
                         )
+                    }
+
+                    if (hostPrefix == HostCommandPrefix.Q) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RWCheckbox(
+                                disableDefaultPublish,
+                                onCheckedChange = { disableDefaultPublish = !disableDefaultPublish },
+                                modifier = Modifier.padding(end = 4.dp),
+                            )
+                            Text(
+                                readI18n("multiplayer.disableDefaultPublish"),
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                        }
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -532,6 +562,12 @@ fun MultiplayerView(
                 ) {
                     RWTextButton(readI18n("multiplayer.host"), modifier = Modifier.padding(4.dp)) {
                         dismiss()
+                        if (hostPrefix == HostCommandPrefix.Q && !disableDefaultPublish) {
+                            UI.requestAutoPublishQRoom()
+                        } else {
+                            UI.clearAutoPublishQRoom()
+                        }
+                        keepAutoPublishAfterLoading = false
                         game.gameRoom.option = RoomOption(transferMod, modSize.toInt())
                         serverAddress = net.buildQuickHostCommand(
                             enableMods = enableMods,

@@ -20,7 +20,30 @@ import org.koin.core.component.KoinComponent
 import org.koin.core.component.get
 import java.io.*
 import java.util.*
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.reflect.full.createInstance
+
+private suspend fun OkHttpClient.executeCancellable(request: Request): Response {
+    val call = newCall(request)
+    val cancelHandle = currentCoroutineContext().job.invokeOnCompletion { cause ->
+        if (cause is CancellationException) {
+            call.cancel()
+        }
+    }
+    return try {
+        currentCoroutineContext().ensureActive()
+        val response = call.execute()
+        try {
+            currentCoroutineContext().ensureActive()
+            response
+        } catch (e: Throwable) {
+            response.close()
+            throw e
+        }
+    } finally {
+        cancelHandle.dispose()
+    }
+}
 
 interface Net : KoinComponent, Initialization {
     /**
@@ -273,12 +296,13 @@ interface Net : KoinComponent, Initialization {
                         .url("$base/servers/room-types")
                         .get()
                         .build()
-                    client.newCall(request).execute().use { response ->
+                    client.executeCancellable(request).use { response ->
                         if (!response.isSuccessful) return@runCatching
                         val body = response.body?.string() ?: return@runCatching
                         merged.addAll(parseRwListRoomTypes(body))
                     }
                 }.onFailure {
+                    coroutineContext.ensureActive()
                     logger.warn("Failed to fetch room types from $base: ${it.message}")
                 }
             }
@@ -352,24 +376,41 @@ interface Net : KoinComponent, Initialization {
         roomtype: String
     ): Result<String> =
         withContext(Dispatchers.IO) {
-            runCatching {
-                val jsonBody = """{"name":"$name","ip":"$ip","roomtype":"$roomtype"}"""
-                val url = java.net.URL("$baseUrl/servers/public")
-                val conn = url.openConnection() as java.net.HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.doOutput = true
-                conn.outputStream.use { os ->
-                    os.write(jsonBody.toByteArray(Charsets.UTF_8))
+            val connRef = AtomicReference<java.net.HttpURLConnection?>()
+            val cancelHandle = coroutineContext.job.invokeOnCompletion { cause ->
+                if (cause is CancellationException) {
+                    connRef.get()?.disconnect()
                 }
-                val responseCode = conn.responseCode
-                val body = if (responseCode in 200..299) {
-                    conn.inputStream.use { it.reader().readText() }
-                } else {
-                    val errorBody = conn.errorStream?.use { it.reader().readText() } ?: ""
-                    throw IOException("HTTP $responseCode: $errorBody")
+            }
+            try {
+                runCatching {
+                    val jsonBody = """{"name":"$name","ip":"$ip","roomtype":"$roomtype"}"""
+                    val url = java.net.URL("$baseUrl/servers/public")
+                    val conn = url.openConnection() as java.net.HttpURLConnection
+                    connRef.set(conn)
+                    coroutineContext.ensureActive()
+                    conn.requestMethod = "POST"
+                    conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    conn.doOutput = true
+                    conn.outputStream.use { os ->
+                        os.write(jsonBody.toByteArray(Charsets.UTF_8))
+                    }
+                    val responseCode = conn.responseCode
+                    coroutineContext.ensureActive()
+                    val body = if (responseCode in 200..299) {
+                        conn.inputStream.use { it.reader().readText() }
+                    } else {
+                        val errorBody = conn.errorStream?.use { it.reader().readText() } ?: ""
+                        throw IOException("HTTP $responseCode: $errorBody")
+                    }
+                    coroutineContext.ensureActive()
+                    body
+                }.onFailure {
+                    coroutineContext.ensureActive()
                 }
-                body
+            } finally {
+                cancelHandle.dispose()
+                connRef.get()?.disconnect()
             }
         }
 

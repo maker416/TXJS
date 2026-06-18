@@ -102,6 +102,8 @@ object UI : Initialization, IUserInterface {
     var showResourceBrowser by mutableStateOf(false)
     var showOpenSourceInfoView by mutableStateOf(false)
 
+    private var pendingAutoPublishQRoom = false
+
     var roomSelectedPlayer by mutableStateOf<Player?>(null)
         internal set
     var receivingNetworkDialogTitle by mutableStateOf("")
@@ -109,6 +111,25 @@ object UI : Initialization, IUserInterface {
     var UiProvider: UIProvider = UIProvider()
 
     private val relayRegex = Regex("""R\d+""")
+
+    fun requestAutoPublishQRoom() {
+        synchronized(UI) {
+            pendingAutoPublishQRoom = true
+        }
+    }
+
+    fun clearAutoPublishQRoom() {
+        synchronized(UI) {
+            pendingAutoPublishQRoom = false
+        }
+    }
+
+    fun consumeAutoPublishQRoom(): Boolean =
+        synchronized(UI) {
+            val pending = pendingAutoPublishQRoom
+            pendingAutoPublishQRoom = false
+            pending
+        }
 
     override fun showWarning(reason: String, isKicked: Boolean) {
         synchronized(UI) {
