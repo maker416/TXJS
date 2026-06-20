@@ -192,6 +192,17 @@ settings = "设置"
 exit = "退出"
 openSourceInfo = "开源说明与许可"
 replay = "观看回放"
+singlePlayerGame = "单人游戏"
+
+[menu.singlePlayer]
+title = "单人游戏"
+subtitle = "选择你想进行的单人游戏模式"
+mission = "战役"
+missionDesc = "挑战内置战役关卡，体验剧情与战斗"
+skirmish = "遭遇战"
+skirmishDesc = "与 AI 对战，自由设置地图、队伍与规则"
+sandbox = "沙盒编辑器"
+sandboxDesc = "自由创建与编辑单位、建筑，设计你的地图"
 
 [common]
 difficulty = "难度"

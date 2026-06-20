@@ -194,7 +194,7 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 项目**未使用**任何第三方导航库。页面切换在 `App.kt` 中通过全局 `MutableState<Boolean>` 变量控制：
 
-- `showMultiplayerView`、`showSettingsView`、`showRoomView`、`showMissionView`、`showModsView`、`showExtensionView`、`showReplayView`、`showContributorList`、`showResourceBrowser`
+- `showMultiplayerView`、`showSettingsView`、`showRoomView`、`showMissionView`、`showModsView`、`showExtensionView`、`showReplayView`、`showContributorList`、`showResourceBrowser`、`showSinglePlayerView`
 - 配合 `AnimatedVisibility`（`fadeIn`/`fadeOut` + `slideInVertically`/`expandIn`/`shrinkOut`）实现过渡动画
 - 当所有视图状态均为 `false` 时，显示主菜单（`UI.UiProvider.MainMenu`）
 
@@ -261,6 +261,23 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 - 文本资源位于 `rwpp-core/src/commonMain/composeResources/files/`
 - `bundle_en.toml`（英文）、`bundle_zh.toml`（中文）
 - 通过 `BaseGameI18nResolverImpl` 解析，游戏内文本分为 `I18nType.RWPP`（启动器自身）与 `I18nType.Game`（游戏本体）
+
+### i18n bundle 编辑规范（重要，踩过坑）
+
+`bundle_*.toml` 在**运行时**才被 `BaseGameI18nResolverImpl.init()` → `Toml.parseToTomlTable(...)` 解析，**编译期不做任何校验**。一旦 TOML 非法，启动器一打开就闪退（解析异常抛在 App 初始化路径上）。修改时必须遵守：
+
+1. **点分键路径唯一性**：同一键路径只能有一种类型，**不能既是标量又是表**。下面这种写法会直接让整个 bundle 解析失败、App 闪退：
+   ```toml
+   [menu]
+   singlePlayer = "单人游戏"     # menu.singlePlayer 是字符串
+
+   [menu.singlePlayer]            # menu.singlePlayer 又是表 —— 非法！
+   title = "单人游戏"
+   ```
+   正确做法是让两者名称错开，例如标量项用 `menu.singlePlayerGame`，子表用 `menu.singlePlayer`。
+2. **新增键后必须肉眼沿点分路径逐层核对**：确认没有任何祖先/兄弟键与自己冲突，也不要重复定义同一个键。
+3. **不要用「编译通过」当作资源正确的证据**：Gradle `BUILD SUCCESSFUL` 只说明 Kotlin 代码合法，对 TOML 资源零校验。改了 `bundle_*.toml` 后，应当用解析器实跑一遍（或至少通读全文）确认合法，再交付。
+4. `readI18n(path)` 在路径不存在时会抛 NPE（`table[next]!!`），不会静默回退；非法 bundle 更会导致全局解析失败。两种情况都可能在运行期才暴露。
 
 ## 安全与部署注意事项
 

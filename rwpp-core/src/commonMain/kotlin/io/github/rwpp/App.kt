@@ -77,6 +77,7 @@ import io.github.rwpp.ui.UI.showReplayView
 import io.github.rwpp.ui.UI.showResourceBrowser
 import io.github.rwpp.ui.UI.showRoomView
 import io.github.rwpp.ui.UI.showSettingsView
+import io.github.rwpp.ui.UI.showSinglePlayerView
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.LineSpinFadeLoaderIndicator
 import io.github.rwpp.widget.v2.bounceClick
@@ -147,7 +148,8 @@ fun App(
             || showExtensionView
             || showReplayView
             || showResourceBrowser
-            || showOpenSourceInfoView)
+            || showOpenSourceInfoView
+            || showSinglePlayerView)
 
     val game = koinInject<Game>()
 
@@ -183,7 +185,7 @@ fun App(
                 Scaffold(
                     containerColor = Color.Transparent,
                     floatingActionButton = {
-                        if(game.isGameCouldContinue() && (showMainMenu || showMissionView)) {
+                        if(game.isGameCouldContinue() && (showMainMenu || showMissionView || showSinglePlayerView)) {
                             FloatingActionButton(
                                 onClick = { game.continueGame() },
                                 shape = CircleShape,
@@ -206,13 +208,8 @@ fun App(
                                 isSinglePlayerGame = false
                                 showMultiplayerView = true
                             },
-                            mission = {
-                                showMissionView = true
-                            },
-                            skirmish = {
-                                showRoomView = true
-                                isSinglePlayerGame = true
-                                game.hostNewSinglePlayer(false)
+                            singlePlayer = {
+                                showSinglePlayerView = true
                             },
                             settings = {
                                 showSettingsView = true
@@ -220,16 +217,8 @@ fun App(
                             mods = {
                                 showModsView = true
                             },
-                            sandbox = {
-                                isSinglePlayerGame = true
-                                showRoomView = true
-                                game.hostNewSinglePlayer(sandbox = true)
-                            },
                             extension = {
                                 showExtensionView = true
-                            },
-                            replay = {
-                                showReplayView = true
                             },
                             resourceBrowser = {
                                 showResourceBrowser = true
@@ -247,6 +236,32 @@ fun App(
                     ) {
                         MissionView { showMissionView = false }
                     }
+                }
+
+                AnimatedVisibility(
+                    showSinglePlayerView,
+                    enter = if(enableAnimations) fadeIn() + slideInVertically() else EnterTransition.None,
+                    exit = if(enableAnimations) fadeOut() + slideOutVertically() else ExitTransition.None,
+                ) {
+                    SinglePlayerView(
+                        onExit = { showSinglePlayerView = false },
+                        onMission = {
+                            showSinglePlayerView = false
+                            showMissionView = true
+                        },
+                        onSkirmish = {
+                            showSinglePlayerView = false
+                            showRoomView = true
+                            isSinglePlayerGame = true
+                            game.hostNewSinglePlayer(false)
+                        },
+                        onSandbox = {
+                            showSinglePlayerView = false
+                            isSinglePlayerGame = true
+                            showRoomView = true
+                            game.hostNewSinglePlayer(sandbox = true)
+                        },
+                    )
                 }
 
                 AnimatedVisibility(

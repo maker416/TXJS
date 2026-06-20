@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -67,7 +68,6 @@ import io.github.rwpp.game.Player
 import io.github.rwpp.game.units.GameUnit
 import io.github.rwpp.game.units.MovementType
 import io.github.rwpp.game.world.World
-import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.projectVersion
 import io.github.rwpp.rwpp_core.generated.resources.Res
@@ -101,6 +101,7 @@ object UI : Initialization, IUserInterface {
     var showExtensionView by mutableStateOf(false)
     var showResourceBrowser by mutableStateOf(false)
     var showOpenSourceInfoView by mutableStateOf(false)
+    var showSinglePlayerView by mutableStateOf(false)
 
     private var pendingAutoPublishQRoom = false
 
@@ -206,60 +207,50 @@ open class UIProvider {
     @Composable
     open fun MainMenu(
         multiplayer: () -> Unit,
-        mission: () -> Unit,
-        skirmish: () -> Unit,
+        singlePlayer: () -> Unit,
         settings: () -> Unit,
         mods: () -> Unit,
-        sandbox: () -> Unit,
         extension: () -> Unit,
-        replay: () -> Unit,
         resourceBrowser: () -> Unit,
         openSourceInfo: () -> Unit
     ) {
         val windowManager = LocalWindowManager.current
-        val standardMenuItems: List<@Composable () -> Unit> = listOf(
-            { MainMenuAction(readI18n("menu.mission"), mission) },
-            { MainMenuAction(readI18n("menus.singlePlayer.skirmish", I18nType.RW), skirmish) },
-            { MainMenuAction(readI18n("menu.multiplayer"), multiplayer) },
-            { MainMenuAction(readI18n("menu.mods"), mods) },
-            { MainMenuAction(readI18n("menu.sandbox"), sandbox) },
-            { MainMenuAction(readI18n("menu.settings"), settings) },
-            { MainMenuAction(readI18n("browser.resourceBrowser"), resourceBrowser) },
-            { MainMenuAction(readI18n("menu.replay"), replay) },
-            { MainMenuAction(readI18n("menu.openSourceInfo"), openSourceInfo) },
-            {
-                val appContext = koinInject<AppContext>()
-                MainMenuAction(readI18n("menu.exit")) { appContext.exit() }
-            },
-        )
+        val buttonSpacing = when (windowManager) {
+            WindowManager.Small -> 8.dp
+            WindowManager.Middle -> 10.dp
+            WindowManager.Large -> 12.dp
+        }
+        val gridSpacing = when (windowManager) {
+            WindowManager.Small -> 6.dp
+            WindowManager.Middle -> 8.dp
+            WindowManager.Large -> 10.dp
+        }
+        val versionStyle = when (windowManager) {
+            WindowManager.Small, WindowManager.Middle -> MaterialTheme.typography.bodySmall
+            WindowManager.Large -> MaterialTheme.typography.bodyLarge
+        }
+        val extraItems: List<@Composable () -> Unit> = extraMenuList.map { menu ->
+            { MainMenuAction(menu.title, menu.onClick) }
+        }
 
         BoxWithConstraints(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
-            val titleAreaHeight = maxHeight * 0.39f
+            val titleAreaHeight = maxHeight * 0.32f
             val titleWidth = when (windowManager) {
-                WindowManager.Small -> maxWidth * 0.64f
-                WindowManager.Middle -> maxWidth * 0.56f
-                WindowManager.Large -> maxWidth * 0.50f
+                WindowManager.Small -> maxWidth * 0.70f
+                WindowManager.Middle -> maxWidth * 0.60f
+                WindowManager.Large -> maxWidth * 0.52f
             }
-            val buttonSpacing = when (windowManager) {
-                WindowManager.Small -> 8.dp
-                WindowManager.Middle -> 9.dp
-                WindowManager.Large -> 10.dp
-            }
-            val menuScrollState = rememberLazyListState()
-            val versionStyle = when (windowManager) {
-                WindowManager.Small, WindowManager.Middle -> MaterialTheme.typography.bodySmall
-                WindowManager.Large -> MaterialTheme.typography.bodyLarge
-            }
-            val extraItems: List<@Composable () -> Unit> = extraMenuList.map { menu ->
-                { MainMenuAction(menu.title, menu.onClick) }
-            }
-            val allItems = standardMenuItems + extraItems
+            val contentMaxWidth = when (windowManager) {
+                WindowManager.Small -> maxWidth * 0.85f
+                WindowManager.Middle -> maxWidth * 0.75f
+                WindowManager.Large -> maxWidth * 0.65f
+            }.coerceAtMost(520.dp)
 
             Text(
-                "$projectVersion (core $coreVersion)",
+                "$coreVersion (app $projectVersion)",
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(top = 8.dp, end = 10.dp),
@@ -267,39 +258,148 @@ open class UIProvider {
                 color = Color.White
             )
 
-            LazyColumn(
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 16.dp),
-                state = menuScrollState,
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(buttonSpacing),
-                contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp)
+                verticalArrangement = Arrangement.Center
             ) {
-                item {
-                    Box(
+                // Title area
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(titleAreaHeight),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        painter = painterResource(Res.drawable.title),
+                        contentDescription = "Menu",
                         modifier = Modifier
-                            .fillMaxWidth()
+                            .width(titleWidth)
                             .height(titleAreaHeight),
-                        contentAlignment = Alignment.Center
+                        contentScale = ContentScale.Fit
+                    )
+                }
+
+                // Menu buttons container - reduced spacing to fit all buttons
+                Column(
+                    modifier = Modifier.widthIn(max = contentMaxWidth),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(buttonSpacing)
+                ) {
+                    // Full-width primary buttons
+                    MainMenuAction(
+                        readI18n("menu.singlePlayerGame"),
+                        onClick = singlePlayer,
+                        isFullWidth = true
+                    )
+                    MainMenuAction(
+                        readI18n("menu.multiplayer"),
+                        onClick = multiplayer,
+                        isFullWidth = true
+                    )
+
+                    // Two-column grid for secondary buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(gridSpacing)
                     ) {
-                        Image(
-                            painter = painterResource(Res.drawable.title),
-                            contentDescription = "Menu",
-                            modifier = Modifier
-                                .width(titleWidth)
-                                .height(titleAreaHeight),
-                            contentScale = ContentScale.Fit
+                        MainMenuAction(
+                            readI18n("menu.settings"),
+                            onClick = settings,
+                            modifier = Modifier.weight(1f)
+                        )
+                        MainMenuAction(
+                            readI18n("menu.mods"),
+                            onClick = mods,
+                            modifier = Modifier.weight(1f)
                         )
                     }
-                }
-                items(allItems.size) { index ->
-                    Box(
-                        contentAlignment = Alignment.Center
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(gridSpacing)
                     ) {
-                        allItems[index]()
+                        MainMenuAction(
+                            readI18n("browser.resourceBrowser"),
+                            onClick = resourceBrowser,
+                            modifier = Modifier.weight(1f)
+                        )
+                        MainMenuAction(
+                            readI18n("menu.openSourceInfo"),
+                            onClick = openSourceInfo,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    // Extra items in grid (if any)
+                    extraItems.chunked(2).forEach { rowItems ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(gridSpacing)
+                        ) {
+                            rowItems.forEach { item ->
+                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                                    item()
+                                }
+                            }
+                            // Fill empty slot if odd number
+                            if (rowItems.size == 1) {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
+                        }
                     }
                 }
+            }
+
+            // Exit button positioned at bottom-left corner
+            val appContext = koinInject<AppContext>()
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 16.dp, bottom = 12.dp)
+            ) {
+                ExitButton(
+                    onClick = { appContext.exit() },
+                    label = readI18n("menu.exit")
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun ExitButton(
+        onClick: () -> Unit,
+        label: String
+    ) {
+        val windowManager = LocalWindowManager.current
+        val cornerRadius = when (windowManager) {
+            WindowManager.Small -> 10.dp
+            WindowManager.Middle -> 12.dp
+            WindowManager.Large -> 14.dp
+        }
+        
+        Surface(
+            color = Color(0x3A1A1A1A),
+            contentColor = Color.White,
+            shape = RoundedCornerShape(cornerRadius),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.4f)),
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp,
+            onClick = onClick
+        ) {
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    label,
+                    color = Color.White.copy(alpha = 0.8f),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium
+                )
             }
         }
     }
@@ -307,33 +407,53 @@ open class UIProvider {
     @Composable
     private fun MainMenuAction(
         content: String,
-        onClick: () -> Unit
+        onClick: () -> Unit,
+        modifier: Modifier = Modifier,
+        isFullWidth: Boolean = false,
+        isEmphasized: Boolean = true
     ) {
         val windowManager = LocalWindowManager.current
         val buttonHeight = when (windowManager) {
-            WindowManager.Small -> 34.dp
-            WindowManager.Middle -> 38.dp
-            WindowManager.Large -> 42.dp
+            WindowManager.Small -> 36.dp
+            WindowManager.Middle -> 40.dp
+            WindowManager.Large -> 44.dp
         }
-        val buttonWidthModifier = when (windowManager) {
-            WindowManager.Small -> Modifier.widthIn(min = 88.dp, max = 138.dp)
-            WindowManager.Middle -> Modifier.widthIn(min = 96.dp, max = 152.dp)
-            WindowManager.Large -> Modifier.widthIn(min = 104.dp, max = 168.dp)
+        val cornerRadius = when (windowManager) {
+            WindowManager.Small -> 16.dp
+            WindowManager.Middle -> 18.dp
+            WindowManager.Large -> 20.dp
         }
+        
+        // Aesthetic improvements: more transparent background, subtler border
+        val backgroundColor = if (isEmphasized) {
+            Color(0x5A1A1A1A)
+        } else {
+            Color(0x4A2A2A2A)
+        }
+        val borderColor = if (isEmphasized) {
+            Color.White.copy(alpha = 0.55f)
+        } else {
+            Color.White.copy(alpha = 0.35f)
+        }
+        
         Surface(
-            color = Color(0x7A2A2A2A),
+            color = backgroundColor,
             contentColor = Color.White,
-            shape = RoundedCornerShape(14.dp),
-            border = BorderStroke(2.dp, Color.White.copy(alpha = 0.72f)),
+            shape = RoundedCornerShape(cornerRadius),
+            border = BorderStroke(1.5.dp, borderColor),
             tonalElevation = 0.dp,
             shadowElevation = 0.dp,
-            modifier = buttonWidthModifier,
+            modifier = if (isFullWidth) {
+                modifier.fillMaxWidth()
+            } else {
+                modifier
+            },
             onClick = onClick
         ) {
             Box(
                 modifier = Modifier
                     .heightIn(min = buttonHeight)
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(

@@ -28,7 +28,7 @@ allprojects {
     }
 }
 
-version = "1.12.70"
+version = "1.12.79"
 
 // 保留 build/key、artifacts 与构建脚本，避免 gradlew clean 误删
 tasks.named<Delete>("clean").configure {

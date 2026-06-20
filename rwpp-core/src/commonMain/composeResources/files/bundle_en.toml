@@ -191,6 +191,17 @@ settings = "Settings"
 exit = "Exit"
 openSourceInfo = "Open Source & License"
 replay = "Watch Replay"
+singlePlayerGame = "Single Player"
+
+[menu.singlePlayer]
+title = "Single Player"
+subtitle = "Choose the single-player mode you want to play"
+mission = "Mission"
+missionDesc = "Tackle built-in campaign missions and experience the story and battles"
+skirmish = "Skirmish"
+skirmishDesc = "Battle against AI with custom maps, teams and rules"
+sandbox = "Sandbox Editor"
+sandboxDesc = "Create and edit units and buildings to design your own map"
 
 [common]
 difficulty = "Difficulty"

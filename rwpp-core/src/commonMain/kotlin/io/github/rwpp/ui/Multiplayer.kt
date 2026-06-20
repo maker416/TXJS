@@ -19,7 +19,6 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
@@ -37,6 +36,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
@@ -76,6 +80,7 @@ import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
@@ -1456,6 +1461,14 @@ fun MultiplayerView(
                 isRefreshing = false
             }
         }
+
+        // 每 5 秒自动刷新一次房间列表
+        LaunchedEffect(Unit) {
+            while (true) {
+                delay(5000)
+                refresh.trySend(Unit)
+            }
+        }
     }
 
     var hostDialogVisible by remember { mutableStateOf(false) }
@@ -1472,77 +1485,42 @@ fun MultiplayerView(
     Scaffold(
         containerColor = Color.Transparent,
         bottomBar = {
-            Box(modifier = Modifier.fillMaxWidth().padding(10.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RWTextButton(
+                    readI18n("multiplayer.host"),
+                    leadingIcon = { Icon(Icons.Default.Build, null, modifier = Modifier.size(30.dp)) },
+                ) { hostDialogVisible = true }
 
-                Row(modifier = Modifier.align(Alignment.Center)) {
-                    RWTextButton(
-                        readI18n("multiplayer.host"),
-                        leadingIcon = { Icon(Icons.Default.Build, null, modifier = Modifier.size(30.dp)) },
-                        modifier = Modifier.padding(10.dp)
-                    ) { hostDialogVisible = true }
-
-                    RWTextButton(
-                        label = readI18n("multiplayer.joinLastGame"),
-                        leadingIcon = { Icon(painter = painterResource(Res.drawable.replay_30), null, modifier = Modifier.size(30.dp)) },
-                        modifier = Modifier.padding(10.dp)
-                    ) {
-                        val lastIp = configIO.getGameConfig<String?>("lastNetworkIP")
-                        if (lastIp != null) {
-                            serverAddress = lastIp
-                            isConnecting = true
-                        }
-                    }
-
-                    RWTextButton(
-                        label = readI18n("multiplayer.apply24HourListPosition"),
-                        leadingIcon = { Icon(painter = painterResource(Res.drawable.public_30), null, modifier = Modifier.size(30.dp)) },
-                        modifier = Modifier.padding(10.dp)
-                    ) {
-                        net.openUriInBrowser(LIST_POSITION_APPLICATION_URL)
+                RWTextButton(
+                    label = readI18n("multiplayer.joinLastGame"),
+                    leadingIcon = { Icon(painter = painterResource(Res.drawable.replay_30), null, modifier = Modifier.size(30.dp)) },
+                ) {
+                    val lastIp = configIO.getGameConfig<String?>("lastNetworkIP")
+                    if (lastIp != null) {
+                        serverAddress = lastIp
+                        isConnecting = true
                     }
                 }
 
-                Row(modifier = Modifier.align(Alignment.CenterEnd)) {
-                    FloatingActionButton(
-                        onClick = { editingServerConfig = null; showServerInfoConfig = true },
-                        shape = CircleShape,
-                        modifier = Modifier.padding(5.dp),
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    ) { Icon(Icons.Default.Add, null, tint = MaterialTheme.colorScheme.surfaceTint) }
+                RWTextButton(
+                    label = readI18n("multiplayer.apply24HourListPosition"),
+                    leadingIcon = { Icon(painter = painterResource(Res.drawable.public_30), null, modifier = Modifier.size(30.dp)) },
+                ) {
+                    net.openUriInBrowser(LIST_POSITION_APPLICATION_URL)
+                }
 
-                    Box {
-                        val requester = remember { FocusRequester() }
-
-                        LaunchedEffect(Unit) {
-                            requester.requestFocus()
-                        }
-
-                        FloatingActionButton(
-                            onClick = { if(!isRefreshing) scope.launch { refresh.trySend(Unit) } },
-                            shape = CircleShape,
-                            modifier = Modifier.padding(5.dp).focusRequester(requester),
-                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        ) {
-                            if(isRefreshing) {
-                                CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary)
-                            } else {
-                                Icon(Icons.Default.Refresh, null, tint = MaterialTheme.colorScheme.surfaceTint)
-                            }
-                        }
-
-                        val appContext = koinInject<AppContext>()
-
-                        if (appContext.isDesktop()) {
-                            Card(
-                                modifier = Modifier.align(Alignment.BottomCenter).padding(1.dp),
-                                shape = RoundedCornerShape(10.dp),
-                                colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary),
-                            ) {
-                                Text("space", modifier = Modifier.padding(1.dp), color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                    }
+                RWTextButton(
+                    label = readI18n("menu.replay"),
+                    leadingIcon = { Icon(painter = painterResource(Res.drawable.visibility_30), null, modifier = Modifier.size(30.dp)) },
+                ) {
+                    onExit()
+                    UI.showReplayView = true
                 }
             }
         },
@@ -1641,11 +1619,18 @@ fun MultiplayerView(
 
                                         JoinServerField()
 
+                                        // 顶部工具栏：筛选 / 刷新（刷新为高频操作，移除添加按钮）
                                         RWIconButton(
                                             painterResource(Res.drawable.tune_30),
                                             modifier = Modifier.padding(5.dp),
                                             size = 50.dp
                                         ) { filterSurfaceDialogVisible = true }
+
+                                        RefreshButtonWithHint(
+                                            isRefreshing = isRefreshing,
+                                            onRefresh = { if(!isRefreshing) scope.launch { refresh.trySend(Unit) } },
+                                            modifier = Modifier.padding(5.dp)
+                                        )
 
                                     }
                                 }
@@ -2039,6 +2024,87 @@ private fun JoinServerRequestDialog(
                         Text(text = readI18n("multiplayer.join"), style = MaterialTheme.typography.bodyLarge)
                     }
                 }
+            }
+        }
+    }
+}
+
+
+/**
+ * 顶部工具栏的刷新按钮，保持与 RWIconButton 一致的边框/背景风格，
+ * 并在刷新时显示 CircularProgressIndicator。桌面端按下 Space 键刷新房间列表，
+ * 与点击按钮等效（提示卡片中的 "space" 即此快捷键）。
+ */
+@Composable
+private fun RefreshButtonWithHint(
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val appContext = koinInject<AppContext>()
+    val requester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        requester.requestFocus()
+    }
+
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Card(
+            border = BorderStroke(3.dp, MaterialTheme.colorScheme.surfaceContainer),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            shape = RoundedCornerShape(5.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 5.dp),
+            modifier = Modifier
+                .size(50.dp)
+                .focusRequester(requester)
+                .onPreviewKeyEvent { event ->
+                    // 空格键 = 刷新房间列表（与点击刷新按钮等效，刷新中不重复触发）
+                    if (event.type == KeyEventType.KeyUp && event.key == Key.Spacebar) {
+                        onRefresh()
+                        true
+                    } else {
+                        false
+                    }
+                }
+                .bounceClick(onClick = onRefresh),
+        ) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (isRefreshing) {
+                    CircularProgressIndicator(
+                        color = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.size(30.dp),
+                        strokeWidth = 3.dp,
+                    )
+                } else {
+                    Icon(
+                        Icons.Default.Refresh,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.surfaceTint,
+                        modifier = Modifier.size(30.dp),
+                    )
+                }
+            }
+        }
+
+        if (appContext.isDesktop()) {
+            Card(
+                modifier = Modifier.padding(top = 2.dp),
+                shape = RoundedCornerShape(10.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary),
+            ) {
+                Text(
+                    "space",
+                    modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
         }
     }
