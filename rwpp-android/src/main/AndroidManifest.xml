@@ -35,7 +35,7 @@
             android:theme="@style/app_theme"
             android:hardwareAccelerated="true"
             android:largeHeap="true"
-            android:label="铁锈战争极速版"
+            android:label="铁锈战争RW"
             android:usesCleartextTraffic="true"
             android:resizeableActivity="true"
             android:requestLegacyExternalStorage="true" android:icon="@drawable/ic_launcher_2">

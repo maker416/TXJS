@@ -268,7 +268,7 @@ open class UIProvider {
                 // Title area
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
+                        .width(titleWidth)
                         .height(titleAreaHeight),
                     contentAlignment = Alignment.Center
                 ) {
@@ -279,6 +279,21 @@ open class UIProvider {
                             .width(titleWidth)
                             .height(titleAreaHeight),
                         contentScale = ContentScale.Fit
+                    )
+
+                    Text(
+                        text = "极速版",
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 4.dp, bottom = 4.dp),
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = when (windowManager) {
+                            WindowManager.Small -> 12.sp
+                            WindowManager.Middle -> 14.sp
+                            WindowManager.Large -> 16.sp
+                        }
                     )
                 }
 
@@ -306,8 +321,8 @@ open class UIProvider {
                         horizontalArrangement = Arrangement.spacedBy(gridSpacing)
                     ) {
                         MainMenuAction(
-                            readI18n("menu.settings"),
-                            onClick = settings,
+                            readI18n("browser.resourceBrowser"),
+                            onClick = resourceBrowser,
                             modifier = Modifier.weight(1f)
                         )
                         MainMenuAction(
@@ -322,8 +337,8 @@ open class UIProvider {
                         horizontalArrangement = Arrangement.spacedBy(gridSpacing)
                     ) {
                         MainMenuAction(
-                            readI18n("browser.resourceBrowser"),
-                            onClick = resourceBrowser,
+                            readI18n("menu.settings"),
+                            onClick = settings,
                             modifier = Modifier.weight(1f)
                         )
                         MainMenuAction(
