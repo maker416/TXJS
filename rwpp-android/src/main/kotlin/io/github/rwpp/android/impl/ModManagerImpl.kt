@@ -33,45 +33,43 @@ class ModManagerImpl : ModManager {
     private val game: Game = get()
     private val isReloadingMods = AtomicBoolean(false)
 
-    override suspend fun modReload() {
+    override suspend fun modReload(forceImmediate: Boolean) {
         if (!isReloadingMods.compareAndSet(false, true)) {
-            logger.info("[MODSYNC] modReload skipped: already reloading")
+            logger.info("[MODSYNC] modReload skipped: already reloading (forceImmediate=$forceImmediate)")
             return
         }
         try {
-            logger.info("[MODSYNC] modReload start, broadcasting ReloadModEvent")
+            logger.info("[MODSYNC] modReload start, broadcasting ReloadModEvent (forceImmediate=$forceImmediate)")
             ReloadModEvent().broadcastIn()
-            val latch = CountDownLatch(1)
-            logger.info("[MODSYNC] modReload posting reload action to game thread")
-            game.post {
-                logger.info("[MODSYNC] modReload game.post action RUNNING on game thread")
-                try {
-                    val t = GameEngine.t()
-                    t.bW.d()
-                    t.bN.save()
-                    val aVar = t.bW
-                    t.bo = true
-                    try {
-                        t.f()
-                        aVar.a(false, false)
-                    } finally {
-                        t.bo = false
-                    }
-                    t.q()
-                    logger.info("[MODSYNC] modReload game.post action DONE")
-                } catch (e: Throwable) {
-                    logger.error("[MODSYNC] modReload game.post action THREW", e)
-                    throw e
-                } finally {
-                    latch.countDown()
-                    logger.info("[MODSYNC] modReload latch counted down")
-                }
-            }
-            logger.info("[MODSYNC] modReload waiting for game thread (latch.await, NO timeout) ...")
-            withContext(Dispatchers.IO) {
-                awaitGamePost(latch)
-                logger.info("[MODSYNC] modReload latch released, refreshing maps")
+            if (forceImmediate) {
+                // mod 同步专用：加入者仍在加载阶段、游戏主循环 i.b() 尚未启动，
+                // game.post 投递的 action 永远不会被消费 -> 直接在当前线程同步执行重载。
+                logger.info("[MODSYNC] modReload forceImmediate: running reload inline on current thread")
+                runReloadCore()
+                logger.info("[MODSYNC] modReload forceImmediate: reload core done, refreshing maps")
                 appKoin.get<Game>().getAllMaps(true)
+            } else {
+                val latch = CountDownLatch(1)
+                logger.info("[MODSYNC] modReload posting reload action to game thread")
+                game.post {
+                    logger.info("[MODSYNC] modReload game.post action RUNNING on game thread")
+                    try {
+                        runReloadCore()
+                        logger.info("[MODSYNC] modReload game.post action DONE")
+                    } catch (e: Throwable) {
+                        logger.error("[MODSYNC] modReload game.post action THREW", e)
+                        throw e
+                    } finally {
+                        latch.countDown()
+                        logger.info("[MODSYNC] modReload latch counted down")
+                    }
+                }
+                logger.info("[MODSYNC] modReload waiting for game thread (latch.await, NO timeout) ...")
+                withContext(Dispatchers.IO) {
+                    awaitGamePost(latch)
+                    logger.info("[MODSYNC] modReload latch released, refreshing maps")
+                    appKoin.get<Game>().getAllMaps(true)
+                }
             }
             logger.info("[MODSYNC] modReload main work finished")
         } finally {
@@ -79,6 +77,25 @@ class ModManagerImpl : ModManager {
             ReloadModFinishedEvent().broadcastIn()
             isReloadingMods.set(false)
         }
+    }
+
+    /**
+     * 重载内核：调用引擎扫描 mods 目录并重新加载。
+     * 默认应在游戏主线程执行；forceImmediate 时为绕过主循环在调用线程直接执行。
+     */
+    private fun runReloadCore() {
+        val t = GameEngine.t()
+        t.bW.d()
+        t.bN.save()
+        val aVar = t.bW
+        t.bo = true
+        try {
+            t.f()
+            aVar.a(false, false)
+        } finally {
+            t.bo = false
+        }
+        t.q()
     }
 
     override suspend fun modUpdate() {

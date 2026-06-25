@@ -95,7 +95,7 @@ object Logic : Initialization {
                             mod.isEnabled = true
                         }
                     }
-                    manager.modReload()
+                    manager.modReload(forceImmediate = true)
                     net.sendPacketToServer(ModPacket.ModReloadFinishPacket())
                 } else {
                     synchronized(Logic) {
@@ -368,8 +368,8 @@ object Logic : Initialization {
             mods.forEach { mod ->
                 mod.isEnabled = mod.name in req
             }
-            logger.info("[MODSYNC] calling modReload() ...")
-            manager.modReload()
+            logger.info("[MODSYNC] calling modReload(forceImmediate=true) ...")
+            manager.modReload(forceImmediate = true)
             logger.info("[MODSYNC] modReload() returned, re-checking mod presence")
             val mods2 = manager.getAllMods()
             logger.info("[MODSYNC] mods after reload: ${mods2.map { it.name }}")
