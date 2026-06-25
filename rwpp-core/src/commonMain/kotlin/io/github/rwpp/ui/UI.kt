@@ -109,6 +109,19 @@ object UI : Initialization, IUserInterface {
         internal set
     var receivingNetworkDialogTitle by mutableStateOf("")
     var showNetworkDialog by mutableStateOf(false)
+    // ---- 房主 MOD 同步下载弹窗的结构化进度状态 ----
+    /** 当前正在下载的 mod 名（空串表示尚未开始/已结束）。 */
+    var receivingModName by mutableStateOf("")
+    /** 当前 mod 下载进度 0f..1f（已收字节 / 总字节）。 */
+    var receivingModProgress by mutableStateOf(0f)
+    /** 当前 mod 已收字节数（用于展示，如 "1.20MB"）。 */
+    var receivingModReceivedBytes by mutableStateOf(0L)
+    /** 当前 mod 总字节数。 */
+    var receivingModTotalBytes by mutableStateOf(0L)
+    /** 本次房间要求下载的 mod 总数（用于 "(2/5)" 徽章）。 */
+    var receivingModTotalCount by mutableStateOf(0)
+    /** 已下载完成的 mod 数（含当前正在下载的那个，从 1 开始）。 */
+    var receivingModDoneCount by mutableStateOf(0)
     var UiProvider: UIProvider = UIProvider()
 
     private val relayRegex = Regex("""R\d+""")

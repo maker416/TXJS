@@ -360,6 +360,7 @@ object Logic : Initialization {
             logger.info("[MODSYNC] queue empty, all mods downloaded, starting finalization")
             withContext(Dispatchers.Main.immediate) {
                 UI.showNetworkDialog = false
+                resetReceivingModState()
             }
             val manager = appKoin.get<ModManager>()
             val mods = manager.getAllMods()
@@ -411,13 +412,32 @@ object Logic : Initialization {
         }
     }
 
-    /** 收到首个分块前初始化下载对话框标题。 */
+    /** 重置下载弹窗的结构化进度状态（须在主线程调用）。 */
+    private fun resetReceivingModState() {
+        UI.receivingModName = ""
+        UI.receivingModProgress = 0f
+        UI.receivingModReceivedBytes = 0L
+        UI.receivingModTotalBytes = 0L
+        UI.receivingModTotalCount = 0
+        UI.receivingModDoneCount = 0
+        UI.receivingNetworkDialogTitle = ""
+    }
+
+    /** 收到首个分块前初始化下载对话框状态。 */
     private suspend fun setDownloadingTitle(index: Int) {
         val totalSize = appKoin.get<Game>().gameRoom.option.allModsSize
-        val name = synchronized(Logic) { modQueue?.peek() ?: "" }
+        val (name, totalCount) = synchronized(Logic) {
+            (modQueue?.peek() ?: "") to (requiredMods?.size ?: 1)
+        }
         withContext(Dispatchers.Main.immediate) {
             UI.receivingNetworkDialogTitle =
                 "Downloading $name. total: ${SizeUtils.byteToMB(totalSize.toLong())}MB. (0/?)"
+            UI.receivingModName = name
+            UI.receivingModProgress = 0f
+            UI.receivingModReceivedBytes = 0L
+            UI.receivingModTotalBytes = 0L
+            UI.receivingModTotalCount = totalCount
+            UI.receivingModDoneCount = 0
             UI.showNetworkDialog = true
         }
     }
@@ -426,16 +446,24 @@ object Logic : Initialization {
     private suspend fun updateDownloadingTitle(name: String) {
         val data = synchronized(Logic) {
             val totalSize = receivingBuffers[name]?.totalSize ?: 0L
-            Triple(
-                receivedBytes[name] ?: 0L,
-                totalSize,
-                requiredMods?.size ?: 1,
-            )
+            val received = receivedBytes[name] ?: 0L
+            val totalCount = requiredMods?.size ?: 1
+            // 已完成 = 总数 - 队列中剩余（含当前正在下载的，故 done 从 1 起算）
+            val remaining = modQueue?.size ?: 0
+            val done = (totalCount - remaining).coerceIn(0, totalCount)
+            DownloadProgressData(received, totalSize, totalCount, done)
         }
-        val (received, totalSize, modCount) = data
+        val (received, totalSize, totalCount, done) = data
+        val progress = if (totalSize > 0) (received.toFloat() / totalSize).coerceIn(0f, 1f) else 0f
         withContext(Dispatchers.Main.immediate) {
             UI.receivingNetworkDialogTitle =
-                "Downloading $name. ${SizeUtils.byteToMB(received)}/${SizeUtils.byteToMB(totalSize)}MB. (/$modCount)"
+                "Downloading $name. ${SizeUtils.byteToMB(received)}/${SizeUtils.byteToMB(totalSize)}MB. (/$totalCount)"
+            UI.receivingModName = name
+            UI.receivingModProgress = progress
+            UI.receivingModReceivedBytes = received
+            UI.receivingModTotalBytes = totalSize
+            UI.receivingModTotalCount = totalCount
+            UI.receivingModDoneCount = done.coerceAtLeast(1)
             UI.showNetworkDialog = true
         }
     }
@@ -477,4 +505,12 @@ private class ModReceiving(
     var totalSize: Long,
     var sha256: String,
     var totalChunks: Int,
+)
+
+/** 下载进度快照：用于锁内取数据、锁外刷新 UI。 */
+private data class DownloadProgressData(
+    val receivedBytes: Long,
+    val totalBytes: Long,
+    val totalCount: Int,
+    val doneCount: Int,
 )

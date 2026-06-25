@@ -29,6 +29,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
@@ -36,6 +37,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.*
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -60,6 +62,7 @@ import io.github.rwpp.event.onDispose
 import io.github.rwpp.game.Game
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.io.SizeUtils
 import io.github.rwpp.app.AutoUpdater
 import io.github.rwpp.app.AutoUpdater.Companion.PROGRESS_NEED_INSTALL_PERMISSION
 import io.github.rwpp.net.LatestVersionProfile
@@ -821,23 +824,19 @@ fun App(
                     {
                         UI.showNetworkDialog = false
                         UI.receivingNetworkDialogTitle = ""
+                        UI.receivingModName = ""
+                        UI.receivingModProgress = 0f
+                        UI.receivingModReceivedBytes = 0L
+                        UI.receivingModTotalBytes = 0L
+                        UI.receivingModTotalCount = 0
+                        UI.receivingModDoneCount = 0
                         val game = appKoin.get<Game>()
                         game.gameRoom.disconnect("refuse to receive network data.")
                         UI.showMultiplayerView = true
                         UI.showRoomView = false
                     }, enableDismiss = true
                 ) { dismiss ->
-                    BorderCard(modifier = Modifier.size(500.dp)) {
-                        Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                            LineSpinFadeLoaderIndicator(MaterialTheme.colorScheme.onSecondaryContainer)
-                            Text(
-                                UI.receivingNetworkDialogTitle,
-                                modifier = Modifier.align(Alignment.CenterHorizontally).padding(20.dp).offset(y = 50.dp),
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
+                    NetworkModDownloadingCard()
                 }
 
                 AnimatedAlertDialog(
@@ -874,6 +873,121 @@ fun App(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 房主 MOD 同步下载进度卡片。
+ * 复用 [io.github.rwpp.widget.LoadingView] 的视觉语言：左侧色条 + 阶段标签 + 计数徽章 + 字节详情 + 确定值进度条。
+ * 进度数据来自 [io.github.rwpp.ui.UI] 的 receivingMod* 状态，由 Logic 下载流程实时刷新。
+ */
+@Composable
+private fun NetworkModDownloadingCard() {
+    val name = UI.receivingModName
+    val progress = UI.receivingModProgress
+    val receivedBytes = UI.receivingModReceivedBytes
+    val totalBytes = UI.receivingModTotalBytes
+    val totalCount = UI.receivingModTotalCount.coerceAtLeast(1)
+    val doneCount = UI.receivingModDoneCount.coerceIn(1, totalCount)
+    val percent = (progress * 100).toInt().coerceIn(0, 100)
+    val detail = readI18n(
+        "mod.downloadingModDetail",
+        I18nType.RWPP,
+        SizeUtils.byteToMB(receivedBytes).toString(),
+        SizeUtils.byteToMB(totalBytes).toString(),
+    )
+
+    BorderCard(
+        modifier = Modifier
+            .fillMaxWidth(0.72f)
+            .widthIn(min = 300.dp, max = 500.dp)
+            .wrapContentHeight(),
+        backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 22.dp, vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+            horizontalAlignment = Alignment.Start
+        ) {
+            // 阶段行：左侧色条 + 标题 + 计数徽章
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(4.dp)
+                        .height(48.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.primary)
+                )
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        readI18n("mod.downloadingMod"),
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    Text(
+                        if (name.isBlank()) detail else "$name · $detail",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                        minLines = 2,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Text(
+                    "$doneCount/$totalCount",
+                    modifier = Modifier
+                        .widthIn(min = 58.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f))
+                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontFeatureSettings = "tnum"
+                    ),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Clip
+                )
+            }
+
+            // 确定值进度条 + 百分比
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(4.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.surfaceContainer,
+                )
+                Text(
+                    "$percent%",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
+                    maxLines = 1
+                )
             }
         }
     }
