@@ -68,7 +68,17 @@ interface Mod {
     val path: String
     val sourceType: ModSourceType
         get() = detectModSourceType(File(path))
-    //var isNetworkMod: Boolean
+
+    /**
+     * 是否为通过网络传输下载的 mod。
+     *
+     * 原版 RW 引擎只扫描 units/ 目录顶层（File.listFiles 非递归，路径硬编码），
+     * 无法用物理子目录分离网络下载的 mod，故采用命名约定 {name}.network.rwmod：
+     * 保留 .rwmod 后缀让引擎能识别，.network 作为内部分辨标记。
+     * 检测基于 [path]（磁盘路径），跨平台一致，不依赖混淆字段名。
+     */
+    val isNetworkMod: Boolean
+        get() = path.contains(".network.rwmod")
 
     fun tryDelete(): Boolean {
         return deleteModFileSafely(File(path))

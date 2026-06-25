@@ -609,13 +609,12 @@ fun MultiplayerView(
                     }
                     ToggleLine(
                         label = readI18n("multiplayer.transferMod"),
-                        checked = false,
-                        enabled = false,
+                        checked = transferMod,
+                        enabled = enableMods && transferDisabledReason == null,
                         clickableWhenDisabled = true,
                         supportingText = transferDisabledReason,
                     ) {
-                        transferMod = false
-                        UI.showWarning(readI18n("multiplayer.transferModUnavailable"))
+                        transferMod = !transferMod
                     }
                 }
             }

@@ -68,6 +68,19 @@ skills-lock.json
 .DS_Store
 Thumbs.db
 
+# 误产物：路径塌缩成的损坏文件名（如 "D:workspaceRWTXJS_ia.txt"）
+# 以及 Windows 设备名误写入（nul/con/prn/aux）
+nul
+con
+prn
+aux
+
+# 游戏库反编译/反汇编产物（javap 输出、.class 导出文本等）
+# 原版 RW 类库为逆向产物，不应进入仓库
+*_ia.txt
+*.class.txt
+*.javap
+
 # Game resources extracted from original APK
 # 整个 res 目录默认排除，仅保留项目自有文件（图标/主题/Provider配置/keep占位）
 rwpp-android/src/main/assets/

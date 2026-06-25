@@ -545,6 +545,9 @@ fun ModsView(onExit: () -> Unit) {
                 ) {
                     MetadataPill(statusText, statusColor)
                     MetadataPill(sourceTypeText, MaterialTheme.colorScheme.tertiary)
+                    if (mod.isNetworkMod) {
+                        MetadataPill(readI18n("mod.networkMod"), MaterialTheme.colorScheme.secondary)
+                    }
                 }
 
                 Text(

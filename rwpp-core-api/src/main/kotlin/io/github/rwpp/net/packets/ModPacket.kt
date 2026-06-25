@@ -49,6 +49,48 @@ sealed class ModPacket : Packet() {
         }
     }
 
+    /**
+     * mod 分块传输包：房主把单个 mod 切成固定大小（[CHUNK_SIZE]）的多个块依次发送，
+     * 客户端按 [name] 重组后再做完整性校验。避免单个 48MB 大包直接交给游戏引擎。
+     *
+     * 约定：仅首块（[chunkIndex] == 0）携带 [totalSize]、[sha256]；后续块这两字段为 0/空，
+     * 重组与校验以首块的元数据为准。
+     */
+    class ModChunkPacket : ModPacket() {
+        /** mod 名称，同一次传输内所有块相同 */
+        var name: String = ""
+        /** 当前块序号，从 0 开始 */
+        var chunkIndex: Int = 0
+        /** 该 mod 的总块数（首块带） */
+        var totalChunks: Int = 0
+        /** 该 mod 完整数据的字节数（首块带） */
+        var totalSize: Long = 0L
+        /** 该 mod 完整数据的 SHA-256 十六进制串（首块带） */
+        var sha256: String = ""
+        /** 本块数据 */
+        var chunkBytes: ByteArray = byteArrayOf()
+
+        override val type: Int = DOWNLOAD_MOD_CHUNK
+
+        override fun readPacket(input: GameInputStream) {
+            name = input.readUTF()
+            chunkIndex = input.readInt()
+            totalChunks = input.readInt()
+            totalSize = input.readLong()
+            sha256 = input.readUTF()
+            chunkBytes = input.readNextBytes()
+        }
+
+        override fun writePacket(output: GameOutputStream) {
+            output.writeUTF(name)
+            output.writeInt(chunkIndex)
+            output.writeInt(totalChunks)
+            output.writeLong(totalSize)
+            output.writeUTF(sha256)
+            output.writeBytesWithSize(chunkBytes)
+        }
+    }
+
     class ModReloadFinishPacket : ModPacket() {
        override val type: Int = MOD_RELOAD_FINISH
 
@@ -64,6 +106,10 @@ sealed class ModPacket : Packet() {
     companion object {
         const val MOD_DOWNLOAD_REQUEST = 500
         const val DOWNLOAD_MOD_PACK = 510
+        const val DOWNLOAD_MOD_CHUNK = 511
         const val MOD_RELOAD_FINISH = 502
+
+        /** 单个分块的最大字节数：64KB。足够小以避免大包风险，又不至于包数过多拖慢。 */
+        const val CHUNK_SIZE = 64 * 1024
     }
 }
