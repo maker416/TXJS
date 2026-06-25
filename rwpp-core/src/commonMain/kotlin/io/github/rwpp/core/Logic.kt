@@ -85,8 +85,10 @@ object Logic : Initialization {
             if (room.isRWPPRoom && room.option.canTransferMod) {
                 // TODO check different mod data.
                 val missingMods = e.requiredMods.toMutableList().apply { removeAll(allMods.map { it.name }) }
+                logger.info("[MODSYNC] ModCheckEvent: requiredMods=${e.requiredMods}, localMods=${allMods.map { it.name }}, missingMods=$missingMods, isRWPPRoom=${room.isRWPPRoom}, canTransferMod=${room.option.canTransferMod}")
 
                 if (missingMods.isEmpty()) {
+                    logger.info("[MODSYNC] no missing mods, fast path: reload + reloadFinish")
                     net.sendPacketToServer(ModPacket.RequestPacket())
                     allMods.forEach { mod ->
                         if (mod.name in e.requiredMods) {
@@ -107,8 +109,10 @@ object Logic : Initialization {
                     net.sendPacketToServer(ModPacket.RequestPacket().apply {
                         mods = missingMods.joinToString(",")
                     })
+                    logger.info("[MODSYNC] request sent to host: missingMods=$missingMods, intercepting ModCheckEvent")
                     setDownloadingTitle(0)
                     e.intercept()
+                    logger.info("[MODSYNC] ModCheckEvent intercepted, waiting for chunks")
                 }
             }
         }
@@ -168,6 +172,7 @@ object Logic : Initialization {
         ) { client, packet ->
             val room = game.gameRoom
             if (!room.isHost) return@registerPacketListener true
+            logger.info("[MODSYNC-HOST] received download request from client: requested='${packet.mods}'")
             runCatching {
                 val player = room.getPlayerByClient(client!!)!!
                 synchronized(Logic) {
@@ -180,6 +185,7 @@ object Logic : Initialization {
                     .filter { it.isEnabled && it.name in requested }
                 // 异步分块发送，避免大数据在原版网络线程里卡顿
                 scope.launch(Dispatchers.IO) {
+                    logger.info("[MODSYNC-HOST] starting chunked send for ${mods.size} mod(s)")
                     mods.forEach { mod ->
                         synchronized(Logic) {
                             if (transferCancelled) return@forEach
@@ -190,7 +196,7 @@ object Logic : Initialization {
                         val total = bytes.size
                         val chunkSize = ModPacket.CHUNK_SIZE
                         val totalChunks = (total + chunkSize - 1) / chunkSize
-                        logger.info("send mod (chunked): ${mod.name}, size=${SizeUtils.byteToMB(total.toLong())}MB, chunks=$totalChunks")
+                        logger.info("[MODSYNC-HOST] sending mod (chunked): ${mod.name}, size=${SizeUtils.byteToMB(total.toLong())}MB, chunks=$totalChunks")
                         var offset = 0
                         var index = 0
                         while (offset < total) {
@@ -215,7 +221,9 @@ object Logic : Initialization {
                             offset = end
                             index++
                         }
+                        logger.info("[MODSYNC-HOST] finished sending mod: ${mod.name}, sentChunks=$index")
                     }
+                    logger.info("[MODSYNC-HOST] all mods sent, waiting for client ModReloadFinishPacket")
                 }
             }.onFailure {
                 logger.error(it.stackTraceToString())
@@ -230,10 +238,12 @@ object Logic : Initialization {
         ) { client, packet ->
             val room = game.gameRoom
             if (room.isHost) return@registerPacketListener true
+            logger.info("[MODSYNC] chunk received: name='${packet.name}', idx=${packet.chunkIndex}/${packet.totalChunks}, bytes=${packet.chunkBytes.size}, totalSize=${packet.totalSize}")
             scope.launch(Dispatchers.IO) {
                 runCatching {
                     handleChunk(packet, room, net)
                 }.onFailure {
+                    logger.error("[MODSYNC] handleChunk FAILED: ${it.stackTraceToString()}")
                     cleanupTransfer()
                     room.disconnect("Mod download failed.")
                     withContext(Dispatchers.Main.immediate) {
@@ -260,6 +270,9 @@ object Logic : Initialization {
             runCatching {
                 val player = room.getPlayerByClient(client!!)!!
                 player.data.ready = true
+                logger.info("[MODSYNC-HOST] ModReloadFinishPacket received from ${player.name}, set ready=true")
+            }.onFailure {
+                logger.error("[MODSYNC-HOST] ModReloadFinishPacket handling FAILED: ${it.stackTraceToString()}")
             }
 
             true
@@ -306,6 +319,7 @@ object Logic : Initialization {
 
         if (!done) return
 
+        logger.info("[MODSYNC] all chunks received for '${packet.name}', start integrity check")
         // 收齐：在锁外做校验与落盘（避免长时间持锁），但文件状态变更重新加锁
         val (name, fullBytes, expectedHash) = synchronized(Logic) {
             val rec = receivingBuffers[packet.name]!!
@@ -313,7 +327,9 @@ object Logic : Initialization {
         }
 
         val actualHash = HashUtils.sha256(fullBytes)
+        logger.info("[MODSYNC] hash check '${packet.name}': expected=$expectedHash, actual=$actualHash, match=${actualHash.equals(expectedHash, ignoreCase = true)}")
         if (!actualHash.equals(expectedHash, ignoreCase = true)) {
+            logger.warn("[MODSYNC] hash mismatch, aborting transfer")
             cleanupTransfer()
             room.disconnect("Mod integrity check failed.")
             withContext(Dispatchers.Main.immediate) {
@@ -326,7 +342,9 @@ object Logic : Initialization {
         // 文件名用 {name}.network.rwmod 约定：保留 .rwmod 后缀让引擎能扫描到，
         // .network 后缀用于 UI 区分「网络传输下载的 mod」。
         val modFile = File(modDir, "$name.network.rwmod")
+        logger.info("[MODSYNC] writing mod to disk: ${modFile.absolutePath}, size=${fullBytes.size}")
         modFile.writeBytesAtomic(fullBytes)
+        logger.info("[MODSYNC] mod written to disk OK: ${modFile.name}")
 
         // 清理该 mod 的缓冲，并从队列移除
         val queueEmpty = synchronized(Logic) {
@@ -339,18 +357,24 @@ object Logic : Initialization {
 
         if (queueEmpty) {
             // 全部下载完成：启用 mod、reload、校验名字齐全、通知房主
+            logger.info("[MODSYNC] queue empty, all mods downloaded, starting finalization")
             withContext(Dispatchers.Main.immediate) {
                 UI.showNetworkDialog = false
             }
             val manager = appKoin.get<ModManager>()
             val mods = manager.getAllMods()
             val req = synchronized(Logic) { requiredMods ?: emptyList() }
+            logger.info("[MODSYNC] enabling required mods: req=$req, currentMods=${mods.map { "${it.name}(enabled=${it.isEnabled})" }}")
             mods.forEach { mod ->
                 mod.isEnabled = mod.name in req
             }
+            logger.info("[MODSYNC] calling modReload() ...")
             manager.modReload()
+            logger.info("[MODSYNC] modReload() returned, re-checking mod presence")
             val mods2 = manager.getAllMods()
+            logger.info("[MODSYNC] mods after reload: ${mods2.map { it.name }}")
             if (req.any { m -> m !in mods2.map { it.name } }) {
+                logger.warn("[MODSYNC] FAIL: required mods missing after reload, disconnecting")
                 cleanupTransfer()
                 room.disconnect("Mod download failed.")
                 withContext(Dispatchers.Main.immediate) {
@@ -359,8 +383,10 @@ object Logic : Initialization {
                 return
             }
 
+            logger.info("[MODSYNC] SUCCESS: sending ModReloadFinishPacket to host")
             net.sendPacketToServer(ModPacket.ModReloadFinishPacket())
         } else {
+            logger.info("[MODSYNC] queue not empty yet, continuing download (remaining=${synchronized(Logic) { modQueue?.size ?: -1 }})")
             withContext(Dispatchers.Main.immediate) {
                 UI.showNetworkDialog = true
             }

@@ -18,6 +18,7 @@ import io.github.rwpp.game.Game
 import io.github.rwpp.game.mod.Mod
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.io.calculateSize
+import io.github.rwpp.logger
 import io.github.rwpp.io.zipFolderToByte
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -33,11 +34,17 @@ class ModManagerImpl : ModManager {
     private val isReloadingMods = AtomicBoolean(false)
 
     override suspend fun modReload() {
-        if (!isReloadingMods.compareAndSet(false, true)) return
+        if (!isReloadingMods.compareAndSet(false, true)) {
+            logger.info("[MODSYNC] modReload skipped: already reloading")
+            return
+        }
         try {
+            logger.info("[MODSYNC] modReload start, broadcasting ReloadModEvent")
             ReloadModEvent().broadcastIn()
             val latch = CountDownLatch(1)
+            logger.info("[MODSYNC] modReload posting reload action to game thread")
             game.post {
+                logger.info("[MODSYNC] modReload game.post action RUNNING on game thread")
                 try {
                     val B = GameEngine.B()
                     B.bZ.e()
@@ -50,16 +57,25 @@ class ModManagerImpl : ModManager {
                     } finally {
                         B.br = false
                     }
+                    logger.info("[MODSYNC] modReload game.post action DONE")
+                } catch (e: Throwable) {
+                    logger.error("[MODSYNC] modReload game.post action THREW", e)
+                    throw e
                 } finally {
                     latch.countDown()
+                    logger.info("[MODSYNC] modReload latch counted down")
                 }
             }
 
+            logger.info("[MODSYNC] modReload waiting for game thread (latch.await, NO timeout) ...")
             withContext(Dispatchers.IO) {
                 latch.await()
             }
+            logger.info("[MODSYNC] modReload latch released, refreshing maps")
             appKoin.get<Game>().getAllMaps(true)
+            logger.info("[MODSYNC] modReload main work finished")
         } finally {
+            logger.info("[MODSYNC] modReload broadcasting ReloadModFinishedEvent (finally)")
             ReloadModFinishedEvent().broadcastIn()
             isReloadingMods.set(false)
         }
