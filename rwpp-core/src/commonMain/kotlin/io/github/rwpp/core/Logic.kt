@@ -15,6 +15,7 @@ import io.github.rwpp.event.events.DisconnectEvent
 import io.github.rwpp.event.events.GameLoadedEvent
 import io.github.rwpp.event.events.ModCheckEvent
 import io.github.rwpp.event.events.PlayerJoinEvent
+import io.github.rwpp.event.events.PlayerLeaveEvent
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.GameRoom
 import io.github.rwpp.game.mod.ModManager
@@ -23,6 +24,8 @@ import io.github.rwpp.io.SizeUtils
 import io.github.rwpp.io.AtomicFileUtils.writeBytesAtomic
 import io.github.rwpp.logger
 import io.github.rwpp.modDir
+import io.github.rwpp.net.HostModTransferScheduler
+import io.github.rwpp.net.HostModTransferSource
 import io.github.rwpp.net.InternalPacketType
 import io.github.rwpp.net.Net
 import io.github.rwpp.net.ServerStatus
@@ -49,8 +52,14 @@ object Logic : Initialization {
     private var modQueue: LinkedList<String>? = null
     /** 本次房间要求的全部 mod 名（用于下载完成后校验与启用）。 */
     private var requiredMods: List<String>? = null
-    /** 传输取消标志：断连或校验失败后置 true，房主发送循环据此提前退出。 */
+    /** 客户端下载传输取消标志：断连或校验失败后置 true，后续残留分块据此作废。 */
     private var transferCancelled: Boolean = false
+    /**
+     * 客户端传输代次号：每次开始新传输（[ModCheckEvent]）或取消（[cleanupTransfer]）时自增。
+     * [handleChunk] 协程在创建时捕获当时的代次，进入锁后若发现代次已变（说明这是上一轮残留协程），
+     * 立即丢弃该分块——从源头消除「旧会话分块在新会话里绊倒严格顺序校验」导致 0/0 的问题。
+     */
+    private var transferGeneration: Long = 0L
 
     /**
      * 客户端按 mod 名重组的缓冲区。
@@ -63,6 +72,15 @@ object Logic : Initialization {
     private val receivedBytes: MutableMap<String, Long> = mutableMapOf()
 
     private val scope = CoroutineScope(SupervisorJob())
+    /**
+     * 房主侧：所有客户端共享一个轮询调度器，避免单个加入者的大 MOD 队列独占上传窗口。
+     * 同一客户端重新请求时替换上一轮会话；[PlayerLeaveEvent] 时移除其会话。
+     */
+    private val hostModTransferScheduler = HostModTransferScheduler(
+        scope = scope,
+        logInfo = { logger.info(it) },
+        logError = { message, error -> logger.error("$message\n${error.stackTraceToString()}") },
+    )
 
     override fun init() {
         registerListeners()
@@ -100,6 +118,8 @@ object Logic : Initialization {
                 } else {
                     synchronized(Logic) {
                         transferCancelled = false
+                        // 新一轮传输：作废旧代次，使上一轮残留的 handleChunk 协程在进入锁后立即自废
+                        transferGeneration++
                         modQueue = LinkedList(missingMods)
                         requiredMods = e.requiredMods
                         receivingBuffers.clear()
@@ -119,6 +139,14 @@ object Logic : Initialization {
 
         GlobalEventChannel.filter(DisconnectEvent::class).subscribeAlways(priority = EventPriority.MONITOR) {
             cleanupTransfer()
+        }
+
+        // 房主侧：远端客户端断开时，取消其正在进行的分块发送会话，
+        // 避免对着死连接空发、以及该客户端重连后出现并发发送循环。
+        GlobalEventChannel.filter(PlayerLeaveEvent::class).subscribeAlways(priority = EventPriority.MONITOR) { e ->
+            if (!appKoin.get<Game>().gameRoom.isHost) return@subscribeAlways
+            val c = e.player.client ?: return@subscribeAlways
+            hostModTransferScheduler.cancel(c)
         }
 
         GlobalEventChannel.filter(GameLoadedEvent::class).subscribeAlways {
@@ -174,7 +202,9 @@ object Logic : Initialization {
             if (!room.isHost) return@registerPacketListener true
             logger.info("[MODSYNC-HOST] received download request from client: requested='${packet.mods}'")
             runCatching {
-                val player = room.getPlayerByClient(client!!)!!
+                val conn = client!!
+                val player = room.getPlayerByClient(conn)
+                    ?: throw IllegalStateException("Could not find player for mod download client")
                 synchronized(Logic) {
                     player.data.ready = false
                     transferCancelled = false
@@ -183,48 +213,14 @@ object Logic : Initialization {
                 val mods = appKoin.get<ModManager>()
                     .getAllMods()
                     .filter { it.isEnabled && it.name in requested }
-                // 异步分块发送，避免大数据在原版网络线程里卡顿
-                scope.launch(Dispatchers.IO) {
-                    logger.info("[MODSYNC-HOST] starting chunked send for ${mods.size} mod(s)")
-                    mods.forEach { mod ->
-                        synchronized(Logic) {
-                            if (transferCancelled) return@forEach
-                        }
-                        // getBytes() 只调一次：对同一份 ByteArray 既分块又算哈希，避免内存翻倍
-                        val bytes = mod.getBytes()
-                        val hash = HashUtils.sha256(bytes)
-                        val total = bytes.size
-                        val chunkSize = ModPacket.CHUNK_SIZE
-                        val totalChunks = (total + chunkSize - 1) / chunkSize
-                        logger.info("[MODSYNC-HOST] sending mod (chunked): ${mod.name}, size=${SizeUtils.byteToMB(total.toLong())}MB, chunks=$totalChunks")
-                        var offset = 0
-                        var index = 0
-                        while (offset < total) {
-                            synchronized(Logic) {
-                                if (transferCancelled) return@forEach
-                            }
-                            val end = minOf(offset + chunkSize, total)
-                            val chunk = bytes.copyOfRange(offset, end)
-                            client.sendPacketToClient(
-                                ModPacket.ModChunkPacket().apply {
-                                    name = mod.name
-                                    chunkIndex = index
-                                    this.totalChunks = totalChunks
-                                    // 仅首块携带元数据，供客户端校验
-                                    if (index == 0) {
-                                        totalSize = total.toLong()
-                                        sha256 = hash
-                                    }
-                                    chunkBytes = chunk
-                                }
-                            )
-                            offset = end
-                            index++
-                        }
-                        logger.info("[MODSYNC-HOST] finished sending mod: ${mod.name}, sentChunks=$index")
-                    }
-                    logger.info("[MODSYNC-HOST] all mods sent, waiting for client ModReloadFinishPacket")
-                }
+                logger.info("[MODSYNC-HOST] queued chunked send for ${mods.size} mod(s) to ${player.name}")
+                hostModTransferScheduler.submit(
+                    conn,
+                    player.name,
+                    mods.map { mod ->
+                        HostModTransferSource(mod.name) { mod.getBytes() }
+                    },
+                )
             }.onFailure {
                 logger.error(it.stackTraceToString())
             }
@@ -239,9 +235,11 @@ object Logic : Initialization {
             val room = game.gameRoom
             if (room.isHost) return@registerPacketListener true
             logger.info("[MODSYNC] chunk received: name='${packet.name}', idx=${packet.chunkIndex}/${packet.totalChunks}, bytes=${packet.chunkBytes.size}, totalSize=${packet.totalSize}")
+            // 捕获当前传输代次：若这是上一轮残留的协程（代次已变），handleChunk 会在锁内立即丢弃
+            val gen = synchronized(Logic) { transferGeneration }
             scope.launch(Dispatchers.IO) {
                 runCatching {
-                    handleChunk(packet, room, net)
+                    handleChunk(packet, gen, room, net)
                 }.onFailure {
                     logger.error("[MODSYNC] handleChunk FAILED: ${it.stackTraceToString()}")
                     cleanupTransfer()
@@ -277,14 +275,31 @@ object Logic : Initialization {
 
             true
         }
+
+        // ---- 房主侧：收到客户端的分块 ACK，释放该客户端的发送窗口（流量控制） ----
+        net.registerPacketListener<ModPacket.ModChunkAckPacket>(
+            ModPacket.MOD_CHUNK_ACK
+        ) { client, packet ->
+            val room = game.gameRoom
+            if (!room.isHost) return@registerPacketListener true
+            val conn = client ?: return@registerPacketListener true
+            hostModTransferScheduler.onAck(conn, packet.name, packet.ackChunkIndex)
+            true
+        }
     }
 
     /**
      * 处理单个分块：按序写入缓冲，收齐时校验哈希并原子落盘。
      * 所有对共享状态的读写都在 synchronized(Logic) 内。
      */
-    private suspend fun handleChunk(packet: ModPacket.ModChunkPacket, room: GameRoom, net: Net) {
+    private suspend fun handleChunk(packet: ModPacket.ModChunkPacket, generation: Long, room: GameRoom, net: Net) {
+        // 本块是否被成功接收并缓冲（用于决定是否回 ACK 释放房主流控窗口）。
+        // 代次过期 / 未请求 / 乱序抛异常的情况下都不会置 true。
+        var accepted = false
         val done = synchronized(Logic) {
+            // 代次校验：若这是上一轮传输残留的协程（generation 已过期），直接丢弃，不触发任何状态变更或顺序异常。
+            // 这是「取消→重新加入」后进度卡 0/0 的根因修复点。
+            if (generation != transferGeneration) return@synchronized false
             val queue = modQueue ?: return@synchronized false
             if (packet.name !in queue) return@synchronized false   // 未请求的 mod，忽略
 
@@ -306,6 +321,7 @@ object Logic : Initialization {
                 )
             }
 
+            accepted = true
             receiving.buffer.write(packet.chunkBytes)
             receivedChunkCounts[packet.name] = expected + 1
             receivedBytes[packet.name] = (receivedBytes[packet.name] ?: 0L) + packet.chunkBytes.size
@@ -316,6 +332,21 @@ object Logic : Initialization {
 
         // 锁外刷新下载进度（suspend 持锁会触发 critical section 警告）
         updateDownloadingTitle(packet.name)
+
+        // 流量控制：每成功接收并缓冲一块，立即回 ACK，让房主释放该客户端的发送窗口、继续发后续块。
+        // 这是「房主不再全速灌包 → 不拖垮游戏线程 → 其它加入者能正常握手」的关键。
+        if (accepted) {
+            runCatching {
+                net.sendPacketToServer(
+                    ModPacket.ModChunkAckPacket().apply {
+                        this.name = packet.name
+                        this.ackChunkIndex = packet.chunkIndex
+                    }
+                )
+            }.onFailure {
+                logger.warn("[MODSYNC] failed to send chunk ACK for '${packet.name}' idx=${packet.chunkIndex}: ${it.message}")
+            }
+        }
 
         if (!done) return
 
@@ -403,6 +434,8 @@ object Logic : Initialization {
     private fun cleanupTransfer() {
         synchronized(Logic) {
             transferCancelled = true
+            // 作废旧代次：使上一轮已派发但尚未执行的 handleChunk 协程在进入锁后立即自废
+            transferGeneration++
             modQueue = null
             requiredMods = null
             receivingBuffers.values.forEach { runCatching { it.buffer.close() } }
@@ -410,6 +443,16 @@ object Logic : Initialization {
             receivedChunkCounts.clear()
             receivedBytes.clear()
         }
+        hostModTransferScheduler.cancelAll()
+    }
+
+    /**
+     * 供 UI 主动取消传输（如点击「取消下载」按钮）。
+     * 同步执行清理，确保状态立即作废、不依赖异步的 [DisconnectEvent]。
+     * 房主侧的发送会话会在随后的 [disconnect] 触发 [PlayerLeaveEvent] 时被取消。
+     */
+    fun cancelTransfer() {
+        cleanupTransfer()
     }
 
     /** 重置下载弹窗的结构化进度状态（须在主线程调用）。 */

@@ -61,9 +61,7 @@ import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.gameVersion
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
-import io.github.rwpp.io.SizeUtils
 import io.github.rwpp.logger
-import io.github.rwpp.maxModSize
 import io.github.rwpp.net.Net
 import io.github.rwpp.net.HostCommandPrefix
 import io.github.rwpp.net.roomListApiBasesWithDefaultFallback
@@ -593,10 +591,6 @@ fun MultiplayerView(
 
             @Composable
             fun ModOptions(modifier: Modifier = Modifier) {
-                val transferDisabledReason = if (modSize > maxModSize) {
-                    "${SizeUtils.byteToMB(modSize)}MB > ${SizeUtils.byteToMB(maxModSize)}MB"
-                } else null
-
                 SectionPanel(
                     title = readI18n("multiplayer.room.option"),
                     modifier = modifier,
@@ -610,9 +604,7 @@ fun MultiplayerView(
                     ToggleLine(
                         label = readI18n("multiplayer.transferMod"),
                         checked = transferMod,
-                        enabled = enableMods && transferDisabledReason == null,
-                        clickableWhenDisabled = true,
-                        supportingText = transferDisabledReason,
+                        enabled = enableMods,
                     ) {
                         transferMod = !transferMod
                     }

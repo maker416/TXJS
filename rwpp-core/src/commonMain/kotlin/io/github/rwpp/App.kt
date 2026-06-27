@@ -53,6 +53,7 @@ import io.github.rwpp.coil.ImageableFetcherFactory
 import io.github.rwpp.coil.ImageableKeyer
 import io.github.rwpp.config.CoreData
 import io.github.rwpp.config.Settings
+import io.github.rwpp.core.Logic
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.broadcast
 import io.github.rwpp.event.events.KeyboardEvent
@@ -819,24 +820,29 @@ fun App(
 
                 LoadingView(reloadingModViewVisible, onLoaded = {}) { null }
 
+                // 主动取消下载：同步作废传输状态 + 断开房间（触发房主 PlayerLeaveEvent 取消其发送 Job）+ 回列表。
+                // 弹窗 enableDismiss=false，点遮罩/空白不再误触断连；取消仅走卡片内的显式按钮。
+                val onCancelDownload: () -> Unit = {
+                    Logic.cancelTransfer()
+                    UI.showNetworkDialog = false
+                    UI.receivingNetworkDialogTitle = ""
+                    UI.receivingModName = ""
+                    UI.receivingModProgress = 0f
+                    UI.receivingModReceivedBytes = 0L
+                    UI.receivingModTotalBytes = 0L
+                    UI.receivingModTotalCount = 0
+                    UI.receivingModDoneCount = 0
+                    val game = appKoin.get<Game>()
+                    game.gameRoom.disconnect("cancelled by user")
+                    UI.showMultiplayerView = true
+                    UI.showRoomView = false
+                }
+
                 AnimatedAlertDialog(
                     UI.showNetworkDialog,
-                    {
-                        UI.showNetworkDialog = false
-                        UI.receivingNetworkDialogTitle = ""
-                        UI.receivingModName = ""
-                        UI.receivingModProgress = 0f
-                        UI.receivingModReceivedBytes = 0L
-                        UI.receivingModTotalBytes = 0L
-                        UI.receivingModTotalCount = 0
-                        UI.receivingModDoneCount = 0
-                        val game = appKoin.get<Game>()
-                        game.gameRoom.disconnect("refuse to receive network data.")
-                        UI.showMultiplayerView = true
-                        UI.showRoomView = false
-                    }, enableDismiss = true
+                    onCancelDownload, enableDismiss = false
                 ) { dismiss ->
-                    NetworkModDownloadingCard()
+                    NetworkModDownloadingCard(onCancelDownload)
                 }
 
                 AnimatedAlertDialog(
@@ -884,7 +890,7 @@ fun App(
  * 进度数据来自 [io.github.rwpp.ui.UI] 的 receivingMod* 状态，由 Logic 下载流程实时刷新。
  */
 @Composable
-private fun NetworkModDownloadingCard() {
+private fun NetworkModDownloadingCard(onCancel: () -> Unit) {
     val name = UI.receivingModName
     val progress = UI.receivingModProgress
     val receivedBytes = UI.receivingModReceivedBytes
@@ -988,6 +994,20 @@ private fun NetworkModDownloadingCard() {
                     style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
                     maxLines = 1
                 )
+            }
+
+            // 取消按钮：主动中断下载并断开房间（与遮罩点解耦，避免误触）
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = onCancel) {
+                    Text(
+                        readI18n("mod.cancelDownload", I18nType.RWPP),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
+                    )
+                }
             }
         }
     }

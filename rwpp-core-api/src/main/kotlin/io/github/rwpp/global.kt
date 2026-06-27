@@ -11,7 +11,6 @@ import io.github.rwpp.command.CommandHandler
 import io.github.rwpp.command.CommandHandler.Command
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.Player
-import io.github.rwpp.io.SizeUtils
 import io.github.rwpp.rwpp_core_api.BuildConfig
 import org.koin.core.Koin
 import org.slf4j.Logger
@@ -60,11 +59,6 @@ val welcomeMessage =
     """.trimIndent()
 
 const val packageName = "io.github.rwpp"
-
-/**
- * 48 is the maximum size of Rusted Warfare packet in MB.
- */
-val maxModSize = SizeUtils.mBToByte(48)
 
 /**
  * global logger.

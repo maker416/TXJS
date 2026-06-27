@@ -103,11 +103,40 @@ sealed class ModPacket : Packet() {
         }
     }
 
+    /**
+     * 分块接收确认包：客户端每成功接收并缓冲一个 [ModChunkPacket] 后回发给房主，用于**流量控制**。
+     * 房主据此释放该客户端的发送窗口（见 [io.github.rwpp.net.HostModTransferScheduler]），
+     * 使房主发送速率自动适配客户端真实排水速度，避免向游戏连接的无界发送队列灌入海量在途分块、
+     * 拖垮房主游戏线程（进而饿死其它加入者的握手）。
+     *
+     * 字段仅用于诊断；窗口释放按「每收到一个 ACK 释放一个槽」的 1:1 语义，依赖底层 TCP 可靠有序交付。
+     */
+    class ModChunkAckPacket : ModPacket() {
+        /** 被确认的 mod 名 */
+        var name: String = ""
+        /** 被确认的块序号 */
+        var ackChunkIndex: Int = 0
+
+        override val type: Int = MOD_CHUNK_ACK
+
+        override fun readPacket(input: GameInputStream) {
+            name = input.readUTF()
+            ackChunkIndex = input.readInt()
+        }
+
+        override fun writePacket(output: GameOutputStream) {
+            output.writeUTF(name)
+            output.writeInt(ackChunkIndex)
+        }
+    }
+
     companion object {
         const val MOD_DOWNLOAD_REQUEST = 500
         const val DOWNLOAD_MOD_PACK = 510
         const val DOWNLOAD_MOD_CHUNK = 511
         const val MOD_RELOAD_FINISH = 502
+        /** 客户端→房主：分块接收确认（流量控制用）。 */
+        const val MOD_CHUNK_ACK = 503
 
         /** 单个分块的最大字节数：64KB。足够小以避免大包风险，又不至于包数过多拖慢。 */
         const val CHUNK_SIZE = 64 * 1024
