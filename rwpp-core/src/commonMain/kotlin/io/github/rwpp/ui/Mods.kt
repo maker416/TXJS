@@ -320,7 +320,8 @@ fun ModsView(onExit: () -> Unit) {
                     }
                 }
 
-                reloadMods()
+                // 仅复制文件到 modDir，不触发引擎全量重载；新模组需手动点击「重载」让引擎扫描加载。
+                UI.showWarning(readI18n("mod.importMod", I18nType.RWPP, file.name))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
