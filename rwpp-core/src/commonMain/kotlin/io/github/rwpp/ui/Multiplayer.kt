@@ -591,6 +591,8 @@ fun MultiplayerView(
 
             @Composable
             fun ModOptions(modifier: Modifier = Modifier) {
+                var showTransferConfirm by remember { mutableStateOf(false) }
+
                 SectionPanel(
                     title = readI18n("multiplayer.room.option"),
                     modifier = modifier,
@@ -606,7 +608,72 @@ fun MultiplayerView(
                         checked = transferMod,
                         enabled = enableMods,
                     ) {
-                        transferMod = !transferMod
+                        // 开启「传输模组」前需阅读免责声明并二次确认；关闭则直接关闭。
+                        if (!transferMod) showTransferConfirm = true else transferMod = false
+                    }
+                }
+
+                // 免责声明二次确认弹窗：仅在用户尝试开启传输模组时弹出
+                AnimatedAlertDialog(
+                    visible = showTransferConfirm,
+                    onDismissRequest = { showTransferConfirm = false },
+                ) { dismiss ->
+                    BorderCard(
+                        modifier = Modifier
+                            .fillMaxWidth(LargeProportion())
+                            .widthIn(max = 480.dp)
+                            .padding(10.dp),
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 360.dp)
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Icon(
+                                    Icons.Default.Warning,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(40.dp),
+                                    tint = Color(0xFFFF9800),
+                                )
+                                Text(
+                                    readI18n("multiplayer.transferModDisclaimerTitle"),
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    textAlign = TextAlign.Center,
+                                )
+                                HorizontalDivider(
+                                    thickness = 2.dp,
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                                )
+                                Text(
+                                    readI18n("multiplayer.transferModDisclaimerMessage").trimIndent(),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                            ) {
+                                RWTextButton(readI18n("common.cancel"), modifier = Modifier.padding(4.dp)) {
+                                    dismiss()
+                                }
+                                RWTextButton(
+                                    readI18n("multiplayer.transferModDisclaimerAccept"),
+                                    modifier = Modifier.padding(4.dp),
+                                ) {
+                                    transferMod = true
+                                    dismiss()
+                                }
+                            }
+                        }
                     }
                 }
             }

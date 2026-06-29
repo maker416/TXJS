@@ -16,6 +16,13 @@ userName = "User Name"
 useAsDefaultList = "Use as default room list"
 battleroom = "Battleroom"
 transferMod = "Transfer Mod"
+transferModDisclaimerTitle = "Transfer Mod · Disclaimer"
+transferModDisclaimerMessage = """
+Once enabled, your enabled mods will be automatically synced to every player who joins this room.
+If any of your loaded mods must not be shared due to copyright, licensing, or other restrictions, please do not use this feature.
+If you proceed, you alone bear all resulting responsibility and consequences.
+"""
+transferModDisclaimerAccept = "I understand, enable anyway"
 addToBlackList = "Add to Blacklist"
 emptyList = "No rooms available"
 connectionFailed = "Unable to connect to any list server. Please check your network or update the client."
