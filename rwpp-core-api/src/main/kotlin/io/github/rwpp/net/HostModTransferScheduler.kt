@@ -77,6 +77,15 @@ class HostModTransferScheduler(
     fun activeClientCount(): Int = synchronized(lock) { sessions.size }
 
     /**
+     * 各下载客户端的进度快照（供房主 UI 展示 per-client 下载进度与当前模组）。
+     * 在 [lock] 下遍历当前会话；单个会话字段由 [HostModTransferSession.nextPacket] 在锁外推进，
+     * 故单条快照可能差一帧（UI 展示可容忍），但字段读取为原子引用/Int，不会崩。
+     */
+    fun snapshot(): List<HostTransferSnapshot> = synchronized(lock) {
+        sessions.values.map { it.toSnapshot() }
+    }
+
+    /**
      * 客户端确认收到一块后调用：释放该 client 一个在途槽，使其窗口内可继续发送。
      * 1:1 语义（每块一个 ACK），依赖底层 TCP 可靠有序交付；重复/陈旧 ACK 安全忽略。
      */
@@ -178,6 +187,27 @@ data class HostModTransferSource(
     val readBytes: () -> ByteArray,
 )
 
+/**
+ * 房主侧单个客户端的 MOD 同步进度快照（只读、不可变），供 UI 展示。
+ *
+ * @property client 对应的客户端连接（与 [io.github.rwpp.game.Player.client] 用同一对象，便于匹配玩家行）
+ * @property playerName 玩家名（诊断/兜底展示用）
+ * @property currentModName 正在发送的模组名
+ * @property sentBytes 当前模组已发送字节数
+ * @property totalBytes 当前模组总字节数
+ * @property modIndex 当前/下一个模组的 0 基序号
+ * @property modCount 本次需传输的模组总数
+ */
+data class HostTransferSnapshot(
+    val client: Client,
+    val playerName: String,
+    val currentModName: String,
+    val sentBytes: Long,
+    val totalBytes: Long,
+    val modIndex: Int,
+    val modCount: Int,
+)
+
 private class HostModTransferSession(
     val client: Client,
     val playerName: String,
@@ -190,6 +220,28 @@ private class HostModTransferSession(
     private var chunkIndex = 0
     /** 已发送但尚未被客户端 ACK 的分块数（流量控制窗口占用）。 */
     var inFlight: Int = 0
+
+    /**
+     * 当前进度快照（当前模组名、已发/总字节、第几个模组）。字段为原子读取，UI 容忍瞬时不一致。
+     * - [HostTransferSnapshot.sentBytes] = [offset]（当前模组已切片发出的字节）。
+     * - [HostTransferSnapshot.totalBytes] = 当前模组完整字节数。
+     * - [HostTransferSnapshot.modIndex] = [sourceIndex]（0 基）。
+     */
+    fun toSnapshot(): HostTransferSnapshot {
+        val payload = currentPayload
+        val modName = payload?.name
+            ?: if (sourceIndex < sources.size) sources[sourceIndex].name else ""
+        val total = payload?.bytes?.size ?: 0
+        return HostTransferSnapshot(
+            client = client,
+            playerName = playerName,
+            currentModName = modName,
+            sentBytes = if (payload != null) offset.toLong() else 0L,
+            totalBytes = total.toLong(),
+            modIndex = sourceIndex,
+            modCount = sources.size,
+        )
+    }
 
     fun nextPacket(): ModPacket.ModChunkPacket? {
         val payload = currentPayload ?: loadNextPayload() ?: return null

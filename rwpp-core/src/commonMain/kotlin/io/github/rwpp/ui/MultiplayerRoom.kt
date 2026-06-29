@@ -1921,6 +1921,12 @@ private fun PublishToListDialog(
 
 
 private val RoomPlayerNameWeight = 0.6f
+
+/** 字节数格式化为一位小数 MB（如 1.2）。commonMain 无 String.format，故手写截断到一位小数。 */
+private fun fmtMB(bytes: Long): String {
+    val tenths = (bytes / 1048576.0 * 10).toLong()
+    return "${tenths / 10}.${tenths % 10}"
+}
 private val RoomPlayerSpawnWeight = 0.1f
 private val RoomPlayerTeamWeight = 0.1f
 private val RoomPlayerPingWeight = 0.2f
@@ -2502,6 +2508,8 @@ private fun RoomPlayerTableRow(
 ) {
     val options = remember { game.getStartingUnitOptions() }
     val rowPadding = if (compact) 2.dp else 5.dp
+    // 房主视图：该玩家是否有正在进行的 MOD 同步会话（用于显示 per-client 进度环与当前模组信息）
+    val transfer = if (room.isHost) UI.hostTransferSnapshots.firstOrNull { it.client == player.client } else null
     Box(modifier) {
         KickPlayerContextMenuAreaMultiplatform(player) {
             Row(
@@ -2517,10 +2525,20 @@ private fun RoomPlayerTableRow(
                         onPlayerClick(player)
                     },
             ) {
+                val baseName = player.name + if (player.startingUnit != -1) {
+                    " - ${options.firstOrNull { it.first == player.startingUnit }?.second ?: "Unknown"}"
+                } else ""
+                val nameText = if (transfer != null) {
+                    val pct = if (transfer.totalBytes > 0)
+                        (transfer.sentBytes * 100 / transfer.totalBytes).coerceIn(0, 100) else 0
+                    if (compact) {
+                        "$baseName · ${transfer.currentModName} $pct%"
+                    } else {
+                        "$baseName · ${transfer.currentModName} ${fmtMB(transfer.sentBytes)}/${fmtMB(transfer.totalBytes)}MB $pct%"
+                    }
+                } else baseName
                 TableCell(
-                    player.name + if (player.startingUnit != -1) {
-                        " - ${options.firstOrNull { it.first == player.startingUnit }?.second ?: "Unknown"}"
-                    } else "",
+                    nameText,
                     color = if (player.color != -1) {
                         Player.getTeamColor(player.color)
                     } else {
@@ -2530,12 +2548,30 @@ private fun RoomPlayerTableRow(
                     drawStroke = false,
                     modifier = Modifier.fillMaxHeight(),
                 ) {
-                    if (!player.data.ready) {
-                        CircularProgressIndicator(
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(if (compact) 12.dp else 15.dp)
-                                .padding(0.dp, 2.dp, 0.dp, 2.dp),
-                        )
+                    if (transfer != null || !player.data.ready) {
+                        // Box 纵向 fillMaxHeight + 居中，修复原实现里小圆圈在格内偏上、视觉中心偏离的问题
+                        Box(
+                            modifier = Modifier.fillMaxHeight().padding(end = 4.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (transfer != null) {
+                                val ringProgress = if (transfer.totalBytes > 0) {
+                                    (transfer.sentBytes.toFloat() / transfer.totalBytes).coerceIn(0f, 1f)
+                                } else 0f
+                                CircularProgressIndicator(
+                                    progress = { ringProgress },
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(if (compact) 12.dp else 16.dp),
+                                    strokeWidth = if (compact) 1.5.dp else 2.dp,
+                                )
+                            } else {
+                                CircularProgressIndicator(
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(if (compact) 12.dp else 16.dp),
+                                    strokeWidth = if (compact) 1.5.dp else 2.dp,
+                                )
+                            }
+                        }
                     }
                 }
                 TableCell(

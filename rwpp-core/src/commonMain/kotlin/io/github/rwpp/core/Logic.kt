@@ -35,7 +35,9 @@ import io.github.rwpp.net.registerPacketListener
 import io.github.rwpp.ui.UI
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -81,6 +83,12 @@ object Logic : Initialization {
         logInfo = { logger.info(it) },
         logError = { message, error -> logger.error("$message\n${error.stackTraceToString()}") },
     )
+
+    /** 房主侧 per-client 进度轮询间隔（ms）。 */
+    private const val HOST_PROGRESS_POLL_MS = 200L
+
+    /** 房主侧 per-client 进度轮询协程；有活跃传输会话时运行，无则自停并清空 UI。 */
+    private var hostProgressPollJob: Job? = null
 
     override fun init() {
         registerListeners()
@@ -221,6 +229,7 @@ object Logic : Initialization {
                         HostModTransferSource(mod.name) { mod.getBytes() }
                     },
                 )
+                ensureHostProgressPoll()
             }.onFailure {
                 logger.error(it.stackTraceToString())
             }
@@ -330,12 +339,16 @@ object Logic : Initialization {
             expected + 1 >= receiving.totalChunks && receiving.totalChunks > 0
         }
 
-        // 锁外刷新下载进度（suspend 持锁会触发 critical section 警告）
-        updateDownloadingTitle(packet.name)
-
-        // 流量控制：每成功接收并缓冲一块，立即回 ACK，让房主释放该客户端的发送窗口、继续发后续块。
-        // 这是「房主不再全速灌包 → 不拖垮游戏线程 → 其它加入者能正常握手」的关键。
+        // 锁外刷新下载进度 + 回 ACK：仅在本块被成功接收并缓冲（accepted）时才做。
+        // 取消/作废的分块（代次过期 transferGeneration 不匹配、modQueue=null、name 不在队列、或乱序）
+        // accepted 恒为 false：既不发 ACK，也不刷新 UI。否则取消后残留的 handleChunk 协程会调用
+        // updateDownloadingTitle 重新把 UI.showNetworkDialog 置 true（其末尾硬写 =true），
+        // 导致弹窗不消失、并往主线程灌刷新任务使刚切出的多人列表卡顿。
         if (accepted) {
+            updateDownloadingTitle(packet.name)
+
+            // 流量控制：每成功接收并缓冲一块，立即回 ACK，让房主释放该客户端的发送窗口、继续发后续块。
+            // 这是「房主不再全速灌包 → 不拖垮游戏线程 → 其它加入者能正常握手」的关键。
             runCatching {
                 net.sendPacketToServer(
                     ModPacket.ModChunkAckPacket().apply {
@@ -431,6 +444,26 @@ object Logic : Initialization {
      * 注意：已原子写入完成的 mod 文件不会被删除（它们是完整的）；
      * 半成品数据存在于内存缓冲，随 clear 释放，不会落盘。
      */
+    /**
+     * 启动房主侧 per-client 进度轮询（幂等）：每 [HOST_PROGRESS_POLL_MS] 把调度器快照发布到
+     * [UI.hostTransferSnapshots]，供房主玩家行展示各下载客户端的进度与当前模组；无活跃会话时自停并清空。
+     */
+    private fun ensureHostProgressPoll() {
+        if (hostProgressPollJob?.isActive == true) return
+        hostProgressPollJob = scope.launch {
+            try {
+                while (true) {
+                    val snaps = hostModTransferScheduler.snapshot()
+                    withContext(Dispatchers.Main.immediate) { UI.hostTransferSnapshots = snaps }
+                    if (snaps.isEmpty()) break
+                    delay(HOST_PROGRESS_POLL_MS)
+                }
+            } finally {
+                withContext(Dispatchers.Main.immediate) { UI.hostTransferSnapshots = emptyList() }
+            }
+        }
+    }
+
     private fun cleanupTransfer() {
         synchronized(Logic) {
             transferCancelled = true
@@ -444,6 +477,9 @@ object Logic : Initialization {
             receivedBytes.clear()
         }
         hostModTransferScheduler.cancelAll()
+        hostProgressPollJob?.cancel()
+        hostProgressPollJob = null
+        scope.launch(Dispatchers.Main.immediate) { UI.hostTransferSnapshots = emptyList() }
     }
 
     /**

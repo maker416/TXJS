@@ -69,6 +69,7 @@ import io.github.rwpp.game.units.GameUnit
 import io.github.rwpp.game.units.MovementType
 import io.github.rwpp.game.world.World
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.net.HostTransferSnapshot
 import io.github.rwpp.projectVersion
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.title
@@ -122,6 +123,8 @@ object UI : Initialization, IUserInterface {
     var receivingModTotalCount by mutableStateOf(0)
     /** 已下载完成的 mod 数（含当前正在下载的那个，从 1 开始）。 */
     var receivingModDoneCount by mutableStateOf(0)
+    /** 房主侧：各下载客户端的 MOD 同步进度快照（由 Logic 轮询调度器并发布，玩家行据此展示 per-client 进度）。 */
+    var hostTransferSnapshots by mutableStateOf<List<HostTransferSnapshot>>(emptyList())
     var UiProvider: UIProvider = UIProvider()
 
     private val relayRegex = Regex("""R\d+""")
