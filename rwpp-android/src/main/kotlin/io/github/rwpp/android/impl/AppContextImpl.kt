@@ -39,6 +39,14 @@ class AppContextImpl : BaseAppContextImpl() {
         return Environment.getExternalStorageDirectory().absolutePath + "/rustedWarfare/$path"
     }
 
+    override fun internalStoragePath(path: String): String {
+        // getExternalFilesDir(null) → /Android/data/<package>/files/
+        // 该目录属于应用私有外部存储：Android 11+ 起普通文件管理器无法访问，
+        // 非 root 设备上对玩家不可见，卸载 App 时由系统一并清除。
+        // 同时原版游戏核心的内部存储后端 e.a.i() 也使用同一路径，二者保持一致。
+        return get<Context>().getExternalFilesDir(null)!!.absolutePath + "/$path"
+    }
+
     override fun generatedLibPath(): String {
         return get<Context>().filesDir.absolutePath + "/generated_lib/"
     }

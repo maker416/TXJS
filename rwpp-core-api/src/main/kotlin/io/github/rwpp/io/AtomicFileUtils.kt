@@ -7,6 +7,7 @@
 
 package io.github.rwpp.io
 
+import io.github.rwpp.internalModDir
 import io.github.rwpp.modDir
 import java.io.File
 import java.io.IOException
@@ -27,14 +28,14 @@ object AtomicFileUtils {
      *
      * 流程：校验路径在 [allowedRoots] 之下 → 写到同目录 `.rwmod.tmp` 临时文件 → renameTo 目标。
      *
-     * @param allowedRoots 允许的根目录白名单，默认仅 [modDir]。
+     * @param allowedRoots 允许的根目录白名单，默认 [modDir] 与 [internalModDir]。
      * @return 写入完成的目标文件。
      * @throws IOException 路径越界、临时文件创建/写入失败或 rename 失败时抛出。
      *         失败时临时文件会被删除，目标文件不受影响。
      */
     fun File.writeBytesAtomic(
         bytes: ByteArray,
-        allowedRoots: List<File> = listOf(File(modDir)),
+        allowedRoots: List<File> = listOf(File(modDir), File(internalModDir)),
     ): File {
         parentFile?.mkdirs()
 

@@ -15,6 +15,7 @@ import io.github.rwpp.event.events.ReloadModEvent
 import io.github.rwpp.event.events.ReloadModFinishedEvent
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.mod.Mod
+import io.github.rwpp.internalModDir
 import io.github.rwpp.logger
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.game.mod.deleteModFileSafely
@@ -182,10 +183,28 @@ class ModManagerImpl : ModManager {
                     }
 
                     private fun modFile(): File {
+                        // it.e() 经 FileLoader 解析后的路径：combined 后端模式下，
+                        // 内部目录模组会解析成 /Android/data/<pkg>/files/units/xxx.rwmod，
+                        // 外部目录模组会解析成 /sdcard/rustedWarfare/units/xxx.rwmod。
+                        // 直接 File(it.e()) 在两种情况下都能拿到真实绝对路径。
                         val sourceFile = File(it.e())
                         if (sourceFile.exists()) return sourceFile
 
-                        return File("/storage/emulated/0/" + a.q(it.g()).removePrefix("/SD/"))
+                        // 回退 1：按外部公共目录解析（兼容旧逻辑）。
+                        // a.q() 剥离 [INTERNAL-PATH]/[EXTERNAL-PATH] tag，removePrefix("/SD/") 转成相对路径。
+                        val externalRel = a.q(it.g()).removePrefix("/SD/")
+                        val externalFile = File("/storage/emulated/0/", externalRel)
+                        if (externalFile.exists()) return externalFile
+
+                        // 回退 2：按应用私有目录解析（网络同步模组）。
+                        // externalRel 形如 "rustedWarfare/units/xxx.network.rwmod" 或 "units/xxx.rwmod"，
+                        // 取末尾 units/ 之后的部分拼到 internalModDir。
+                        val fileName = externalRel.substringAfter("units/", externalRel)
+                        val internalFile = File(internalModDir, fileName)
+                        if (internalFile.exists()) return internalFile
+
+                        // 都找不到时返回外部路径，保持与原行为一致（让上层 getSize/getBytes 自然失败）
+                        return externalFile
                     }
                 })
             }

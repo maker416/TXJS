@@ -120,6 +120,19 @@ val modDir by lazy {
     appKoin.get<AppContext>().externalStoragePath("units/")
 }
 
+/**
+ * 应用私有模组目录：用于存放网络同步过来的房主模组。
+ *
+ * Android 上位于 getExternalFilesDir/units/，非 root 设备上文件管理器无法访问，
+ * 卸载 App 时随应用一起删除；桌面端回退到与 [modDir] 相同的路径。
+ *
+ * 引擎的模组扫描会同时加载 [modDir]（外部公共）和本目录（应用私有）两个位置的模组，
+ * 见 [io.github.rwpp.android.impl.inject.FileLoaderInject]。
+ */
+val internalModDir by lazy {
+    appKoin.get<AppContext>().internalStoragePath("units/")
+}
+
 val generatedLibDir by lazy {
     appKoin.get<AppContext>().generatedLibPath()
 }

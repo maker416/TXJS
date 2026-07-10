@@ -7,14 +7,42 @@
 
 package io.github.rwpp.android.impl.inject
 
+import com.corrodinggames.rts.gameFramework.e.c as ExternalFileLoader
+import com.corrodinggames.rts.gameFramework.e.d as PathWrappedFileLoader
+import com.corrodinggames.rts.gameFramework.e.e as CombinedFileLoader
+import io.github.rwpp.AppContext
+import io.github.rwpp.appKoin
 import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
 
+/**
+ * 覆盖原版 FileLoader 工厂方法 [com.corrodinggames.rts.gameFramework.e.a.a]，
+ * 返回一个组合后端 [CombinedFileLoader]（原版 e.e），同时挂载：
+ * - primary：外部公共目录 /sdcard/rustedWarfare/（向后兼容用户已导入的模组、地图等）
+ * - secondary：应用私有目录 getExternalFilesDir/（存放网络同步的房主模组，
+ *   非 root 设备上文件管理器无法访问，卸载 App 时随应用一起删除）
+ *
+ * 引擎的模组扫描（i.a → e.a.h → e.a.b.b）在路径不含 tag 时会**合并** primary 与
+ * secondary 两个后端的目录列表（已通过字节码验证 e.e.b(String, boolean) 的合并行为），
+ * 因此放在私有目录的网络模组会被引擎一并扫描加载。
+ *
+ * tag 字符串使用原版约定 [EXTERNAL_TAG]/[INTERNAL_TAG]，与原版 e.a.a(int storageType)
+ * 在 storageType=2（external 主 + internal 副）模式下产生的字面量一致，保证原版路径
+ * 解析、迁移、日志逻辑正常工作。
+ */
 @InjectClass(com.corrodinggames.rts.gameFramework.e.a::class)
 object FileLoaderInject {
+    private const val EXTERNAL_TAG = "[EXTERNAL-PATH]/"
+    private const val INTERNAL_TAG = "[INTERNAL-PATH]/"
+
     @Inject("a", InjectMode.Override)
-    fun getFileLoader(storageType: Int): com.corrodinggames.rts.gameFramework.e.c? {
-        return com.corrodinggames.rts.gameFramework.e.c()
+    fun getFileLoader(storageType: Int): ExternalFileLoader? {
+        val ctx = appKoin.get<AppContext>()
+        // externalStoragePath("") → /sdcard/rustedWarfare/（注意末尾带 rustedWarfare 根）
+        // internalStoragePath("") → /Android/data/<pkg>/files/
+        val external = PathWrappedFileLoader(ctx.externalStoragePath(""), "external")
+        val internal = PathWrappedFileLoader(ctx.internalStoragePath(""), "internal")
+        return CombinedFileLoader(external, EXTERNAL_TAG, internal, INTERNAL_TAG)
     }
 }

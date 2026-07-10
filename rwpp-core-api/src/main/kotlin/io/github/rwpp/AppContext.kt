@@ -21,6 +21,15 @@ interface AppContext : KoinComponent {
 
     fun externalStoragePath(path: String): String
 
+    /**
+     * 应用私有存储路径（Android 为 getExternalFilesDir 下的私密目录，非 root 设备上
+     * 文件管理器无法访问，卸载 App 时随应用一起删除；桌面端默认回退到 [externalStoragePath]）。
+     *
+     * 用于存放需要保护的文件，例如网络同步过来的房主模组——只允许玩家在游戏内使用，
+     * 不允许玩家通过文件管理器直接取出。
+     */
+    fun internalStoragePath(path: String): String
+
     /** 注入产物目录（Android 为应用私有目录，桌面端为运行目录下的 generated_lib/） */
     fun generatedLibPath(): String
 

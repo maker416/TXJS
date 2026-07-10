@@ -22,8 +22,8 @@ import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.io.HashUtils
 import io.github.rwpp.io.SizeUtils
 import io.github.rwpp.io.AtomicFileUtils.writeBytesAtomic
+import io.github.rwpp.internalModDir
 import io.github.rwpp.logger
-import io.github.rwpp.modDir
 import io.github.rwpp.net.HostModTransferScheduler
 import io.github.rwpp.net.HostModTransferSource
 import io.github.rwpp.net.InternalPacketType
@@ -385,7 +385,12 @@ object Logic : Initialization {
         // 原子写：写临时文件再 rename，避免中途崩溃损坏。
         // 文件名用 {name}.network.rwmod 约定：保留 .rwmod 后缀让引擎能扫描到，
         // .network 后缀用于 UI 区分「网络传输下载的 mod」。
-        val modFile = File(modDir, "$name.network.rwmod")
+        //
+        // 写入应用私有目录 internalModDir（Android 上为 getExternalFilesDir/units/），
+        // 而非外部公共目录 modDir：网络同步的模组只允许玩家在游戏内使用，不允许通过
+        // 文件管理器取出。引擎通过 FileLoaderInject 的组合后端会同时扫描 modDir 和
+        // internalModDir 两个位置，故私有目录内的模组也能被加载。
+        val modFile = File(internalModDir, "$name.network.rwmod")
         logger.info("[MODSYNC] writing mod to disk: ${modFile.absolutePath}, size=${fullBytes.size}")
         modFile.writeBytesAtomic(fullBytes)
         logger.info("[MODSYNC] mod written to disk OK: ${modFile.name}")

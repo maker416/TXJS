@@ -39,6 +39,12 @@ class AppContextImpl : BaseAppContextImpl() {
         return System.getProperty("user.dir") + "/$path"
     }
 
+    override fun internalStoragePath(path: String): String {
+        // 桌面端无 Android 私有目录概念，也不需要隔离网络同步模组，回退到外部路径，
+        // 保持与原行为一致（桌面端网络同步模组仍写入工作目录下的 units/）。
+        return externalStoragePath(path)
+    }
+
     override fun generatedLibPath(): String = externalStoragePath("generated_lib/")
 
     override fun init() {

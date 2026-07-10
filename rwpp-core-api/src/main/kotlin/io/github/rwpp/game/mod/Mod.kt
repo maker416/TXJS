@@ -7,6 +7,7 @@
 
 package io.github.rwpp.game.mod
 
+import io.github.rwpp.internalModDir
 import io.github.rwpp.modDir
 import java.io.File
 
@@ -28,7 +29,7 @@ fun detectModSourceType(file: File): ModSourceType {
 
 fun deleteModFileSafely(
     file: File,
-    allowedRoots: List<File> = listOf(File(modDir), File("mods/units"), File("units"))
+    allowedRoots: List<File> = listOf(File(modDir), File(internalModDir), File("mods/units"), File("units"))
 ): Boolean {
     return runCatching {
         if (!file.exists()) return@runCatching false
