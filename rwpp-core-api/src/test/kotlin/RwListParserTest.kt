@@ -184,6 +184,35 @@ class RwListParserTest {
     }
 
     @Test
+    fun displayLabelReflectsModSyncStatusForModdedRooms() {
+        val requiredMod = """[{"modName":"x","unitCount":1}]"""
+
+        // 模组房间 + 「模组同步」标签 → 显示「模组同步」
+        val moddedSync = RoomDescription(uuid = "u", label = MOD_SYNC_ROOM_TYPE, mods = requiredMod)
+        assertTrue(moddedSync.isModdedRoom)
+        assertEquals(MOD_SYNC_ROOM_TYPE, moddedSync.displayLabel)
+
+        // 模组房间 + 空标签 → 显示「未开启模组同步」
+        val moddedBlank = RoomDescription(uuid = "u", mods = requiredMod)
+        assertEquals(MOD_SYNC_NOT_ENABLED_LABEL, moddedBlank.displayLabel)
+
+        // 模组房间 + 其他标签（如「公益」） → 仍显示「未开启模组同步」
+        val moddedOther = RoomDescription(uuid = "u", label = "公益", mods = requiredMod)
+        assertEquals(MOD_SYNC_NOT_ENABLED_LABEL, moddedOther.displayLabel)
+    }
+
+    @Test
+    fun displayLabelKeepsServerLabelForVanillaRooms() {
+        // 非模组房间 → 保留服务端原始标签
+        val vanilla = RoomDescription(uuid = "u", label = "公益")
+        assertFalse(vanilla.isModdedRoom)
+        assertEquals("公益", vanilla.displayLabel)
+
+        // 非模组房间 + 空标签 → 空（列表不渲染标签 Chip）
+        assertEquals("", RoomDescription(uuid = "u", label = "").displayLabel)
+    }
+
+    @Test
     fun parseRoomTypesResponse() {
         val body = """
             {

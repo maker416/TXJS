@@ -67,6 +67,7 @@ import io.github.rwpp.net.HostCommandPrefix
 import io.github.rwpp.net.roomListApiBasesWithDefaultFallback
 import io.github.rwpp.net.RoomDescription
 import io.github.rwpp.net.RoomListDegradeReason
+import io.github.rwpp.net.displayLabel
 import io.github.rwpp.net.isJoinableFromList
 import io.github.rwpp.net.isModdedRoom
 import io.github.rwpp.net.listDegradeReason
@@ -916,8 +917,9 @@ fun MultiplayerView(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        if (desc.label.isNotBlank()) {
-                            RoomLabelChip(desc.label)
+                        val chipLabel = desc.displayLabel
+                        if (chipLabel.isNotBlank()) {
+                            RoomLabelChip(chipLabel)
                         }
                         if (statusChipText != null) {
                             RoomStatusChip(statusChipText)

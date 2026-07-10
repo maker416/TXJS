@@ -144,6 +144,7 @@ publishRoomNameHint = "Custom room names are not supported yet; the default name
 publishSelectTypeHint = "Choose a room name and tag, then confirm publishing."
 publishSelectedType = "Selected: {0}"
 publishTypeRequired = "Select a tag"
+publishTagLockedHint = "Mod sync is enabled. The room tag is locked and cannot be changed."
 
 [mod]
 update = "Update"

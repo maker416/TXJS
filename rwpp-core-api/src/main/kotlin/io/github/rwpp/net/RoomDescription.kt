@@ -88,9 +88,30 @@ fun RoomDescription.listDegradeReason(): RoomListDegradeReason {
     return RoomListDegradeReason.None
 }
 
+/** 服务端「模组同步」房间类型字符串：房主开启传输模组（MOD 同步）后公开房间所用的标签。 */
+const val MOD_SYNC_ROOM_TYPE = "模组同步"
+
+/** 模组房间未开启传输模组时，房间列表本地展示的占位标签。 */
+const val MOD_SYNC_NOT_ENABLED_LABEL = "未开启模组同步"
+
 /** True when the room requires non-empty mods (RWList `required_mod` or [version] == modded). */
 val RoomDescription.isModdedRoom: Boolean
     get() = version.equals("modded", ignoreCase = true) || parseRequiredModNames(mods).isNotEmpty()
+
+/**
+ * 房间列表中实际展示的标签：
+ * - 模组房间且服务端标签为「模组同步」 →「模组同步」（房主已开启传输模组，客户端可自动下载 MOD）；
+ * - 其余模组房间 →「未开启模组同步」（房主未开启传输模组，客户端需自备 MOD）；
+ * - 非模组房间 → 服务端原始标签（可能为空，此时列表不渲染标签 Chip）。
+ *
+ * 注意：标签筛选仍基于服务端原始标签 [RoomDescription.label]，与此展示标签解耦。
+ */
+val RoomDescription.displayLabel: String
+    get() = when {
+        isModdedRoom && label.trim().equals(MOD_SYNC_ROOM_TYPE, ignoreCase = true) -> MOD_SYNC_ROOM_TYPE
+        isModdedRoom -> MOD_SYNC_NOT_ENABLED_LABEL
+        else -> label.trim()
+    }
 
 /** Whether the list UI should offer join; password rooms stay joinable (password at connect time). */
 val RoomDescription.isJoinableFromList: Boolean

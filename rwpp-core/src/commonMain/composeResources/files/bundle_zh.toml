@@ -145,6 +145,7 @@ publishRoomNameHint = "暂不支持自定义房间名，将自动使用默认名
 publishSelectTypeHint = "选择房间名称和标签后，再确认公开。"
 publishSelectedType = "已选：{0}"
 publishTypeRequired = "请选择标签"
+publishTagLockedHint = "已开启「传输模组」，房间标签已固定，无法更改。"
 
 [mod]
 update = "刷新"
