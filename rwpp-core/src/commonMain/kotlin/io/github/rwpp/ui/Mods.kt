@@ -9,23 +9,30 @@ package io.github.rwpp.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -476,6 +483,9 @@ fun ModsView(onExit: () -> Unit) {
         val ramUsed = remember(updated, enabledChanged, mod.id) { mod.getRamUsed() }
         val errorMessage = remember(updated, enabledChanged, mod.id) { mod.errorMessage }
         val description = remember(updated, mod.id) { mod.description.trim() }
+        val clipboardManager = LocalClipboardManager.current
+        var showErrorDialog by remember(mod.id) { mutableStateOf(false) }
+        var errorCopied by remember(mod.id) { mutableStateOf(false) }
         val expandedStyle = remember {
             SpanStyle(
                 fontWeight = FontWeight.W500,
@@ -560,13 +570,38 @@ fun ModsView(onExit: () -> Unit) {
                 )
 
                 if (errorMessage != null) {
-                    Text(
-                        errorMessage,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                errorCopied = false
+                                showErrorDialog = true
+                            }
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(14.dp).padding(top = 2.dp),
+                        )
+                        Text(
+                            errorMessage,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            readI18n("mod.errorViewDetails"),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                    }
                 }
 
                 if (description.isNotBlank()) {
@@ -611,6 +646,89 @@ fun ModsView(onExit: () -> Unit) {
                         contentDescription = null,
                         tint = if (isEnabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
                     )
+                }
+            }
+        }
+
+        if (errorMessage != null) {
+            AnimatedAlertDialog(
+                visible = showErrorDialog,
+                onDismissRequest = { showErrorDialog = false },
+            ) { dismiss ->
+                BorderCard(
+                    modifier = Modifier
+                        .fillMaxWidth(LargeProportion())
+                        .widthIn(max = 560.dp)
+                        .padding(10.dp),
+                ) {
+                    val errorScrollState = rememberScrollState()
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(22.dp),
+                            )
+                            Text(
+                                readI18n("mod.errorLoadTitle"),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                        Text(
+                            mod.name,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.85f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 80.dp, max = 320.dp)
+                                .padding(horizontal = 14.dp),
+                        ) {
+                            SelectionContainer {
+                                Text(
+                                    text = errorMessage,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .verticalScroll(errorScrollState)
+                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                )
+                            }
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
+                        ) {
+                            RWTextButton(
+                                if (errorCopied) readI18n("mod.errorCopied") else readI18n("mod.errorCopy"),
+                            ) {
+                                clipboardManager.setText(AnnotatedString(errorMessage))
+                                errorCopied = true
+                            }
+                            RWTextButton(readI18n("common.close")) { dismiss() }
+                        }
+                    }
                 }
             }
         }
