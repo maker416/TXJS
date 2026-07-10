@@ -177,23 +177,16 @@ private fun FilterSwitchRow(
 }
 
 @Composable
-private fun RoomAccessChip(text: String, hasPassword: Boolean) {
-    val containerColor =
-        if (hasPassword) MaterialTheme.colorScheme.tertiaryContainer
-        else Color.Transparent
-    val contentColor =
-        if (hasPassword) MaterialTheme.colorScheme.onTertiaryContainer
-        else MaterialTheme.colorScheme.outline
+private fun RoomAccessChip(text: String) {
     Surface(
-        color = containerColor,
+        color = MaterialTheme.colorScheme.tertiaryContainer,
         shape = RoundedCornerShape(6.dp),
-        border = if (!hasPassword) BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant) else null,
     ) {
         Text(
             text,
             modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
             style = MaterialTheme.typography.labelMedium,
-            color = contentColor,
+            color = MaterialTheme.colorScheme.onTertiaryContainer,
         )
     }
 }
@@ -892,9 +885,6 @@ fun MultiplayerView(
             } else null
             val modsText = roomListModsColumnText(desc, readI18n("multiplayer.roomList.vanillaDisplay"))
             val playersText = "${desc.playerCurrentCount ?: "?"}/${desc.playerMaxCount ?: "?"}"
-            val accessText =
-                if (desc.requiredPassword) readI18n("multiplayer.roomList.accessPassword")
-                else readI18n("multiplayer.roomList.accessPublic")
 
             Card(
                 onClick = {
@@ -925,7 +915,7 @@ fun MultiplayerView(
                             RoomStatusChip(statusChipText)
                         }
                         Text(
-                            desc.creator,
+                            desc.mapName.removeSuffix(".tmx"),
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.bodyLarge,
                             color = textColor.copy(alpha = degradeAlpha),
@@ -939,7 +929,9 @@ fun MultiplayerView(
                             color = textColor.copy(alpha = 0.8f * degradeAlpha),
                             fontWeight = rowFontWeight,
                         )
-                        RoomAccessChip(accessText, desc.requiredPassword)
+                        if (desc.requiredPassword) {
+                            RoomAccessChip(readI18n("multiplayer.roomList.accessPassword"))
+                        }
                     }
                     Spacer(Modifier.height(4.dp))
                     Row(
@@ -948,7 +940,7 @@ fun MultiplayerView(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Text(
-                            desc.mapName.removeSuffix(".tmx"),
+                            desc.creator,
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.bodySmall,
                             color = textColor.copy(alpha = 0.85f * degradeAlpha),
