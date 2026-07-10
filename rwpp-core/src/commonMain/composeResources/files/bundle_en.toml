@@ -205,7 +205,7 @@ mods = "Mods"
 extension = "Extension"
 settings = "Settings"
 exit = "Exit"
-openSourceInfo = "Open Source & License"
+openSourceInfo = "Feedback & Info"
 replay = "Watch Replay"
 singlePlayerGame = "Single Player"
 
