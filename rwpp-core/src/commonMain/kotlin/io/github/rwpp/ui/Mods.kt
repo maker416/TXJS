@@ -47,6 +47,7 @@ import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.external.ExternalHandler
 import io.github.rwpp.external.FileChooseProgress
 import io.github.rwpp.game.mod.Mod
+import io.github.rwpp.game.mod.ModInfoParser
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.game.mod.ModSourceType
 import io.github.rwpp.i18n.I18nType
@@ -84,6 +85,33 @@ private data class ModImportProgress(
 private val ModListScrollbarThickness = 4.dp
 private val ModListScrollbarPadding = 3.dp
 private val ModListScrollbarReservedWidth = 18.dp
+
+private class UnloadedMod(private val file: File) : Mod {
+    private val metadata = ModInfoParser.parseFromRwmod(file)
+    override val id: Int = -(file.absolutePath.hashCode() and 0x7FFFFFFF) - 1
+    override val name: String get() = metadata.name
+    override val description: String get() = metadata.description
+    override val minVersion: String get() = metadata.minVersion
+    override val errorMessage: String? = null
+    override var isEnabled: Boolean = false
+    override val path: String = file.absolutePath
+    override fun getRamUsed(): String = "0"
+    override fun getSize(): Long = file.length()
+    override fun getBytes(): ByteArray = file.readBytes()
+}
+
+private fun scanUnloadedMods(existing: List<Mod>): List<Mod> {
+    val existingNames = existing.map { File(it.path).name.lowercase() }.toSet()
+    val result = mutableListOf<Mod>()
+    File(modDir).listFiles()?.forEach { file ->
+        if (file.isFile && file.extension.equals("rwmod", ignoreCase = true)
+            && file.name.lowercase() !in existingNames
+        ) {
+            result.add(UnloadedMod(file))
+        }
+    }
+    return result
+}
 
 @Composable
 private fun ModImportProgressDialog(progress: ModImportProgress?) {
@@ -172,7 +200,21 @@ fun ModsView(onExit: () -> Unit) {
     val settings = koinInject<Settings>()
 
     var deletedMod by remember { mutableStateOf(false) }
-    val mods = remember { SnapshotStateList<Mod>().apply { addAll(modManager.getAllMods()) } }
+    val initialEngineMods = remember { modManager.getAllMods() }
+    val mods = remember {
+        SnapshotStateList<Mod>().apply {
+            addAll(initialEngineMods)
+            addAll(scanUnloadedMods(initialEngineMods))
+        }
+    }
+    var loadedEnabledFileNames by remember {
+        mutableStateOf(
+            initialEngineMods
+                .filter { it.isEnabled }
+                .map { File(it.path).name.lowercase() }
+                .toSet()
+        )
+    }
     var filter by remember { mutableStateOf("") }
 
     val scope = rememberCoroutineScope()
@@ -192,7 +234,9 @@ fun ModsView(onExit: () -> Unit) {
         }
     }) {
         try {
-            modManager.modSaveChange()
+            val knownStates = mods.associate { File(it.path).name.lowercase() to it.isEnabled }
+            // 引擎重建单位表时也会扫描目录，必须传入完整 UI 状态，防止新文件按默认值启用。
+            modManager.modSaveChange(enabledByFileName = knownStates)
             withContext(Dispatchers.Main) {
                 applySucceeded = true
             }
@@ -233,12 +277,28 @@ fun ModsView(onExit: () -> Unit) {
     val disabledTotal = mods.size - enabledTotal
 
     suspend fun reloadMods() {
+        val knownStates = mods.associate { File(it.path).name.lowercase() to it.isEnabled }
+
         withContext(Dispatchers.IO) {
-            modManager.modReload()
+            // 在引擎加载单位定义之前应用开关，未启用的新模组不会解析单位（避免浪费时间）
+            modManager.modReload(enabledByFileName = knownStates)
         }
         mods.clear()
-        mods.addAll(modManager.getAllMods())
+        val engineMods = modManager.getAllMods()
+        // 再同步一次 UI 侧状态（与加载前写入引擎的状态一致）
+        engineMods.forEach { mod ->
+            val fileName = File(mod.path).name.lowercase()
+            mod.isEnabled = knownStates[fileName] ?: false
+        }
+        loadedEnabledFileNames = engineMods
+            .filter { it.isEnabled }
+            .map { File(it.path).name.lowercase() }
+            .toSet()
+
+        mods.addAll(engineMods)
+        mods.addAll(scanUnloadedMods(engineMods))
         updated = !updated
+        enabledChanged = !enabledChanged
     }
 
     fun reload() {
@@ -327,8 +387,13 @@ fun ModsView(onExit: () -> Unit) {
                     }
                 }
 
-                // 仅复制文件到 modDir，不触发引擎全量重载；新模组需手动点击「重载」让引擎扫描加载。
-                UI.showWarning(readI18n("mod.importMod", I18nType.RWPP, file.name))
+                // 复制完成后扫描文件系统，将新模组以 UnloadedMod（禁用）加入列表
+                val enginePaths = mods.map { File(it.path).name }.toSet()
+                if (file.name !in enginePaths) {
+                    mods.add(UnloadedMod(target))
+                    updated = !updated
+                }
+                UI.showWarning(readI18n("mod.importSuccess", I18nType.RWPP, file.name))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -905,6 +970,29 @@ fun ModsView(onExit: () -> Unit) {
                 },
                 modifier = Modifier.padding(horizontal = 4.dp),
             ) {
+                val enabledNotLoaded = mods.filter { mod ->
+                    mod.isEnabled && File(mod.path).name.lowercase() !in loadedEnabledFileNames
+                }
+                if (enabledNotLoaded.isNotEmpty()) {
+                    UI.showWarning(
+                        readI18n(
+                            "mod.enabledNotLoaded",
+                            I18nType.RWPP,
+                            enabledNotLoaded.joinToString { it.name }
+                        )
+                    )
+                    return@RWTextButton
+                }
+
+                val needsUnitRebuild = deletedMod || mods.any { mod ->
+                    !mod.isEnabled && File(mod.path).name.lowercase() in loadedEnabledFileNames
+                }
+                if (!needsUnitRebuild) {
+                    // 仅导入了默认禁用的模组时无需触碰引擎；文件继续保持未加载状态。
+                    onExit()
+                    return@RWTextButton
+                }
+
                 applySucceeded = false
                 loadingMessage = ""
                 isApplying = true

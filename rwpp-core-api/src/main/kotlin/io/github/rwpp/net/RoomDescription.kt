@@ -34,8 +34,8 @@ data class RoomDescription(
     val roomId: Int = 0,
     val customIp: String? = null,
     /**
-     * Server-defined room label supplied by the 14th CSV column.
-     * Empty string means no label.
+     * Raw RWList `roomtype` scalar. RWList v2.14.0 stores one or more labels joined by `|`.
+     * Use [labels] for normalized semantic access rather than comparing this string directly.
      */
     val label: String = "",
     /**
@@ -91,26 +91,101 @@ fun RoomDescription.listDegradeReason(): RoomListDegradeReason {
 /** 服务端「模组同步」房间类型字符串：房主开启传输模组（MOD 同步）后公开房间所用的标签。 */
 const val MOD_SYNC_ROOM_TYPE = "模组同步"
 
-/** 模组房间未开启传输模组时，房间列表本地展示的占位标签。 */
-const val MOD_SYNC_NOT_ENABLED_LABEL = "未开启模组同步"
+/**
+ * 解析 RWList `roomtype`（竖线分隔的多标签串）为规范标签列表：
+ * 按 `|` 拆分、去除每段首尾空格、丢弃空段、按首次出现顺序去重（大小写不敏感，保留首次出现的原始写法）。
+ */
+fun parseRoomLabels(roomType: String): List<String> {
+    if (roomType.isBlank()) return emptyList()
+    val seen = LinkedHashSet<String>()
+    roomType.split('|').forEach { segment ->
+        val trimmed = segment.trim()
+        if (trimmed.isEmpty()) return@forEach
+        val key = trimmed.lowercase()
+        if (seen.none { it.lowercase() == key }) seen.add(trimmed)
+    }
+    return seen.toList()
+}
+
+/** 将标签列表按 [parseRoomLabels] 的逆操作编码为 RWList wire 串（去空、按给定顺序去重）。 */
+fun encodeRoomLabels(labels: Iterable<String>): String {
+    val seen = LinkedHashSet<String>()
+    labels.forEach { label ->
+        val trimmed = label.trim()
+        if (trimmed.isEmpty()) return@forEach
+        val key = trimmed.lowercase()
+        if (seen.none { it.lowercase() == key }) seen.add(trimmed)
+    }
+    return seen.joinToString("|")
+}
+
+/** 房间所有已解析标签，保留服务端原始顺序；空标签返回空列表。 */
+val RoomDescription.labels: List<String>
+    get() = parseRoomLabels(label)
+
+/** 当前房间是否包含给定标签（大小写、首尾空格不敏感）。 */
+fun RoomDescription.hasRoomLabel(label: String): Boolean {
+    val key = label.trim().lowercase()
+    if (key.isEmpty()) return false
+    return labels.any { it.lowercase() == key }
+}
+
+/**
+ * OR 语义的标签筛选：[selected] 为空时不过滤（返回 true）；
+ * 否则当房间任一已解析标签命中已选标签时保留。比较对大小写、首尾空格不敏感。
+ */
+fun RoomDescription.matchesAnyRoomLabel(selected: Set<String>): Boolean {
+    if (selected.isEmpty()) return true
+    val keys = selected.mapNotNull { it.trim().lowercase().takeIf(String::isNotEmpty) }.toHashSet()
+    if (keys.isEmpty()) return true
+    return labels.any { it.lowercase() in keys }
+}
+
+/**
+ * 组合公开发布标签：在用户已选普通标签（保持给定顺序、去重）之后，
+ * 当 [includeModSync] 为真时追加协议哨兵 [MOD_SYNC_ROOM_TYPE]（若已在普通标签中则不重复）。
+ * 返回可直接传给 RWList `roomtype` 的 wire 串。
+ */
+fun composePublishRoomType(
+    selectedOrdinary: List<String>,
+    includeModSync: Boolean,
+): String {
+    val ordered = mutableListOf<String>()
+    val seen = HashSet<String>()
+    selectedOrdinary.forEach { label ->
+        val trimmed = label.trim()
+        if (trimmed.isEmpty()) return@forEach
+        val key = trimmed.lowercase()
+        if (seen.add(key)) ordered.add(trimmed)
+    }
+    if (includeModSync) {
+        val key = MOD_SYNC_ROOM_TYPE.lowercase()
+        if (seen.add(key)) ordered.add(MOD_SYNC_ROOM_TYPE)
+    }
+    return ordered.joinToString("|")
+}
+
+/**
+ * 模组同步的能力状态。服务端房间类型 [MOD_SYNC_ROOM_TYPE] 仅作为协议哨兵，不应直接作为 UI 文案。
+ */
+enum class ModSyncStatus {
+    NotModded,
+    Enabled,
+    NotEnabled,
+}
 
 /** True when the room requires non-empty mods (RWList `required_mod` or [version] == modded). */
 val RoomDescription.isModdedRoom: Boolean
     get() = version.equals("modded", ignoreCase = true) || parseRequiredModNames(mods).isNotEmpty()
 
 /**
- * 房间列表中实际展示的标签：
- * - 模组房间且服务端标签为「模组同步」 →「模组同步」（房主已开启传输模组，客户端可自动下载 MOD）；
- * - 其余模组房间 →「未开启模组同步」（房主未开启传输模组，客户端需自备 MOD）；
- * - 非模组房间 → 服务端原始标签（可能为空，此时列表不渲染标签 Chip）。
- *
- * 注意：标签筛选仍基于服务端原始标签 [RoomDescription.label]，与此展示标签解耦。
+ * 从已解析标签集合推导模组同步能力；标签筛选应使用 [matchesAnyRoomLabel]。
  */
-val RoomDescription.displayLabel: String
+val RoomDescription.modSyncStatus: ModSyncStatus
     get() = when {
-        isModdedRoom && label.trim().equals(MOD_SYNC_ROOM_TYPE, ignoreCase = true) -> MOD_SYNC_ROOM_TYPE
-        isModdedRoom -> MOD_SYNC_NOT_ENABLED_LABEL
-        else -> label.trim()
+        !isModdedRoom -> ModSyncStatus.NotModded
+        hasRoomLabel(MOD_SYNC_ROOM_TYPE) -> ModSyncStatus.Enabled
+        else -> ModSyncStatus.NotEnabled
     }
 
 /** Whether the list UI should offer join; password rooms stay joinable (password at connect time). */

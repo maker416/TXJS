@@ -11,7 +11,6 @@ package io.github.rwpp.ui
 
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
-import com.eclipsesource.json.Json
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -59,18 +58,23 @@ import io.github.rwpp.game.Game
 import io.github.rwpp.game.data.RoomOption
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.gameVersion
-import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.logger
 import io.github.rwpp.net.Net
 import io.github.rwpp.net.HostCommandPrefix
 import io.github.rwpp.net.roomListApiBasesWithDefaultFallback
+import io.github.rwpp.net.MOD_SYNC_ROOM_TYPE
 import io.github.rwpp.net.RoomDescription
 import io.github.rwpp.net.RoomListDegradeReason
-import io.github.rwpp.net.displayLabel
+import io.github.rwpp.net.ModSyncStatus
+import io.github.rwpp.net.hasRoomLabel
 import io.github.rwpp.net.isJoinableFromList
 import io.github.rwpp.net.isModdedRoom
+import io.github.rwpp.net.labels
 import io.github.rwpp.net.listDegradeReason
+import io.github.rwpp.net.matchesAnyRoomLabel
+import io.github.rwpp.net.modSyncStatus
+import io.github.rwpp.net.parseRequiredModNames
 import io.github.rwpp.net.sorted
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.platform.readPainterByBytes
@@ -88,22 +92,32 @@ import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import kotlin.math.roundToInt
 
-/** Values are join order in the list API JSON object (e.g. {"1":"modA","2":"modB"}). */
-private fun parseModNamesFromJson(modsJson: String): List<String> {
-    if (modsJson.isBlank()) return emptyList()
-    return runCatching {
-        val obj = Json.parse(modsJson).asObject()
-        obj.names()
-            .sortedWith(compareBy<String> { it.toIntOrNull() ?: Int.MAX_VALUE })
-            .mapNotNull { key ->
-                val v = obj[key] ?: return@mapNotNull null
-                if (v.isString) v.asString().trim().takeIf { it.isNotEmpty() } else null
-            }
-    }.getOrElse { emptyList() }
+private fun roomListCategoryText(
+    desc: RoomDescription,
+    vanillaLabel: String,
+    moddedLabel: String,
+    modSyncLabel: String,
+): String = when {
+    desc.isModdedRoom && desc.hasRoomLabel(MOD_SYNC_ROOM_TYPE) -> modSyncLabel
+    desc.isModdedRoom -> moddedLabel
+    else -> vanillaLabel
 }
 
-private fun mapVanillaVersionDisplay(raw: String, vanillaLabel: String): String =
-    if (raw.equals("vanilla", ignoreCase = true)) vanillaLabel else raw
+/**
+ * 用于列表/详情中作为独立 Chip 展示的普通服务端标签：排除协议哨兵 [MOD_SYNC_ROOM_TYPE]，
+ * 后者已由本地化的主类型文本表达。
+ */
+private fun ordinaryRoomLabels(desc: RoomDescription): List<String> =
+    desc.labels.filterNot { it.equals(MOD_SYNC_ROOM_TYPE, ignoreCase = true) }
+
+/**
+ * 模组同步状态 Chip 的本地化 key。
+ * 主类型已是「模组同步」时返回 null（避免与主类型重复）；仅模组房间但未含哨兵时提示「未开启」。
+ */
+private fun roomModSyncStatusI18nKey(desc: RoomDescription): String? = when (desc.modSyncStatus) {
+    ModSyncStatus.NotEnabled -> "multiplayer.roomList.modSyncDisabled"
+    ModSyncStatus.Enabled, ModSyncStatus.NotModded -> null
+}
 
 private const val LIST_POSITION_APPLICATION_URL = "http://listup.xn--rhqr8xvr4ahqsgka.com/"
 
@@ -232,14 +246,6 @@ private fun RoomLabelChip(label: String) {
             overflow = TextOverflow.Ellipsis,
         )
     }
-}
-
-/** For modded rows, show comma-separated mod names from [RoomDescription.mods] JSON; otherwise [RoomDescription.version] (vanilla → [vanillaLabel]). */
-private fun roomListModsColumnText(desc: RoomDescription, vanillaLabel: String): String {
-    if (!desc.isModdedRoom) return mapVanillaVersionDisplay(desc.version, vanillaLabel)
-    val names = parseModNamesFromJson(desc.mods)
-    val joined = names.joinToString(", ").ifBlank { desc.version }
-    return mapVanillaVersionDisplay(joined, vanillaLabel)
 }
 
 @Suppress("UnusedMaterial3ScaffoldPaddingParameter", "RememberReturnType")
@@ -883,7 +889,14 @@ fun MultiplayerView(
             val statusChipText = if (isDegraded) {
                 roomListDegradeReasonI18nKey(degradeReason)?.let { readI18n(it) }
             } else null
-            val modsText = roomListModsColumnText(desc, readI18n("multiplayer.roomList.vanillaDisplay"))
+            val categoryText = roomListCategoryText(
+                desc,
+                readI18n("multiplayer.roomList.vanillaDisplay"),
+                readI18n("multiplayer.roomList.moddedDisplay"),
+                readI18n("multiplayer.roomList.modSyncDisplay"),
+            )
+            val modSyncChipText = roomModSyncStatusI18nKey(desc)?.let(::readI18n)
+            val ordinaryLabels = ordinaryRoomLabels(desc)
             val playersText = "${desc.playerCurrentCount ?: "?"}/${desc.playerMaxCount ?: "?"}"
 
             Card(
@@ -901,69 +914,68 @@ fun MultiplayerView(
                 ),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
             ) {
-                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    // 左侧:地图名(上) + 房主/普通标签/状态(下)
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
-                        val chipLabel = desc.displayLabel
-                        if (chipLabel.isNotBlank()) {
-                            RoomLabelChip(chipLabel)
-                        }
-                        if (statusChipText != null) {
-                            RoomStatusChip(statusChipText)
-                        }
                         Text(
                             desc.mapName.removeSuffix(".tmx"),
-                            modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.bodyLarge,
                             color = textColor.copy(alpha = degradeAlpha),
                             fontWeight = rowFontWeight,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        Text(
-                            playersText,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = textColor.copy(alpha = 0.8f * degradeAlpha),
-                            fontWeight = rowFontWeight,
-                        )
-                        if (desc.requiredPassword) {
-                            RoomAccessChip(readI18n("multiplayer.roomList.accessPassword"))
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Text(
+                                desc.creator,
+                                modifier = Modifier.weight(1f, fill = false),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = textColor.copy(alpha = 0.85f * degradeAlpha),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            ordinaryLabels.forEach { label ->
+                                RoomLabelChip(label)
+                            }
+                            if (desc.requiredPassword) {
+                                RoomAccessChip(readI18n("multiplayer.roomList.accessPassword"))
+                            }
+                            if (statusChipText != null) {
+                                RoomStatusChip(statusChipText)
+                            }
                         }
                     }
-                    Spacer(Modifier.height(4.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    // 右侧:类型标签 + 人数(上),模组同步状态(下,右下角)
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        Text(
-                            desc.creator,
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = textColor.copy(alpha = 0.85f * degradeAlpha),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        if (modsText.length > 20) {
-                            Box(modifier = Modifier.widthIn(max = 130.dp).horizontalScroll(rememberScrollState())) {
-                                Text(
-                                    modsText,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = textColor.copy(alpha = 0.7f * degradeAlpha),
-                                    maxLines = 1,
-                                    softWrap = false,
-                                )
-                            }
-                        } else {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            RoomLabelChip(categoryText)
                             Text(
-                                modsText,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = textColor.copy(alpha = 0.7f * degradeAlpha),
-                                maxLines = 1,
+                                playersText,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = textColor.copy(alpha = 0.8f * degradeAlpha),
+                                fontWeight = rowFontWeight,
                             )
+                        }
+                        if (modSyncChipText != null) {
+                            RoomAccessChip(modSyncChipText)
                         }
                     }
                 }
@@ -1603,9 +1615,8 @@ fun MultiplayerView(
                                 return@filter false
                             }
 
-                            if (roomLabelFilterSelection.isNotEmpty()) {
-                                if (room.label.trim() !in roomLabelFilterSelection) return@filter false
-                            }
+                            // 多标签房间按“任一标签命中已选筛选项”的 OR 语义保留
+                            if (!room.matchesAnyRoomLabel(roomLabelFilterSelection)) return@filter false
 
                             if (mapNameFilter.isNotBlank()) {
                                 return@filter room.mapName.contains(mapNameFilter, true)
@@ -1969,6 +1980,56 @@ private fun WelcomeMessageAdmittingDialog(
 }
 
 @Composable
+private fun RoomDetailsSection(
+    title: String? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (title != null) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            content()
+        }
+    }
+}
+
+@Composable
+private fun RoomDetailItem(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            label,
+            modifier = Modifier.widthIn(min = 72.dp),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            value,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
 private fun JoinServerRequestDialog(
     visible: Boolean,
     onDismissRequest: () -> Unit,
@@ -1980,100 +2041,133 @@ private fun JoinServerRequestDialog(
     AnimatedAlertDialog(
         visible, onDismissRequest = onDismissRequest
     ) { dismiss ->
+        val categoryText = roomListCategoryText(
+            roomDescription,
+            readI18n("multiplayer.roomList.vanillaDisplay"),
+            readI18n("multiplayer.roomList.moddedDisplay"),
+            readI18n("multiplayer.roomList.modSyncDisplay"),
+        )
+        val ordinaryLabels = ordinaryRoomLabels(roomDescription)
+        val requiredMods = parseRequiredModNames(roomDescription.mods)
+        val modSyncText = roomModSyncStatusI18nKey(roomDescription)?.let(::readI18n)
+        val statusText = roomListDegradeReasonI18nKey(roomDescription.listDegradeReason())?.let(::readI18n)
+
         BorderCard(
             modifier = Modifier
-              //  .fillMaxSize(GeneralProportion())
-                .size(500.dp)
-                .padding(10.dp)
-                .verticalScroll(rememberScrollState()),
+                .widthIn(max = 560.dp)
+                .padding(10.dp),
         ) {
 
-            Box(modifier = Modifier
-                .fillMaxWidth()
-                .height(75.dp)
-                .background(
-                    brush = Brush.linearGradient(
-                        listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary))
-                ),
-                contentAlignment = Alignment.Center
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        Brush.linearGradient(
+                            listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary),
+                        ),
+                    )
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
             ) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    Row(modifier = Modifier.weight(1f).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.Info, null, modifier = Modifier.size(32.dp).padding(5.dp))
-                        Text(
-                            if (roomDescription.isJoinableFromList) "Join Server?"
-                            else readI18n("multiplayer.roomList.roomInfoTitle"),
-                            modifier = Modifier.padding(5.dp),
-                            style = MaterialTheme.typography.headlineLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        if (roomDescription.isJoinableFromList) {
+                            readI18n("multiplayer.roomList.joinTitle")
+                        } else {
+                            readI18n("multiplayer.roomList.roomInfoTitle")
+                        },
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
+                    Text(
+                        roomDescription.mapName.removeSuffix(".tmx"),
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 440.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    RoomLabelChip(categoryText)
+                    ordinaryLabels.forEach { label -> RoomLabelChip(label) }
+                    if (modSyncText != null) RoomAccessChip(modSyncText)
+                    if (roomDescription.requiredPassword) {
+                        RoomAccessChip(readI18n("multiplayer.roomList.accessPassword"))
+                    }
+                    if (statusText != null) RoomStatusChip(statusText)
+                }
+
+                RoomDetailsSection {
+                    RoomDetailItem(readI18n("multiplayer.roomList.detailHost"), roomDescription.creator)
+                    RoomDetailItem(readI18n("multiplayer.roomList.detailMap"), roomDescription.mapName.removeSuffix(".tmx"))
+                    RoomDetailItem(
+                        readI18n("multiplayer.roomList.detailPlayers"),
+                        "${roomDescription.playerCurrentCount ?: "?"}/${roomDescription.playerMaxCount ?: "?"}",
+                    )
+                    RoomDetailItem(readI18n("multiplayer.roomList.detailCategory"), categoryText)
+                }
+
+                RoomDetailsSection(title = readI18n("multiplayer.roomList.requiredMods")) {
+                    when {
+                        !roomDescription.isModdedRoom -> Text(
+                            readI18n("multiplayer.roomList.noRequiredMods"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        requiredMods.isEmpty() -> Text(
+                            readI18n("multiplayer.roomList.modInfoUnavailable"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        else -> FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            requiredMods.forEach { modName ->
+                                AssistChip(onClick = {}, label = { Text(modName) })
+                            }
+                        }
                     }
                 }
             }
 
-            LargeDividingLine { 0.dp }
-
-            Text(
-                readI18n(
-                    "multiplayer.roomInfo",
-                    I18nType.RWPP,
-                    roomDescription.creator,
-                    roomDescription.mapName,
-                    roomDescription.playerCurrentCount?.toString() ?: "",
-                    roomDescription.playerMaxCount?.toString() ?: "",
-                    roomDescription.version,
-                    roomDescription.mods
-                ),
-                modifier = Modifier.padding(5.dp),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-
-            Spacer(modifier = Modifier.weight(1f))
-
             Row(
-                modifier = Modifier.fillMaxWidth()
-                    .height(IntrinsicSize.Min)
-                    .background(color = MaterialTheme.colorScheme.surface)
-                    .padding(5.dp),
-                horizontalArrangement = Arrangement.Center
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box(
-                    modifier = Modifier
-                        .padding(8.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable {
-                            blacklists.add(
-                                Blacklist("${roomDescription.creator}: ${roomDescription.mapName}", roomDescription.uuid)
-                            )
-
-                            dismiss()
-                        }
-                        .weight(1f)
-                        .padding(vertical = 20.dp),
-                    contentAlignment = Alignment.Center
+                OutlinedButton(
+                    onClick = {
+                        blacklists.add(
+                            Blacklist("${roomDescription.creator}: ${roomDescription.mapName}", roomDescription.uuid)
+                        )
+                        dismiss()
+                    },
+                    modifier = Modifier.weight(1f),
                 ) {
-                    Text(text = readI18n("multiplayer.addToBlackList"), style = MaterialTheme.typography.bodyLarge)
+                    Text(readI18n("multiplayer.addToBlackList"))
                 }
-
                 if (roomDescription.isJoinableFromList) {
-                    VerticalDivider(modifier = Modifier.padding(2.dp).fillMaxHeight(), thickness = 2.dp)
-
-                    Box(
-                        modifier = Modifier
-                            .padding(8.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable {
-                                onJoin(dismiss)
-                            }
-                            .weight(1f)
-                            .padding(vertical = 20.dp),
-                        contentAlignment = Alignment.Center
+                    Button(
+                        onClick = { onJoin(dismiss) },
+                        modifier = Modifier.weight(1f),
                     ) {
-                        Text(text = readI18n("multiplayer.join"), style = MaterialTheme.typography.bodyLarge)
+                        Text(readI18n("multiplayer.join"))
                     }
                 }
             }

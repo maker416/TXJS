@@ -34,6 +34,7 @@ import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.GameLoadedEvent
+import io.github.rwpp.game.mod.NetworkModCache
 import io.github.rwpp.generatedLibDir
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
@@ -62,6 +63,20 @@ import kotlin.system.exitProcess
 
 
 class LoadingScreen : ComponentActivity() {
+    companion object {
+        @Volatile
+        private var networkModCachePrepared = false
+    }
+
+    private fun prepareNetworkModCacheForStartup() {
+        if (networkModCachePrepared) return
+        synchronized(LoadingScreen::class.java) {
+            if (networkModCachePrepared) return
+            appKoin.get<NetworkModCache>().prepareStartup()
+            networkModCachePrepared = true
+        }
+    }
+
     private fun logGeneratedArtifactState() {
         val generatedLib = File(generatedLibDir, "android-game-lib.jar")
         val generatedDex = File(dexFolder, "classes.dex")
@@ -297,11 +312,13 @@ class LoadingScreen : ComponentActivity() {
                                                         logger?.info("Reusing existing GameEngine instance; skip re-creation.")
                                                         loadingThread
                                                         prepareDefaultStorageType()
+                                                        prepareNetworkModCacheForStartup()
                                                     } else {
                                                         val engineImpl = GameEngine.dv.a(this@LoadingScreen)
                                                         Reflect.reifiedSet<GameEngine>(null, "ak", engineImpl)
                                                         loadingThread
                                                         prepareDefaultStorageType()
+                                                        prepareNetworkModCacheForStartup()
                                                         engineImpl.a(this@LoadingScreen as Context)
                                                         val configIO = appKoin.get<ConfigIO>()
                                                         if (!configIO.getGameConfig<Boolean>("hasSelectedAStorageType")) {

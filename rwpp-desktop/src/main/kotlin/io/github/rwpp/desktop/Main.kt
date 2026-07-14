@@ -60,6 +60,7 @@ import io.github.rwpp.event.events.GameLoadedEvent
 import io.github.rwpp.event.events.QuitGameEvent
 import io.github.rwpp.event.onDispose
 import io.github.rwpp.game.Game
+import io.github.rwpp.game.mod.NetworkModCache
 import io.github.rwpp.game.sendChatMessageOrCommand
 import io.github.rwpp.game.units.comp.CompModule
 import io.github.rwpp.generatedLibDir
@@ -183,6 +184,9 @@ fun main(array: Array<String>) {
     if (!requireReloadingLib) {
         val app = appKoin.get<AppContext>()
         app.init()
+        val networkModCache = appKoin.get<NetworkModCache>()
+        networkModCache.prepareStartup()
+        app.onExit { networkModCache.cleanupWorkingCopiesOnExit() }
     }
 
     Logger.getLogger(OkHttpClient::class.java.name).level = Level.FINE

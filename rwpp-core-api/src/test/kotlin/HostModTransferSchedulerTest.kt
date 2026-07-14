@@ -5,7 +5,7 @@
  * https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
  */
 
-import io.github.rwpp.net.Client
+import io.github.rwpp.game.mod.NetworkModDescriptor
 import io.github.rwpp.net.HostModTransferScheduler
 import io.github.rwpp.net.HostModTransferSource
 import io.github.rwpp.net.Packet
@@ -27,27 +27,27 @@ class HostModTransferSchedulerTest {
         val fourChunks = ByteArray(ModPacket.CHUNK_SIZE * 3 + 1) { it.toByte() }
 
         secondClient = RecordingClient("second", events) { packet ->
-            // 模拟真实客户端：每收一块立即回 ACK，释放房主流控窗口
-            scheduler.onAck(secondClient, packet.name, packet.chunkIndex)
+            scheduler.onAck(secondClient, packet.requestId, packet.name, packet.chunkIndex)
         }
         lateinit var firstClient: RecordingClient
         firstClient = RecordingClient("first", events) { packet ->
-            // 首块到达时把第二位加入调度（验证轮询公平），并同样回 ACK
             if (packet.chunkIndex == 0) {
                 scheduler.submit(
                     secondClient,
                     "second",
-                    listOf(HostModTransferSource("same-mod") { fourChunks }),
+                    2L,
+                    listOf(source("same-mod", fourChunks)),
                 )
             }
-            scheduler.onAck(firstClient, packet.name, packet.chunkIndex)
+            scheduler.onAck(firstClient, packet.requestId, packet.name, packet.chunkIndex)
         }
 
         scheduler = HostModTransferScheduler(this, windowSize = 16, chunkDelayMillis = 0)
         scheduler.submit(
             firstClient,
             "first",
-            listOf(HostModTransferSource("same-mod") { fourChunks }),
+            1L,
+            listOf(source("same-mod", fourChunks)),
         )
 
         withTimeout(1000) {
@@ -63,7 +63,6 @@ class HostModTransferSchedulerTest {
     fun unackedClientIsBlockedAtWindowUntilAckReleasesIt() = runBlocking {
         val events = mutableListOf<String>()
         val windowSize = 3
-        // 该客户端收块后不回 ACK → 房主窗口不应被释放
         val silent = RecordingClient("silent", events)
         val scheduler = HostModTransferScheduler(
             this,
@@ -74,28 +73,29 @@ class HostModTransferSchedulerTest {
         scheduler.submit(
             silent,
             "silent",
-            listOf(HostModTransferSource("big") { ByteArray(ModPacket.CHUNK_SIZE * 50) }),
+            1L,
+            listOf(source("big", ByteArray(ModPacket.CHUNK_SIZE * 50))),
         )
 
-        // 等到窗口被填满（发满 windowSize 块）
         withTimeout(1000) { while (events.size < windowSize) yield() }
-        // 再留足时间，确认不会冒出第 windowSize+1 块（被窗口挡住、且无 ACK 释放）
         delay(80)
         assertEquals(windowSize, events.size, "host must not exceed the in-flight window without ACKs")
 
-        // 释放一个槽：应能继续多发一块
-        scheduler.onAck(silent, "big", 0)
+        scheduler.onAck(silent, 1L, "big", 0)
         withTimeout(1000) { while (events.size < windowSize + 1) yield() }
         assertTrue(events.size >= windowSize + 1, "a released window slot must allow one more chunk")
 
         scheduler.cancelAll()
     }
 
+    private fun source(name: String, bytes: ByteArray): HostModTransferSource =
+        HostModTransferSource(NetworkModDescriptor.fromBytes(name, bytes), bytes)
+
     private class RecordingClient(
         private val id: String,
         private val events: MutableList<String>,
         private val afterSend: (ModPacket.ModChunkPacket) -> Unit = {},
-    ) : Client {
+    ) : io.github.rwpp.net.Client {
         override fun sendPacketToClient(packet: Packet) {
             val chunk = packet as ModPacket.ModChunkPacket
             events.add("$id:${chunk.chunkIndex}")

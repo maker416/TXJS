@@ -23,7 +23,7 @@ data class PublishedRoomInfo(
     var serverId: String = "",
     /** 上传时返回的 secret_key，用于续期和删除 */
     var secretKey: String = "",
-    /** 房间类型 (roomtype) */
+    /** 房间类型 (roomtype)；RWList v2.14.0 多标签时为竖线分隔的 wire 串，如 `公益|PVP|模组同步`。 */
     var roomType: String = "",
     /** 使用的列表服务基础 URL */
     var baseUrl: String = DEFAULT_ROOM_LIST_API_URLS,

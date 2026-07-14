@@ -167,6 +167,7 @@ class RwListParserTest {
         )
         val desc = mapRwListEntryToRoomDescription(entry)
         assertEquals("modded", desc.version)
+        assertEquals(entry.required_mod, desc.mods)
         assertTrue(desc.isModdedRoom)
     }
 
@@ -184,32 +185,105 @@ class RwListParserTest {
     }
 
     @Test
-    fun displayLabelReflectsModSyncStatusForModdedRooms() {
+    fun modSyncStatusIsIndependentFromRawServerLabel() {
         val requiredMod = """[{"modName":"x","unitCount":1}]"""
 
-        // 模组房间 + 「模组同步」标签 → 显示「模组同步」
         val moddedSync = RoomDescription(uuid = "u", label = MOD_SYNC_ROOM_TYPE, mods = requiredMod)
         assertTrue(moddedSync.isModdedRoom)
-        assertEquals(MOD_SYNC_ROOM_TYPE, moddedSync.displayLabel)
+        assertEquals(ModSyncStatus.Enabled, moddedSync.modSyncStatus)
 
-        // 模组房间 + 空标签 → 显示「未开启模组同步」
         val moddedBlank = RoomDescription(uuid = "u", mods = requiredMod)
-        assertEquals(MOD_SYNC_NOT_ENABLED_LABEL, moddedBlank.displayLabel)
+        assertEquals(ModSyncStatus.NotEnabled, moddedBlank.modSyncStatus)
 
-        // 模组房间 + 其他标签（如「公益」） → 仍显示「未开启模组同步」
         val moddedOther = RoomDescription(uuid = "u", label = "公益", mods = requiredMod)
-        assertEquals(MOD_SYNC_NOT_ENABLED_LABEL, moddedOther.displayLabel)
+        assertEquals(ModSyncStatus.NotEnabled, moddedOther.modSyncStatus)
+        assertEquals("公益", moddedOther.label)
+
+        val vanilla = RoomDescription(uuid = "u", label = MOD_SYNC_ROOM_TYPE)
+        assertFalse(vanilla.isModdedRoom)
+        assertEquals(ModSyncStatus.NotModded, vanilla.modSyncStatus)
+        assertEquals(MOD_SYNC_ROOM_TYPE, vanilla.label)
     }
 
     @Test
-    fun displayLabelKeepsServerLabelForVanillaRooms() {
-        // 非模组房间 → 保留服务端原始标签
-        val vanilla = RoomDescription(uuid = "u", label = "公益")
-        assertFalse(vanilla.isModdedRoom)
-        assertEquals("公益", vanilla.displayLabel)
+    fun malformedRequiredModDataIsSafe() {
+        assertTrue(parseRequiredModNames("not-json").isEmpty())
+        val modded = RoomDescription(uuid = "u", version = "modded", mods = "not-json")
+        assertTrue(modded.isModdedRoom)
+        assertEquals(ModSyncStatus.NotEnabled, modded.modSyncStatus)
+    }
 
-        // 非模组房间 + 空标签 → 空（列表不渲染标签 Chip）
-        assertEquals("", RoomDescription(uuid = "u", label = "").displayLabel)
+    @Test
+    fun parseRoomLabelsHandlesPipeDelimitedValues() {
+        assertEquals(emptyList<String>(), parseRoomLabels(""))
+        assertEquals(emptyList<String>(), parseRoomLabels("  | | "))
+        assertEquals(listOf("公益"), parseRoomLabels("公益"))
+        assertEquals(listOf("public", "pvp"), parseRoomLabels("public|pvp"))
+        assertEquals(listOf("public", "pvp"), parseRoomLabels(" public | pvp "))
+        assertEquals(listOf("public", "pvp"), parseRoomLabels("public||pvp| "))
+        // 稳定去重，保留首次出现的写法
+        assertEquals(listOf("public", "PVP"), parseRoomLabels("public|PVP|pvp"))
+    }
+
+    @Test
+    fun encodeRoomLabelsRoundTrips() {
+        assertEquals("", encodeRoomLabels(emptyList()))
+        assertEquals("public", encodeRoomLabels(listOf("public")))
+        assertEquals("public|pvp", encodeRoomLabels(listOf("public", "", "pvp", "public")))
+        assertEquals("public|PVP", encodeRoomLabels(listOf("public", "PVP", "pvp")))
+        // 与服务端规范化一致的 round-trip
+        assertEquals("public|pvp", parseRoomLabels("public||pvp| ").joinToString("|"))
+    }
+
+    @Test
+    fun roomDescriptionLabelsPreserveRawScalar() {
+        val entry = RwListServerEntry(
+            name = "Mod room", ip = "127.0.0.1:5123", needpass = false, mapname = "m",
+            roomtype = "公益|PVP|模组同步", max_players = 8, current_players = 2,
+            required_mod = """[{"modName":"x","unitCount":1}]""", available = "1",
+        )
+        val desc = mapRwListEntryToRoomDescription(entry)
+        // 原始 wire 串保留不变
+        assertEquals("公益|PVP|模组同步", desc.label)
+        assertEquals(listOf("公益", "PVP", "模组同步"), desc.labels)
+    }
+
+    @Test
+    fun modSyncStatusDetectsSentinelAnywhereInLabels() {
+        val requiredMod = """[{"modName":"x","unitCount":1}]"""
+
+        assertEquals(ModSyncStatus.Enabled, RoomDescription(uuid = "u", label = "模组同步", mods = requiredMod).modSyncStatus)
+        assertEquals(ModSyncStatus.Enabled, RoomDescription(uuid = "u", label = "公益|模组同步", mods = requiredMod).modSyncStatus)
+        assertEquals(ModSyncStatus.Enabled, RoomDescription(uuid = "u", label = "公益|PVP|模组同步", mods = requiredMod).modSyncStatus)
+        // 大小写不敏感
+        assertEquals(ModSyncStatus.Enabled, RoomDescription(uuid = "u", label = "模组同步".uppercase(), mods = requiredMod).modSyncStatus)
+
+        assertEquals(ModSyncStatus.NotEnabled, RoomDescription(uuid = "u", label = "公益|PVP", mods = requiredMod).modSyncStatus)
+        // 原版房间即使含错误哨兵仍 NotModded
+        val vanilla = RoomDescription(uuid = "u", label = "模组同步")
+        assertFalse(vanilla.isModdedRoom)
+        assertEquals(ModSyncStatus.NotModded, vanilla.modSyncStatus)
+    }
+
+    @Test
+    fun roomLabelMatchingUsesAnyWithCaseInsensitive() {
+        val room = RoomDescription(uuid = "u", label = "公益|PVP|模组同步")
+        assertTrue(room.matchesAnyRoomLabel(emptySet()))
+        assertTrue(room.matchesAnyRoomLabel(setOf("公益")))
+        assertTrue(room.matchesAnyRoomLabel(setOf("pvp", "娱乐")))
+        assertFalse(room.matchesAnyRoomLabel(setOf("娱乐", "休闲")))
+        assertTrue(room.matchesAnyRoomLabel(setOf("模组同步")))
+    }
+
+    @Test
+    fun composePublishRoomTypeAppendsModSyncSentinel() {
+        assertEquals("公益|PVP", composePublishRoomType(listOf("公益", "PVP"), includeModSync = false))
+        assertEquals("公益|PVP|模组同步", composePublishRoomType(listOf("公益", "PVP"), includeModSync = true))
+        assertEquals("模组同步", composePublishRoomType(emptyList(), includeModSync = true))
+        // 普通标签中已含哨兵时不再重复追加
+        assertEquals("公益|模组同步", composePublishRoomType(listOf("公益", "模组同步"), includeModSync = true))
+        // 关闭同步时只是不追加，不主动剥离已传入的普通标签
+        assertEquals("公益|模组同步", composePublishRoomType(listOf("公益", "模组同步"), includeModSync = false))
     }
 
     @Test

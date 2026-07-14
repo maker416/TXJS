@@ -17,6 +17,7 @@ import io.github.rwpp.event.events.ReloadModFinishedEvent
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.mod.Mod
 import io.github.rwpp.game.mod.ModManager
+import io.github.rwpp.game.mod.ModReloadSelection
 import io.github.rwpp.io.calculateSize
 import io.github.rwpp.logger
 import io.github.rwpp.io.zipFolderToByte
@@ -33,7 +34,7 @@ class ModManagerImpl : ModManager {
     private val game: Game = get()
     private val isReloadingMods = AtomicBoolean(false)
 
-    override suspend fun modReload(forceImmediate: Boolean) {
+    override suspend fun modReload(forceImmediate: Boolean, enabledByFileName: Map<String, Boolean>?) {
         if (!isReloadingMods.compareAndSet(false, true)) {
             logger.info("[MODSYNC] modReload skipped: already reloading (forceImmediate=$forceImmediate)")
             return
@@ -45,7 +46,7 @@ class ModManagerImpl : ModManager {
                 // mod 同步专用：加入者仍在加载阶段、游戏主循环尚未启动，
                 // game.post 投递的 action 永远不会被消费 -> 直接在当前线程同步执行重载。
                 logger.info("[MODSYNC] modReload forceImmediate: running reload inline on current thread")
-                runReloadCore()
+                runReloadCore(enabledByFileName)
                 logger.info("[MODSYNC] modReload forceImmediate: reload core done, refreshing maps")
                 appKoin.get<Game>().getAllMaps(true)
             } else {
@@ -54,7 +55,7 @@ class ModManagerImpl : ModManager {
                 game.post {
                     logger.info("[MODSYNC] modReload game.post action RUNNING on game thread")
                     try {
-                        runReloadCore()
+                        runReloadCore(enabledByFileName)
                         logger.info("[MODSYNC] modReload game.post action DONE")
                     } catch (e: Throwable) {
                         logger.error("[MODSYNC] modReload game.post action THREW", e)
@@ -84,18 +85,41 @@ class ModManagerImpl : ModManager {
      * 重载内核：调用引擎扫描 mods 目录并重新加载。
      * 默认应在游戏主线程执行；forceImmediate 时为绕过主循环在调用线程直接执行。
      */
-    private fun runReloadCore() {
+    private fun runReloadCore(enabledByFileName: Map<String, Boolean>?) {
         val B = GameEngine.B()
         B.bZ.e()
         B.bQ.save()
         try {
             B.br = true
             B.e()
-            B.bZ.a(false, false)
+            reloadUnitsWithSelection(enabledByFileName)
             B.x()
         } finally {
             B.br = false
         }
+    }
+
+    /**
+     * `a(false, false)` 内部先扫描目录，再解析单位。扫描后的注入点会读取
+     * [ModReloadSelection]，因此本次扫描新建的模组也能在单位解析前获得正确状态。
+     */
+    private fun reloadUnitsWithSelection(enabledByFileName: Map<String, Boolean>?) {
+        val B = GameEngine.B()
+        if (enabledByFileName == null) {
+            B.bZ.a(false, false)
+            return
+        }
+
+        ModReloadSelection.activate(enabledByFileName)
+        try {
+            B.bZ.a(false, false)
+        } finally {
+            ModReloadSelection.deactivate()
+        }
+
+        // 扫描后再保存，确保新登记模组的禁用状态能够跨重启恢复。
+        B.bZ.e()
+        B.bQ.save()
     }
 
     override suspend fun modUpdate() {
@@ -106,14 +130,23 @@ class ModManagerImpl : ModManager {
         B.bZ.k()
     }
 
-    override suspend fun modSaveChange() {
+    override suspend fun modReregister() {
+        val latch = CountDownLatch(1)
+        game.post {
+            GameEngine.B().bZ.a(false, false)
+            latch.countDown()
+        }
+        withContext(Dispatchers.IO) {
+            latch.await()
+        }
+    }
+
+    override suspend fun modSaveChange(enabledByFileName: Map<String, Boolean>?) {
         val b = GameEngine.B()
         b.bZ.e()
         b.bQ.save()
-        val a2: Int = b.bZ.a(false)
-        if(b.bX.B)
-            return
-        com.corrodinggames.rts.game.units.custom.ag.c(true)
+        if (b.bX.B) return
+        reloadUnitsWithSelection(enabledByFileName)
     }
 
     override fun getModByName(name: String): Mod? {

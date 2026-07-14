@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.ripple.RippleAlpha
 import androidx.compose.material3.*
@@ -74,6 +75,7 @@ import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.net.MOD_SYNC_ROOM_TYPE
 import io.github.rwpp.net.Net
+import io.github.rwpp.net.composePublishRoomType
 import io.github.rwpp.net.roomListPublishAddress
 import io.github.rwpp.config.DEFAULT_ROOM_LIST_API_URLS
 import com.eclipsesource.json.Json
@@ -123,8 +125,8 @@ private sealed class PublishToListUiState {
     data class SelectRoomType(
         val types: List<String>,
         val allowCustomRoomName: Boolean,
-        /** 非空时表示标签被锁定为该值（用户无法改选），用于房主开启 MOD 同步的场景。 */
-        val forcedRoomType: String? = null,
+        /** 房主开启传输模组时为 true：普通标签仍可多选，模组同步标签会被自动追加。 */
+        val modSyncEnabled: Boolean = false,
     ) : PublishToListUiState()
 
     data class Success(val roomId: String, val serverId: String) : PublishToListUiState()
@@ -460,19 +462,25 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
             }
             else -> {
                 // 「模组同步」标签与传输模组特性绑定：
-                // - 开启传输模组且列表提供该标签 → 锁定为该标签；
-                // - 未开启传输模组 → 不允许选择该标签（从可选项中剔除）；
-                // 其余情况由用户自由选择。
+                // - 始终不作为可手选的普通标签出现；
+                // - 开启传输模组时由客户端自动追加该协议哨兵，普通标签仍可自由多选；
+                // - 未开启传输模组时不追加，也不会出现在候选中。
                 val canTransferMod = room.option.canTransferMod
-                val forcedRoomType = if (canTransferMod && types.contains(MOD_SYNC_ROOM_TYPE)) {
-                    MOD_SYNC_ROOM_TYPE
-                } else null
-                val selectableTypes = if (canTransferMod) types else types.filterNot { it == MOD_SYNC_ROOM_TYPE }
-                publishState = PublishToListUiState.SelectRoomType(
-                    types = selectableTypes,
-                    allowCustomRoomName = health.allowCustomName,
-                    forcedRoomType = forcedRoomType,
-                )
+                val selectableTypes = types.filterNot { it.equals(MOD_SYNC_ROOM_TYPE, ignoreCase = true) }
+                if (canTransferMod && types.none { it.equals(MOD_SYNC_ROOM_TYPE, ignoreCase = true) }) {
+                    // 房间列表白名单未提供模组同步标签，发布必然被服务端白名单拒绝
+                    kickListDetectorPlayers()
+                    publishState = PublishToListUiState.Failure(
+                        readI18n("multiplayer.room.publishModSyncTypeMissing"),
+                        PublishStep.FetchingTypes,
+                    )
+                } else {
+                    publishState = PublishToListUiState.SelectRoomType(
+                        types = selectableTypes,
+                        allowCustomRoomName = health.allowCustomName,
+                        modSyncEnabled = canTransferMod,
+                    )
+                }
             }
         }
     }
@@ -1667,9 +1675,10 @@ private fun PublishToListDialog(
                             }
                         }
                         is PublishToListUiState.SelectRoomType -> {
-                            val forcedRoomType = current.forcedRoomType
-                            var selectedRoomType by remember(current.types, forcedRoomType) {
-                                mutableStateOf(forcedRoomType ?: current.types.singleOrNull())
+                            val modSyncEnabled = current.modSyncEnabled
+                            // 多选状态：保持 Set 语义，但序列化时按服务端返回顺序过滤，保证请求稳定
+                            var selectedRoomTypes by remember(current.types) {
+                                mutableStateOf<Set<String>>(emptySet())
                             }
                             var roomName by remember(defaultRoomName, current.allowCustomRoomName) {
                                 mutableStateOf(defaultRoomName)
@@ -1681,7 +1690,9 @@ private fun PublishToListDialog(
                             } else {
                                 defaultRoomName
                             }
-                            val canPublish = selectedRoomType != null && effectiveRoomName.isNotBlank()
+                            val orderedSelected = current.types.filter { it in selectedRoomTypes }
+                            val effectiveRoomType = composePublishRoomType(orderedSelected, modSyncEnabled)
+                            val canPublish = effectiveRoomType.isNotBlank() && effectiveRoomName.isNotBlank()
                             val roomNameHintColor by animateColorAsState(
                                 targetValue = if (roomNameHintHighlighted) {
                                     MaterialTheme.colorScheme.primary
@@ -1771,7 +1782,7 @@ private fun PublishToListDialog(
                                     }
 
                                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        if (forcedRoomType != null) {
+                                        if (modSyncEnabled) {
                                             Surface(
                                                 color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.6f),
                                                 contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
@@ -1786,12 +1797,12 @@ private fun PublishToListDialog(
                                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                                 ) {
                                                     Icon(
-                                                        Icons.Default.Lock,
+                                                        Icons.Default.Refresh,
                                                         contentDescription = null,
                                                         modifier = Modifier.size(18.dp),
                                                     )
                                                     Text(
-                                                        readI18n("multiplayer.room.publishTagLockedHint"),
+                                                        readI18n("multiplayer.room.publishModSyncAutoHint"),
                                                         style = MaterialTheme.typography.bodySmall,
                                                     )
                                                 }
@@ -1812,17 +1823,17 @@ private fun PublishToListDialog(
                                                     color = MaterialTheme.colorScheme.onSurface,
                                                 )
                                                 Text(
-                                                    if (selectedRoomType == null) {
+                                                    if (effectiveRoomType.isBlank()) {
                                                         readI18n("multiplayer.room.publishTypeRequired")
                                                     } else {
                                                         readI18n(
-                                                            "multiplayer.room.publishSelectedType",
+                                                            "multiplayer.room.publishSelectedTypes",
                                                             I18nType.RWPP,
-                                                            selectedRoomType.orEmpty(),
+                                                            orderedSelected.size.toString(),
                                                         )
                                                     },
                                                     style = MaterialTheme.typography.bodySmall,
-                                                    color = if (selectedRoomType == null) {
+                                                    color = if (effectiveRoomType.isBlank()) {
                                                         MaterialTheme.colorScheme.onSurfaceVariant
                                                     } else {
                                                         MaterialTheme.colorScheme.primary
@@ -1834,7 +1845,7 @@ private fun PublishToListDialog(
                                             Button(
                                                 enabled = canPublish,
                                                 onClick = {
-                                                    selectedRoomType?.let { onPublish(it, effectiveRoomName) }
+                                                    onPublish(effectiveRoomType, effectiveRoomName)
                                                 },
                                             ) {
                                                 Icon(
@@ -1852,12 +1863,15 @@ private fun PublishToListDialog(
                                             verticalArrangement = Arrangement.spacedBy(8.dp),
                                         ) {
                                             current.types.forEach { type ->
-                                                val selected = selectedRoomType == type
+                                                val selected = type in selectedRoomTypes
                                                 FilterChip(
                                                     selected = selected,
-                                                    enabled = forcedRoomType == null || type == forcedRoomType,
                                                     onClick = {
-                                                        if (forcedRoomType == null) selectedRoomType = type
+                                                        selectedRoomTypes = if (selected) {
+                                                            selectedRoomTypes - type
+                                                        } else {
+                                                            selectedRoomTypes + type
+                                                        }
                                                     },
                                                     label = { Text(type) },
                                                     leadingIcon = if (selected) {

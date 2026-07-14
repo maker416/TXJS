@@ -7,6 +7,7 @@
 
 package io.github.rwpp.net.packets
 
+import io.github.rwpp.game.mod.NetworkModDescriptor
 import io.github.rwpp.io.GameInputStream
 import io.github.rwpp.io.GameOutputStream
 import io.github.rwpp.net.Packet
@@ -14,18 +15,60 @@ import io.github.rwpp.net.Packet
 @Suppress("MemberVisibilityCanBePrivate")
 sealed class ModPacket : Packet() {
 
-    class RequestPacket : ModPacket() {
+    class ManifestRequestPacket : ModPacket() {
+        var requestId: Long = 0L
+        var requiredNames: List<String> = emptyList()
 
-        var mods: String = ""
+        override val type: Int = MOD_MANIFEST_REQUEST
+
+        override fun readPacket(input: GameInputStream) {
+            requestId = input.readLong()
+            requiredNames = readStringList(input)
+        }
+
+        override fun writePacket(output: GameOutputStream) {
+            output.writeLong(requestId)
+            writeStringList(output, requiredNames)
+        }
+    }
+
+    class ManifestResponsePacket : ModPacket() {
+        var requestId: Long = 0L
+        var success: Boolean = false
+        var errorMessage: String = ""
+        var descriptors: List<NetworkModDescriptor> = emptyList()
+
+        override val type: Int = MOD_MANIFEST_RESPONSE
+
+        override fun readPacket(input: GameInputStream) {
+            requestId = input.readLong()
+            success = input.readBoolean()
+            errorMessage = input.readUTF().also { require(it.length <= MAX_ERROR_LENGTH) { "manifest error too long" } }
+            descriptors = readDescriptorList(input)
+        }
+
+        override fun writePacket(output: GameOutputStream) {
+            output.writeLong(requestId)
+            output.writeBoolean(success)
+            output.writeUTF(errorMessage.take(MAX_ERROR_LENGTH))
+            writeDescriptorList(output, descriptors)
+        }
+    }
+
+    class RequestPacket : ModPacket() {
+        var requestId: Long = 0L
+        var requestedDescriptors: List<NetworkModDescriptor> = emptyList()
 
         override val type: Int = MOD_DOWNLOAD_REQUEST
 
         override fun readPacket(input: GameInputStream) {
-            mods = input.readUTF()
+            requestId = input.readLong()
+            requestedDescriptors = readDescriptorList(input)
         }
 
         override fun writePacket(output: GameOutputStream) {
-            output.writeUTF(mods)
+            output.writeLong(requestId)
+            writeDescriptorList(output, requestedDescriptors)
         }
     }
 
@@ -51,12 +94,10 @@ sealed class ModPacket : Packet() {
 
     /**
      * mod 分块传输包：房主把单个 mod 切成固定大小（[CHUNK_SIZE]）的多个块依次发送，
-     * 客户端按 [name] 重组后再做完整性校验。避免单个 48MB 大包直接交给游戏引擎。
-     *
-     * 约定：仅首块（[chunkIndex] == 0）携带 [totalSize]、[sha256]；后续块这两字段为 0/空，
-     * 重组与校验以首块的元数据为准。
+     * 客户端按 manifest 中的 descriptor 重组后再做完整性校验。
      */
     class ModChunkPacket : ModPacket() {
+        var requestId: Long = 0L
         /** mod 名称，同一次传输内所有块相同 */
         var name: String = ""
         /** 当前块序号，从 0 开始 */
@@ -73,15 +114,17 @@ sealed class ModPacket : Packet() {
         override val type: Int = DOWNLOAD_MOD_CHUNK
 
         override fun readPacket(input: GameInputStream) {
-            name = input.readUTF()
-            chunkIndex = input.readInt()
-            totalChunks = input.readInt()
-            totalSize = input.readLong()
-            sha256 = input.readUTF()
-            chunkBytes = input.readNextBytes()
+            requestId = input.readLong()
+            name = input.readUTF().also { validateName(it) }
+            chunkIndex = input.readInt().also { require(it >= 0) { "negative chunk index" } }
+            totalChunks = input.readInt().also { require(it >= 0) { "negative total chunks" } }
+            totalSize = input.readLong().also { require(it >= 0L) { "negative total size" } }
+            sha256 = input.readUTF().lowercase().also { if (it.isNotEmpty()) NetworkModDescriptor(name, totalSize, it) }
+            chunkBytes = input.readNextBytes().also { require(it.size <= CHUNK_SIZE) { "chunk too large" } }
         }
 
         override fun writePacket(output: GameOutputStream) {
+            output.writeLong(requestId)
             output.writeUTF(name)
             output.writeInt(chunkIndex)
             output.writeInt(totalChunks)
@@ -92,26 +135,24 @@ sealed class ModPacket : Packet() {
     }
 
     class ModReloadFinishPacket : ModPacket() {
-       override val type: Int = MOD_RELOAD_FINISH
+        var requestId: Long = 0L
+
+        override val type: Int = MOD_RELOAD_FINISH
 
         override fun readPacket(input: GameInputStream) {
-            input.readInt()
+            requestId = input.readLong()
         }
 
         override fun writePacket(output: GameOutputStream) {
-            output.writeInt(1)
+            output.writeLong(requestId)
         }
     }
 
     /**
      * 分块接收确认包：客户端每成功接收并缓冲一个 [ModChunkPacket] 后回发给房主，用于**流量控制**。
-     * 房主据此释放该客户端的发送窗口（见 [io.github.rwpp.net.HostModTransferScheduler]），
-     * 使房主发送速率自动适配客户端真实排水速度，避免向游戏连接的无界发送队列灌入海量在途分块、
-     * 拖垮房主游戏线程（进而饿死其它加入者的握手）。
-     *
-     * 字段仅用于诊断；窗口释放按「每收到一个 ACK 释放一个槽」的 1:1 语义，依赖底层 TCP 可靠有序交付。
      */
     class ModChunkAckPacket : ModPacket() {
+        var requestId: Long = 0L
         /** 被确认的 mod 名 */
         var name: String = ""
         /** 被确认的块序号 */
@@ -120,11 +161,13 @@ sealed class ModPacket : Packet() {
         override val type: Int = MOD_CHUNK_ACK
 
         override fun readPacket(input: GameInputStream) {
-            name = input.readUTF()
-            ackChunkIndex = input.readInt()
+            requestId = input.readLong()
+            name = input.readUTF().also { validateName(it) }
+            ackChunkIndex = input.readInt().also { require(it >= 0) { "negative ack index" } }
         }
 
         override fun writePacket(output: GameOutputStream) {
+            output.writeLong(requestId)
             output.writeUTF(name)
             output.writeInt(ackChunkIndex)
         }
@@ -137,8 +180,55 @@ sealed class ModPacket : Packet() {
         const val MOD_RELOAD_FINISH = 502
         /** 客户端→房主：分块接收确认（流量控制用）。 */
         const val MOD_CHUNK_ACK = 503
+        const val MOD_MANIFEST_REQUEST = 504
+        const val MOD_MANIFEST_RESPONSE = 505
 
         /** 单个分块的最大字节数：64KB。足够小以避免大包风险，又不至于包数过多拖慢。 */
         const val CHUNK_SIZE = 64 * 1024
+        const val MAX_DESCRIPTOR_COUNT = 128
+        const val MAX_ERROR_LENGTH = 512
+
+        fun writeDescriptor(output: GameOutputStream, descriptor: NetworkModDescriptor) {
+            output.writeUTF(descriptor.name)
+            output.writeLong(descriptor.payloadSize)
+            output.writeUTF(descriptor.normalizedSha256)
+        }
+
+        fun readDescriptor(input: GameInputStream): NetworkModDescriptor {
+            val name = input.readUTF().also { validateName(it) }
+            val size = input.readLong().also { require(it >= 0L) { "negative payload size" } }
+            val sha256 = input.readUTF().lowercase()
+            return NetworkModDescriptor(name, size, sha256)
+        }
+
+        fun writeDescriptorList(output: GameOutputStream, descriptors: List<NetworkModDescriptor>) {
+            require(descriptors.size <= MAX_DESCRIPTOR_COUNT) { "too many descriptors" }
+            output.writeInt(descriptors.size)
+            descriptors.forEach { writeDescriptor(output, it) }
+        }
+
+        fun readDescriptorList(input: GameInputStream): List<NetworkModDescriptor> {
+            val count = input.readInt().also { require(it in 0..MAX_DESCRIPTOR_COUNT) { "invalid descriptor count" } }
+            return List(count) { readDescriptor(input) }
+        }
+
+        fun writeStringList(output: GameOutputStream, values: List<String>) {
+            require(values.size <= MAX_DESCRIPTOR_COUNT) { "too many strings" }
+            output.writeInt(values.size)
+            values.forEach { value ->
+                validateName(value)
+                output.writeUTF(value)
+            }
+        }
+
+        fun readStringList(input: GameInputStream): List<String> {
+            val count = input.readInt().also { require(it in 0..MAX_DESCRIPTOR_COUNT) { "invalid string count" } }
+            return List(count) { input.readUTF().also { value -> validateName(value) } }
+        }
+
+        private fun validateName(name: String) {
+            require(name.isNotBlank()) { "blank mod name" }
+            require(name.length <= NetworkModDescriptor.MAX_NAME_LENGTH) { "mod name too long" }
+        }
     }
 }

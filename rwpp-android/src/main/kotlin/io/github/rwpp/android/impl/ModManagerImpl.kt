@@ -7,7 +7,6 @@
 
 package io.github.rwpp.android.impl
 
-import com.corrodinggames.rts.game.units.custom.ag
 import com.corrodinggames.rts.gameFramework.e.a
 import io.github.rwpp.appKoin
 import io.github.rwpp.event.broadcastIn
@@ -15,11 +14,12 @@ import io.github.rwpp.event.events.ReloadModEvent
 import io.github.rwpp.event.events.ReloadModFinishedEvent
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.mod.Mod
-import io.github.rwpp.internalModDir
-import io.github.rwpp.logger
 import io.github.rwpp.game.mod.ModManager
+import io.github.rwpp.game.mod.ModReloadSelection
 import io.github.rwpp.game.mod.deleteModFileSafely
 import io.github.rwpp.io.calculateSize
+import io.github.rwpp.internalModDir
+import io.github.rwpp.logger
 import io.github.rwpp.io.zipFolderToByte
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -34,7 +34,7 @@ class ModManagerImpl : ModManager {
     private val game: Game = get()
     private val isReloadingMods = AtomicBoolean(false)
 
-    override suspend fun modReload(forceImmediate: Boolean) {
+    override suspend fun modReload(forceImmediate: Boolean, enabledByFileName: Map<String, Boolean>?) {
         if (!isReloadingMods.compareAndSet(false, true)) {
             logger.info("[MODSYNC] modReload skipped: already reloading (forceImmediate=$forceImmediate)")
             return
@@ -46,7 +46,7 @@ class ModManagerImpl : ModManager {
                 // mod 同步专用：加入者仍在加载阶段、游戏主循环 i.b() 尚未启动，
                 // game.post 投递的 action 永远不会被消费 -> 直接在当前线程同步执行重载。
                 logger.info("[MODSYNC] modReload forceImmediate: running reload inline on current thread")
-                runReloadCore()
+                runReloadCore(enabledByFileName)
                 logger.info("[MODSYNC] modReload forceImmediate: reload core done, refreshing maps")
                 appKoin.get<Game>().getAllMaps(true)
             } else {
@@ -55,7 +55,7 @@ class ModManagerImpl : ModManager {
                 game.post {
                     logger.info("[MODSYNC] modReload game.post action RUNNING on game thread")
                     try {
-                        runReloadCore()
+                        runReloadCore(enabledByFileName)
                         logger.info("[MODSYNC] modReload game.post action DONE")
                     } catch (e: Throwable) {
                         logger.error("[MODSYNC] modReload game.post action THREW", e)
@@ -84,19 +84,41 @@ class ModManagerImpl : ModManager {
      * 重载内核：调用引擎扫描 mods 目录并重新加载。
      * 默认应在游戏主线程执行；forceImmediate 时为绕过主循环在调用线程直接执行。
      */
-    private fun runReloadCore() {
+    private fun runReloadCore(enabledByFileName: Map<String, Boolean>?) {
         val t = GameEngine.t()
         t.bW.d()
         t.bN.save()
-        val aVar = t.bW
         t.bo = true
         try {
             t.f()
-            aVar.a(false, false)
+            reloadUnitsWithSelection(enabledByFileName)
         } finally {
             t.bo = false
         }
         t.q()
+    }
+
+    /**
+     * `a(false, false)` 内部先扫描目录，再解析单位。扫描后的注入点会读取
+     * [ModReloadSelection]，因此本次扫描新建的模组也能在单位解析前获得正确状态。
+     */
+    private fun reloadUnitsWithSelection(enabledByFileName: Map<String, Boolean>?) {
+        val t = GameEngine.t()
+        if (enabledByFileName == null) {
+            t.bW.a(false, false)
+            return
+        }
+
+        ModReloadSelection.activate(enabledByFileName)
+        try {
+            t.bW.a(false, false)
+        } finally {
+            ModReloadSelection.deactivate()
+        }
+
+        // 扫描后再保存，确保新登记模组的禁用状态能够跨重启恢复。
+        t.bW.d()
+        t.bN.save()
     }
 
     override suspend fun modUpdate() {
@@ -108,25 +130,29 @@ class ModManagerImpl : ModManager {
         awaitGamePost(latch)
     }
 
+    override suspend fun modReregister() {
+        val latch = CountDownLatch(1)
+        game.post {
+            GameEngine.t().bW.a(false, false)
+            latch.countDown()
+        }
+        awaitGamePost(latch)
+    }
+
     private suspend fun awaitGamePost(latch: CountDownLatch) {
         withContext(Dispatchers.IO) {
             latch.await()
         }
     }
 
-    override suspend fun modSaveChange() {
+    override suspend fun modSaveChange(enabledByFileName: Map<String, Boolean>?) {
         val latch = CountDownLatch(1)
         game.post {
             try {
                 val t = GameEngine.t()
                 t.bW.d()
                 t.bN.save()
-                val a2: Int = t.bW.a()
-                if (!t.bU.C) {
-                    if (ag.b(true) && a2 == 0) {
-                        t.bW.b()
-                    }
-                }
+                reloadUnitsWithSelection(enabledByFileName)
             } finally {
                 latch.countDown()
             }

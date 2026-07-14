@@ -31,7 +31,7 @@ const val coreVersion = "v1.15"
  * The protocol version.
  * The clients which have different protocol version can not join to each other
  */
-const val protocolVersion = 4
+const val protocolVersion = 5
 
 /**
  * 1.15 -> 176

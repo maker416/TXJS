@@ -18,12 +18,14 @@ import io.github.rwpp.event.events.PlayerJoinEvent
 import io.github.rwpp.event.events.PlayerLeaveEvent
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.GameRoom
+import io.github.rwpp.game.mod.Mod
 import io.github.rwpp.game.mod.ModManager
+import io.github.rwpp.game.mod.NetworkModCache
+import io.github.rwpp.game.mod.NetworkModDescriptor
 import io.github.rwpp.io.HashUtils
 import io.github.rwpp.io.SizeUtils
-import io.github.rwpp.io.AtomicFileUtils.writeBytesAtomic
-import io.github.rwpp.internalModDir
 import io.github.rwpp.logger
+import io.github.rwpp.net.Client
 import io.github.rwpp.net.HostModTransferScheduler
 import io.github.rwpp.net.HostModTransferSource
 import io.github.rwpp.net.InternalPacketType
@@ -41,53 +43,35 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
-import java.io.File
 import java.util.LinkedList
-
-//typealias TargetPositionWithUnits = Triple<Double, Double, List<GameUnit>>
 
 object Logic : Initialization {
     private var playerCount = 0
 
-    // ---- mod 传输相关状态：全部在 synchronized(Logic) 下访问 ----
-    /** 等待下载的 mod 名队列（客户端侧）。null 表示当前不在传输中。 */
-    private var modQueue: LinkedList<String>? = null
-    /** 本次房间要求的全部 mod 名（用于下载完成后校验与启用）。 */
+    private var modQueue: LinkedList<NetworkModDescriptor>? = null
     private var requiredMods: List<String>? = null
-    /** 客户端下载传输取消标志：断连或校验失败后置 true，后续残留分块据此作废。 */
-    private var transferCancelled: Boolean = false
-    /**
-     * 客户端传输代次号：每次开始新传输（[ModCheckEvent]）或取消（[cleanupTransfer]）时自增。
-     * [handleChunk] 协程在创建时捕获当时的代次，进入锁后若发现代次已变（说明这是上一轮残留协程），
-     * 立即丢弃该分块——从源头消除「旧会话分块在新会话里绊倒严格顺序校验」导致 0/0 的问题。
-     */
+    private var requiredDescriptors: List<NetworkModDescriptor>? = null
+    private var currentRequestId: Long = 0L
     private var transferGeneration: Long = 0L
+    private var manifestTimeoutJob: Job? = null
 
-    /**
-     * 客户端按 mod 名重组的缓冲区。
-     * value.first = 已收字节流，value.second = 首块携带的元数据（大小/哈希/总块数）。
-     */
     private val receivingBuffers: MutableMap<String, ModReceiving> = mutableMapOf()
-    /** 客户端侧各 mod 已收到的块数（按序写入校验用）。 */
     private val receivedChunkCounts: MutableMap<String, Int> = mutableMapOf()
-    /** 客户端侧各 mod 已收到的字节数（进度展示用）。 */
     private val receivedBytes: MutableMap<String, Long> = mutableMapOf()
 
+    private val hostPreparedManifests: MutableMap<Client, HostPreparedManifest> = mutableMapOf()
+
     private val scope = CoroutineScope(SupervisorJob())
-    /**
-     * 房主侧：所有客户端共享一个轮询调度器，避免单个加入者的大 MOD 队列独占上传窗口。
-     * 同一客户端重新请求时替换上一轮会话；[PlayerLeaveEvent] 时移除其会话。
-     */
     private val hostModTransferScheduler = HostModTransferScheduler(
         scope = scope,
         logInfo = { logger.info(it) },
         logError = { message, error -> logger.error("$message\n${error.stackTraceToString()}") },
     )
 
-    /** 房主侧 per-client 进度轮询间隔（ms）。 */
     private const val HOST_PROGRESS_POLL_MS = 200L
-
-    /** 房主侧 per-client 进度轮询协程；有活跃传输会话时运行，无则自停并清空 UI。 */
+    private const val MANIFEST_TIMEOUT_MS = 30_000L
+    /** 房主侧：为客户端预读的 mod 字节在未被消费时的最长保留时间，超时即释放，防止内存泄漏。 */
+    private const val HOST_MANIFEST_TTL_MS = 60_000L
     private var hostProgressPollJob: Job? = null
 
     override fun init() {
@@ -106,41 +90,33 @@ object Logic : Initialization {
             val game = appKoin.get<Game>()
             val room = game.gameRoom
             val net = appKoin.get<Net>()
-            val manager = appKoin.get<ModManager>()
-            val allMods = manager.getAllMods()
             if (room.isRWPPRoom && room.option.canTransferMod) {
-                // TODO check different mod data.
-                val missingMods = e.requiredMods.toMutableList().apply { removeAll(allMods.map { it.name }) }
-                logger.info("[MODSYNC] ModCheckEvent: requiredMods=${e.requiredMods}, localMods=${allMods.map { it.name }}, missingMods=$missingMods, isRWPPRoom=${room.isRWPPRoom}, canTransferMod=${room.option.canTransferMod}")
-
-                if (missingMods.isEmpty()) {
-                    logger.info("[MODSYNC] no missing mods, fast path: reload + reloadFinish")
-                    net.sendPacketToServer(ModPacket.RequestPacket())
-                    allMods.forEach { mod ->
-                        if (mod.name in e.requiredMods) {
-                            mod.isEnabled = true
+                val requestId = synchronized(Logic) {
+                    transferGeneration++
+                    currentRequestId = transferGeneration
+                    requiredMods = e.requiredMods
+                    requiredDescriptors = null
+                    modQueue = null
+                    clearReceivingLocked()
+                    currentRequestId
+                }
+                e.intercept()
+                logger.info("[MODSYNC] requesting host manifest: requestId=$requestId, required=${e.requiredMods}")
+                net.sendPacketToServer(ModPacket.ManifestRequestPacket().apply {
+                    this.requestId = requestId
+                    requiredNames = e.requiredMods.distinct()
+                })
+                manifestTimeoutJob?.cancel()
+                manifestTimeoutJob = scope.launch {
+                    delay(MANIFEST_TIMEOUT_MS)
+                    val stillWaiting = synchronized(Logic) { currentRequestId == requestId && requiredDescriptors == null }
+                    if (stillWaiting) {
+                        cleanupTransfer()
+                        room.disconnect("Mod manifest request timed out.")
+                        withContext(Dispatchers.Main.immediate) {
+                            UI.showWarning("Mod manifest request timed out.", true)
                         }
                     }
-                    manager.modReload(forceImmediate = true)
-                    net.sendPacketToServer(ModPacket.ModReloadFinishPacket())
-                } else {
-                    synchronized(Logic) {
-                        transferCancelled = false
-                        // 新一轮传输：作废旧代次，使上一轮残留的 handleChunk 协程在进入锁后立即自废
-                        transferGeneration++
-                        modQueue = LinkedList(missingMods)
-                        requiredMods = e.requiredMods
-                        receivingBuffers.clear()
-                        receivedChunkCounts.clear()
-                        receivedBytes.clear()
-                    }
-                    net.sendPacketToServer(ModPacket.RequestPacket().apply {
-                        mods = missingMods.joinToString(",")
-                    })
-                    logger.info("[MODSYNC] request sent to host: missingMods=$missingMods, intercepting ModCheckEvent")
-                    setDownloadingTitle(0)
-                    e.intercept()
-                    logger.info("[MODSYNC] ModCheckEvent intercepted, waiting for chunks")
                 }
             }
         }
@@ -149,12 +125,11 @@ object Logic : Initialization {
             cleanupTransfer()
         }
 
-        // 房主侧：远端客户端断开时，取消其正在进行的分块发送会话，
-        // 避免对着死连接空发、以及该客户端重连后出现并发发送循环。
         GlobalEventChannel.filter(PlayerLeaveEvent::class).subscribeAlways(priority = EventPriority.MONITOR) { e ->
             if (!appKoin.get<Game>().gameRoom.isHost) return@subscribeAlways
             val c = e.player.client ?: return@subscribeAlways
             hostModTransferScheduler.cancel(c)
+            synchronized(Logic) { hostPreparedManifests.remove(c)?.release() }
         }
 
         GlobalEventChannel.filter(GameLoadedEvent::class).subscribeAlways {
@@ -202,34 +177,104 @@ object Logic : Initialization {
             true
         }
 
-        // ---- 房主侧：收到客户端下载请求后，分块发送每个缺失的 mod ----
+        net.registerPacketListener<ModPacket.ManifestRequestPacket>(
+            ModPacket.MOD_MANIFEST_REQUEST
+        ) { client, packet ->
+            val room = game.gameRoom
+            if (!room.isHost) return@registerPacketListener true
+            val conn = client ?: return@registerPacketListener true
+            scope.launch(Dispatchers.IO) {
+                val response = runCatching {
+                    prepareHostManifest(conn, packet.requestId, packet.requiredNames)
+                }.fold(
+                    onSuccess = { prepared ->
+                        synchronized(Logic) {
+                            hostPreparedManifests.remove(conn)?.release()
+                            hostPreparedManifests[conn] = prepared
+                        }
+                        ModPacket.ManifestResponsePacket().apply {
+                            requestId = packet.requestId
+                            success = true
+                            descriptors = prepared.sources.map { it.descriptor }
+                        }
+                    },
+                    onFailure = { error ->
+                        logger.error("[MODSYNC-HOST] manifest request failed: ${error.stackTraceToString()}")
+                        ModPacket.ManifestResponsePacket().apply {
+                            requestId = packet.requestId
+                            success = false
+                            errorMessage = error.message ?: "Failed to prepare mod manifest"
+                        }
+                    }
+                )
+                conn.sendPacketToClient(response)
+                // Safety net: if the client never follows up with a download request or finish packet
+                // (e.g. it cache-hits but drops before ModReloadFinish, or stalls), release the prepared
+                // payload bytes after a grace period so they do not linger on the host.
+                scope.launch {
+                    delay(HOST_MANIFEST_TTL_MS)
+                    synchronized(Logic) {
+                        val pending = hostPreparedManifests[conn]
+                        if (pending != null && pending.requestId == packet.requestId) {
+                            hostPreparedManifests.remove(conn)
+                            pending.release()
+                            logger.info("[MODSYNC-HOST] released unconsumed prepared manifest for client after TTL (requestId=${packet.requestId})")
+                        }
+                    }
+                }
+            }
+            true
+        }
+
+        net.registerPacketListener<ModPacket.ManifestResponsePacket>(
+            ModPacket.MOD_MANIFEST_RESPONSE
+        ) { _, packet ->
+            val room = game.gameRoom
+            if (room.isHost) return@registerPacketListener true
+            val gen = synchronized(Logic) { currentRequestId }
+            if (packet.requestId != gen) return@registerPacketListener true
+            manifestTimeoutJob?.cancel()
+            if (!packet.success) {
+                cleanupTransfer()
+                room.disconnect(packet.errorMessage.ifBlank { "Mod manifest failed." })
+                return@registerPacketListener true
+            }
+            scope.launch(Dispatchers.IO) {
+                runCatching { handleManifestResponse(packet, gen, room, net) }.onFailure {
+                    logger.error("[MODSYNC] manifest handling failed: ${it.stackTraceToString()}")
+                    cleanupTransfer()
+                    room.disconnect("Mod manifest failed.")
+                    withContext(Dispatchers.Main.immediate) { UI.showWarning("Mod manifest failed: ${it.message}", true) }
+                }
+            }
+            true
+        }
+
         net.registerPacketListener<ModPacket.RequestPacket>(
             ModPacket.MOD_DOWNLOAD_REQUEST
         ) { client, packet ->
             val room = game.gameRoom
             if (!room.isHost) return@registerPacketListener true
-            logger.info("[MODSYNC-HOST] received download request from client: requested='${packet.mods}'")
+            logger.info("[MODSYNC-HOST] received download request from client: requestId=${packet.requestId}, requested=${packet.requestedDescriptors.map { it.name }}")
             runCatching {
                 val conn = client!!
                 val player = room.getPlayerByClient(conn)
                     ?: throw IllegalStateException("Could not find player for mod download client")
-                synchronized(Logic) {
+                val prepared = synchronized(Logic) { hostPreparedManifests.remove(conn) }
+                    ?: throw IllegalStateException("Missing prepared manifest for download request")
+                require(prepared.requestId == packet.requestId) { "Download request id does not match prepared manifest" }
+                val requestedKeys = packet.requestedDescriptors.map { it.cacheKey() }.toSet()
+                val sources = prepared.sources.filter { it.descriptor.cacheKey() in requestedKeys }
+                require(sources.size == packet.requestedDescriptors.size) { "Requested descriptor was not in host manifest" }
+                prepared.sources.filter { it.descriptor.cacheKey() !in requestedKeys }.forEach { it.release() }
+                synchronized(Logic) { player.data.ready = false }
+                if (sources.isEmpty()) {
                     player.data.ready = false
-                    transferCancelled = false
+                    logger.info("[MODSYNC-HOST] no payload requested by ${player.name}")
+                } else {
+                    hostModTransferScheduler.submit(conn, player.name, packet.requestId, sources)
+                    ensureHostProgressPoll()
                 }
-                val requested = packet.mods.split(",").filter { it.isNotBlank() }
-                val mods = appKoin.get<ModManager>()
-                    .getAllMods()
-                    .filter { it.isEnabled && it.name in requested }
-                logger.info("[MODSYNC-HOST] queued chunked send for ${mods.size} mod(s) to ${player.name}")
-                hostModTransferScheduler.submit(
-                    conn,
-                    player.name,
-                    mods.map { mod ->
-                        HostModTransferSource(mod.name) { mod.getBytes() }
-                    },
-                )
-                ensureHostProgressPoll()
             }.onFailure {
                 logger.error(it.stackTraceToString())
             }
@@ -237,15 +282,13 @@ object Logic : Initialization {
             true
         }
 
-        // ---- 客户端侧：接收分块，按 mod 名重组，收齐后校验哈希并原子写 ----
         net.registerPacketListener<ModPacket.ModChunkPacket>(
             ModPacket.DOWNLOAD_MOD_CHUNK
-        ) { client, packet ->
+        ) { _, packet ->
             val room = game.gameRoom
             if (room.isHost) return@registerPacketListener true
-            logger.info("[MODSYNC] chunk received: name='${packet.name}', idx=${packet.chunkIndex}/${packet.totalChunks}, bytes=${packet.chunkBytes.size}, totalSize=${packet.totalSize}")
-            // 捕获当前传输代次：若这是上一轮残留的协程（代次已变），handleChunk 会在锁内立即丢弃
-            val gen = synchronized(Logic) { transferGeneration }
+            logger.info("[MODSYNC] chunk received: requestId=${packet.requestId}, name='${packet.name}', idx=${packet.chunkIndex}/${packet.totalChunks}, bytes=${packet.chunkBytes.size}, totalSize=${packet.totalSize}")
+            val gen = synchronized(Logic) { currentRequestId }
             scope.launch(Dispatchers.IO) {
                 runCatching {
                     handleChunk(packet, gen, room, net)
@@ -262,13 +305,9 @@ object Logic : Initialization {
             true
         }
 
-        // 兼容旧版单包协议（v4 不再触发，保留以防万一）
         net.registerPacketListener<ModPacket.ModPackPacket>(
             ModPacket.DOWNLOAD_MOD_PACK
-        ) { _, _ ->
-            // 旧版房主才会发此包；新版客户端忽略，避免误处理
-            true
-        }
+        ) { _, _ -> true }
 
         net.registerPacketListener<ModPacket.ModReloadFinishPacket>(
             ModPacket.MOD_RELOAD_FINISH
@@ -277,7 +316,8 @@ object Logic : Initialization {
             runCatching {
                 val player = room.getPlayerByClient(client!!)!!
                 player.data.ready = true
-                logger.info("[MODSYNC-HOST] ModReloadFinishPacket received from ${player.name}, set ready=true")
+                synchronized(Logic) { hostPreparedManifests.remove(client)?.release() }
+                logger.info("[MODSYNC-HOST] ModReloadFinishPacket received from ${player.name}, requestId=${packet.requestId}, set ready=true")
             }.onFailure {
                 logger.error("[MODSYNC-HOST] ModReloadFinishPacket handling FAILED: ${it.stackTraceToString()}")
             }
@@ -285,73 +325,132 @@ object Logic : Initialization {
             true
         }
 
-        // ---- 房主侧：收到客户端的分块 ACK，释放该客户端的发送窗口（流量控制） ----
         net.registerPacketListener<ModPacket.ModChunkAckPacket>(
             ModPacket.MOD_CHUNK_ACK
         ) { client, packet ->
             val room = game.gameRoom
             if (!room.isHost) return@registerPacketListener true
             val conn = client ?: return@registerPacketListener true
-            hostModTransferScheduler.onAck(conn, packet.name, packet.ackChunkIndex)
+            hostModTransferScheduler.onAck(conn, packet.requestId, packet.name, packet.ackChunkIndex)
             true
         }
     }
 
+    private fun prepareHostManifest(client: Client, requestId: Long, requiredNames: List<String>): HostPreparedManifest {
+        val manager = appKoin.get<ModManager>()
+        val enabled = manager.getAllMods().filter { it.isEnabled && it.name in requiredNames }
+        val byName = enabled.groupBy { it.name }
+        val sources = requiredNames.distinct().map { name ->
+            val candidates = byName[name].orEmpty()
+            require(candidates.size == 1) { "Host mod '$name' is missing or ambiguous" }
+            val mod = candidates.single()
+            val bytes = mod.getBytes()
+            HostModTransferSource(NetworkModDescriptor.fromBytes(mod.name, bytes), bytes)
+        }
+        return HostPreparedManifest(client, requestId, sources)
+    }
+
+    private suspend fun handleManifestResponse(packet: ModPacket.ManifestResponsePacket, requestId: Long, room: GameRoom, net: Net) {
+        val cache = appKoin.get<NetworkModCache>()
+        val manager = appKoin.get<ModManager>()
+        val descriptors = packet.descriptors
+        val requiredNamesSnapshot = synchronized(Logic) { requiredMods.orEmpty() }
+        require(descriptors.map { it.name }.toSet().containsAll(requiredNamesSnapshot.toSet())) {
+            "Host manifest does not include all required mods"
+        }
+        synchronized(Logic) {
+            if (requestId != currentRequestId) return
+            requiredDescriptors = descriptors
+        }
+        val localMatches = findLocalMatchKeys(manager.getAllMods(), descriptors, cache)
+        val missing = descriptors.filter { descriptor -> descriptor.cacheKey() !in localMatches }
+        if (missing.isEmpty()) {
+            logger.info("[MODSYNC] all required mods matched locally/cache, finalizing without download")
+            finalizeModSync(requestId, descriptors, net)
+            return
+        }
+        synchronized(Logic) {
+            if (requestId != currentRequestId) return
+            modQueue = LinkedList(missing)
+            requiredDescriptors = descriptors
+            clearReceivingLocked()
+        }
+        net.sendPacketToServer(ModPacket.RequestPacket().apply {
+            this.requestId = requestId
+            requestedDescriptors = missing
+        })
+        logger.info("[MODSYNC] requested missing descriptor(s): ${missing.map { it.name }}")
+        setDownloadingTitle(0)
+    }
+
     /**
-     * 处理单个分块：按序写入缓冲，收齐时校验哈希并原子落盘。
-     * 所有对共享状态的读写都在 synchronized(Logic) 内。
+     * Returns the set of cache keys for descriptors that the client already satisfies — either through a
+     * verified managed network cache entry, an exact-hash local network mod, or an exact-hash local mod.
+     * Identity is always name + payloadSize + sha256; a same-name but different-content mod is NOT a match.
      */
-    private suspend fun handleChunk(packet: ModPacket.ModChunkPacket, generation: Long, room: GameRoom, net: Net) {
-        // 本块是否被成功接收并缓冲（用于决定是否回 ACK 释放房主流控窗口）。
-        // 代次过期 / 未请求 / 乱序抛异常的情况下都不会置 true。
+    private fun findLocalMatchKeys(
+        mods: List<Mod>,
+        descriptors: List<NetworkModDescriptor>,
+        cache: NetworkModCache,
+    ): Set<String> {
+        val targetKeys = descriptors.map { it.cacheKey() }.toSet()
+        val matches = mutableSetOf<String>()
+        descriptors.forEach { descriptor ->
+            if (cache.find(descriptor) != null) matches.add(descriptor.cacheKey())
+        }
+        val namesToHashes = descriptors.associateBy { it.name }
+        mods.forEach { mod ->
+            if (mod.isNetworkMod) {
+                val descriptor = cache.descriptorForManagedPath(mod.path)
+                if (descriptor != null && descriptor.cacheKey() in targetKeys) matches.add(descriptor.cacheKey())
+            } else {
+                val expected = namesToHashes[mod.name] ?: return@forEach
+                runCatching {
+                    val descriptor = NetworkModDescriptor.fromBytes(mod.name, mod.getBytes())
+                    if (descriptor.cacheKey() in targetKeys && descriptor == expected) matches.add(descriptor.cacheKey())
+                }.onFailure { logger.warn("[MODSYNC] failed to hash local mod '${mod.name}': ${it.message}") }
+            }
+        }
+        return matches
+    }
+
+    private suspend fun handleChunk(packet: ModPacket.ModChunkPacket, requestId: Long, room: GameRoom, net: Net) {
         var accepted = false
         val done = synchronized(Logic) {
-            // 代次校验：若这是上一轮传输残留的协程（generation 已过期），直接丢弃，不触发任何状态变更或顺序异常。
-            // 这是「取消→重新加入」后进度卡 0/0 的根因修复点。
-            if (generation != transferGeneration) return@synchronized false
+            if (requestId != currentRequestId || packet.requestId != currentRequestId) return@synchronized false
             val queue = modQueue ?: return@synchronized false
-            if (packet.name !in queue) return@synchronized false   // 未请求的 mod，忽略
-
-            val receiving = receivingBuffers.getOrPut(packet.name) {
-                ModReceiving(ByteArrayOutputStream(), packet.totalSize, packet.sha256, packet.totalChunks)
-            }
-            // 首块携带元数据：若缓冲是新建的，用它初始化；否则以首块为准（防御性覆盖）
+            val descriptor = queue.firstOrNull { it.name == packet.name } ?: return@synchronized false
             if (packet.chunkIndex == 0) {
-                receiving.totalSize = packet.totalSize
-                receiving.sha256 = packet.sha256
-                receiving.totalChunks = packet.totalChunks
+                require(packet.totalSize == descriptor.payloadSize) { "Chunk size does not match manifest" }
+                require(packet.sha256.equals(descriptor.normalizedSha256, ignoreCase = true)) { "Chunk hash does not match manifest" }
+                require(packet.totalChunks == maxOf(1, ((descriptor.payloadSize + ModPacket.CHUNK_SIZE - 1) / ModPacket.CHUNK_SIZE).toInt())) {
+                    "Chunk count does not match manifest"
+                }
             }
 
-            val expected = receivedChunkCounts[packet.name] ?: 0
+            val receiving = receivingBuffers.getOrPut(descriptor.cacheKey()) {
+                ModReceiving(ByteArrayOutputStream(), descriptor, packet.totalChunks)
+            }
+
+            val expected = receivedChunkCounts[descriptor.cacheKey()] ?: 0
             if (packet.chunkIndex != expected) {
-                // 乱序或丢块：当前实现要求严格按序，出错即失败
-                throw IllegalStateException(
-                    "Mod chunk out of order for ${packet.name}: expected $expected, got ${packet.chunkIndex}"
-                )
+                throw IllegalStateException("Mod chunk out of order for ${packet.name}: expected $expected, got ${packet.chunkIndex}")
             }
 
             accepted = true
             receiving.buffer.write(packet.chunkBytes)
-            receivedChunkCounts[packet.name] = expected + 1
-            receivedBytes[packet.name] = (receivedBytes[packet.name] ?: 0L) + packet.chunkBytes.size
+            receivedChunkCounts[descriptor.cacheKey()] = expected + 1
+            receivedBytes[descriptor.cacheKey()] = (receivedBytes[descriptor.cacheKey()] ?: 0L) + packet.chunkBytes.size
 
-            // 是否收齐（进度 UI 在锁外刷新，避免 suspend 持锁）
             expected + 1 >= receiving.totalChunks && receiving.totalChunks > 0
         }
 
-        // 锁外刷新下载进度 + 回 ACK：仅在本块被成功接收并缓冲（accepted）时才做。
-        // 取消/作废的分块（代次过期 transferGeneration 不匹配、modQueue=null、name 不在队列、或乱序）
-        // accepted 恒为 false：既不发 ACK，也不刷新 UI。否则取消后残留的 handleChunk 协程会调用
-        // updateDownloadingTitle 重新把 UI.showNetworkDialog 置 true（其末尾硬写 =true），
-        // 导致弹窗不消失、并往主线程灌刷新任务使刚切出的多人列表卡顿。
         if (accepted) {
             updateDownloadingTitle(packet.name)
-
-            // 流量控制：每成功接收并缓冲一块，立即回 ACK，让房主释放该客户端的发送窗口、继续发后续块。
-            // 这是「房主不再全速灌包 → 不拖垮游戏线程 → 其它加入者能正常握手」的关键。
             runCatching {
                 net.sendPacketToServer(
                     ModPacket.ModChunkAckPacket().apply {
+                        this.requestId = packet.requestId
                         this.name = packet.name
                         this.ackChunkIndex = packet.chunkIndex
                     }
@@ -363,96 +462,77 @@ object Logic : Initialization {
 
         if (!done) return
 
-        logger.info("[MODSYNC] all chunks received for '${packet.name}', start integrity check")
-        // 收齐：在锁外做校验与落盘（避免长时间持锁），但文件状态变更重新加锁
-        val (name, fullBytes, expectedHash) = synchronized(Logic) {
-            val rec = receivingBuffers[packet.name]!!
-            Triple(packet.name, rec.buffer.toByteArray(), rec.sha256)
+        val (descriptor, fullBytes) = synchronized(Logic) {
+            val queue = modQueue ?: return
+            val descriptor = queue.firstOrNull { it.name == packet.name } ?: return
+            val rec = receivingBuffers[descriptor.cacheKey()] ?: return
+            descriptor to rec.buffer.toByteArray()
         }
-
+        require(fullBytes.size.toLong() == descriptor.payloadSize) { "Downloaded size does not match manifest" }
         val actualHash = HashUtils.sha256(fullBytes)
-        logger.info("[MODSYNC] hash check '${packet.name}': expected=$expectedHash, actual=$actualHash, match=${actualHash.equals(expectedHash, ignoreCase = true)}")
-        if (!actualHash.equals(expectedHash, ignoreCase = true)) {
-            logger.warn("[MODSYNC] hash mismatch, aborting transfer")
+        if (!actualHash.equals(descriptor.normalizedSha256, ignoreCase = true)) {
             cleanupTransfer()
             room.disconnect("Mod integrity check failed.")
-            withContext(Dispatchers.Main.immediate) {
-                UI.showWarning("Mod integrity check failed: $name", true)
-            }
+            withContext(Dispatchers.Main.immediate) { UI.showWarning("Mod integrity check failed: ${descriptor.name}", true) }
             return
         }
 
-        // 原子写：写临时文件再 rename，避免中途崩溃损坏。
-        // 文件名用 {name}.network.rwmod 约定：保留 .rwmod 后缀让引擎能扫描到，
-        // .network 后缀用于 UI 区分「网络传输下载的 mod」。
-        //
-        // 写入应用私有目录 internalModDir（Android 上为 getExternalFilesDir/units/），
-        // 而非外部公共目录 modDir：网络同步的模组只允许玩家在游戏内使用，不允许通过
-        // 文件管理器取出。引擎通过 FileLoaderInject 的组合后端会同时扫描 modDir 和
-        // internalModDir 两个位置，故私有目录内的模组也能被加载。
-        val modFile = File(internalModDir, "$name.network.rwmod")
-        logger.info("[MODSYNC] writing mod to disk: ${modFile.absolutePath}, size=${fullBytes.size}")
-        modFile.writeBytesAtomic(fullBytes)
-        logger.info("[MODSYNC] mod written to disk OK: ${modFile.name}")
+        val cache = appKoin.get<NetworkModCache>()
+        cache.storeVerified(descriptor, fullBytes)
+        cache.activate(descriptor)
+        logger.info("[MODSYNC] mod cached and activated OK: ${descriptor.name}")
 
-        // 清理该 mod 的缓冲，并从队列移除
         val queueEmpty = synchronized(Logic) {
-            receivingBuffers.remove(packet.name)
-            receivedChunkCounts.remove(packet.name)
-            receivedBytes.remove(packet.name)
-            modQueue?.remove(packet.name)
+            val key = descriptor.cacheKey()
+            receivingBuffers.remove(key)
+            receivedChunkCounts.remove(key)
+            receivedBytes.remove(key)
+            modQueue?.removeIf { it.cacheKey() == key }
             modQueue?.isEmpty() ?: true
         }
 
         if (queueEmpty) {
-            // 全部下载完成：启用 mod、reload、校验名字齐全、通知房主
-            logger.info("[MODSYNC] queue empty, all mods downloaded, starting finalization")
-            withContext(Dispatchers.Main.immediate) {
-                UI.showNetworkDialog = false
-                resetReceivingModState()
-            }
-            val manager = appKoin.get<ModManager>()
-            val mods = manager.getAllMods()
-            val req = synchronized(Logic) { requiredMods ?: emptyList() }
-            logger.info("[MODSYNC] enabling required mods: req=$req, currentMods=${mods.map { "${it.name}(enabled=${it.isEnabled})" }}")
-            mods.forEach { mod ->
-                mod.isEnabled = mod.name in req
-            }
-            logger.info("[MODSYNC] calling modReload(forceImmediate=true) ...")
-            manager.modReload(forceImmediate = true)
-            logger.info("[MODSYNC] modReload() returned, re-checking mod presence")
-            val mods2 = manager.getAllMods()
-            logger.info("[MODSYNC] mods after reload: ${mods2.map { it.name }}")
-            if (req.any { m -> m !in mods2.map { it.name } }) {
-                logger.warn("[MODSYNC] FAIL: required mods missing after reload, disconnecting")
-                cleanupTransfer()
-                room.disconnect("Mod download failed.")
-                withContext(Dispatchers.Main.immediate) {
-                    UI.showWarning("Mod download failed: required mods were not found.", true)
-                }
-                return
-            }
-
-            logger.info("[MODSYNC] SUCCESS: sending ModReloadFinishPacket to host")
-            net.sendPacketToServer(ModPacket.ModReloadFinishPacket())
+            finalizeModSync(requestId, synchronized(Logic) { requiredDescriptors.orEmpty() }, net)
         } else {
-            logger.info("[MODSYNC] queue not empty yet, continuing download (remaining=${synchronized(Logic) { modQueue?.size ?: -1 }})")
-            withContext(Dispatchers.Main.immediate) {
-                UI.showNetworkDialog = true
-            }
+            withContext(Dispatchers.Main.immediate) { UI.showNetworkDialog = true }
         }
     }
 
-    /**
-     * 清理传输状态：断连、校验失败或下载异常时调用。
-     * 重置队列、关闭缓冲、置取消标志（让房主发送循环提前退出）。
-     * 注意：已原子写入完成的 mod 文件不会被删除（它们是完整的）；
-     * 半成品数据存在于内存缓冲，随 clear 释放，不会落盘。
-     */
-    /**
-     * 启动房主侧 per-client 进度轮询（幂等）：每 [HOST_PROGRESS_POLL_MS] 把调度器快照发布到
-     * [UI.hostTransferSnapshots]，供房主玩家行展示各下载客户端的进度与当前模组；无活跃会话时自停并清空。
-     */
+    private suspend fun finalizeModSync(requestId: Long, descriptors: List<NetworkModDescriptor>, net: Net) {
+        withContext(Dispatchers.Main.immediate) {
+            UI.showNetworkDialog = false
+            resetReceivingModState()
+        }
+        val cache = appKoin.get<NetworkModCache>()
+        descriptors.forEach { descriptor -> cache.find(descriptor)?.let { cache.activate(descriptor) } }
+        val manager = appKoin.get<ModManager>()
+        var mods = manager.getAllMods()
+        val exactNames = descriptors.map { it.name }.toSet()
+        mods.forEach { mod -> mod.isEnabled = mod.name in exactNames }
+        logger.info("[MODSYNC] calling modReload(forceImmediate=true) ...")
+        manager.modReload(forceImmediate = true)
+        mods = manager.getAllMods()
+        val matched = findLocalMatchKeys(mods, descriptors, cache)
+        if (!descriptors.all { it.cacheKey() in matched }) {
+            cleanupTransfer()
+            appKoin.get<Game>().gameRoom.disconnect("Mod download failed.")
+            withContext(Dispatchers.Main.immediate) {
+                UI.showWarning("Mod download failed: required mods were not found.", true)
+            }
+            return
+        }
+        logger.info("[MODSYNC] SUCCESS: sending ModReloadFinishPacket to host")
+        net.sendPacketToServer(ModPacket.ModReloadFinishPacket().apply { this.requestId = requestId })
+        cleanupTransfer()
+    }
+
+    private fun clearReceivingLocked() {
+        receivingBuffers.values.forEach { runCatching { it.buffer.close() } }
+        receivingBuffers.clear()
+        receivedChunkCounts.clear()
+        receivedBytes.clear()
+    }
+
     private fun ensureHostProgressPoll() {
         if (hostProgressPollJob?.isActive == true) return
         hostProgressPollJob = scope.launch {
@@ -471,32 +551,29 @@ object Logic : Initialization {
 
     private fun cleanupTransfer() {
         synchronized(Logic) {
-            transferCancelled = true
-            // 作废旧代次：使上一轮已派发但尚未执行的 handleChunk 协程在进入锁后立即自废
             transferGeneration++
+            currentRequestId = transferGeneration
             modQueue = null
             requiredMods = null
-            receivingBuffers.values.forEach { runCatching { it.buffer.close() } }
-            receivingBuffers.clear()
-            receivedChunkCounts.clear()
-            receivedBytes.clear()
+            requiredDescriptors = null
+            clearReceivingLocked()
         }
+        manifestTimeoutJob?.cancel()
+        manifestTimeoutJob = null
         hostModTransferScheduler.cancelAll()
+        synchronized(Logic) {
+            hostPreparedManifests.values.forEach { it.release() }
+            hostPreparedManifests.clear()
+        }
         hostProgressPollJob?.cancel()
         hostProgressPollJob = null
         scope.launch(Dispatchers.Main.immediate) { UI.hostTransferSnapshots = emptyList() }
     }
 
-    /**
-     * 供 UI 主动取消传输（如点击「取消下载」按钮）。
-     * 同步执行清理，确保状态立即作废、不依赖异步的 [DisconnectEvent]。
-     * 房主侧的发送会话会在随后的 [disconnect] 触发 [PlayerLeaveEvent] 时被取消。
-     */
     fun cancelTransfer() {
         cleanupTransfer()
     }
 
-    /** 重置下载弹窗的结构化进度状态（须在主线程调用）。 */
     private fun resetReceivingModState() {
         UI.receivingModName = ""
         UI.receivingModProgress = 0f
@@ -507,16 +584,15 @@ object Logic : Initialization {
         UI.receivingNetworkDialogTitle = ""
     }
 
-    /** 收到首个分块前初始化下载对话框状态。 */
     private suspend fun setDownloadingTitle(index: Int) {
-        val totalSize = appKoin.get<Game>().gameRoom.option.allModsSize
-        val (name, totalCount) = synchronized(Logic) {
-            (modQueue?.peek() ?: "") to (requiredMods?.size ?: 1)
-        }
+        val queueSnapshot = synchronized(Logic) { modQueue?.toList().orEmpty() }
+        val current = queueSnapshot.getOrNull(index) ?: queueSnapshot.firstOrNull()
+        val totalSize = queueSnapshot.sumOf { it.payloadSize }
+        val totalCount = synchronized(Logic) { requiredDescriptors?.size ?: queueSnapshot.size.coerceAtLeast(1) }
         withContext(Dispatchers.Main.immediate) {
             UI.receivingNetworkDialogTitle =
-                "Downloading $name. total: ${SizeUtils.byteToMB(totalSize.toLong())}MB. (0/?)"
-            UI.receivingModName = name
+                "Downloading ${current?.name.orEmpty()}. total: ${SizeUtils.byteToMB(totalSize)}MB. (0/?)"
+            UI.receivingModName = current?.name.orEmpty()
             UI.receivingModProgress = 0f
             UI.receivingModReceivedBytes = 0L
             UI.receivingModTotalBytes = 0L
@@ -526,13 +602,13 @@ object Logic : Initialization {
         }
     }
 
-    /** 按已收字节 / 总大小刷新下载进度。锁内取数据，锁外刷新 UI。 */
     private suspend fun updateDownloadingTitle(name: String) {
         val data = synchronized(Logic) {
-            val totalSize = receivingBuffers[name]?.totalSize ?: 0L
-            val received = receivedBytes[name] ?: 0L
-            val totalCount = requiredMods?.size ?: 1
-            // 已完成 = 总数 - 队列中剩余（含当前正在下载的，故 done 从 1 起算）
+            val descriptor = modQueue?.firstOrNull { it.name == name }
+            val key = descriptor?.cacheKey().orEmpty()
+            val totalSize = descriptor?.payloadSize ?: 0L
+            val received = receivedBytes[key] ?: 0L
+            val totalCount = requiredDescriptors?.size ?: 1
             val remaining = modQueue?.size ?: 0
             val done = (totalCount - remaining).coerceIn(0, totalCount)
             DownloadProgressData(received, totalSize, totalCount, done)
@@ -551,47 +627,22 @@ object Logic : Initialization {
             UI.showNetworkDialog = true
         }
     }
-
-    //经过测试，分组效果不佳，暂时不使用
-    /*
-    fun onPathfindingOptimization(targetX: Float, targetY: Float, selectedUnits: List<GameUnit>): List<TargetPositionWithUnits> {
-//        val leftX = selectedUnits.minOf { it.x }
-//        val rightX = selectedUnits.maxOf { it.x }
-//        val topY = selectedUnits.minOf { it.y }
-//        val bottomY = selectedUnits.maxOf { it.y }
-        // 简单距离迭代，计算每个单位到其他单位的距离，并将距离较短的单位放入同一组
-        val groups = mutableListOf<TargetPositionWithUnits>()
-        val unassignedUnits = selectedUnits.toMutableList()
-        val maxDistance = 10
-        while (unassignedUnits.isNotEmpty()) {
-            val group = mutableListOf<GameUnit>()
-            groups.add(Triple(targetX.toDouble(), targetY.toDouble(), group))
-            group.add(unassignedUnits.removeAt(0))
-            for (i in unassignedUnits.indices) {
-                val unit = unassignedUnits[i]
-                val distance = sqrt((unit.x - group.last().x) * (unit.x - group.last().x) + (unit.y - group.last().y) * (unit.y - group.last().y))
-                if (distance <= maxDistance) {
-                    group.add(unassignedUnits.removeAt(i))
-                }
-            }
-        }
-
-        return groups
-    }
-    */
 }
 
-/**
- * 客户端侧单个 mod 的接收缓冲与元数据。
- */
+private data class HostPreparedManifest(
+    val client: Client,
+    val requestId: Long,
+    val sources: List<HostModTransferSource>,
+) {
+    fun release() = sources.forEach { it.release() }
+}
+
 private class ModReceiving(
     val buffer: ByteArrayOutputStream,
-    var totalSize: Long,
-    var sha256: String,
-    var totalChunks: Int,
+    val descriptor: NetworkModDescriptor,
+    val totalChunks: Int,
 )
 
-/** 下载进度快照：用于锁内取数据、锁外刷新 UI。 */
 private data class DownloadProgressData(
     val receivedBytes: Long,
     val totalBytes: Long,
