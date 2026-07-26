@@ -17,4 +17,8 @@ class GameI18nResolverImpl : BaseGameI18nResolverImpl() {
     override fun i18n(str: String, vararg args: Any?): String {
         return com.corrodinggames.rts.gameFramework.h.a.a(str, args)
     }
+
+    override fun refreshGameTranslations() {
+        runCatching { com.corrodinggames.rts.gameFramework.h.a.c() }
+    }
 }

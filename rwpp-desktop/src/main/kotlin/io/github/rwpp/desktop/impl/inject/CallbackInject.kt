@@ -16,6 +16,7 @@ import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
 import io.github.rwpp.inject.InterruptResult
+import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.ui.UI
 
 
@@ -34,11 +35,11 @@ object CallbackInject {
 
         UI.showQuestion(
             if(ae.b != null)
-                "Server Question"
-            else ae.e ?: "Password Required",
+                readI18n("multiplayer.serverQuestion")
+            else ae.e ?: readI18n("multiplayer.passwordRequired"),
             if(ae.b != null)
                 a.c(ae.b)
-            else "This server requires a password to join"
+            else readI18n("multiplayer.passwordRequiredMessage")
         ) {
             if (it == null) {
                 ae.a()

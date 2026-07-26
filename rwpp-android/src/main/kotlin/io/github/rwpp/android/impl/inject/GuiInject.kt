@@ -257,7 +257,7 @@ object GuiInject {
         }
 
         override fun a(): String? {
-            return "Show Attack Range"
+            return readI18n("settings.showAttackRange")
         }
 
         override fun compareTo(other: Any?): Int {
@@ -277,11 +277,11 @@ object GuiInject {
 
     object ShowAttackRangeBuilding : com.corrodinggames.rts.game.units.a.p("c_show_attack_range_building") {
         override fun b(): String? {
-            return "显示建筑攻击范围"
+            return readI18n("settings.showBuildingAttackRange")
         }
 
         override fun a(): String? {
-            return "Show Attack Range Building"
+            return readI18n("settings.showBuildingAttackRange")
         }
 
         override fun compareTo(other: Any?): Int {
@@ -299,11 +299,12 @@ object GuiInject {
     object ShowAttackRangeUnits : com.corrodinggames.rts.game.units.a.p("c_show_attack_range_units") {
 
         override fun b(): String? {
-            return "显示单位攻击范围\n${settings.showAttackRangeUnit}"
+            val rangeLabel = readI18n("settings.attackRange${settings.showAttackRangeUnit}")
+            return "${readI18n("settings.showUnitAttackRange")}\n$rangeLabel"
         }
 
         override fun a(): String? {
-            return "Show Attack Range Units"
+            return readI18n("settings.showUnitAttackRange")
         }
 
         override fun compareTo(other: Any?): Int {

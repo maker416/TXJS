@@ -39,7 +39,7 @@ object MainInject {
     ) {
         if(appKoin.get<Settings>().showWelcomeMessage != true) return
         val rwOutputStream = RwOutputStream()
-        rwOutputStream.c(welcomeMessage)
+        rwOutputStream.c(welcomeMessage())
         rwOutputStream.c(3)
         rwOutputStream.b("RWPP")
         rwOutputStream.a(null as c?)

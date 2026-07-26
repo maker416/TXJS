@@ -11,6 +11,7 @@ import io.github.rwpp.command.CommandHandler
 import io.github.rwpp.command.CommandHandler.Command
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.Player
+import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.rwpp_core_api.BuildConfig
 import org.koin.core.Koin
 import org.slf4j.Logger
@@ -48,15 +49,8 @@ var koinInit = false
  */
 lateinit var appKoin: Koin
 
-val welcomeMessage =
-    """
-        这是一个使用[RWPP]所创建的房间
-        [RWPP]是在github上开源的多平台RW启动器, 支持多种拓展功能
-        QQ交流群: 927597495
-        开源地址请访问 https://github.com/Minxyzgo/RWPP 
-        当前版本: $projectVersion (core $coreVersion)
-        Copyright 2023-2025 RWPP contributors
-    """.trimIndent()
+/** 开房欢迎语，随界面语言切换（{0}=projectVersion, {1}=coreVersion）。 */
+fun welcomeMessage(): String = readI18n("multiplayer.welcomeMessage", io.github.rwpp.i18n.I18nType.RWPP, projectVersion, coreVersion)
 
 const val packageName = "io.github.rwpp"
 
@@ -114,6 +108,23 @@ val resOutputDir by lazy {
 
 val mapDir by lazy {
     appKoin.get<AppContext>().externalStoragePath("maps/")
+}
+
+/**
+ * 引擎实际扫描的自定义地图目录。
+ *
+ * - Desktop：`mods/maps/`（与房间选图前缀、启动清理一致）
+ * - Android：与 [mapDir] 相同（`rustedWarfare/maps/`）
+ *
+ * 导入 / 管理 / 资源下载应写入此目录，否则 Desktop 上写入 [mapDir] 后列表扫不到。
+ */
+val customMapDir by lazy {
+    val ctx = appKoin.get<AppContext>()
+    if (ctx.isDesktop()) {
+        ctx.externalStoragePath("mods/maps/")
+    } else {
+        mapDir
+    }
 }
 
 val modDir by lazy {

@@ -7,6 +7,7 @@
 
 package io.github.rwpp.config
 
+import io.github.rwpp.i18n.LanguageHelper
 import kotlinx.serialization.Serializable
 import org.koin.core.annotation.Single
 
@@ -71,5 +72,14 @@ data class Settings(
             enableAnimations = false
             configVersion = 1
         }
+        if (configVersion!! < 2) {
+            // v2: language 成为唯一真相源；旧版仅有 forceEnglish=true 时迁移为英文
+            if (forceEnglish && language == "zh") {
+                language = "en"
+            }
+            configVersion = 2
+        }
+        // 每次加载都让 Settings.forceEnglish 与 language（含 auto）解析结果对齐
+        LanguageHelper.applyToSettings(this)
     }
 }

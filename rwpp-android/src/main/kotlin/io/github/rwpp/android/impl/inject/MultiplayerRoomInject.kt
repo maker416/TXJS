@@ -19,6 +19,7 @@ import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
 import io.github.rwpp.inject.InterruptResult
+import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.ui.UI
 
 @InjectClass(MultiplayerBattleroomActivity::class)
@@ -48,9 +49,9 @@ object MultiplayerRoomInject {
 
         UI.showQuestion(
             if(ao.b != null)
-                "Server Question"
-            else ao.e ?: "Password Required",
-            message ?: "This server requires a password to join"
+                readI18n("multiplayer.serverQuestion")
+            else ao.e ?: readI18n("multiplayer.passwordRequired"),
+            message ?: readI18n("multiplayer.passwordRequiredMessage")
         ) {
             if (it == null) {
                 val game = appKoin.get<Game>()

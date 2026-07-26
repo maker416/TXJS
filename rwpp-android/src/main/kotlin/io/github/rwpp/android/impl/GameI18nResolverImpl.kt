@@ -21,4 +21,8 @@ class GameI18nResolverImpl : BaseGameI18nResolverImpl() {
             "[$str]"
         }
     }
+
+    override fun refreshGameTranslations() {
+        runCatching { com.corrodinggames.rts.gameFramework.h.a.c() }
+    }
 }

@@ -32,6 +32,7 @@ import io.github.rwpp.config.Settings
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.external.ExternalHandler
+import io.github.rwpp.i18n.GameI18nResolver
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import com.eclipsesource.json.Json
@@ -58,17 +59,21 @@ fun SettingsView(
     onChangeBackgroundImage: (String) -> Unit,
     onExit: () -> Unit
 ) {
+    val configIO = koinInject<ConfigIO>()
+    val appContext = koinInject<AppContext>()
+    val settings = koinInject<Settings>()
+    val i18nResolver = koinInject<GameI18nResolver>()
+
     BackHandler(true, onExit)
+    // 进入设置页时对齐启动器 language 与游戏 forceEnglish，避免混用 I18nType.RW / RWPP 时中英夹杂
+    LaunchedEffect(Unit) {
+        runCatching { i18nResolver.syncGameLanguage() }
+    }
     DisposableEffect(Unit) {
         onDispose {
             CloseUIPanelEvent("settings").broadcastIn()
         }
     }
-
-    val configIO = koinInject<ConfigIO>()
-    val appContext = koinInject<AppContext>()
-    val settings = koinInject<Settings>()
-
 
     var backgroundImagePath by remember { mutableStateOf(settings.backgroundImagePath ?: "") }
     var showRestartHint by remember { mutableStateOf(false) }
@@ -203,8 +208,8 @@ fun SettingsView(
                                             ) { index, _ ->
                                                 selectedLanguageIndex = index
                                                 settings.language = languageKeys[index]
-                                                settings.forceEnglish = languageKeys[index] == "en"
-                                                configIO.setGameConfig("forceEnglish", languageKeys[index] == "en")
+                                                i18nResolver.syncGameLanguage()
+                                                i18nResolver.reloadBundle()
                                                 showRestartHint = true
                                             }
                                             SettingsSwitchComp("showUnitGroups", "unitGroupInterface")
@@ -228,15 +233,24 @@ fun SettingsView(
                                                 valueFormat = { "${(it * 10).roundToInt()}" },
                                             )
                                             if (appContext.isDesktop()) {
-                                                val list = remember { listOf("Default", "Software", "OpenGL") }
-                                                var selectedIndex by remember { mutableStateOf(list.indexOf(settings.renderingBackend)) }
+                                                val backendKeys = remember { listOf("Default", "Software", "OpenGL") }
+                                                val backendLabels = remember {
+                                                    listOf(
+                                                        readI18n("settings.renderingBackendDefault"),
+                                                        readI18n("settings.renderingBackendSoftware"),
+                                                        readI18n("settings.renderingBackendOpenGL"),
+                                                    )
+                                                }
+                                                var selectedIndex by remember {
+                                                    mutableStateOf(backendKeys.indexOf(settings.renderingBackend).coerceAtLeast(0))
+                                                }
 
                                                 SettingsDropDown(
                                                     "renderingBackend",
-                                                    list,
+                                                    backendLabels,
                                                     selectedIndex
-                                                ) { index, backend ->
-                                                    settings.renderingBackend = list[index]
+                                                ) { index, _ ->
+                                                    settings.renderingBackend = backendKeys[index]
                                                     selectedIndex = index
                                                 }
                                             }
@@ -265,11 +279,20 @@ fun SettingsView(
                                                 settings.showUnitTargetLine = it
                                             }
 
-                                            val list = listOf("Zero", "Keep", "Unlimited")
-                                            var selectedIndex by remember { mutableIntStateOf(list.indexOf(settings.effectLimitForAllEffects)) }
-                                            SettingsDropDown("effectLimitForAllEffects", list, selectedIndex) { index, type ->
+                                            val effectKeys = remember { listOf("Zero", "Keep", "Unlimited") }
+                                            val effectLabels = remember {
+                                                listOf(
+                                                    readI18n("settings.effectLimitZero"),
+                                                    readI18n("settings.effectLimitKeep"),
+                                                    readI18n("settings.effectLimitUnlimited"),
+                                                )
+                                            }
+                                            var selectedIndex by remember {
+                                                mutableIntStateOf(effectKeys.indexOf(settings.effectLimitForAllEffects).coerceAtLeast(0))
+                                            }
+                                            SettingsDropDown("effectLimitForAllEffects", effectLabels, selectedIndex) { index, _ ->
                                                 selectedIndex = index
-                                                settings.effectLimitForAllEffects = type
+                                                settings.effectLimitForAllEffects = effectKeys[index]
                                             }
 
 //                                            SettingsSwitchComp(
@@ -375,11 +398,16 @@ fun SettingsView(
                                         }
 
                                         SettingsGroup("", readI18n("settings.units")) {
-                                            val list = Settings.unitAttackRangeTypes
-                                            var selectedIndex by remember { mutableIntStateOf(list.indexOf(settings.showAttackRangeUnit)) }
-                                            SettingsDropDown("showAttackRange", list, selectedIndex) { index, type ->
+                                            val rangeKeys = Settings.unitAttackRangeTypes
+                                            val rangeLabels = remember {
+                                                rangeKeys.map { readI18n("settings.attackRange$it") }
+                                            }
+                                            var selectedIndex by remember {
+                                                mutableIntStateOf(rangeKeys.indexOf(settings.showAttackRangeUnit).coerceAtLeast(0))
+                                            }
+                                            SettingsDropDown("showAttackRange", rangeLabels, selectedIndex) { index, _ ->
                                                 selectedIndex = index
-                                                settings.showAttackRangeUnit = type
+                                                settings.showAttackRangeUnit = rangeKeys[index]
                                             }
                                         }
 
@@ -404,7 +432,8 @@ fun SettingsView(
                                     "developer" -> SettingsGroup("developer") {
                                         SettingsSwitchComp("showFps")
                                         SettingsSwitchComp(
-                                            "Show Welcome Message",
+                                            "showWelcomeMessage",
+                                            readI18n("settings.showWelcomeMessage"),
                                             defaultValue = settings.showWelcomeMessage ?: false
                                         ) { settings.showWelcomeMessage = it }
                                     }

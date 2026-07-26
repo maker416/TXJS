@@ -14,4 +14,20 @@ interface GameI18nResolver : Initialization, KoinComponent {
      * Read RW translations (not RWPP)
      */
     fun i18n(str: String, vararg args: Any?): String
+
+    /**
+     * 按 [io.github.rwpp.config.Settings.language] 对齐 [io.github.rwpp.config.Settings.forceEnglish]，
+     * 并在游戏引擎可用时写入 SettingsEngine.forceEnglish。
+     */
+    fun syncGameLanguage()
+
+    /**
+     * 按当前语言重新加载 RWPP bundle（清空缓存后再次 [init]）。
+     */
+    fun reloadBundle()
+
+    /**
+     * 刷新游戏引擎翻译缓存（如 `h.a.c()`）。引擎未就绪时忽略。
+     */
+    fun refreshGameTranslations()
 }
