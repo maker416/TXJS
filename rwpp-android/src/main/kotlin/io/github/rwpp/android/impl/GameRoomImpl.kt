@@ -67,7 +67,8 @@ class GameRoomImpl(private val game: GameImpl) : GameRoom {
         set(value) {
             lastMapPath = null
             if (isHostServer) {
-                GameEngine.t().bU.i("-map" + com.corrodinggames.rts.gameFramework.e.a.q(LevelSelectActivity.convertLevelFileNameForDisplay(value.mapName)) + "'")
+                // 与原版一致：-map <展示名>（去掉 [p2] 等文件名前缀）
+                GameEngine.t().bU.i("-map ${value.displayName()}")
             } else {
                 GameEngine.t().bU.aB = getMapRealPath(value)
                 GameEngine.t().bU.aA.a = com.corrodinggames.rts.gameFramework.j.at.entries[value.mapType.ordinal]

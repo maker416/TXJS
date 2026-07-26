@@ -19,6 +19,7 @@ import io.github.rwpp.appKoin
 import io.github.rwpp.extensionPath
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.ui.ModsMapsTab
 import io.github.rwpp.ui.UI
 import org.koin.core.error.DefinitionOverrideException
 import java.io.File
@@ -73,6 +74,8 @@ class ExternalHelperActivity : AppCompatActivity() {
                         "/storage/emulated/0/rustedWarfare/replays/"
                     } else if (dataString.endsWith(".tmx")) {
                         endsAction = {
+                            UI.pendingModsMapsTab = ModsMapsTab.Maps
+                            UI.showModsView = true
                             UI.showWarning(
                                 readI18n("android.importMap", I18nType.RWPP, fileName)
                             )

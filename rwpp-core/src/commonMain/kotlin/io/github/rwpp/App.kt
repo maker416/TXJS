@@ -307,7 +307,7 @@ fun App(
                     enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
                     exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
                 ) {
-                    ModsView { showModsView = false }
+                    ModsAndMapsView { showModsView = false }
                 }
 
                 AnimatedVisibility(
@@ -407,22 +407,27 @@ fun App(
                     ) {
                         Column(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             Icon(
                                 Icons.Default.Warning,
                                 null,
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(46.dp)
+                                modifier = Modifier.size(42.dp)
                             )
-                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                readI18n("common.notice"),
+                                color = MaterialTheme.colorScheme.primary,
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.headlineSmall,
+                            )
                             Text(
                                 UI.warning?.reason ?: "",
                                 color = MaterialTheme.colorScheme.onSurface,
                                 textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.bodyLarge
+                                style = MaterialTheme.typography.bodyMedium,
                             )
-                            Spacer(modifier = Modifier.height(16.dp))
                             RWTextButton(readI18n("common.ok"), onClick = dismiss)
                         }
                     }

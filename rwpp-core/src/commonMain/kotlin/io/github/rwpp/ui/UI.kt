@@ -98,6 +98,11 @@ object UI : Initialization, IUserInterface {
     var showReplayView by mutableStateOf(false)
     var showSettingsView by mutableStateOf(false)
     var showModsView by mutableStateOf(false)
+    /**
+     * 打开「模组与地图」页时的初始 tab；消费一次后清空。
+     * 供 Android `.tmx` 深链等场景直达地图管理。
+     */
+    var pendingModsMapsTab by mutableStateOf<ModsMapsTab?>(null)
     var showRoomView by mutableStateOf(false)
     var showExtensionView by mutableStateOf(false)
     var showResourceBrowser by mutableStateOf(false)
@@ -342,7 +347,7 @@ open class UIProvider {
                             modifier = Modifier.weight(1f)
                         )
                         MainMenuAction(
-                            readI18n("menu.mods"),
+                            readI18n("menu.modsAndMaps"),
                             onClick = mods,
                             modifier = Modifier.weight(1f)
                         )
