@@ -111,6 +111,18 @@ task("packageWixDistribution") {
             "C:\\Program Files\\dotnet",
             "${System.getProperty("user.home")}\\.dotnet\\tools"
         ).joinToString(";")
+
+        // 一体包游戏根：RW_GAME_ROOT > packaging/game-root.local.txt > 默认 Steam 路径
+        val gameRoot = resolveRwGameRoot(rootProject.rootDir)
+        val gameLib = File(gameRoot, "game-lib.jar")
+        if (!gameLib.isFile) {
+            throw GradleException(
+                "一体包需要原版游戏目录（缺少 game-lib.jar）: $gameRoot\n" +
+                    "请设置环境变量 RW_GAME_ROOT，或在 packaging/game-root.local.txt 写入路径。"
+            )
+        }
+        logger.lifecycle("RW game root for MSI: $gameRoot")
+
         val pb = ProcessBuilder(
             "cmd", "/c",
             "dotnet run --project=\"${rootProject.rootDir.absolutePath}\\wix\" $guid ${rootProject.version}"
@@ -118,6 +130,7 @@ task("packageWixDistribution") {
         pb.directory(rootProject.rootDir)
         pb.environment()["PATH"] = "${pb.environment()["PATH"]};$extPath"
         pb.environment()["WIXTOOLS_ACCEPT_OSMF_EULA"] = "true"
+        pb.environment()["RW_GAME_ROOT"] = gameRoot
         val process = pb.start()
 
         val stdout = Thread {
@@ -137,6 +150,23 @@ task("packageWixDistribution") {
             throw GradleException("dotnet run exited with code $exitCode")
         }
     }
+}
+
+fun resolveRwGameRoot(rootDir: File): String {
+    val fromEnv = System.getenv("RW_GAME_ROOT")?.trim()?.trim('"')
+    if (!fromEnv.isNullOrEmpty()) {
+        return File(fromEnv).canonicalPath
+    }
+    val localFile = File(rootDir, "packaging/game-root.local.txt")
+    if (localFile.isFile) {
+        val line = localFile.readLines()
+            .map { it.trim() }
+            .firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
+        if (!line.isNullOrEmpty()) {
+            return File(line.trim('"')).canonicalPath
+        }
+    }
+    return File("""D:\APP\Steam\steamapps\common\Rusted Warfare""").canonicalPath
 }
 
 

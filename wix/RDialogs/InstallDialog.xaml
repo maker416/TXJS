@@ -7,7 +7,7 @@
     xmlns:wixsharp="clr-namespace:WixSharp.UI.WPF;assembly=WixSharp.UI.WPF"
     d:DesignHeight="408"
     d:DesignWidth="512"
-    DialogTitle="选择原版铁锈战争游戏目录"
+    DialogTitle="选择安装目录"
     mc:Ignorable="d">
     <Grid x:Name="Root">
         <Grid.RowDefinitions>
@@ -40,12 +40,12 @@
                         Grid.Column="0"
                         FontSize="12"
                         FontWeight="Bold"
-                        Text="选择原版铁锈战争游戏目录" />
+                        Text="选择安装目录" />
                     <TextBlock
                         x:Name="DialogDescription"
                         Margin="17,5"
                         VerticalAlignment="Stretch"
-                        Text="RWJS 是启动器，请把它安装到原版 Rusted Warfare 根目录。示例：D:\APP\Steam\steamapps\common\Rusted Warfare"
+                        Text="RWJS 一体包已包含原版游戏运行时，可安装到任意目录。默认：C:\Program Files\Minxyzgo\RWJS"
                         TextWrapping="Wrap" />
                 </StackPanel>
             </Grid>
@@ -54,7 +54,7 @@
         <StackPanel Grid.Row="1" Margin="20,10">
             <TextBlock
                 MinHeight="58"
-                Text="请确认下面路径是原版游戏目录。安装器会检测 steam_appid、原版 exe、game-lib.jar、assets/res/libs 等特征；至少命中一个即可继续。"
+                Text="安装目录将同时包含启动器（RWJS.exe）、捆绑 JVM（runtime）以及原版游戏资源（assets、libs、game-lib.jar 等）。"
                 TextWrapping="Wrap" />
             <TextBox
                 x:Name="InstallDirPath"

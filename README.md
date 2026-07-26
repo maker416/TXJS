@@ -53,7 +53,7 @@
 
 - 使用 **OpenJDK 17** 或以上。
 - 桌面端可执行任务：`rwpp-desktop:packageReleaseUberJarForCurrentOS`
-- 构建 MSI：执行任务 `rwpp-desktop:packageWixDistribution`（需安装 .NET SDK）
+- 构建 MSI 一体包：执行任务 `rwpp-desktop:packageWixDistribution`（需 .NET SDK + 本机原版游戏目录；见 `packaging/README.md`）
 - Android 端若缺少部分 assets/res，可从本机已安装的铁锈战争客户端中对照补齐。
 
 <h1 align="center">参与贡献</h1>

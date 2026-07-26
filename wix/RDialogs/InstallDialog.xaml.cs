@@ -105,8 +105,8 @@ namespace RSetup.RDialogs
             using (var dialog = new System.Windows.Forms.FolderBrowserDialog
             {
                 SelectedPath = InstallDirPath,
-                Description = @"请选择原版 Rusted Warfare 游戏根目录，例如 D:\APP\Steam\steamapps\common\Rusted Warfare",
-                ShowNewFolderButton = false
+                Description = @"请选择 RWJS 安装目录（一体包，可任选目录）",
+                ShowNewFolderButton = true
             })
             {
                 if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
@@ -119,10 +119,11 @@ namespace RSetup.RDialogs
 
         public void GoNext()
         {
-            if (!RustedWarfareInstallDir.TryFindOriginalFeature(InstallDirPath, out string normalized, out string feature, out string reason))
+            string normalized = RustedWarfareInstallDir.Normalize(InstallDirPath);
+            if (string.IsNullOrEmpty(normalized))
             {
                 System.Windows.MessageBox.Show(
-                    RustedWarfareInstallDir.BuildInvalidPathMessage(InstallDirPath, reason),
+                    "请选择有效的安装目录。",
                     "安装路径错误",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);

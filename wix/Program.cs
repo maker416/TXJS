@@ -34,9 +34,13 @@ namespace RSetup
             //使用release的distribution, 需要先运行gradle task
             var appDir = $@"rwpp-desktop\build\compose\binaries\main-release\app\{ProductName}";
 
-            var appFeature = new Feature("App", $"{ProductName}运行的主要部分", true, false);
+            // 一体包：从本机原版游戏目录暂存运行时本体（不进 Git）
+            string gameRoot = GamePayload.ResolveGameRoot(RootDir);
+            GamePayload.Stage(RootDir, gameRoot);
+
+            var appFeature = new Feature("App", $"{ProductName}运行的主要部分（含原版游戏本体）", true, false);
             var jvmFeature = new Feature("Jvm64", $"{ProductName}运行时Jvm", true, true);
-            var steamFeature = new Feature("Steam", $"{ProductName}对Steam的支持", false, true);
+            var steamFeature = new Feature("Steam", $"用{ProductName}替换原版 64 位 exe（便于快捷方式/Steam 启动）", false, true);
             
             appFeature.Add(steamFeature);
 
@@ -45,12 +49,16 @@ namespace RSetup
             {
                 return !str.Contains("skiko-awt-runtime-macos") && !str.Contains("skiko-awt-runtime-linux");
             };
+
+            // 游戏本体已暂存到 build/tmp/game-payload，与启动器并列安装到 INSTALLDIR
             var entities = new WixEntity[]
             {
                 new WixSharp.File(appFeature, $@"{appDir}\{ProductName}.exe"),
                 new WixSharp.File(appFeature, @"rwpp-desktop\logo.ico"),
                 new Dir(appFeature, "app", appFiles),
                 new Dir(jvmFeature, "runtime", new Files($@"{appDir}\runtime\*")),
+                // 相对 SourceBaseDir（仓库根），由 GamePayload.Stage 预先生成
+                new Files(appFeature, @"build\tmp\game-payload\*"),
             };
 
             var project = new ManagedProject(ProductName,
@@ -88,7 +96,7 @@ namespace RSetup
                 info.ProductIcon = $@"{RootDir}\rwpp-desktop\logo.ico";
                 info.Contact = "RWJS Contributors";
                 info.Manufacturer = "Minxyzgo";
-                info.Comments = "Multiplatform launcher for Rusted Warfare";
+                info.Comments = "Standalone RWJS installer with licensed Rusted Warfare runtime";
             });
             project.Properties = new[]
             {
@@ -383,17 +391,18 @@ namespace RSetup
             if (!e.IsInstalling && !e.IsModifying && !e.IsRepairing)
                 return;
 
+            // 一体包可安装到任意目录，不再强制原版 Steam 游戏根目录
             string installDir = ResolveSessionInstallDir(e);
-            if (RustedWarfareInstallDir.TryFindOriginalFeature(installDir, out string normalized, out string feature, out string reason))
+            string normalized = NormalizeInstallDir(installDir);
+            if (string.IsNullOrEmpty(normalized))
             {
-                WriteInstallLog($"Install dir validation passed: {normalized}, feature={feature}");
-                e.InstallDir = normalized;
+                WriteInstallLog("Install dir validation failed: empty path");
+                e.Result = ActionResult.Failure;
                 return;
             }
 
-            string message = RustedWarfareInstallDir.BuildInvalidPathMessage(installDir, reason);
-            WriteInstallLog($"Install dir validation failed: {message.Replace(Environment.NewLine, " | ")}");
-            e.Result = ActionResult.Failure;
+            WriteInstallLog($"Install dir accepted (standalone bundle): {normalized}");
+            e.InstallDir = normalized;
         }
 
         private static string ResolveSessionInstallDir(SetupEventArgs e)
@@ -452,17 +461,8 @@ namespace RSetup
                 return;
             }
 
-            // 首次安装：自动搜寻 Rusted Warfare 路径作为默认安装目录
-            var rwDir = checkInstalled("Rusted Warfare - RTS");
-            if (RustedWarfareInstallDir.TryFindOriginalFeature(rwDir, out string normalizedRwDir, out string feature, out string reason))
-            {
-                e.InstallDir = normalizedRwDir;
-                WriteInstallLog($"Detected Rusted Warfare install dir: {normalizedRwDir}, feature={feature}");
-            }
-            else if (!string.IsNullOrWhiteSpace(rwDir))
-            {
-                WriteInstallLog($"Ignored Rusted Warfare registry dir because validation failed: {rwDir}; {reason}");
-            }
+            // 首次安装：使用独立默认目录（Program Files），不再写入 Steam 原版目录
+            WriteInstallLog($"Standalone install default dir={e.InstallDir}");
         }
 
         private static void Msi_AfterInstall(SetupEventArgs e)

@@ -108,10 +108,11 @@ namespace RSetup
         public static string BuildInvalidPathMessage(string path, string reason)
         {
             string normalized = Normalize(path) ?? path ?? string.Empty;
-            return "请选择原版铁锈战争（Rusted Warfare）的游戏根目录。\n\n" +
+            // 保留给诊断/兼容旧逻辑；一体包安装不再强制原版目录
+            return "安装路径无效。\n\n" +
                    $"当前路径: {normalized}\n" +
                    $"原因: {reason}\n\n" +
-                   @"示例: D:\APP\Steam\steamapps\common\Rusted Warfare";
+                   @"一体包可安装到任意目录，例如: C:\Program Files\Minxyzgo\RWJS";
         }
 
         private static bool HasSteamAppId(string normalized)

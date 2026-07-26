@@ -44,6 +44,10 @@ skills-lock.json
 # List server
 /listserver/
 
+# PC 一体包：本机游戏根路径与暂存目录（游戏本体不进仓库）
+/packaging/game-root.local.txt
+/build/tmp/game-payload/
+
 # Desktop runtime (user.dir when developing from repo root)
 /generated_lib/
 /extension/
