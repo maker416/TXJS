@@ -13,6 +13,7 @@ import io.github.rwpp.event.EventPriority
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.events.DisconnectEvent
 import io.github.rwpp.event.events.GameLoadedEvent
+import io.github.rwpp.event.events.HostGameEvent
 import io.github.rwpp.event.events.ModCheckEvent
 import io.github.rwpp.event.events.PlayerJoinEvent
 import io.github.rwpp.event.events.PlayerLeaveEvent
@@ -22,6 +23,9 @@ import io.github.rwpp.game.mod.Mod
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.game.mod.NetworkModCache
 import io.github.rwpp.game.mod.NetworkModDescriptor
+import io.github.rwpp.i18n.GameI18nResolver
+import io.github.rwpp.i18n.I18nType
+import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.io.HashUtils
 import io.github.rwpp.io.SizeUtils
 import io.github.rwpp.logger
@@ -43,6 +47,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.LinkedList
 
 object Logic : Initialization {
@@ -112,9 +117,9 @@ object Logic : Initialization {
                     val stillWaiting = synchronized(Logic) { currentRequestId == requestId && requiredDescriptors == null }
                     if (stillWaiting) {
                         cleanupTransfer()
-                        room.disconnect("Mod manifest request timed out.")
+                        room.disconnect(readI18n("mod.manifestTimeout"))
                         withContext(Dispatchers.Main.immediate) {
-                            UI.showWarning("Mod manifest request timed out.", true)
+                            UI.showWarning(readI18n("mod.manifestTimeout"), true)
                         }
                     }
                 }
@@ -132,9 +137,22 @@ object Logic : Initialization {
             synchronized(Logic) { hostPreparedManifests.remove(c)?.release() }
         }
 
+        GlobalEventChannel.filter(HostGameEvent::class).subscribeAlways(priority = EventPriority.MONITOR) {
+            scope.launch(Dispatchers.IO) {
+                val remaining = appKoin.get<ModManager>().getAllMods().filter { it.isNetworkMod && it.isEnabled }
+                if (remaining.isNotEmpty()) {
+                    logger.warn("[MODSYNC-HOST] network cache mods still enabled after hosting: ${remaining.map { it.name }}")
+                    abortHostDueToNetworkMods()
+                }
+            }
+        }
+
         GlobalEventChannel.filter(GameLoadedEvent::class).subscribeAlways {
             val game = appKoin.get<Game>()
             val settings = appKoin.get<Settings>()
+
+            // 引擎就绪后把 language 解析结果写入 SettingsEngine.forceEnglish，避免启动器/游戏双轨不同步
+            runCatching { appKoin.get<GameI18nResolver>().syncGameLanguage() }
 
             when (settings.effectLimitForAllEffects) {
                 "Zero" -> game.setEffectLimitForAllEffects(0)
@@ -148,6 +166,31 @@ object Logic : Initialization {
         synchronized(Logic) {
             return ++playerCount
         }
+    }
+
+    /**
+     * 开房前禁用所有已启用的网络缓存模组（`*.network.rwmod`），并重建单位表。
+     *
+     * 使用 [ModManager.modReload] 的 forceImmediate，避免开房 Loading 阶段主循环尚未启动时
+     * [ModManager.modSaveChange] 投递到游戏线程后永久等待。
+     *
+     * @return 是否实际禁用了至少一个网络模组。
+     */
+    suspend fun disableNetworkModsBeforeHosting(): Boolean {
+        val manager = appKoin.get<ModManager>()
+        val mods = manager.getAllMods()
+        val networkEnabled = mods.filter { it.isNetworkMod && it.isEnabled }
+        if (networkEnabled.isEmpty()) return false
+
+        logger.info(
+            "[MODSYNC-HOST] disabling network cache mods before hosting: ${networkEnabled.map { it.name }}"
+        )
+        val enabledByFileName = mods.associate { mod ->
+            File(mod.path).name.lowercase() to (mod.isEnabled && !mod.isNetworkMod)
+        }
+        networkEnabled.forEach { it.isEnabled = false }
+        manager.modReload(forceImmediate = true, enabledByFileName = enabledByFileName)
+        return true
     }
 
     fun registerListeners() {
@@ -183,6 +226,20 @@ object Logic : Initialization {
             val room = game.gameRoom
             if (!room.isHost) return@registerPacketListener true
             val conn = client ?: return@registerPacketListener true
+            // 模组同步一开始就标记未就绪，覆盖「本地/缓存全命中」不发下载请求的窗口；
+            // 直到客户端发来 ModReloadFinish 才恢复 ready，避免房主抢先开局。
+            val requestingPlayer = room.getPlayerByClient(conn)
+            if (requestingPlayer != null) {
+                synchronized(Logic) { requestingPlayer.data.ready = false }
+                logger.info(
+                    "[MODSYNC-HOST] ManifestRequest from ${requestingPlayer.name}, " +
+                        "requestId=${packet.requestId}, set ready=false"
+                )
+            } else {
+                logger.warn(
+                    "[MODSYNC-HOST] ManifestRequest from unknown client, requestId=${packet.requestId}"
+                )
+            }
             scope.launch(Dispatchers.IO) {
                 val response = runCatching {
                     prepareHostManifest(conn, packet.requestId, packet.requiredNames)
@@ -236,15 +293,17 @@ object Logic : Initialization {
             manifestTimeoutJob?.cancel()
             if (!packet.success) {
                 cleanupTransfer()
-                room.disconnect(packet.errorMessage.ifBlank { "Mod manifest failed." })
+                room.disconnect(packet.errorMessage.ifBlank { readI18n("mod.manifestFailed") })
                 return@registerPacketListener true
             }
             scope.launch(Dispatchers.IO) {
                 runCatching { handleManifestResponse(packet, gen, room, net) }.onFailure {
                     logger.error("[MODSYNC] manifest handling failed: ${it.stackTraceToString()}")
                     cleanupTransfer()
-                    room.disconnect("Mod manifest failed.")
-                    withContext(Dispatchers.Main.immediate) { UI.showWarning("Mod manifest failed: ${it.message}", true) }
+                    room.disconnect(readI18n("mod.manifestFailed"))
+                    withContext(Dispatchers.Main.immediate) {
+                        UI.showWarning(readI18n("mod.manifestFailedDetail", I18nType.RWPP, it.message.orEmpty()), true)
+                    }
                 }
             }
             true
@@ -295,9 +354,9 @@ object Logic : Initialization {
                 }.onFailure {
                     logger.error("[MODSYNC] handleChunk FAILED: ${it.stackTraceToString()}")
                     cleanupTransfer()
-                    room.disconnect("Mod download failed.")
+                    room.disconnect(readI18n("mod.downloadFailed"))
                     withContext(Dispatchers.Main.immediate) {
-                        UI.showWarning("Mod download failed: ${it.stackTraceToString()}", true)
+                        UI.showWarning(readI18n("mod.downloadFailedDetail", I18nType.RWPP, it.stackTraceToString()), true)
                     }
                 }
             }
@@ -339,6 +398,14 @@ object Logic : Initialization {
     private fun prepareHostManifest(client: Client, requestId: Long, requiredNames: List<String>): HostPreparedManifest {
         val manager = appKoin.get<ModManager>()
         val enabled = manager.getAllMods().filter { it.isEnabled && it.name in requiredNames }
+        val networkMods = enabled.filter { it.isNetworkMod }
+        if (networkMods.isNotEmpty()) {
+            logger.warn(
+                "[MODSYNC-HOST] refused to transfer network cache mods: ${networkMods.map { it.name }}"
+            )
+            abortHostDueToNetworkMods()
+            throw IllegalStateException("Network cache mods cannot be transferred when hosting")
+        }
         val byName = enabled.groupBy { it.name }
         val sources = requiredNames.distinct().map { name ->
             val candidates = byName[name].orEmpty()
@@ -348,6 +415,20 @@ object Logic : Initialization {
             HostModTransferSource(NetworkModDescriptor.fromBytes(mod.name, bytes), bytes)
         }
         return HostPreparedManifest(client, requestId, sources)
+    }
+
+    private fun abortHostDueToNetworkMods() {
+        hostModTransferScheduler.cancelAll()
+        synchronized(Logic) {
+            hostPreparedManifests.values.forEach { it.release() }
+            hostPreparedManifests.clear()
+        }
+        val message = readI18n("multiplayer.networkModHostBlocked")
+        val room = appKoin.get<Game>().gameRoom
+        scope.launch(Dispatchers.Main.immediate) {
+            UI.showWarning(message, true)
+        }
+        room.disconnect(message)
     }
 
     private suspend fun handleManifestResponse(packet: ModPacket.ManifestResponsePacket, requestId: Long, room: GameRoom, net: Net) {
@@ -365,7 +446,16 @@ object Logic : Initialization {
         val localMatches = findLocalMatchKeys(manager.getAllMods(), descriptors, cache)
         val missing = descriptors.filter { descriptor -> descriptor.cacheKey() !in localMatches }
         if (missing.isEmpty()) {
-            logger.info("[MODSYNC] all required mods matched locally/cache, finalizing without download")
+            // 仍发送空下载请求：房主侧据此保持 ready=false，并释放已预读的 manifest 字节；
+            // 随后 finalizeModSync → ModReloadFinish 才把 ready 置回 true。
+            logger.info(
+                "[MODSYNC] all required mods matched locally/cache, " +
+                    "notifying host with empty download request then finalizing"
+            )
+            net.sendPacketToServer(ModPacket.RequestPacket().apply {
+                this.requestId = requestId
+                requestedDescriptors = emptyList()
+            })
             finalizeModSync(requestId, descriptors, net)
             return
         }
@@ -472,8 +562,10 @@ object Logic : Initialization {
         val actualHash = HashUtils.sha256(fullBytes)
         if (!actualHash.equals(descriptor.normalizedSha256, ignoreCase = true)) {
             cleanupTransfer()
-            room.disconnect("Mod integrity check failed.")
-            withContext(Dispatchers.Main.immediate) { UI.showWarning("Mod integrity check failed: ${descriptor.name}", true) }
+            room.disconnect(readI18n("mod.integrityFailed"))
+            withContext(Dispatchers.Main.immediate) {
+                UI.showWarning(readI18n("mod.integrityFailedDetail", I18nType.RWPP, descriptor.name), true)
+            }
             return
         }
 
@@ -515,9 +607,9 @@ object Logic : Initialization {
         val matched = findLocalMatchKeys(mods, descriptors, cache)
         if (!descriptors.all { it.cacheKey() in matched }) {
             cleanupTransfer()
-            appKoin.get<Game>().gameRoom.disconnect("Mod download failed.")
+            appKoin.get<Game>().gameRoom.disconnect(readI18n("mod.downloadFailed"))
             withContext(Dispatchers.Main.immediate) {
-                UI.showWarning("Mod download failed: required mods were not found.", true)
+                UI.showWarning(readI18n("mod.downloadFailedMissing"), true)
             }
             return
         }
@@ -590,8 +682,13 @@ object Logic : Initialization {
         val totalSize = queueSnapshot.sumOf { it.payloadSize }
         val totalCount = synchronized(Logic) { requiredDescriptors?.size ?: queueSnapshot.size.coerceAtLeast(1) }
         withContext(Dispatchers.Main.immediate) {
-            UI.receivingNetworkDialogTitle =
-                "Downloading ${current?.name.orEmpty()}. total: ${SizeUtils.byteToMB(totalSize)}MB. (0/?)"
+            UI.receivingNetworkDialogTitle = readI18n(
+                "mod.downloadingTitleStart",
+                I18nType.RWPP,
+                current?.name.orEmpty(),
+                SizeUtils.byteToMB(totalSize).toString(),
+                totalCount.toString(),
+            )
             UI.receivingModName = current?.name.orEmpty()
             UI.receivingModProgress = 0f
             UI.receivingModReceivedBytes = 0L
@@ -616,8 +713,15 @@ object Logic : Initialization {
         val (received, totalSize, totalCount, done) = data
         val progress = if (totalSize > 0) (received.toFloat() / totalSize).coerceIn(0f, 1f) else 0f
         withContext(Dispatchers.Main.immediate) {
-            UI.receivingNetworkDialogTitle =
-                "Downloading $name. ${SizeUtils.byteToMB(received)}/${SizeUtils.byteToMB(totalSize)}MB. (/$totalCount)"
+            UI.receivingNetworkDialogTitle = readI18n(
+                "mod.downloadingTitleProgress",
+                I18nType.RWPP,
+                name,
+                SizeUtils.byteToMB(received).toString(),
+                SizeUtils.byteToMB(totalSize).toString(),
+                done.coerceAtLeast(0).toString(),
+                totalCount.toString(),
+            )
             UI.receivingModName = name
             UI.receivingModProgress = progress
             UI.receivingModReceivedBytes = received

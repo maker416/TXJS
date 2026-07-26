@@ -51,6 +51,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.AppContext
 import io.github.rwpp.config.*
+import io.github.rwpp.core.Logic
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.event.events.JoinGameEvent
@@ -310,6 +311,8 @@ fun MultiplayerView(
 
     var serverAddress by remember { mutableStateOf("") }
     var isConnecting by remember { mutableStateOf(false) }
+    /** 本次连接是否为开房（而非加入他人房间）；开房前需禁用网络缓存模组。 */
+    var pendingHostSession by remember { mutableStateOf(false) }
     var keepAutoPublishAfterLoading by remember { mutableStateOf(false) }
 
     var editingServerConfig by remember { mutableStateOf<ServerConfig?>(null) }
@@ -349,6 +352,7 @@ fun MultiplayerView(
     JoinServerRequestDialog(showJoinRequestDialog, { showJoinRequestDialog = false },
        selectedRoomDescription, blacklists
     ) { dismiss ->
+        pendingHostSession = false
         serverAddress = selectedRoomDescription!!.addressProvider()
         isConnecting = true
         dismiss()
@@ -362,6 +366,7 @@ fun MultiplayerView(
                 UI.clearAutoPublishQRoom()
             }
             keepAutoPublishAfterLoading = false
+            pendingHostSession = false
             isConnecting = false
         },
         cancellable = true,
@@ -370,6 +375,13 @@ fun MultiplayerView(
             message("That server no longer exists")
             UI.clearAutoPublishQRoom()
             return@LoadingView false
+        }
+
+        if (pendingHostSession) {
+            val disabled = Logic.disableNetworkModsBeforeHosting()
+            if (disabled) {
+                message(readI18n("multiplayer.networkModDisabledOnHost"))
+            }
         }
 
         message("connecting...")
@@ -415,6 +427,12 @@ fun MultiplayerView(
             val modManager = koinInject<ModManager>()
             var enableMods by remember { mutableStateOf(false) }
             var transferMod by remember { mutableStateOf(false) }
+            val hasNetworkMods = remember {
+                modManager.getAllMods().any { it.isNetworkMod }
+            }
+            val hasEnabledNetworkMods = remember {
+                modManager.getAllMods().any { it.isNetworkMod && it.isEnabled }
+            }
             val modSize by remember {
                 mutableLongStateOf(
                     modManager.getAllMods()
@@ -592,6 +610,7 @@ fun MultiplayerView(
             @Composable
             fun ModOptions(modifier: Modifier = Modifier) {
                 var showTransferConfirm by remember { mutableStateOf(false) }
+                var showNetworkModHint by remember { mutableStateOf(false) }
 
                 SectionPanel(
                     title = readI18n("multiplayer.room.option"),
@@ -601,7 +620,12 @@ fun MultiplayerView(
                         label = readI18n("multiplayer.enableMods"),
                         checked = enableMods,
                     ) {
-                        enableMods = !enableMods
+                        if (!enableMods) {
+                            enableMods = true
+                            if (hasNetworkMods) showNetworkModHint = true
+                        } else {
+                            enableMods = false
+                        }
                     }
                     ToggleLine(
                         label = readI18n("multiplayer.transferMod"),
@@ -610,6 +634,77 @@ fun MultiplayerView(
                     ) {
                         // 开启「传输模组」前需阅读免责声明并二次确认；关闭则直接关闭。
                         if (!transferMod) showTransferConfirm = true else transferMod = false
+                    }
+                    if (hasNetworkMods) {
+                        Text(
+                            if (hasEnabledNetworkMods) {
+                                readI18n("multiplayer.networkModHostHint")
+                            } else {
+                                readI18n("multiplayer.networkModHostHintDisabled")
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFFF9800),
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                    }
+                }
+
+                AnimatedAlertDialog(
+                    visible = showNetworkModHint,
+                    onDismissRequest = { showNetworkModHint = false },
+                ) { dismiss ->
+                    BorderCard(
+                        modifier = Modifier
+                            .fillMaxWidth(LargeProportion())
+                            .widthIn(max = 480.dp)
+                            .padding(10.dp),
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 360.dp)
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Icon(
+                                    Icons.Default.Warning,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(40.dp),
+                                    tint = Color(0xFFFF9800),
+                                )
+                                Text(
+                                    readI18n("multiplayer.networkModHostHintTitle"),
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    textAlign = TextAlign.Center,
+                                )
+                                HorizontalDivider(
+                                    thickness = 2.dp,
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                                )
+                                Text(
+                                    readI18n("multiplayer.networkModHostBlocked"),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 12.dp),
+                                horizontalArrangement = Arrangement.Center,
+                            ) {
+                                RWTextButton(
+                                    readI18n("multiplayer.networkModHostHintConfirm"),
+                                    modifier = Modifier.padding(4.dp),
+                                ) {
+                                    dismiss()
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -857,6 +952,7 @@ fun MultiplayerView(
                             speedMultiplier = speedMultiplier,
                             prefix = hostPrefix,
                         )
+                        pendingHostSession = true
                         isConnecting = true
                     }
                 }
@@ -898,6 +994,12 @@ fun MultiplayerView(
             val modSyncChipText = roomModSyncStatusI18nKey(desc)?.let(::readI18n)
             val ordinaryLabels = ordinaryRoomLabels(desc)
             val playersText = "${desc.playerCurrentCount ?: "?"}/${desc.playerMaxCount ?: "?"}"
+            val requiredMods = parseRequiredModNames(desc.mods)
+            val modsText = when {
+                !desc.isModdedRoom -> readI18n("multiplayer.roomList.noRequiredMods")
+                requiredMods.isEmpty() -> readI18n("multiplayer.roomList.modInfoUnavailable")
+                else -> requiredMods.joinToString(", ")
+            }
 
             Card(
                 onClick = {
@@ -920,35 +1022,41 @@ fun MultiplayerView(
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    // 左侧:地图名(上) + 房主/普通标签/状态(下)
+                    // 左侧:房间标签+地图名(上) + 启用模组/状态(下)
                     Column(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
-                        Text(
-                            desc.mapName.removeSuffix(".tmx"),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = textColor.copy(alpha = degradeAlpha),
-                            fontWeight = rowFontWeight,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            ordinaryLabels.forEach { label ->
+                                RoomLabelChip(label)
+                            }
+                            Text(
+                                desc.mapName.removeSuffix(".tmx"),
+                                modifier = Modifier.weight(1f, fill = false),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = textColor.copy(alpha = degradeAlpha),
+                                fontWeight = rowFontWeight,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                         FlowRow(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             Text(
-                                desc.creator,
+                                modsText,
                                 modifier = Modifier.weight(1f, fill = false),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = textColor.copy(alpha = 0.85f * degradeAlpha),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
-                            ordinaryLabels.forEach { label ->
-                                RoomLabelChip(label)
-                            }
                             if (desc.requiredPassword) {
                                 RoomAccessChip(readI18n("multiplayer.roomList.accessPassword"))
                             }
@@ -1063,6 +1171,7 @@ fun MultiplayerView(
                 Card(
                     onClick = {
                         val ip = serverData.config.ip
+                        pendingHostSession = false
                         serverAddress = ip
                         configIO.setGameConfig("lastNetworkIP", ip)
                         isConnecting = true
@@ -1286,6 +1395,7 @@ fun MultiplayerView(
                     null,
                     modifier = Modifier.clickable {
                         if(joinServerAddress.isNotBlank()) {
+                            pendingHostSession = false
                             serverAddress = joinServerAddress
                             isConnecting = true
                         }
@@ -1567,6 +1677,7 @@ fun MultiplayerView(
                 ) {
                     val lastIp = configIO.getGameConfig<String?>("lastNetworkIP")
                     if (lastIp != null) {
+                        pendingHostSession = false
                         serverAddress = lastIp
                         isConnecting = true
                     }
@@ -2058,7 +2169,7 @@ private fun JoinServerRequestDialog(
                 .padding(10.dp),
         ) {
 
-            Box(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(
@@ -2066,9 +2177,14 @@ private fun JoinServerRequestDialog(
                             listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary),
                         ),
                     )
-                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
                     Text(
                         if (roomDescription.isJoinableFromList) {
                             readI18n("multiplayer.roomList.joinTitle")
@@ -2085,6 +2201,22 @@ private fun JoinServerRequestDialog(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                }
+                // 加入按钮放在标题栏右侧，避免小屏底部操作栏被遮挡
+                if (roomDescription.isJoinableFromList) {
+                    Button(
+                        onClick = { onJoin(dismiss) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.onPrimary,
+                            contentColor = MaterialTheme.colorScheme.primary,
+                        ),
+                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
+                    ) {
+                        Text(
+                            readI18n("multiplayer.join"),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    }
                 }
             }
 
@@ -2158,17 +2290,9 @@ private fun JoinServerRequestDialog(
                         )
                         dismiss()
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(readI18n("multiplayer.addToBlackList"))
-                }
-                if (roomDescription.isJoinableFromList) {
-                    Button(
-                        onClick = { onJoin(dismiss) },
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text(readI18n("multiplayer.join"))
-                    }
                 }
             }
         }

@@ -78,6 +78,18 @@ class ModPacketSerializationTest {
     }
 
     @Test
+    fun requestPacketRoundTripsWithEmptyDescriptors() {
+        // 缓存全命中时客户端会发空下载请求，通知房主保持 ready=false 直到 ModReloadFinish。
+        val packet = ModPacket.RequestPacket().apply {
+            requestId = 11L
+            requestedDescriptors = emptyList()
+        }
+        val out = roundTrip(packet) as ModPacket.RequestPacket
+        assertEquals(11L, out.requestId)
+        assertEquals(emptyList(), out.requestedDescriptors)
+    }
+
+    @Test
     fun chunkAckRoundTripsWithRequestId() {
         val packet = ModPacket.ModChunkAckPacket().apply {
             requestId = 42L
