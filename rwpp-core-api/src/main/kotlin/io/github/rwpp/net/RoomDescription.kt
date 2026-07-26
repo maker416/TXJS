@@ -91,6 +91,9 @@ fun RoomDescription.listDegradeReason(): RoomListDegradeReason {
 /** 服务端「模组同步」房间类型字符串：房主开启传输模组（MOD 同步）后公开房间所用的标签。 */
 const val MOD_SYNC_ROOM_TYPE = "模组同步"
 
+/** 公开发布时未选择任何普通标签时的默认房间标签。 */
+const val DEFAULT_PUBLISH_ROOM_TYPE = "默认"
+
 /**
  * 解析 RWList `roomtype`（竖线分隔的多标签串）为规范标签列表：
  * 按 `|` 拆分、去除每段首尾空格、丢弃空段、按首次出现顺序去重（大小写不敏感，保留首次出现的原始写法）。
@@ -143,6 +146,7 @@ fun RoomDescription.matchesAnyRoomLabel(selected: Set<String>): Boolean {
 
 /**
  * 组合公开发布标签：在用户已选普通标签（保持给定顺序、去重）之后，
+ * 若普通标签为空则回退 [DEFAULT_PUBLISH_ROOM_TYPE]；
  * 当 [includeModSync] 为真时追加协议哨兵 [MOD_SYNC_ROOM_TYPE]（若已在普通标签中则不重复）。
  * 返回可直接传给 RWList `roomtype` 的 wire 串。
  */
@@ -157,6 +161,12 @@ fun composePublishRoomType(
         if (trimmed.isEmpty()) return@forEach
         val key = trimmed.lowercase()
         if (seen.add(key)) ordered.add(trimmed)
+    }
+    if (ordered.isEmpty()) {
+        val fallback = DEFAULT_PUBLISH_ROOM_TYPE.trim()
+        if (fallback.isNotEmpty() && seen.add(fallback.lowercase())) {
+            ordered.add(fallback)
+        }
     }
     if (includeModSync) {
         val key = MOD_SYNC_ROOM_TYPE.lowercase()

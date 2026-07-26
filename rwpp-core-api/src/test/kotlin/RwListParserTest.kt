@@ -279,7 +279,9 @@ class RwListParserTest {
     fun composePublishRoomTypeAppendsModSyncSentinel() {
         assertEquals("公益|PVP", composePublishRoomType(listOf("公益", "PVP"), includeModSync = false))
         assertEquals("公益|PVP|模组同步", composePublishRoomType(listOf("公益", "PVP"), includeModSync = true))
-        assertEquals("模组同步", composePublishRoomType(emptyList(), includeModSync = true))
+        // 未选普通标签时默认「默认」，再按需追加模组同步哨兵
+        assertEquals("默认", composePublishRoomType(emptyList(), includeModSync = false))
+        assertEquals("默认|模组同步", composePublishRoomType(emptyList(), includeModSync = true))
         // 普通标签中已含哨兵时不再重复追加
         assertEquals("公益|模组同步", composePublishRoomType(listOf("公益", "模组同步"), includeModSync = true))
         // 关闭同步时只是不追加，不主动剥离已传入的普通标签
