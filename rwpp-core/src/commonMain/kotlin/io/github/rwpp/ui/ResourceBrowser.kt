@@ -34,7 +34,8 @@ import coil3.compose.AsyncImage
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.i18n.readI18n
-import io.github.rwpp.mapDir
+import io.github.rwpp.impl.formatRtsBoxHeat
+import io.github.rwpp.customMapDir
 import io.github.rwpp.modDir
 import io.github.rwpp.net.Net
 import io.github.rwpp.net.NetResourceInfo
@@ -63,12 +64,6 @@ fun ResourceBrowser(
 
     var downloadingMod by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf(0f) }
-    var logonDialogVisible by remember { mutableStateOf(false) }
-
-    LoginDialog(
-        visible = logonDialogVisible,
-        onDismiss = { logonDialogVisible = false }
-    )
 
     BorderCard(
         modifier = Modifier
@@ -95,32 +90,21 @@ fun ResourceBrowser(
                             color = MaterialTheme.colorScheme.primary
                         )
                     } else {
-                        RWTextButton(
-                            label = readI18n("browser.loadMore"),
-                            leadingIcon = {
-                                Icon(
-                                    painter = painterResource(Res.drawable.replay_30),
-                                    null,
-                                    modifier = Modifier.size(30.dp)
-                                )
-                            },
-                            modifier = Modifier.padding(10.dp)
-                        ) {
-                            page += 1
-                        }
-
-                        RWTextButton(
-                            label = readI18n("browser.login"),
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Default.Person,
-                                    null,
-                                    modifier = Modifier.size(30.dp)
-                                )
-                            },
-                            modifier = Modifier.padding(10.dp)
-                        ) {
-                            logonDialogVisible = true
+                        // 热门资源无分页；仅搜索协议支持「加载更多」
+                        if (selectedProtocolIndex == 0) {
+                            RWTextButton(
+                                label = readI18n("browser.loadMore"),
+                                leadingIcon = {
+                                    Icon(
+                                        painter = painterResource(Res.drawable.replay_30),
+                                        null,
+                                        modifier = Modifier.size(30.dp)
+                                    )
+                                },
+                                modifier = Modifier.padding(10.dp)
+                            ) {
+                                page += 1
+                            }
                         }
                     }
                 }
@@ -130,17 +114,26 @@ fun ResourceBrowser(
                 ExitButton(onExit)
                 Column {
                     Spacer(modifier = Modifier.height(20.dp))
-                    LaunchedEffect(keyword, page, selectedTypeIndex) {
+                    LaunchedEffect(keyword, page, selectedTypeIndex, selectedProtocolIndex) {
                         isLoading = true
+                        val protocolIndex = selectedProtocolIndex
                         net.searchBBS(
-                            net.bbsProtocols[selectedProtocolIndex],
+                            net.bbsProtocols[protocolIndex],
                             page,
                             keyword,
                             if (selectedTypeIndex == 0)
                                 ResourceType.Mod
                             else ResourceType.Map,
                         ) { result ->
-                            result.getOrNull()?.let { allInfo.addAll(it) }
+                            result.getOrNull()?.let { list ->
+                                // 热门资源为固定精选列表，无分页，每次用新结果替换
+                                if (protocolIndex == 1) {
+                                    allInfo.clear()
+                                    allInfo.addAll(list)
+                                } else {
+                                    allInfo.addAll(list)
+                                }
+                            }
                             isLoading = false
                         }
                     }
@@ -243,18 +236,32 @@ fun ResourceBrowser(
                                         )
                                     }
 
+                                    if (resourceInfo.description != null) {
+                                        Text(
+                                            resourceInfo.description!!,
+                                            modifier = Modifier.padding(start = 2.dp).widthIn(10.dp, 150.dp),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            overflow = TextOverflow.Ellipsis,
+                                            color = MaterialTheme.colorScheme.error,
+                                            maxLines = 1
+                                        )
+                                    }
+
                                     if (resourceInfo.author != null) {
                                         Text(
                                             resourceInfo.author!!,
                                             modifier = Modifier.padding(start = 2.dp).widthIn(10.dp, 150.dp),
                                             style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.secondary
+                                            overflow = TextOverflow.Ellipsis,
+                                            color = MaterialTheme.colorScheme.secondary,
+                                            maxLines = 1
                                         )
                                     }
 
                                     if (resourceInfo.downloadNum != null) {
+                                        // 热门列表协议下 downloadNum 表示热度（非下载次数）
                                         Text(
-                                            "下载次数： " + resourceInfo.downloadNum!!,
+                                            "热度： " + formatRtsBoxHeat(resourceInfo.downloadNum!!),
                                             modifier = Modifier.padding(start = 2.dp).widthIn(10.dp, 150.dp),
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.primary
@@ -292,7 +299,7 @@ fun ResourceBrowser(
                                                     File(
                                                         if (selectedTypeIndex == 0)
                                                             "$modDir/${resourceInfo.title}.rwmod"
-                                                        else "$mapDir/${resourceInfo.title}.tmx"
+                                                        else "$customMapDir/${resourceInfo.title}.tmx"
                                                     )
                                                 ) { p -> progress = p }
                                             }
@@ -373,10 +380,10 @@ fun ResourceBrowser(
             Spacer(Modifier.weight(1f))
             Text(
                 if (downloaded) {
-                    "Done"
+                    readI18n("common.done")
                 } else if (failed)
-                    "Failed"
-                else "Downloading...",
+                    readI18n("common.failed")
+                else readI18n("common.downloading"),
                 modifier = Modifier.padding(start = 2.dp).align(Alignment.CenterHorizontally),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.primary

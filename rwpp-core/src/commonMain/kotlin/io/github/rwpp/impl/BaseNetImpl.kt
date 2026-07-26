@@ -37,7 +37,7 @@ abstract class BaseNetImpl : Net {
         .build()
 
     override val scope: CoroutineScope = CoroutineScope(SupervisorJob())
-    override val bbsProtocols: MutableList<BBSProtocol> = mutableListOf(RTSBoxProtocol, RTSBoxDownloadWeeklyProtocol)
+    override val bbsProtocols: MutableList<BBSProtocol> = mutableListOf(RTSBoxProtocol, RTSBoxHotProtocol)
     override val roomListProvider: MutableMap<String, suspend () -> List<RoomDescription>> = mutableMapOf()
     override val roomListHostProtocol: MutableMap<String, (maxPlayer: Int, enableMods: Boolean, isPublic: Boolean) -> String> = mutableMapOf()
 
@@ -165,40 +165,132 @@ val RTSBoxProtocol = BBSProtocol(
     }
 )
 
-val RTSBoxDownloadWeeklyProtocol = BBSProtocol(
-    "https://www.rtsbox.cn/api/lt_api/data.php",
-    "铁锈盒子 下载周榜",
-    { page, _, type ->
+/**
+ * 铁锈盒子「热门资源」列表（与 https://www.rtsbox.cn/category/rts-mod 下载站模块一致）。
+ * 公开侧无 JSON，需解析移动端模块 HTML。
+ */
+val RTSBoxHotProtocol = BBSProtocol(
+    "https://www.rtsbox.cn/wp-content/module/mobile/page/lt_download_list/0_index_html.php?password=echo_html",
+    "铁锈盒子 热门资源",
+    { page, _, _ ->
         MultipartBody.Builder()
             .setType(MultipartBody.FORM)
-            .apply {
-                addFormDataPart("catID", if (type == ResourceType.Mod) "mod" else "map")
-                addFormDataPart("type", "WeekDownload")
-                addFormDataPart("page", page.toString())
-            }
+            .addFormDataPart("page", page.toString())
             .build()
     },
     { response ->
         runCatching {
-            val jsonBody = Json.parse(response.body?.string().apply { println(this) })
-            buildList {
-                for (data in jsonBody.asArray()) {
-                    val info = data.asObject()
-                    val title = String(info.getString("title", "???").toByteArray(), Charsets.UTF_8)
-                    val postID = info.getInt("postID", -1)
-                    val downloadNum = info.getInt("download_num", -1)
-
-                    add(
-                        NetResourceInfo(
-                            postID.toString(),
-                            title,
-                            bbsUrl = "https://www.rtsbox.cn/$postID.html",
-                            imageUrl = info.getString("img_url", null),
-                            downloadNum = downloadNum
-                        )
-                    )
-                }
-            }.toTypedArray()
+            val html = response.body?.string() ?: return@runCatching null
+            parseRtsBoxHotResources(html)
         }.getOrNull()
     }
 )
+
+private fun unescapeHtmlLight(text: String): String =
+    text.replace("&#038;", "&")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#039;", "'")
+        .replace("&nbsp;", " ")
+        .trim()
+
+/**
+ * 从下载站首页 HTML 中截取「热门资源」区块并解析卡片。
+ * 热门列表为站方人工精选，无分页；调用方应整表替换而非追加。
+ *
+ * [NetResourceInfo.downloadNum] 在此协议下表示「热度」（非下载次数）；
+ * 站点可能返回 `2.12w` 形式，会换算为整数（×10000）供展示格式化。
+ */
+internal fun parseRtsBoxHotResources(html: String): Array<NetResourceInfo> {
+    val marker = "热门资源</span>"
+    val start = html.indexOf(marker)
+    if (start < 0) return emptyArray()
+
+    val after = html.substring(start + marker.length)
+    val nextTitle = Regex("""<span class="lt_download_list_top_titel">([^.<][^<]*)</span>""")
+        .find(after)
+    val block = if (nextTitle != null) after.substring(0, nextTitle.range.first) else after.take(20_000)
+
+    val ids = Regex("""data-post_id="([0-9,]+)"""")
+        .find(block)
+        ?.groupValues
+        ?.get(1)
+        ?.split(',')
+        ?.map { it.trim() }
+        ?.filter { it.isNotEmpty() }
+        .orEmpty()
+
+    if (ids.isEmpty()) return emptyArray()
+
+    val titlePattern = Regex("""lt_title_span[^>]*>([^<]+)|<div class="title">([^<]+)</div>""")
+    val imagePattern = Regex("""<img src="([^"]+)"|background-image:url\(([^)]+)\)""")
+    val heatPattern = Regex(
+        """(?:jinsom-fire-fill|lt_text_shadow)[\s\S]{0,160}?>([\d.]+w?)</span>"""
+    )
+    val authorPattern = Regex("""author/\d+"[^>]*>([^<]+)""")
+    val badgePattern = Regex("""(?:独家|精选)[^<]{0,40}""")
+    val nextCardPattern = Regex("""jinsom-post-\d+""")
+
+    return ids.mapNotNull { id ->
+        val pos = listOf(
+            Regex("""post_id=$id&url=https://www\.rtsbox\.cn/$id\.html"""),
+            Regex("""jinsom-post-$id"""),
+            Regex("""www\.rtsbox\.cn/$id\.html""")
+        ).firstNotNullOfOrNull { pat -> pat.find(block)?.range?.first } ?: return@mapNotNull null
+
+        val nextPos = nextCardPattern.find(block, startIndex = pos + 10)?.range?.first
+            ?: minOf(pos + 2500, block.length)
+        val cardHtml = block.substring(pos, nextPos)
+        // 首卡「独家/精选」角标可能写在链接正前方
+        val lookbackHtml = block.substring(maxOf(0, pos - 280), pos)
+
+        val titleMatch = titlePattern.find(cardHtml)
+        val title = unescapeHtmlLight(
+            titleMatch?.groupValues?.get(1)?.ifEmpty { null }
+                ?: titleMatch?.groupValues?.get(2)?.ifEmpty { null }
+                ?: "帖子 $id"
+        )
+        val imageMatch = imagePattern.find(cardHtml)
+        val imageUrl = imageMatch?.groupValues?.get(1)?.ifEmpty { null }
+            ?: imageMatch?.groupValues?.get(2)?.ifEmpty { null }
+        val heatRaw = heatPattern.find(cardHtml)?.groupValues?.get(1)
+        val author = authorPattern.find(cardHtml)?.groupValues?.get(1)?.let(::unescapeHtmlLight)
+        val badge = (
+            badgePattern.find(cardHtml)?.value
+                ?: badgePattern.find(lookbackHtml)?.value
+            )?.let(::unescapeHtmlLight)
+
+        NetResourceInfo(
+            id = id,
+            title = title,
+            description = badge,
+            author = author,
+            bbsUrl = "https://www.rtsbox.cn/$id.html",
+            imageUrl = imageUrl,
+            downloadNum = parseRtsBoxHeat(heatRaw)
+        )
+    }.toTypedArray()
+}
+
+/** 解析站点热度：`5852` 或 `2.12w`（万）。 */
+internal fun parseRtsBoxHeat(raw: String?): Int? {
+    val text = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    return if (text.endsWith("w", ignoreCase = true)) {
+        val value = text.dropLast(1).toDoubleOrNull() ?: return null
+        (value * 10_000).toInt()
+    } else {
+        text.toIntOrNull()
+    }
+}
+
+/** 热度展示：≥10000 时用站点同款 `x.xxw`。 */
+internal fun formatRtsBoxHeat(heat: Int): String =
+    if (heat >= 10_000) {
+        val w = heat / 10_000.0
+        val formatted = (((w * 100).toInt()) / 100.0).toString().trimEnd('0').trimEnd('.')
+        "${formatted}w"
+    } else {
+        heat.toString()
+    }
