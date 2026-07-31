@@ -7,8 +7,6 @@
 
 package io.github.rwpp.android.impl
 
-import android.graphics.PixelFormat
-import android.opengl.GLSurfaceView
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.Gravity
@@ -28,7 +26,6 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.corrodinggames.rts.appFramework.InGameActivity
-import io.github.rwpp.android.OffscreenSurfaceView
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
 import io.github.rwpp.ui.UI
@@ -51,8 +48,6 @@ class CustomInGameActivity : InGameActivity(), LifecycleOwner, SavedStateRegistr
         super.onCreate(savedInstanceState)
         instance = this
 
-        val glSurfaceView = OffscreenSurfaceView(this)
-
         val fullScreenParams = FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
@@ -60,8 +55,9 @@ class CustomInGameActivity : InGameActivity(), LifecycleOwner, SavedStateRegistr
             gravity = Gravity.FILL
         }
 
-        addContentView(glSurfaceView, fullScreenParams)
-
+        // 攻击范围显示功能已下线（Settings.migrate 强制关闭且禁止再开启），
+        // 不再挂载 OffscreenSurfaceView：其忙等渲染线程会在 surface 销毁时
+        // （如对局中打开设置页）抛出未捕获异常导致闪退，或无超时 join 拖死 UI 线程
         val composeView = ComposeView(this)
             .apply {
                 setViewTreeLifecycleOwner(this@CustomInGameActivity)
