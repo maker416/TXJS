@@ -12,14 +12,12 @@ import com.corrodinggames.rts.gameFramework.e
 import com.corrodinggames.rts.gameFramework.j.*
 import io.github.rwpp.*
 import io.github.rwpp.desktop.GameEngine
-import io.github.rwpp.desktop.bannedUnitList
 import io.github.rwpp.desktop.impl.PlayerImpl
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.ChatMessageEvent
 import io.github.rwpp.event.events.SystemMessageEvent
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.data.RoomOption
-import io.github.rwpp.game.units.GameCommandActions
 import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
@@ -38,20 +36,9 @@ import java.io.IOException
 object NetworkInject {
     @Inject("a", injectMode = InjectMode.InsertBefore)
     fun onBanUnits(netPacket: e): Any {
-        val actionString = netPacket.k.a()
-
-        if (actionString.removePrefix("u_") in bannedUnitList) {
-            return InterruptResult.Unit
-        }
-
-        if (netPacket.j == null) return Unit
-        val realAction = GameCommandActions.from(netPacket.j.d().ordinal)
-        val u = netPacket.j.a()
-        return if (u is com.corrodinggames.rts.game.units.`as`) {
-            if (realAction == GameCommandActions.BUILD && u.v() in bannedUnitList) {
-                InterruptResult.Unit
-            } else Unit
-        } else Unit
+        // 服务器侧拦截：收到被禁单位的命令时直接丢弃，不再入队与转发。
+        // 发起端本机的即时生效与统一执行由 GameCommandInject 拦截。
+        return if (isBannedCommand(netPacket)) InterruptResult.Unit else Unit
     }
 
     @Inject("c", injectMode = InjectMode.InsertBefore)

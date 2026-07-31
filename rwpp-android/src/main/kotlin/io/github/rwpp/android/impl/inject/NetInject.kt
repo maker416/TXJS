@@ -18,7 +18,6 @@ import com.corrodinggames.rts.appFramework.MultiplayerBattleroomActivity
 import com.corrodinggames.rts.gameFramework.j.ae
 import com.corrodinggames.rts.gameFramework.k
 import io.github.rwpp.*
-import io.github.rwpp.android.bannedUnitList
 import io.github.rwpp.android.cachePlayerSet
 import io.github.rwpp.android.impl.ClientImpl
 import io.github.rwpp.android.impl.GameEngine
@@ -31,7 +30,6 @@ import io.github.rwpp.event.events.SystemMessageEvent
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.Player
 import io.github.rwpp.game.data.RoomOption
-import io.github.rwpp.game.units.GameCommandActions
 import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
@@ -280,20 +278,9 @@ object NetInject {
 
     @Inject("a", InjectMode.InsertBefore)
     fun onReceiveGameCommand(b3: com.corrodinggames.rts.gameFramework.e): Any {
-        val actionString = b3.k.b
-
-        if(actionString.removePrefix("u_") in bannedUnitList) {
-            return InterruptResult.Unit
-        }
-
-        if(b3.j == null) return Unit
-        val realAction = GameCommandActions.from(b3.j.a.ordinal)
-        val u = b3.j.b
-        return if(realAction == GameCommandActions.BUILD && u is com.corrodinggames.rts.game.units.el) {
-            if(u.i() in bannedUnitList) {
-                InterruptResult.Unit
-            } else Unit
-        } else Unit
+        // 服务器侧拦截：收到被禁单位的命令时直接丢弃，不再入队与转发。
+        // 命令到达预定帧后的统一执行由 GameCommandInject 拦截兜底。
+        return if (isBannedCommand(b3)) InterruptResult.Unit else Unit
     }
 
     @Inject("a", injectMode = InjectMode.InsertBefore)
