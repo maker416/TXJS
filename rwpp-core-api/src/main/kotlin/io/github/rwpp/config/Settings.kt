@@ -81,5 +81,10 @@ data class Settings(
         }
         // 每次加载都让 Settings.forceEnglish 与 language（含 auto）解析结果对齐
         LanguageHelper.applyToSettings(this)
+
+        // 增强出兵与攻击范围显示功能已下线：每次加载强制关闭，任何旧配置值都无法再开启
+        enhancedReinforceTroops = false
+        showBuildingAttackRange = false
+        showAttackRangeUnit = "Never"
     }
 }

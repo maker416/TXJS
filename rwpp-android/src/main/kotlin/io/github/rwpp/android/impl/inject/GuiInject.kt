@@ -19,12 +19,7 @@ import com.corrodinggames.rts.gameFramework.utility.`SlickToAndroidKeycodes$Andr
 import io.github.rwpp.android.impl.GameEngine
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
-import io.github.rwpp.game.Game
-import io.github.rwpp.game.base.BaseFactory
-import io.github.rwpp.game.units.GameUnit
-import io.github.rwpp.game.units.comp.EntityRangeUnitComp
 import io.github.rwpp.graphics.GL
-import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.inject.Accessor
 import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
@@ -37,8 +32,6 @@ import io.github.rwpp.utils.Reflect
 typealias GUI = com.corrodinggames.rts.gameFramework.f.a
 typealias FClass = com.corrodinggames.rts.gameFramework.f
 
-private val factory by lazy { appKoin.get<BaseFactory>() }
-private val room by lazy { appKoin.get<Game>().gameRoom }
 private val settings by lazy { appKoin.get<Settings>() }
 
 @SetInterfaceOn([com.corrodinggames.rts.gameFramework.f.i::class])
@@ -51,25 +44,11 @@ interface RenderAccessor {
 
 @InjectClass(GUI::class)
 object GuiInject {
-    var buttons: java.util.ArrayList<Any?>? = null
-
     var unitGroups: ArrayList<ce>? = null
 
     private val rect = Rect()
     private val sRect = Rect()
     private val paintI = Paint()
-
-    @Inject(method = "a", injectMode = InjectMode.InsertAfter)
-    fun GUI.onAddGameActions(unit: ce?, arr: java.util.ArrayList<*>?) {
-        buttons = buttons ?: Reflect.get(this, "aq")
-        if (unit == null && settings.showExtraButton) {
-            buttons!!.add(ShowAttackRangeBuilding)
-            buttons!!.add(ShowAttackRangeUnits)
-        }
-        if (unit != null && settings.showExtraButton && (unit as GameUnit).player.team != room.localPlayer.team) {
-            buttons!!.add(ShowAttackRange)
-        }
-    }
 
     @Inject(method = "f", injectMode = InjectMode.Override)
     fun GUI.onDrawUnitGroups(f: Float) {
@@ -248,74 +227,6 @@ object GuiInject {
             val i4 = (gameEngine.cC / 2.0f)
             val textSize = (gameEngine.bP.aE.textSize) + 7
             gameEngine.bL.a(FClass.a((gameEngine.bv / 1000).toLong()), i4, textSize, gameEngine.bP.aE)
-        }
-    }
-
-    object ShowAttackRange : com.corrodinggames.rts.game.units.a.p("c_show_attack_range") {
-        override fun b(): String? {
-            return readI18n("settings.showAttackRange")
-        }
-
-        override fun a(): String? {
-            return readI18n("settings.showAttackRange")
-        }
-
-        override fun compareTo(other: Any?): Int {
-            return 0
-        }
-
-        override fun c(unit: com.corrodinggames.rts.game.units.ce, z: Boolean): Boolean {
-            //GameEngine.B().bS.g.n()
-            val unit = GameEngine.t().bP.bZ.firstOrNull()
-            if (unit != null) {
-                val comp = (unit as GameUnit).comp.first { it is EntityRangeUnitComp } as EntityRangeUnitComp
-                comp.showAttackRange = !comp.showAttackRange
-            }
-            return true
-        }
-    }
-
-    object ShowAttackRangeBuilding : com.corrodinggames.rts.game.units.a.p("c_show_attack_range_building") {
-        override fun b(): String? {
-            return readI18n("settings.showBuildingAttackRange")
-        }
-
-        override fun a(): String? {
-            return readI18n("settings.showBuildingAttackRange")
-        }
-
-        override fun compareTo(other: Any?): Int {
-            return 0
-        }
-
-        override fun c(unit: com.corrodinggames.rts.game.units.ce, z: Boolean): Boolean {
-            //GameEngine.B().bS.g.n()
-
-            settings.showBuildingAttackRange = !settings.showBuildingAttackRange
-            return true
-        }
-    }
-
-    object ShowAttackRangeUnits : com.corrodinggames.rts.game.units.a.p("c_show_attack_range_units") {
-
-        override fun b(): String? {
-            val rangeLabel = readI18n("settings.attackRange${settings.showAttackRangeUnit}")
-            return "${readI18n("settings.showUnitAttackRange")}\n$rangeLabel"
-        }
-
-        override fun a(): String? {
-            return readI18n("settings.showUnitAttackRange")
-        }
-
-        override fun compareTo(other: Any?): Int {
-            return 0
-        }
-
-        override fun c(unit: com.corrodinggames.rts.game.units.ce, z: Boolean): Boolean {
-            //GameEngine.B().bS.g.n()
-            val index = Settings.unitAttackRangeTypes.indexOf(settings.showAttackRangeUnit)
-            settings.showAttackRangeUnit = Settings.unitAttackRangeTypes.getOrNull(index + 1) ?: Settings.unitAttackRangeTypes.first()
-            return true
         }
     }
 }
