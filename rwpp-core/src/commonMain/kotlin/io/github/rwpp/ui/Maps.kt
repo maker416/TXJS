@@ -22,6 +22,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import io.github.rwpp.app.PermissionHelper
@@ -173,10 +174,13 @@ fun LazyGridItemScope.MapItem(
                 modifier = Modifier.padding(5.dp).weight(1f).align(Alignment.CenterHorizontally),
             )
         }
+        // 限制名称行数：卡片限高 200dp，长名称无限换行会把 weight(1f) 的图片挤压到不可见
         Text(
             name,
             modifier = Modifier.padding(5.dp).align(Alignment.CenterHorizontally),
-            style = MaterialTheme.typography.headlineSmall
+            style = MaterialTheme.typography.headlineSmall,
+            maxLines = if (showImage) 2 else 4,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

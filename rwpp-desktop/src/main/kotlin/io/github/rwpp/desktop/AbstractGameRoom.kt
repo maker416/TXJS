@@ -309,6 +309,9 @@ abstract class AbstractGameRoom  : GameRoom {
 
         if (isHostServer) {
             val e = GameEngine.B().bX.e()
+            // e() 返回当前房间设置的副本，applyProxyControl 会按差量下发指令；
+            // 漏掉 d 会导致主机服务器（云服）房间修改雾设置不生效
+            e.d = fogMode.ordinal
             e.l = sharedControl
             e.c = startingCredits
             e.g = startingUnits
