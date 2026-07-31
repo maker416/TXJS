@@ -180,6 +180,7 @@ publishTagLockedHint = "已开启「传输模组」，房间标签已固定，�
 publishModSyncAutoHint = "已开启传输模组，「模组同步」标签将自动添加，普通标签仍可多选。"
 publishModSyncTypeMissing = "该列表服务器未提供「模组同步」标签，无法在开启传输模组时公开房间。"
 playersNotReadyModSync = "无法开始游戏。以下玩家仍在同步或加载模组：{0}"
+startMapLoadFailed = "地图加载失败，未能进入游戏。请重新加入房间后重试。"
 keepCurrentTeam = "保持当前"
 startingCreditsDefault = "默认 ($4000)"
 
