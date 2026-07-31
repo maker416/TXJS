@@ -171,6 +171,8 @@ Android 在 `i.a.j()`、Desktop 在 `i.a.k()` 返回后注入，将状态写入�
 
 ```
 导入流程：
+  目标已存在            → revealExistingMod() 确保列表可见（清空搜索过滤，缺失时补 UnloadedMod），
+                          提示 mod.importAlreadyExists，不复制
   copyToWithProgress()  → 仅复制文件
   mods.add(UnloadedMod) → UI 列表显示（禁用），引擎零参与
 

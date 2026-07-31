@@ -392,6 +392,20 @@ fun ModsView(
         )
     }
 
+    /**
+     * 重复导入时确保既有模组在列表中可见：
+     * - 清空搜索关键字，避免模组被当前过滤条件隐藏；
+     * - 列表中没有该文件时（例如绕开导入流程直接放进 units/ 的文件），以 UnloadedMod 补入。
+     */
+    fun revealExistingMod(target: File) {
+        filter = ""
+        val alreadyListed = mods.any { File(it.path).name.equals(target.name, ignoreCase = true) }
+        if (!alreadyListed && target.isFile) {
+            mods.add(UnloadedMod(target))
+        }
+        updated = !updated
+    }
+
     fun importModFile(file: File) {
         if (importProgress?.stage == ModImportStage.Importing) return
 
@@ -403,6 +417,17 @@ fun ModsView(
             }
 
             val target = File(modDir, file.name)
+
+            // 目标已存在（重复导入）：不复制，确保列表中能看到既有模组，并给出明确提示。
+            // 原实现直接展示 FileAlreadyExistsException 的英文异常信息；且当文件经导入流程
+            // 之外的途径进入 units/（手动复制、资源浏览器下载、联机同步激活）时列表中并没有它，
+            // 造成「提示已导入但界面看不到该模组」。
+            if (target.exists()) {
+                revealExistingMod(target)
+                importProgress = null
+                UI.showWarning(readI18n("mod.importAlreadyExists", I18nType.RWPP, file.name))
+                return@launch
+            }
 
             try {
                 importProgress = ModImportProgress(
@@ -438,6 +463,10 @@ fun ModsView(
                 UI.showWarning(readI18n("mod.importSuccess", I18nType.RWPP, file.name))
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: FileAlreadyExistsException) {
+                // 预检查与复制之间存在竞态（复制期间目标被其他流程创建），按重复导入处理。
+                revealExistingMod(target)
+                UI.showWarning(readI18n("mod.importAlreadyExists", I18nType.RWPP, file.name))
             } catch (e: Throwable) {
                 UI.showWarning(e.message ?: "Unknown error")
             } finally {
