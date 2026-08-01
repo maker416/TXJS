@@ -7,8 +7,16 @@
 
 package io.github.rwpp.config
 
+import io.github.rwpp.rwpp_core_api.BuildConfig
+
 /** Base URL of the online presence service (no trailing path). */
 const val DEFAULT_ONLINE_PRESENCE_API_URL = "http://210.16.166.71:11451"
+
+/**
+ * 安装包来源渠道标识，随注册 Session 上报，用于按渠道统计新增/留存（如广告投放效果）。
+ * 打包时通过 Gradle 属性传入：`gradlew -PonlineChannel=tt_ad ...`，默认 "official"。
+ */
+const val DEFAULT_ONLINE_CHANNEL: String = BuildConfig.ONLINE_CHANNEL
 
 fun normalizeOnlinePresenceBaseUrl(url: String): String =
     url.trim().trimEnd('/')

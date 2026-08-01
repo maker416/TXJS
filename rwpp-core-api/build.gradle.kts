@@ -19,6 +19,13 @@ group = "io.github.rwpp"
 
 buildConfig {
     buildConfigField("VERSION", rootProject.version.toString())
+    // 安装包渠道标识：打包时通过 -PonlineChannel=xxx 传入，默认 official。
+    // 仅允许字母、数字、下划线、连字符（服务端同样校验）。
+    val onlineChannel = (findProperty("onlineChannel") as String?)
+        ?.trim()
+        ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,64}")) }
+        ?: "official"
+    buildConfigField("ONLINE_CHANNEL", onlineChannel)
 }
 
 dependencies {
