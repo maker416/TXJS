@@ -9,12 +9,15 @@ package io.github.rwpp.impl
 
 import com.eclipsesource.json.Json
 import io.github.rwpp.AppContext
+import io.github.rwpp.config.ConfigIO
+import io.github.rwpp.config.DEFAULT_ONLINE_CHANNEL
 import io.github.rwpp.config.DEFAULT_ONLINE_PRESENCE_API_URL
 import io.github.rwpp.config.normalizeOnlinePresenceBaseUrl
 import io.github.rwpp.core.Initialization
 import io.github.rwpp.logger
 import io.github.rwpp.net.Net
 import io.github.rwpp.net.OnlinePresenceTracker
+import io.github.rwpp.projectVersion
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -40,6 +43,9 @@ class OnlinePresenceTrackerImpl : OnlinePresenceTracker, KoinComponent {
 
     @Volatile
     private var heartbeatIntervalSec: Int = 15
+
+    @Volatile
+    private var deviceId: String? = null
 
     private val baseUrl: String
         get() = normalizeOnlinePresenceBaseUrl(DEFAULT_ONLINE_PRESENCE_API_URL)
@@ -117,7 +123,9 @@ class OnlinePresenceTrackerImpl : OnlinePresenceTracker, KoinComponent {
             }
         }
 
-        val body = """{"platform":"$platform"}""".toRequestBody(JSON_MEDIA_TYPE)
+        val deviceField = resolveDeviceId()?.let { ""","device_id":"$it"""" } ?: ""
+        val body = """{"platform":"$platform","version":"$projectVersion","channel":"$DEFAULT_ONLINE_CHANNEL"$deviceField}"""
+            .toRequestBody(JSON_MEDIA_TYPE)
         val request = Request.Builder()
             .url("$baseUrl/api/v1/sessions")
             .header("Accept", "application/json")
@@ -154,6 +162,53 @@ class OnlinePresenceTrackerImpl : OnlinePresenceTracker, KoinComponent {
         }
     }
 
+    /**
+     * 获取本机唯一设备 ID：优先读本地持久化配置；首次安装时向服务器申请一个并保存。
+     * 只要应用数据不被清除（卸载重装、清数据）就一直沿用，升级不受影响。
+     * 申请失败返回 null，本次注册不带 device_id（服务端回退按 IP 统计）。
+     */
+    private fun resolveDeviceId(): String? {
+        deviceId?.let { return it }
+
+        val configIO = get<ConfigIO>()
+        val saved = configIO.readSingleConfig(CONFIG_GROUP, DEVICE_ID_KEY)?.trim()
+        if (!saved.isNullOrEmpty()) {
+            deviceId = saved
+            return saved
+        }
+
+        val request = Request.Builder()
+            .url("$baseUrl/api/v1/devices")
+            .header("Accept", "application/json")
+            .post(EMPTY_BODY)
+            .build()
+
+        return runCatching {
+            get<Net>().client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    logger.debug("Online presence device id request failed: HTTP ${response.code}")
+                    null
+                } else {
+                    val body = response.body?.string()
+                    val id = body
+                        ?.let { runCatching { Json.parse(it).asObject().getString("device_id", "").trim() }.getOrNull() }
+                        ?.takeIf { it.isNotEmpty() }
+                    if (id == null) {
+                        null
+                    } else {
+                        configIO.saveSingleConfig(CONFIG_GROUP, DEVICE_ID_KEY, id)
+                        deviceId = id
+                        logger.info("Online presence device id issued and saved")
+                        id
+                    }
+                }
+            }
+        }.getOrElse { error ->
+            logger.debug("Online presence device id request failed: ${error.message}")
+            null
+        }
+    }
+
     private fun sendHeartbeat(): Int {
         val id = sessionId ?: return -1
         val request = Request.Builder()
@@ -167,6 +222,8 @@ class OnlinePresenceTrackerImpl : OnlinePresenceTracker, KoinComponent {
     }
 
     companion object {
+        private const val CONFIG_GROUP = "online_presence"
+        private const val DEVICE_ID_KEY = "device_id"
         private val JSON_MEDIA_TYPE = "application/json".toMediaType()
         private val EMPTY_BODY = ByteArray(0).toRequestBody(null)
     }
