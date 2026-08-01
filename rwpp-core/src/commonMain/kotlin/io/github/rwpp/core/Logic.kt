@@ -77,6 +77,8 @@ object Logic : Initialization {
 
     /** 房主侧：已 announce 的 P2P peer 登记（房间级，跨多次同步保留）。 */
     private val hostP2pPeers: MutableMap<Client, HostP2pPeer> = mutableMapOf()
+    /** 房主侧：各客户端通过 P2P 拉取完成的模组数（P2P 加速效果统计）。 */
+    private val hostP2pViaP2PCount: MutableMap<Client, Int> = mutableMapOf()
     /** 房间级 P2P 会话令牌（HostGameEvent 时生成；空串 = 未在开房）。 */
     private var p2pToken: String = ""
 
@@ -1168,6 +1170,12 @@ object Logic : Initialization {
             hostP2pPeers.mapValues { (_, info) -> info.listenPort }
         }
         scope.launch(Dispatchers.Main.immediate) { UI.hostP2pPeerPorts = ports }
+    }
+
+    /** 房主视角：发布各客户端通过 P2P 拉取完成的模组数到 UI 状态。 */
+    private fun publishHostP2pViaP2PCount() {
+        val counts = synchronized(Logic) { hostP2pViaP2PCount.toMap() }
+        scope.launch(Dispatchers.Main.immediate) { UI.hostP2pViaP2PCount = counts }
     }
 
     /**
