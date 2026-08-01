@@ -41,6 +41,7 @@ import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.destruction_30
+import io.github.rwpp.rwpp_core.generated.resources.shield_30
 import io.github.rwpp.rwpp_core.generated.resources.stacks_30
 import io.github.rwpp.rwpp_core.generated.resources.swords_30
 import io.github.rwpp.widget.BorderCard
@@ -51,7 +52,7 @@ import io.github.rwpp.widget.v2.bounceClick
 import org.jetbrains.compose.resources.painterResource
 
 /**
- * 单人游戏入口列表，整合主菜单中的「战役」「遭遇战」「沙盒编辑器」。
+ * 单人游戏入口列表，整合主菜单中的「战役」「生存模式」「遭遇战」「沙盒编辑器」。
  * 整体风格与多人游戏、任务等面板保持一致：深色半透明卡片 + surfaceContainer 边框，
  * 不使用彩色渐变徽章或分隔线，避免与主界面其他页面风格割裂。
  */
@@ -59,6 +60,7 @@ import org.jetbrains.compose.resources.painterResource
 fun SinglePlayerView(
     onExit: () -> Unit,
     onMission: () -> Unit,
+    onSurvival: () -> Unit,
     onSkirmish: () -> Unit,
     onSandbox: () -> Unit,
 ) {
@@ -110,6 +112,16 @@ fun SinglePlayerView(
                     title = readI18n("menu.singlePlayer.mission"),
                     description = readI18n("menu.singlePlayer.missionDesc"),
                     onClick = onMission,
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                SinglePlayerEntry(
+                    modifier = Modifier.fillMaxWidth(cardWidth),
+                    icon = painterResource(Res.drawable.shield_30),
+                    title = readI18n("menu.singlePlayer.survival"),
+                    description = readI18n("menu.singlePlayer.survivalDesc"),
+                    onClick = onSurvival,
                 )
 
                 Spacer(Modifier.height(12.dp))
