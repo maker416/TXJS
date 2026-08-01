@@ -308,6 +308,13 @@ class GameImpl : AbstractGame() {
                             ScriptEngine.getInstance().root.loadReplay(mode.replay.name)
                         }
                     }
+                    is GameStartMode.LoadSave -> {
+                        gameOver = false
+                        container.post {
+                            // 原版读档入口：参数带 .rwsave 后缀、不带 saves/ 前缀
+                            ScriptEngine.getInstance().root.loadGame(mode.saveName + ".rwsave")
+                        }
+                    }
                     is GameStartMode.Continue -> {
                         gameOver = false
                         container.post {
@@ -462,6 +469,10 @@ class GameImpl : AbstractGame() {
 
     override fun watchReplay(replay: Replay) {
         gameSessionManager.startGame(GameStartMode.Replay(replay))
+    }
+
+    override fun loadSaveGame(saveName: String) {
+        gameSessionManager.startGame(GameStartMode.LoadSave(saveName))
     }
 
     override fun setEffectLimitForAllEffects(limit: Int) {

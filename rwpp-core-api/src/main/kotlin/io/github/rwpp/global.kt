@@ -132,6 +132,16 @@ val modDir by lazy {
 }
 
 /**
+ * 对局存档目录（`.rwsave`）。
+ *
+ * - Desktop：`<游戏根目录>/saves/`（与引擎相对路径 `saves` 一致）
+ * - Android：`rustedWarfare/saves/`（对应引擎虚拟路径 `/SD/rustedWarfare/saves/`）
+ */
+val saveDir by lazy {
+    appKoin.get<AppContext>().externalStoragePath("saves/")
+}
+
+/**
  * 应用私有模组目录：用于存放网络同步过来的房主模组。
  *
  * Android 上位于 getExternalFilesDir/units/，非 root 设备上文件管理器无法访问，

@@ -90,6 +90,7 @@ abstract class AbstractGame : Game {
         isPublic: Boolean,
         password: String?,
         useMods: Boolean,
+        onHosted: () -> Unit,
     ) {
         val B = GameEngine.B()
         B.bX.b("starting new")
@@ -105,6 +106,7 @@ abstract class AbstractGame : Game {
             HostGameEvent().broadcastIn()
             PlayerJoinEvent(gameRoom.localPlayer).broadcastIn()
             RefreshUIEvent().broadcastIn(delay = 200L)
+            onHosted()
         }
     }
 

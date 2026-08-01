@@ -84,7 +84,7 @@
 - `commonMain/kotlin/io/github/rwpp/`
   - `App.kt` — 根 Compose 应用，使用 `AnimatedVisibility` 管理页面切换
   - `impl/` — 通用实现基类（`BaseAppContextImpl`、`BaseExternalHandlerImpl`、`BaseNetImpl`、`BaseGameI18nResolverImpl` 等）
-  - `ui/` — 各功能页面：主菜单、多人联机、房间、设置、Mod 管理、任务、回放、资源浏览器、扩展、Ban 单位、注入控制台
+  - `ui/` — 各功能页面：主菜单、多人联机、房间、设置、Mod 管理、任务、回放、存档管理、资源浏览器、扩展、Ban 单位、注入控制台
   - `widget/` — 自定义 Compose 组件（按钮、主题、加载动画、对话框、导航栏、滚动条等）
   - `widget/v2/` — 第二版组件（Brush、按钮动画、LazyColumn 滚动条、加载指示器）
   - `coil/` — 自定义 Coil `ImageableFetcher`/`ImageableKeyer`
@@ -194,7 +194,7 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 项目**未使用**任何第三方导航库。页面切换在 `App.kt` 中通过全局 `MutableState<Boolean>` 变量控制：
 
-- `showMultiplayerView`、`showSettingsView`、`showRoomView`、`showMissionView`、`showModsView`、`showExtensionView`、`showReplayView`、`showContributorList`、`showResourceBrowser`、`showSinglePlayerView`
+- `showMultiplayerView`、`showSettingsView`、`showRoomView`、`showMissionView`、`showModsView`、`showExtensionView`、`showReplayView`、`showContributorList`、`showResourceBrowser`、`showSinglePlayerView`、`showSavesView`
 - 配合 `AnimatedVisibility`（`fadeIn`/`fadeOut` + `slideInVertically`/`expandIn`/`shrinkOut`）实现过渡动画
 - 当所有视图状态均为 `false` 时，显示主菜单（`UI.UiProvider.MainMenu`）
 

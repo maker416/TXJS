@@ -277,6 +277,7 @@ exit = "退出"
 openSourceInfo = "反馈与说明"
 replay = "观看回放"
 singlePlayerGame = "单人游戏"
+saves = "存档管理"
 
 [menu.singlePlayer]
 title = "单人游戏"
@@ -456,6 +457,25 @@ deleteFailed = "删除地图失败"
 switchToMods = "模组"
 switchToMaps = "地图"
 extensionTmx = ".tmx"
+
+[saves]
+title = "存档管理"
+search = "搜索存档"
+empty = "暂无存档"
+emptyFiltered = "没有匹配的存档"
+count = "{0} 个"
+play = "开始"
+host = "开房"
+hostTitle = "使用存档开房"
+hostPublic = "公开房间（加入房间列表）"
+hostUseMods = "启用 Mod"
+hostPassword = "房间密码（可选）"
+hostStart = "创建房间"
+hostFailed = "开房失败：找不到对应存档"
+loadFailed = "存档加载失败，可能与当前游戏版本不兼容"
+deleteConfirmTitle = "确认删除存档"
+deleteConfirmMessage = "确定要删除“{0}”吗？此操作无法撤销。"
+deleteFailed = "删除存档失败"
 
 [app]
 exiting = "正在退出…"
