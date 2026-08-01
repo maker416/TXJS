@@ -25,8 +25,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
-import io.github.rwpp.game.Game
-import io.github.rwpp.game.map.MapType
 import io.github.rwpp.game.save.GameSave
 import io.github.rwpp.game.save.deleteGameSaveSafely
 import io.github.rwpp.game.save.scanGameSaves
@@ -37,7 +35,6 @@ import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.ExpandedCard
 import io.github.rwpp.widget.v2.LazyColumnScrollbar
 import io.github.rwpp.widget.v2.RWIconButton
-import org.koin.compose.koinInject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -71,12 +68,12 @@ private fun SaveMetadataPill(text: String, color: Color) {
 }
 
 /**
- * 存档管理界面：列出 `.rwsave` 存档，支持从存档开始单机、以存档开房与删除存档。
+ * 保存的游戏界面：列出 `.rwsave` 存档，仅支持删除存档。
+ * 使用存档请在选地图界面选择「保存的游戏」。
  */
 @Composable
 fun SavesViewDialog(
     onExit: () -> Unit,
-    onOpenRoom: () -> Unit,
 ) {
     BackHandler(true, onExit)
     DisposableEffect(Unit) {
@@ -85,13 +82,11 @@ fun SavesViewDialog(
         }
     }
 
-    val game = koinInject<Game>()
     val saves = remember {
         SnapshotStateList<GameSave>().apply { addAll(scanGameSaves()) }
     }
     var filter by remember { mutableStateOf("") }
     var pendingDelete by remember { mutableStateOf<GameSave?>(null) }
-    var pendingHost by remember { mutableStateOf<GameSave?>(null) }
 
     val filtered = saves.filter { it.displayName().contains(filter, ignoreCase = true) }
 
@@ -105,22 +100,6 @@ fun SavesViewDialog(
             saves.removeAll { it.file.absolutePath == save.file.absolutePath }
         } else {
             UI.showWarning(readI18n("saves.deleteFailed"))
-        }
-    }
-
-    fun hostSave(save: GameSave, isPublic: Boolean, password: String?, useMods: Boolean) {
-        // 先把存档解析为引擎地图项（MapType.SavedGame），失败则不要开房
-        val saveMap = game.getAllMaps(true).firstOrNull {
-            it.mapType == MapType.SavedGame && it.mapName == save.saveName
-        }
-        if (saveMap == null) {
-            UI.showWarning(readI18n("saves.hostFailed"))
-            return
-        }
-        game.hostStartWithPasswordAndMods(isPublic, password, useMods) {
-            // 房间建立后再设置地图（Android 开房是异步的）
-            game.gameRoom.selectedMap = saveMap
-            onOpenRoom()
         }
     }
 
@@ -169,17 +148,6 @@ fun SavesViewDialog(
                 }
             }
         }
-    }
-
-    pendingHost?.let { save ->
-        HostSaveDialog(
-            save = save,
-            onDismissRequest = { pendingHost = null },
-            onHost = { isPublic, password, useMods ->
-                pendingHost = null
-                hostSave(save, isPublic, password, useMods)
-            },
-        )
     }
 
     ExpandedCard {
@@ -287,8 +255,6 @@ fun SavesViewDialog(
                             ) { save ->
                                 SaveItem(
                                     save = save,
-                                    onPlay = { game.loadSaveGame(save.saveName) },
-                                    onHost = { pendingHost = save },
                                     onDelete = { pendingDelete = save },
                                 )
                             }
@@ -305,8 +271,6 @@ fun SavesViewDialog(
 @Composable
 private fun SaveItem(
     save: GameSave,
-    onPlay: () -> Unit,
-    onHost: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val file = save.file
@@ -344,20 +308,6 @@ private fun SaveItem(
                 }
             }
 
-            RWTextButton(
-                readI18n("saves.play"),
-                leadingIcon = {
-                    Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(22.dp))
-                },
-                onClick = onPlay,
-            )
-            RWTextButton(
-                readI18n("saves.host"),
-                leadingIcon = {
-                    Icon(Icons.Default.Send, null, modifier = Modifier.size(22.dp))
-                },
-                onClick = onHost,
-            )
             IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
                 Icon(
                     Icons.Default.Delete,
@@ -365,93 +315,6 @@ private fun SaveItem(
                     tint = MaterialTheme.colorScheme.error,
                     modifier = Modifier.size(22.dp),
                 )
-            }
-        }
-    }
-}
-
-/**
- * 「以存档开房」选项对话框：公开性、密码、是否启用 Mod。
- */
-@Composable
-private fun HostSaveDialog(
-    save: GameSave,
-    onDismissRequest: () -> Unit,
-    onHost: (isPublic: Boolean, password: String?, useMods: Boolean) -> Unit,
-) {
-    var isPublic by remember { mutableStateOf(false) }
-    var useMods by remember { mutableStateOf(false) }
-    var password by remember { mutableStateOf("") }
-
-    AnimatedAlertDialog(
-        visible = true,
-        onDismissRequest = onDismissRequest,
-    ) { dismiss ->
-        BorderCard(
-            modifier = Modifier
-                .fillMaxWidth(0.9f)
-                .padding(10.dp)
-                .widthIn(max = 480.dp),
-            backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 18.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text(
-                    readI18n("saves.hostTitle"),
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Text(
-                    save.displayName(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RWCheckbox(checked = isPublic, onCheckedChange = { isPublic = it })
-                    Text(
-                        readI18n("saves.hostPublic"),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RWCheckbox(checked = useMods, onCheckedChange = { useMods = it })
-                    Text(
-                        readI18n("saves.hostUseMods"),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-
-                RWSingleOutlinedTextField(
-                    readI18n("saves.hostPassword"),
-                    password,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { password = it }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RWTextButton(readI18n("mod.cancel"), onClick = dismiss)
-                    RWTextButton(readI18n("saves.hostStart")) {
-                        dismiss()
-                        onHost(isPublic, password.ifBlank { null }, useMods)
-                    }
-                }
             }
         }
     }

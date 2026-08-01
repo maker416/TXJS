@@ -84,7 +84,7 @@
 - `commonMain/kotlin/io/github/rwpp/`
   - `App.kt` — 根 Compose 应用，使用 `AnimatedVisibility` 管理页面切换
   - `impl/` — 通用实现基类（`BaseAppContextImpl`、`BaseExternalHandlerImpl`、`BaseNetImpl`、`BaseGameI18nResolverImpl` 等）
-  - `ui/` — 各功能页面：主菜单、多人联机、房间、设置、Mod 管理、任务、回放、存档管理、资源浏览器、扩展、Ban 单位、注入控制台
+  - `ui/` — 各功能页面：主菜单、多人联机、房间、设置、Mod 管理、任务、回放、保存的游戏、资源浏览器、扩展、Ban 单位、注入控制台
   - `widget/` — 自定义 Compose 组件（按钮、主题、加载动画、对话框、导航栏、滚动条等）
   - `widget/v2/` — 第二版组件（Brush、按钮动画、LazyColumn 滚动条、加载指示器）
   - `coil/` — 自定义 Coil `ImageableFetcher`/`ImageableKeyer`
@@ -233,7 +233,7 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 - 客户端 `ModChunkAssembler` **稀疏重组**（允许乱序），每块先过块级 SHA-256：坏块回 `NAK(506)` 单块重传（重试上限 3），每块都回 `ACK(503)` 释放窗口；收齐再做整包 SHA-256 复核 → `NetworkModCache.storeVerified/activate` → `ModReloadFinish(502)` 解除房主 ready 门控。
 - **断点续传**：已校验块即时落盘（`NetworkModCache.storePartialChunk`，桌面端 AES-GCM 逐块加密，Android 明文存引擎扫描目录之外的 `network-mod-partial/`），24h TTL；掉线/取消/被杀后下次进房按位图续传。
 - 乱序不再是致命错误；结构性错误（序号越界/大小不符）仍会断连。
-- 房主掉线：客户端传输活跃时断开 → 显示 `mod.hostDisconnected` 专属提示（区别于 generic 断连/传输失败）。
+- 房主掉线：引擎检测到「客户端→房主/中继」连接断开（`c.a(boolean,boolean,String)`，关联玩家为 null 且本机非主机）时，两端 `ClientInject` 会异步调用 `gameRoom.disconnect()` 补发 `DisconnectEvent`。两个约束：① 判定取**「最后一条活跃连接」**语义——本条断开后连接队列（桌面 `ad.aM` / Android `ae.aO`）中已无其他活跃连接（`c.h()/c.g()` 为 true）才触发，否则进房时的探测/辅助连接断开会误杀同步；主连接先断、辅助连接苟延时稍滞后但不漏报；② 必须异步：`ad/ae.b()` 会 join 连接读线程，而钩子正运行在该线程上，同步调用自我 join 死锁。Logic 据此 `cleanupTransfer()` 关闭下载卡片，客户端传输活跃时断开 → 显示 `mod.hostDisconnected` 专属提示并返回房间列表（区别于 generic 断连/传输失败）。
 
 **P2P 网状互传层（加速路径，信令包 512-514 + 独立 TCP 数据面）**
 - 信令走游戏连接：客户端进房时 `Announce(512)` 自报 P2P 监听端口与 LAN 地址；房主随 manifest 下发 `PeerList(513)`（房间级会话令牌 + peer 表，含各 peer `remoteAddress`）；客户端收齐某 mod 后成为 seed 并发 `Have(514)`，房主转发给其他 peer。

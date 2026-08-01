@@ -18,6 +18,8 @@ import io.github.rwpp.event.events.ChatMessageEvent
 import io.github.rwpp.event.events.SystemMessageEvent
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.data.RoomOption
+import io.github.rwpp.i18n.I18nType
+import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
@@ -57,7 +59,12 @@ object NetworkInject {
                         if (v != protocolVersion) {
                             gameRoom.disconnect()
                             UI.showWarning(
-                                "Different protocol version. yours: $protocolVersion server's: $v",
+                                readI18n(
+                                    "multiplayer.protocolVersionMismatch",
+                                    I18nType.RWPP,
+                                    protocolVersion.toString(),
+                                    v.toString()
+                                ),
                                 true
                             )
                             return@with

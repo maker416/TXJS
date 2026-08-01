@@ -91,6 +91,8 @@ sealed class ModPeerPacket : Packet() {
         var modNames: List<String> = emptyList()
         /** 房主转发时填写的 seed 持有者 connectHexId；client→房主时为空串。 */
         var ownerHexId: String = ""
+        /** true = 这些模组是通过 P2P 从其他 peer 拉取的（非房主星型分发）。房主据此统计 P2P 加速效果。 */
+        var viaP2P: Boolean = false
 
         override val type: Int = MOD_PEER_HAVE
 
@@ -99,6 +101,7 @@ sealed class ModPeerPacket : Packet() {
             val count = input.readInt().also { require(it in 0..MAX_MOD_NAME_COUNT) { "invalid mod name count" } }
             modNames = List(count) { input.readUTF().also { name -> validateModName(name) } }
             ownerHexId = input.readUTF().also { require(it.length <= MAX_HEX_ID_LENGTH) { "owner hex id too long" } }
+            viaP2P = input.readBoolean()
         }
 
         override fun writePacket(output: GameOutputStream) {
@@ -110,6 +113,7 @@ sealed class ModPeerPacket : Packet() {
                 output.writeUTF(name)
             }
             output.writeUTF(ownerHexId.take(MAX_HEX_ID_LENGTH))
+            output.writeBoolean(viaP2P)
         }
     }
 

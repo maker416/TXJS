@@ -51,17 +51,19 @@ class HostModTransferScheduler(
 
     /**
      * @param haveBitmaps mod 名 → 客户端已持有分块位图（断点续传）。对应位为 1 的块不再发送。
+     * @param connectHexId 玩家跨客户端唯一标识（用于进度广播与 UI 匹配）。
      */
     fun submit(
         client: Client,
         playerName: String,
+        connectHexId: String,
         requestId: Long,
         mods: List<HostModTransferSource>,
         haveBitmaps: Map<String, BitSet> = emptyMap(),
     ) {
         synchronized(lock) {
             sessions.remove(client)?.releaseRemaining()
-            sessions[client] = HostModTransferSession(client, playerName, requestId, mods, haveBitmaps, logInfo)
+            sessions[client] = HostModTransferSession(client, playerName, connectHexId, requestId, mods, haveBitmaps, logInfo)
             ensureSchedulerLocked()
         }
     }
@@ -137,11 +139,16 @@ class HostModTransferScheduler(
                     }
                 }
                 if (snapshot.isEmpty()) return
+                // 所有会话均已完成传输（等待 ModReloadFinish）：无需继续调度，退出。
+                // 会话仍保留在 sessions 中供 snapshot() 查询，直到 ModReloadFinish 后由 cancel 移除。
+                if (snapshot.all { it.awaitingReloadFinish }) return
 
                 var sentAny = false
                 for (session in snapshot) {
                     currentCoroutineContext().ensureActive()
                     if (!isActive(session)) continue
+                    // 应用阶段：所有分块已发完，等待客户端 ModReloadFinish，不再发新包
+                    if (session.awaitingReloadFinish) continue
 
                     val roomInWindow = synchronized(lock) { session.inFlight < windowSize }
                     if (!roomInWindow) continue
@@ -158,8 +165,9 @@ class HostModTransferScheduler(
                     }
 
                     if (packet == null) {
-                        removeIfCurrent(session)
-                        session.releaseRemaining()
+                        // 所有分块发完：标记为应用阶段而非移除会话，保留快照让 UI 继续显示 100% 进度，
+                        // 直到客户端回报 ModReloadFinish 后由 Logic 调用 cancel 移除。
+                        session.awaitingReloadFinish = true
                         logInfo("[MODSYNC-HOST] all mods sent to ${session.playerName}, waiting for client ModReloadFinishPacket")
                         continue
                     }
@@ -219,8 +227,11 @@ class HostModTransferSource(
  * 不属同一口径，直接相除在第 2 个模组起会失真。
  */
 data class HostTransferSnapshot(
-    val client: Client,
+    /** 关联的网络连接。房主端始终非空；加入者端（经 507 广播构造）其他玩家的连接为 null。 */
+    val client: Client?,
+    val connectHexId: String,
     val playerName: String,
+    val requestId: Long,
     val currentModName: String,
     val sentBytes: Long,
     val totalBytes: Long,
@@ -228,11 +239,14 @@ data class HostTransferSnapshot(
     val modCount: Int,
     /** 当前模组已交付给客户端的字节数 = 断点续传免发字节 + 本次按序已发字节（不含 NAK 重发），上限为 [totalBytes]。 */
     val currentModProgressBytes: Long,
+    /** true = 所有分块已发完，等待客户端重载模组并回报 ModReloadFinish（应用阶段）。 */
+    val awaitingReloadFinish: Boolean = false,
 )
 
 private class HostModTransferSession(
     val client: Client,
     val playerName: String,
+    val connectHexId: String,
     val requestId: Long,
     sources: List<HostModTransferSource>,
     haveBitmaps: Map<String, BitSet>,
@@ -249,6 +263,8 @@ private class HostModTransferSession(
     private val sentPayloads = LinkedHashMap<String, HostModPayload>()
     /** 已发送但尚未被客户端 ACK 的分块数（流量控制窗口占用）。 */
     var inFlight: Int = 0
+    /** true = 所有分块已发完，等待客户端重载模组并回报 ModReloadFinish。此时不再发新包，但会话保留以维持进度快照。 */
+    var awaitingReloadFinish = false
     /** 累计已发字节（进度快照用）。 */
     private var sentBytesTotal = 0L
     /** 当前模组已交付字节：断点续传免发字节 + 按序已发字节（不含 NAK 重发），随 payload 切换重置。 */
@@ -259,16 +275,37 @@ private class HostModTransferSession(
         val source = if (sourceIndex < sources.size) sources[sourceIndex] else null
         val modName = payload?.descriptor?.name ?: source?.descriptor?.name ?: ""
         val total = payload?.bytes?.size ?: source?.bytes?.size ?: 0
-        return HostTransferSnapshot(
-            client = client,
-            playerName = playerName,
-            currentModName = modName,
-            sentBytes = sentBytesTotal,
-            totalBytes = total.toLong(),
-            modIndex = sourceIndex,
-            modCount = sources.size,
-            currentModProgressBytes = currentModProgressBytes.coerceAtMost(total.toLong()),
-        )
+        return if (awaitingReloadFinish) {
+            // 应用阶段：所有模组已传完，进度 100%，模组计数显示 n/n
+            val lastSource = sources.lastOrNull()
+            val lastTotal = lastSource?.bytes?.size?.toLong() ?: 0L
+            HostTransferSnapshot(
+                client = client,
+                connectHexId = connectHexId,
+                playerName = playerName,
+                requestId = requestId,
+                currentModName = lastSource?.descriptor?.name ?: "",
+                sentBytes = sentBytesTotal,
+                totalBytes = lastTotal,
+                modIndex = sources.size - 1,
+                modCount = sources.size,
+                currentModProgressBytes = lastTotal,
+                awaitingReloadFinish = true,
+            )
+        } else {
+            HostTransferSnapshot(
+                client = client,
+                connectHexId = connectHexId,
+                playerName = playerName,
+                requestId = requestId,
+                currentModName = modName,
+                sentBytes = sentBytesTotal,
+                totalBytes = total.toLong(),
+                modIndex = sourceIndex,
+                modCount = sources.size,
+                currentModProgressBytes = currentModProgressBytes.coerceAtMost(total.toLong()),
+            )
+        }
     }
 
     /** NAK 请求重传。仅当对应 payload 仍在内存（当前或已发完）时入队，否则静默丢弃。 */

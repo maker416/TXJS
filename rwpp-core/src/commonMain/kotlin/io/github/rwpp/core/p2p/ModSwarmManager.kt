@@ -62,8 +62,8 @@ class ModSwarmManager(
     var roomToken: String? = null
         private set
 
-    /** cacheKey → 完整已校验 payload（本机可作为 seed 提供的 mod）。 */
-    val seedBytes: MutableMap<String, ByteArray> = ConcurrentHashMap()
+    /** cacheKey → 已落盘的模组 payload 文件（本机可作为 seed 提供的 mod）。serve 时从磁盘按块读取，避免内存持有完整字节导致 OOM。 */
+    val seedFiles: MutableMap<String, java.io.File> = ConcurrentHashMap()
 
     /** connectHexId → 已知 peer（房主 PeerList 下发 + HavePacket 增量更新）。 */
     val peers: MutableMap<String, ModPeerPacket.PeerInfo> = ConcurrentHashMap()
@@ -114,14 +114,14 @@ class ModSwarmManager(
         roomToken = null
         runCatching { socket?.close() }
         connections.forEach { runCatching { it.close() } }
-        seedBytes.clear()
+        seedFiles.clear()
         peers.clear()
         log("[MODSWARM] stopped all p2p activity")
     }
 
-    /** 登记一个已完成校验的 mod 为本机 seed（下载完成路径调用）。 */
-    fun offerSeed(cacheKey: String, bytes: ByteArray) {
-        seedBytes[cacheKey] = bytes
+    /** 登记一个已落盘的 mod 文件为本机 seed（下载完成路径调用）。serve 时从磁盘按块读取。 */
+    fun offerSeed(cacheKey: String, payloadFile: java.io.File) {
+        seedFiles[cacheKey] = payloadFile
     }
 
     /**
@@ -283,27 +283,34 @@ class ModSwarmManager(
             output.flush()
             return
         }
-        val seed = seedBytes[handshake.cacheKey]
-        if (seed == null) {
+        val seedFile = seedFiles[handshake.cacheKey]
+        if (seedFile == null || !seedFile.isFile) {
             ModPeerWire.encodeStatus(output, ModPeerWire.STATUS_UNKNOWN_MOD)
             output.flush()
             return
         }
         ModPeerWire.encodeStatus(output, ModPeerWire.STATUS_OK)
         val want = BitSet.valueOf(handshake.wantBitmap)
-        val totalChunks = maxOf(1, (seed.size + ModPacket.CHUNK_SIZE - 1) / ModPacket.CHUNK_SIZE)
+        val fileSize = seedFile.length().toInt()
+        val totalChunks = maxOf(1, (fileSize + ModPacket.CHUNK_SIZE - 1) / ModPacket.CHUNK_SIZE)
         var sent = 0
-        var index = want.nextSetBit(0)
-        while (index in 0 until totalChunks) {
-            if (System.currentTimeMillis() > deadline) {
-                log("[MODSWARM] serve hit total time cap, closing connection")
-                return
+        // 从磁盘按块读取，避免内存持有完整模组字节
+        java.io.RandomAccessFile(seedFile, "r").use { raf ->
+            var index = want.nextSetBit(0)
+            while (index in 0 until totalChunks) {
+                if (System.currentTimeMillis() > deadline) {
+                    log("[MODSWARM] serve hit total time cap, closing connection")
+                    return
+                }
+                val start = index * ModPacket.CHUNK_SIZE
+                val length = minOf(ModPacket.CHUNK_SIZE, fileSize - start)
+                val chunk = ByteArray(length)
+                raf.seek(start.toLong())
+                raf.readFully(chunk)
+                ModPeerWire.encodeChunkFrame(output, index, chunk)
+                sent++
+                index = want.nextSetBit(index + 1)
             }
-            val start = index * ModPacket.CHUNK_SIZE
-            val end = minOf(start + ModPacket.CHUNK_SIZE, seed.size)
-            ModPeerWire.encodeChunkFrame(output, index, seed.copyOfRange(start, end))
-            sent++
-            index = want.nextSetBit(index + 1)
         }
         ModPeerWire.encodeEndOfChunks(output)
         output.flush()

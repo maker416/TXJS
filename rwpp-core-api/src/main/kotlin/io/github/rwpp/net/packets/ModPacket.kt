@@ -212,6 +212,61 @@ sealed class ModPacket : Packet() {
         }
     }
 
+    /**
+     * 房主向房间内所有客户端广播的 MOD 同步进度快照。
+     * 加入者据此在玩家列表里也能看到其他加入者的下载进度。
+     */
+    class HostTransferProgressPacket : ModPacket() {
+        var requestId: Long = 0L
+        var entries: List<ProgressEntry> = emptyList()
+
+        override val type: Int = HOST_TRANSFER_PROGRESS
+
+        override fun readPacket(input: GameInputStream) {
+            requestId = input.readLong()
+            val count = input.readInt().also { require(it in 0..MAX_DESCRIPTOR_COUNT) { "invalid progress entry count" } }
+            entries = List(count) {
+                ProgressEntry(
+                    connectHexId = input.readUTF(),
+                    playerName = input.readUTF(),
+                    currentModName = input.readUTF().also { name -> if (name.isNotEmpty()) validateName(name) },
+                    currentModProgressBytes = input.readLong().also { v -> require(v >= 0L) { "negative progress bytes" } },
+                    totalBytes = input.readLong().also { v -> require(v >= 0L) { "negative total bytes" } },
+                    modIndex = input.readInt().also { v -> require(v >= 0) { "negative mod index" } },
+                    modCount = input.readInt().also { v -> require(v >= 0) { "negative mod count" } },
+                    awaitingReloadFinish = input.readBoolean(),
+                )
+            }
+        }
+
+        override fun writePacket(output: GameOutputStream) {
+            output.writeLong(requestId)
+            output.writeInt(entries.size)
+            entries.forEach {
+                output.writeUTF(it.connectHexId)
+                output.writeUTF(it.playerName)
+                output.writeUTF(it.currentModName)
+                output.writeLong(it.currentModProgressBytes)
+                output.writeLong(it.totalBytes)
+                output.writeInt(it.modIndex)
+                output.writeInt(it.modCount)
+                output.writeBoolean(it.awaitingReloadFinish)
+            }
+        }
+
+        data class ProgressEntry(
+            val connectHexId: String,
+            val playerName: String,
+            val currentModName: String,
+            val currentModProgressBytes: Long,
+            val totalBytes: Long,
+            val modIndex: Int,
+            val modCount: Int,
+            /** true = 所有分块已传完，该玩家正在重载模组（应用阶段）。 */
+            val awaitingReloadFinish: Boolean = false,
+        )
+    }
+
     companion object {
         const val MOD_DOWNLOAD_REQUEST = 500
         const val DOWNLOAD_MOD_PACK = 510
@@ -223,6 +278,8 @@ sealed class ModPacket : Packet() {
         const val MOD_MANIFEST_RESPONSE = 505
         /** 客户端→房主：分块内容校验失败，请求重传（与 ACK 成对，ACK 释放窗口、NAK 请求重发）。 */
         const val MOD_CHUNK_NAK = 506
+        /** 房主→所有客户端：广播各加入者的 MOD 同步进度快照。 */
+        const val HOST_TRANSFER_PROGRESS = 507
 
         /** 单个分块的最大字节数：64KB。足够小以避免大包风险，又不至于包数过多拖慢。 */
         const val CHUNK_SIZE = 64 * 1024

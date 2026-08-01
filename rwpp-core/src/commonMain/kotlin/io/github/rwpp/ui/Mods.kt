@@ -1299,14 +1299,17 @@ fun ModsView(
         containerColor = Color.Transparent,
         bottomBar = { ActionBar() }
     ) { paddingValues ->
-        // 左右分栏只依赖可用宽度：原先用 WindowManager.Small（宽或高任一不足即触发）
-        // 会在高度偏矮但宽度足够的分辨率下错误变成上下堆叠。
+        // 左右分栏要求宽度与高度都足够：只看宽度时，横屏手机（约 800×360dp）
+        // 也会走双栏，顶栏与底部按钮栏占完后列表视口只剩几十 dp，根本无法滚动浏览；
+        // 高度不足时退化为单列滚动布局（头部随列表滚动，视口利用率最大）。
+        // 原先的 WindowManager.Small（宽或高任一不足即触发）会在高度偏矮但宽度
+        // 足够的桌面窗口下错误变成上下堆叠，故仍保留 700dp 宽度门槛。
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            val useSideBySide = maxWidth >= 700.dp
+            val useSideBySide = maxWidth >= 700.dp && maxHeight >= 480.dp
             if (embedded) {
                 ModsBody(compact = !useSideBySide, modifier = Modifier.fillMaxSize())
             } else if (useSideBySide) {

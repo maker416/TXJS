@@ -562,6 +562,13 @@ class GameRoomImpl(private val game: GameImpl) : GameRoom {
 
         MainActivity.activityResume()
 
+        // 房主掉线/被踢等被动断开时，对局 Activity 可能仍在前台并显示黑屏。
+        // 主动结束它，让 MainActivity 回到前台并触发 gameLauncher 回调，
+        // 从而广播 ReturnMainMenuEvent，自动返回多人游戏房间列表。
+        CustomInGameActivity.instance?.takeIf { !it.isFinishing }?.let { activity ->
+            activity.runOnUiThread { activity.finish() }
+        }
+
         DisconnectEvent(reason).broadcastIn()
     }
 

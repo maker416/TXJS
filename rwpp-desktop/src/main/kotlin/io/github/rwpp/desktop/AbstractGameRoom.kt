@@ -15,6 +15,8 @@ import io.github.rwpp.desktop.impl.PlayerImpl
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.DisconnectEvent
 import io.github.rwpp.event.events.MapChangedEvent
+import io.github.rwpp.event.events.QuitGameEvent
+import io.github.rwpp.event.events.ReturnMainMenuEvent
 import io.github.rwpp.game.ConnectingPlayer
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.GameRoom
@@ -363,6 +365,15 @@ abstract class AbstractGameRoom  : GameRoom {
         lastMapPath = null
 
         if (isConnecting) GameEngine.B().bX.b(reason)
+
+        // 对局中房主掉线/被踢等被动断开时，若仍在游戏画面，主动切回菜单，
+        // 避免玩家卡在游戏黑屏画面。
+        if (displaySwitcher.currentMode.value == DisplayMode.Game) {
+            QuitGameEvent().broadcastIn()
+            ReturnMainMenuEvent().broadcastIn()
+            gameSessionManager.returnToMenu()
+        }
+
         DisconnectEvent(reason).broadcastIn()
     }
 

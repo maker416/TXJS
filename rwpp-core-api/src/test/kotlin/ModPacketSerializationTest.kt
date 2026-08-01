@@ -236,4 +236,42 @@ class ModPacketSerializationTest {
             }
         }.getOrNull())
     }
+
+    @Test
+    fun hostTransferProgressRoundTrips() {
+        val packet = ModPacket.HostTransferProgressPacket().apply {
+            requestId = 77L
+            entries = listOf(
+                ModPacket.HostTransferProgressPacket.ProgressEntry(
+                    connectHexId = "abc123",
+                    playerName = "player1",
+                    currentModName = "mod-a",
+                    currentModProgressBytes = 1024L,
+                    totalBytes = 4096L,
+                    modIndex = 0,
+                    modCount = 2,
+                ),
+                ModPacket.HostTransferProgressPacket.ProgressEntry(
+                    connectHexId = "def456",
+                    playerName = "player2",
+                    currentModName = "mod-b",
+                    currentModProgressBytes = 2048L,
+                    totalBytes = 2048L,
+                    modIndex = 1,
+                    modCount = 3,
+                ),
+            )
+        }
+        val out = roundTrip(packet) as ModPacket.HostTransferProgressPacket
+        assertEquals(77L, out.requestId)
+        assertEquals(2, out.entries.size)
+        val first = out.entries[0]
+        assertEquals("abc123", first.connectHexId)
+        assertEquals("player1", first.playerName)
+        assertEquals("mod-a", first.currentModName)
+        assertEquals(1024L, first.currentModProgressBytes)
+        assertEquals(4096L, first.totalBytes)
+        assertEquals(0, first.modIndex)
+        assertEquals(2, first.modCount)
+    }
 }

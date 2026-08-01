@@ -2672,14 +2672,23 @@ private fun RoomPlayerTableRow(
 ) {
     val options = remember { game.getStartingUnitOptions() }
     val rowPadding = if (compact) 2.dp else 5.dp
-    // 房主视图：该玩家是否有正在进行的 MOD 同步会话（有则在行内展开同步进度条）
+    // 房主/加入者通用视图：该玩家是否有正在进行的 MOD 同步会话（有则在行内展开同步进度条）
     // 行级 derivedStateOf：全局快照 200ms 轮询更新时，仅匹配到本行玩家的会话变化才触发本行重组
-    val transferState = remember(room.isHost, player.client) {
+    // 优先按 connectHexId 匹配（跨端唯一标识），connectHexId 为空时 fallback 到 client 引用匹配
+    // client 可能为 null（加入者端其他玩家无连接对象），仅两者均非空时才比较引用
+    val transferState = remember(player.client, player.connectHexId) {
         derivedStateOf {
-            if (room.isHost) UI.hostTransferSnapshots.firstOrNull { it.client == player.client } else null
+            UI.hostTransferSnapshots.firstOrNull {
+                (it.connectHexId.isNotBlank() && it.connectHexId == player.connectHexId) ||
+                    (it.client != null && it.client == player.client)
+            }
         }
     }
     val transfer = transferState.value
+
+    // 房主视角：该加入者是否已宣告 P2P 能力（AnnouncePacket 的 listenPort > 0）
+    val p2pEnabled = (room.isHost || room.isHostServer) &&
+        player.client?.let { (UI.hostP2pPeerPorts[it] ?: 0) > 0 } == true
 
     // 同步中的玩家行边框做呼吸脉冲，一眼可辨「还在传模组」；
     // 脉冲仅在有同步会话时才创建，空闲行不跑无限动画
@@ -2739,6 +2748,20 @@ private fun RoomPlayerTableRow(
                                 )
                             }
                         }
+                        // 房主视角的 P2P 徽章：该加入者已宣告 P2P 监听端口，可参与模组互传
+                        if (p2pEnabled) {
+                            Text(
+                                "P2P",
+                                modifier = Modifier
+                                    .padding(end = if (compact) 3.dp else 6.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f))
+                                    .padding(horizontal = if (compact) 3.dp else 5.dp, vertical = 1.dp),
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                maxLines = 1,
+                            )
+                        }
                     }
                     TableCell(
                         if (player.isSpectator) "S" else (player.spawnPoint + 1).toString(),
@@ -2775,6 +2798,7 @@ private fun RoomPlayerTableRow(
  */
 @Composable
 private fun RoomModSyncStrip(transfer: HostTransferSnapshot, compact: Boolean) {
+    val applying = transfer.awaitingReloadFinish
     val progress = if (transfer.totalBytes > 0) {
         (transfer.currentModProgressBytes.toFloat() / transfer.totalBytes).coerceIn(0f, 1f)
     } else 0f
@@ -2802,7 +2826,7 @@ private fun RoomModSyncStrip(transfer: HostTransferSnapshot, compact: Boolean) {
             modifier = Modifier.size(if (compact) 9.dp else 11.dp),
         )
         Text(
-            transfer.currentModName,
+            if (applying) readI18n("mod.applyingMod", I18nType.RWPP) else transfer.currentModName,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -2817,12 +2841,23 @@ private fun RoomModSyncStrip(transfer: HostTransferSnapshot, compact: Boolean) {
                 maxLines = 1,
             )
         }
-        ModSyncProgressBar(
-            progress = animatedProgress,
-            modifier = Modifier
-                .weight(if (compact) 0.9f else 1.2f)
-                .height(if (compact) 4.dp else 5.dp),
-        )
+        if (applying) {
+            // 应用阶段：无可量化进度，用脉冲（不确定）条
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .weight(if (compact) 0.9f else 1.2f)
+                    .height(if (compact) 4.dp else 5.dp),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceContainer,
+            )
+        } else {
+            ModSyncProgressBar(
+                progress = animatedProgress,
+                modifier = Modifier
+                    .weight(if (compact) 0.9f else 1.2f)
+                    .height(if (compact) 4.dp else 5.dp),
+            )
+        }
         Text(
             "$percent%",
             style = MaterialTheme.typography.labelSmall.copy(

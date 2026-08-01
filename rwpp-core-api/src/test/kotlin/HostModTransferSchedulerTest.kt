@@ -35,6 +35,7 @@ class HostModTransferSchedulerTest {
                 scheduler.submit(
                     secondClient,
                     "second",
+                    "hex-second",
                     2L,
                     listOf(source("same-mod", fourChunks)),
                 )
@@ -46,15 +47,18 @@ class HostModTransferSchedulerTest {
         scheduler.submit(
             firstClient,
             "first",
+            "hex-first",
             1L,
             listOf(source("same-mod", fourChunks)),
         )
 
         withTimeout(1000) {
-            while (scheduler.activeClientCount() > 0) {
+            // 两个会话都发完（均 awaitingReloadFinish）后 scheduler 退出
+            while (scheduler.snapshot().count { it.awaitingReloadFinish } < 2) {
                 yield()
             }
         }
+        scheduler.cancelAll()
 
         assertTrue(events.indexOf("second:0") in 1 until events.indexOf("first:3"))
     }
@@ -73,6 +77,7 @@ class HostModTransferSchedulerTest {
         scheduler.submit(
             silent,
             "silent",
+            "hex-silent",
             1L,
             listOf(source("big", ByteArray(ModPacket.CHUNK_SIZE * 50))),
         )
@@ -102,16 +107,19 @@ class HostModTransferSchedulerTest {
         scheduler.submit(
             client,
             "c",
+            "hex-c",
             1L,
             listOf(source("mod", fourChunks)),
             mapOf("mod" to java.util.BitSet().apply { set(0); set(1) }),
         )
 
         withTimeout(1000) {
-            while (scheduler.activeClientCount() > 0) {
+            // 所有块发完后会话标记为 awaitingReloadFinish（不再移除），轮询 snapshot 确认
+            while (scheduler.snapshot().none { it.awaitingReloadFinish }) {
                 yield()
             }
         }
+        scheduler.cancelAll()
 
         assertEquals(listOf("c:2", "c:3"), events)
     }
@@ -129,6 +137,7 @@ class HostModTransferSchedulerTest {
         scheduler.submit(
             client,
             "c",
+            "hex-c",
             1L,
             listOf(source("mod", ByteArray(ModPacket.CHUNK_SIZE * 3))),
         )
@@ -162,6 +171,7 @@ class HostModTransferSchedulerTest {
         scheduler.submit(
             silent,
             "silent",
+            "hex-silent",
             1L,
             listOf(source("mod", ByteArray(ModPacket.CHUNK_SIZE * 4))),
         )
@@ -193,6 +203,7 @@ class HostModTransferSchedulerTest {
         scheduler.submit(
             silent,
             "silent",
+            "hex-silent",
             1L,
             listOf(source("mod", ByteArray(ModPacket.CHUNK_SIZE * 4))),
             mapOf("mod" to java.util.BitSet().apply { set(0); set(1) }),
@@ -226,6 +237,7 @@ class HostModTransferSchedulerTest {
         scheduler.submit(
             client,
             "c",
+            "hex-c",
             1L,
             listOf(
                 source("a", ByteArray(ModPacket.CHUNK_SIZE * 4)),
