@@ -130,6 +130,8 @@ object UI : Initialization, IUserInterface {
     var receivingModTotalCount by mutableStateOf(0)
     /** 已下载完成的 mod 数（含当前正在下载的那个，从 1 开始）。 */
     var receivingModDoneCount by mutableStateOf(0)
+    /** 下载完成后的「正在应用模组」阶段：卡片切换为不确定进度，直到引擎重载 + 校验 + 上报完成。 */
+    var receivingModApplying by mutableStateOf(false)
     /** 房主侧：各下载客户端的 MOD 同步进度快照（由 Logic 轮询调度器并发布，玩家行据此展示 per-client 进度）。 */
     var hostTransferSnapshots by mutableStateOf<List<HostTransferSnapshot>>(emptyList())
     var UiProvider: UIProvider = UIProvider()

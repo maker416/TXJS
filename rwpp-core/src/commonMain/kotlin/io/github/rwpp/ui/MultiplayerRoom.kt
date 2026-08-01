@@ -9,7 +9,13 @@ package io.github.rwpp.ui
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -37,12 +43,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -74,6 +90,7 @@ import io.github.rwpp.game.units.UnitType
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.net.DEFAULT_PUBLISH_ROOM_TYPE
+import io.github.rwpp.net.HostTransferSnapshot
 import io.github.rwpp.net.MOD_SYNC_ROOM_TYPE
 import io.github.rwpp.net.Net
 import io.github.rwpp.net.composePublishRoomType
@@ -2645,63 +2662,60 @@ private fun RoomPlayerTableRow(
 ) {
     val options = remember { game.getStartingUnitOptions() }
     val rowPadding = if (compact) 2.dp else 5.dp
-    // 房主视图：该玩家是否有正在进行的 MOD 同步会话（用于显示 per-client 进度环与当前模组信息）
+    // 房主视图：该玩家是否有正在进行的 MOD 同步会话（有则在行内展开同步进度条）
     val transfer = if (room.isHost) UI.hostTransferSnapshots.firstOrNull { it.client == player.client } else null
+
+    // 同步中的玩家行边框做呼吸脉冲，一眼可辨「还在传模组」；
+    // 脉冲仅在有同步会话时才创建，空闲行不跑无限动画
+    val rowBorderColor = if (transfer != null) {
+        val borderPulse by rememberInfiniteTransition(label = "room player sync border").animateFloat(
+            initialValue = 0.45f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(900, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "room player sync border alpha",
+        )
+        MaterialTheme.colorScheme.primary.copy(alpha = borderPulse)
+    } else {
+        MaterialTheme.colorScheme.primary
+    }
+
     Box(modifier) {
         KickPlayerContextMenuAreaMultiplatform(player) {
-            Row(
+            Column(
                 modifier = Modifier
-                    .height(IntrinsicSize.Max)
                     .padding(rowPadding)
-                    .border(
-                        BorderStroke(2.dp, MaterialTheme.colorScheme.primary),
-                        rowShape,
-                    )
+                    .border(BorderStroke(2.dp, rowBorderColor), rowShape)
                     .fillMaxWidth()
                     .clickable(room.isHost || room.isHostServer || room.localPlayer == player) {
                         onPlayerClick(player)
                     },
             ) {
-                val baseName = player.name + if (player.startingUnit != -1) {
-                    " - ${options.firstOrNull { it.first == player.startingUnit }?.second ?: "Unknown"}"
-                } else ""
-                val nameText = if (transfer != null) {
-                    val pct = if (transfer.totalBytes > 0)
-                        (transfer.sentBytes * 100 / transfer.totalBytes).coerceIn(0, 100) else 0
-                    if (compact) {
-                        "$baseName · ${transfer.currentModName} $pct%"
-                    } else {
-                        "$baseName · ${transfer.currentModName} ${fmtMB(transfer.sentBytes)}/${fmtMB(transfer.totalBytes)}MB $pct%"
-                    }
-                } else baseName
-                TableCell(
-                    nameText,
-                    color = if (player.color != -1) {
-                        Player.getTeamColor(player.color)
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
-                    weight = RoomPlayerNameWeight,
-                    drawStroke = false,
-                    modifier = Modifier.fillMaxHeight(),
-                ) {
-                    if (transfer != null || !player.data.ready) {
-                        // Box 纵向 fillMaxHeight + 居中，修复原实现里小圆圈在格内偏上、视觉中心偏离的问题
-                        Box(
-                            modifier = Modifier.fillMaxHeight().padding(end = 4.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            if (transfer != null) {
-                                val ringProgress = if (transfer.totalBytes > 0) {
-                                    (transfer.sentBytes.toFloat() / transfer.totalBytes).coerceIn(0f, 1f)
-                                } else 0f
-                                CircularProgressIndicator(
-                                    progress = { ringProgress },
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(if (compact) 12.dp else 16.dp),
-                                    strokeWidth = if (compact) 1.5.dp else 2.dp,
-                                )
-                            } else {
+                Row(modifier = Modifier.height(IntrinsicSize.Max)) {
+                    val baseName = player.name + if (player.startingUnit != -1) {
+                        " - ${options.firstOrNull { it.first == player.startingUnit }?.second ?: "Unknown"}"
+                    } else ""
+                    TableCell(
+                        baseName,
+                        color = if (player.color != -1) {
+                            Player.getTeamColor(player.color)
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                        weight = RoomPlayerNameWeight,
+                        drawStroke = false,
+                        modifier = Modifier.fillMaxHeight(),
+                    ) {
+                        // 未就绪（等待装载/就绪）且尚无同步会话：显示不确定进度环；
+                        // 有同步会话时由行内进度条承载进度，名称格保持干净
+                        if (transfer == null && !player.data.ready) {
+                            // Box 纵向 fillMaxHeight + 居中，修复原实现里小圆圈在格内偏上、视觉中心偏离的问题
+                            Box(
+                                modifier = Modifier.fillMaxHeight().padding(end = 4.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
                                 CircularProgressIndicator(
                                     color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(if (compact) 12.dp else 16.dp),
@@ -2710,28 +2724,209 @@ private fun RoomPlayerTableRow(
                             }
                         }
                     }
+                    TableCell(
+                        if (player.isSpectator) "S" else (player.spawnPoint + 1).toString(),
+                        RoomPlayerSpawnWeight,
+                        color = if (player.isSpectator) Color.Black else Player.getTeamColor(player.spawnPoint),
+                        modifier = Modifier.fillMaxHeight(),
+                    )
+                    TableCell(
+                        player.teamAlias(),
+                        RoomPlayerTeamWeight,
+                        color = Player.getTeamColor(player.team),
+                        modifier = Modifier.fillMaxHeight(),
+                    )
+                    val ping = remember(update) { player.ping }
+                    TableCell(
+                        ping,
+                        RoomPlayerPingWeight,
+                        drawStroke = false,
+                        modifier = Modifier.fillMaxHeight(),
+                    )
                 }
-                TableCell(
-                    if (player.isSpectator) "S" else (player.spawnPoint + 1).toString(),
-                    RoomPlayerSpawnWeight,
-                    color = if (player.isSpectator) Color.Black else Player.getTeamColor(player.spawnPoint),
-                    modifier = Modifier.fillMaxHeight(),
-                )
-                TableCell(
-                    player.teamAlias(),
-                    RoomPlayerTeamWeight,
-                    color = Player.getTeamColor(player.team),
-                    modifier = Modifier.fillMaxHeight(),
-                )
-                val ping = remember(update) { player.ping }
-                TableCell(
-                    ping,
-                    RoomPlayerPingWeight,
-                    drawStroke = false,
-                    modifier = Modifier.fillMaxHeight(),
-                )
+                if (transfer != null) {
+                    RoomModSyncStrip(transfer = transfer, compact = compact)
+                }
             }
         }
+    }
+}
+
+/**
+ * 房主视角的行内 MOD 同步进度条（玩家行第二行）。
+ * 构成：下载图标 + 当前模组名 + 渐变进度条（流光扫过 + 端点光斑）+ 百分比 + 模组计数徽章；
+ * 宽屏额外显示「已传/总量 MB」。进度按当前模组口径（含断点续传免发字节）。
+ */
+@Composable
+private fun RoomModSyncStrip(transfer: HostTransferSnapshot, compact: Boolean) {
+    val progress = if (transfer.totalBytes > 0) {
+        (transfer.currentModProgressBytes.toFloat() / transfer.totalBytes).coerceIn(0f, 1f)
+    } else 0f
+    // 快照每 200ms 轮询一次，用 220ms 过渡让进度走动连续
+    val animatedProgress by animateFloatAsState(
+        targetValue = progress,
+        animationSpec = tween(220),
+        label = "room mod sync progress",
+    )
+    val percent = (progress * 100).roundToInt()
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                start = if (compact) 8.dp else 12.dp,
+                end = if (compact) 8.dp else 12.dp,
+                bottom = if (compact) 4.dp else 6.dp,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 8.dp),
+    ) {
+        ModSyncDownloadGlyph(
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(if (compact) 9.dp else 11.dp),
+        )
+        Text(
+            transfer.currentModName,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (!compact) {
+            Text(
+                "${fmtMB(transfer.currentModProgressBytes)}/${fmtMB(transfer.totalBytes)}MB",
+                style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+        ModSyncProgressBar(
+            progress = animatedProgress,
+            modifier = Modifier
+                .weight(if (compact) 0.9f else 1.2f)
+                .height(if (compact) 4.dp else 5.dp),
+        )
+        Text(
+            "$percent%",
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontWeight = FontWeight.Bold,
+                fontFeatureSettings = "tnum",
+            ),
+            color = MaterialTheme.colorScheme.primary,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+            modifier = Modifier.widthIn(min = if (compact) 26.dp else 32.dp),
+        )
+        // 模组计数徽章：当前第几个 / 共几个
+        Text(
+            "${transfer.modIndex + 1}/${transfer.modCount}",
+            modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f))
+                .padding(horizontal = if (compact) 4.dp else 6.dp, vertical = 2.dp),
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontWeight = FontWeight.Bold,
+                fontFeatureSettings = "tnum",
+            ),
+            maxLines = 1,
+        )
+    }
+}
+
+/** 细圆角渐变进度条：轨道 + 主色渐变填充 + 流光扫过 + 进度端点光斑。 */
+@Composable
+private fun ModSyncProgressBar(progress: Float, modifier: Modifier = Modifier) {
+    val trackColor = MaterialTheme.colorScheme.surfaceContainer
+    val fillStartColor = MaterialTheme.colorScheme.inversePrimary
+    val fillEndColor = MaterialTheme.colorScheme.primary
+    val shimmer by rememberInfiniteTransition(label = "room mod sync shimmer").animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1400, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "room mod sync shimmer offset",
+    )
+
+    Canvas(modifier = modifier) {
+        val radius = size.height / 2f
+        drawRoundRect(color = trackColor, cornerRadius = CornerRadius(radius, radius))
+
+        val fillWidth = size.width * progress.coerceIn(0f, 1f)
+        if (fillWidth > 0f) {
+            val fillPath = Path().apply {
+                addRoundRect(RoundRect(0f, 0f, fillWidth, size.height, CornerRadius(radius, radius)))
+            }
+            clipPath(fillPath) {
+                // 渐变铺满整条轨道（而非仅填充区），保证任意进度下色相一致
+                drawRoundRect(
+                    brush = Brush.horizontalGradient(
+                        colors = listOf(fillStartColor, fillEndColor),
+                        startX = 0f,
+                        endX = size.width,
+                    ),
+                    cornerRadius = CornerRadius(radius, radius),
+                )
+                // 流光：一条斜向半透明白带反复扫过已填充区域
+                val bandWidth = size.height * 2.5f
+                val sweep = shimmer * (fillWidth + bandWidth * 2f) - bandWidth
+                val band = Path().apply {
+                    moveTo(sweep, size.height)
+                    lineTo(sweep + bandWidth * 0.5f, 0f)
+                    lineTo(sweep + bandWidth, 0f)
+                    lineTo(sweep + bandWidth * 0.5f, size.height)
+                    close()
+                }
+                drawPath(band, Color.White.copy(alpha = 0.16f))
+            }
+            // 端点光斑，强化「正在前进」的视觉锚点
+            drawCircle(
+                color = Color.White.copy(alpha = 0.85f),
+                radius = radius * 0.45f,
+                center = Offset((fillWidth - radius).coerceAtLeast(radius), size.height / 2f),
+            )
+        }
+    }
+}
+
+/** 手绘下载图标（箭杆 + 两翼 + 托盘线）；material-icons-core 无下载图标，Canvas 绘制更贴合圆角细线风格。 */
+@Composable
+private fun ModSyncDownloadGlyph(tint: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val strokeWidth = minOf(w, h) * 0.16f
+        val cx = w / 2f
+        // 箭杆
+        drawLine(
+            color = tint,
+            start = Offset(cx, h * 0.06f),
+            end = Offset(cx, h * 0.52f),
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Round,
+        )
+        // 箭头两翼
+        val head = Path().apply {
+            moveTo(cx - w * 0.26f, h * 0.38f)
+            lineTo(cx, h * 0.64f)
+            lineTo(cx + w * 0.26f, h * 0.38f)
+        }
+        drawPath(
+            head,
+            tint,
+            style = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round),
+        )
+        // 托盘
+        drawLine(
+            color = tint,
+            start = Offset(w * 0.10f, h * 0.88f),
+            end = Offset(w * 0.90f, h * 0.88f),
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Round,
+        )
     }
 }
 

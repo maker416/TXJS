@@ -213,6 +213,10 @@ class HostModTransferSource(
 
 /**
  * 房主侧单个客户端的 MOD 同步进度快照（只读、不可变），供 UI 展示。
+ *
+ * 进度语义：UI 应使用 [currentModProgressBytes] / [totalBytes] 计算**当前模组**的进度。
+ * [sentBytes] 是整个会话的累计已发字节（含已传完的模组），与 [totalBytes]（仅当前模组大小）
+ * 不属同一口径，直接相除在第 2 个模组起会失真。
  */
 data class HostTransferSnapshot(
     val client: Client,
@@ -222,6 +226,8 @@ data class HostTransferSnapshot(
     val totalBytes: Long,
     val modIndex: Int,
     val modCount: Int,
+    /** 当前模组已交付给客户端的字节数 = 断点续传免发字节 + 本次按序已发字节（不含 NAK 重发），上限为 [totalBytes]。 */
+    val currentModProgressBytes: Long,
 )
 
 private class HostModTransferSession(
@@ -245,6 +251,8 @@ private class HostModTransferSession(
     var inFlight: Int = 0
     /** 累计已发字节（进度快照用）。 */
     private var sentBytesTotal = 0L
+    /** 当前模组已交付字节：断点续传免发字节 + 按序已发字节（不含 NAK 重发），随 payload 切换重置。 */
+    private var currentModProgressBytes = 0L
 
     fun toSnapshot(): HostTransferSnapshot {
         val payload = currentPayload
@@ -259,6 +267,7 @@ private class HostModTransferSession(
             totalBytes = total.toLong(),
             modIndex = sourceIndex,
             modCount = sources.size,
+            currentModProgressBytes = currentModProgressBytes.coerceAtMost(total.toLong()),
         )
     }
 
@@ -277,7 +286,7 @@ private class HostModTransferSession(
             val (name, index) = resendQueue.removeFirst()
             val payload = payloadFor(name) ?: continue
             if (index !in 0 until payload.totalChunks) continue
-            return buildChunk(payload, index)
+            return buildChunk(payload, index, countProgress = false)
         }
 
         while (true) {
@@ -289,14 +298,23 @@ private class HostModTransferSession(
                 continue
             }
             nextChunkIndex = index + 1
-            return buildChunk(payload, index)
+            return buildChunk(payload, index, countProgress = true)
         }
     }
 
-    private fun buildChunk(payload: HostModPayload, index: Int): ModPacket.ModChunkPacket {
+    private fun buildChunk(
+        payload: HostModPayload,
+        index: Int,
+        countProgress: Boolean,
+    ): ModPacket.ModChunkPacket {
         val start = index * ModPacket.CHUNK_SIZE
         val end = if (payload.bytes.isEmpty()) 0 else minOf(start + ModPacket.CHUNK_SIZE, payload.bytes.size)
-        sentBytesTotal += (end - start)
+        val length = (end - start).toLong()
+        sentBytesTotal += length
+        // 只有当前 payload 的按序首发才计入当前模组进度；NAK 重发与跨 mod 的迟到重传不计
+        if (countProgress && payload === currentPayload) {
+            currentModProgressBytes += length
+        }
         return ModPacket.ModChunkPacket().apply {
             requestId = this@HostModTransferSession.requestId
             name = payload.descriptor.name
@@ -324,9 +342,25 @@ private class HostModTransferSession(
         val payload = HostModPayload(source.descriptor, source.bytes, totalChunks, source, skip)
         currentPayload = payload
         nextChunkIndex = 0
+        // 断点续传：客户端已持有的块不再发送，但这部分字节应计入当前模组进度
+        currentModProgressBytes = skippedBytes(source.bytes.size, totalChunks, skip)
         val skipped = (0 until totalChunks).count { skip.get(it) }
         logInfo("[MODSYNC-HOST] sending mod to $playerName (chunked): ${source.descriptor.name}, size=${source.bytes.size}, chunks=$totalChunks, skippedByResume=$skipped")
         return payload
+    }
+
+    /** 位图中已持有分块对应的字节总量（末块可能不足 CHUNK_SIZE，空 payload 为 0）。 */
+    private fun skippedBytes(size: Int, totalChunks: Int, skip: BitSet): Long {
+        var sum = 0L
+        var i = skip.nextSetBit(0)
+        while (i >= 0) {
+            if (i < totalChunks) {
+                val start = i * ModPacket.CHUNK_SIZE
+                sum += (minOf(start + ModPacket.CHUNK_SIZE, size) - start).coerceAtLeast(0)
+            }
+            i = skip.nextSetBit(i + 1)
+        }
+        return sum
     }
 
     private fun finishCurrentPayload() {

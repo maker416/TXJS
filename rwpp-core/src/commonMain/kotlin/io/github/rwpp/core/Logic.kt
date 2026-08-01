@@ -946,10 +946,29 @@ object Logic : Initialization {
     }
 
     private suspend fun finalizeModSync(requestId: Long, descriptors: List<NetworkModDescriptor>, net: Net) {
+        // 下载完成 ≠ 同步完成：不关闭对话框，切换到「正在应用模组」不确定进度态，
+        // 贯穿引擎重载 + 模组校验 + ModReloadFinish 上报全程。
+        // 旧实现先关下载卡片再靠通用 LoadingView 的 ReloadMod 事件对覆盖引擎调用区间，
+        // 事件之后的校验/上报阶段界面零反馈，表现为「加载圈提前消失」。
+        val modCount = descriptors.size.coerceAtLeast(1)
         withContext(Dispatchers.Main.immediate) {
-            UI.showNetworkDialog = false
             resetReceivingModState()
+            UI.receivingModApplying = true
+            UI.receivingModTotalCount = modCount
+            UI.receivingModDoneCount = modCount
+            UI.receivingNetworkDialogTitle = readI18n("mod.downloadingModComplete", I18nType.RWPP)
+            UI.showNetworkDialog = true
         }
+        try {
+            finalizeModSyncApply(requestId, descriptors, net)
+        } catch (e: Throwable) {
+            // 应用阶段卡片不再提供取消入口，异常时必须兜底关闭，避免卡片卡死在「正在应用」态
+            cleanupTransfer()
+            throw e
+        }
+    }
+
+    private suspend fun finalizeModSyncApply(requestId: Long, descriptors: List<NetworkModDescriptor>, net: Net) {
         val cache = appKoin.get<NetworkModCache>()
         val manager = appKoin.get<ModManager>()
         val modsBefore = manager.getAllMods()
@@ -1070,6 +1089,7 @@ object Logic : Initialization {
         hostProgressPollJob = null
         scope.launch(Dispatchers.Main.immediate) {
             UI.hostTransferSnapshots = emptyList()
+            UI.receivingModApplying = false
             UI.showNetworkDialog = false
         }
     }
@@ -1085,6 +1105,7 @@ object Logic : Initialization {
         UI.receivingModTotalBytes = 0L
         UI.receivingModTotalCount = 0
         UI.receivingModDoneCount = 0
+        UI.receivingModApplying = false
         UI.receivingNetworkDialogTitle = ""
     }
 

@@ -38,6 +38,7 @@ class I18nBundleTest {
             "hostDisconnected",
             "chunkRetryExceeded",
             "peerLeftDuringTransfer",
+            "applyingMod",
         )
         listOf("bundle_zh.toml", "bundle_en.toml").forEach { name ->
             val file = bundleFile(name)

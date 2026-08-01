@@ -858,7 +858,9 @@ fun App(
                     }
                 }
 
-                LoadingView(reloadingModViewVisible, onLoaded = {}) { null }
+                // 模组同步期间进度由 NetworkModDownloadingCard 承载（下载→应用全程），
+                // 不再叠加通用加载圈，避免双弹窗与「圈提前消失」的观感
+                LoadingView(reloadingModViewVisible && !UI.showNetworkDialog, onLoaded = {}) { null }
 
                 // 主动取消下载：同步作废传输状态 + 断开房间（触发房主 PlayerLeaveEvent 取消其发送 Job）+ 回列表。
                 // 弹窗 enableDismiss=false，点遮罩/空白不再误触断连；取消仅走卡片内的显式按钮。
@@ -872,6 +874,7 @@ fun App(
                     UI.receivingModTotalBytes = 0L
                     UI.receivingModTotalCount = 0
                     UI.receivingModDoneCount = 0
+                    UI.receivingModApplying = false
                     val game = appKoin.get<Game>()
                     game.gameRoom.disconnect("cancelled by user")
                     UI.showMultiplayerView = true
@@ -925,12 +928,16 @@ fun App(
 }
 
 /**
- * 房主 MOD 同步下载进度卡片。
- * 复用 [io.github.rwpp.widget.LoadingView] 的视觉语言：左侧色条 + 阶段标签 + 计数徽章 + 字节详情 + 确定值进度条。
- * 进度数据来自 [io.github.rwpp.ui.UI] 的 receivingMod* 状态，由 Logic 下载流程实时刷新。
+ * 房主 MOD 同步进度卡片。
+ * 复用 [io.github.rwpp.widget.LoadingView] 的视觉语言：左侧色条 + 阶段标签 + 计数徽章 + 字节详情 + 进度条。
+ * 覆盖两个阶段（均由 Logic 下载/应用流程实时刷新）：
+ * - 下载阶段：确定值进度条 + 百分比 + 取消按钮；
+ * - 应用阶段（[io.github.rwpp.ui.UI.receivingModApplying]）：引擎重载与校验无可量化进度，
+ *   显示脉冲（不确定）进度条并隐藏取消按钮，直到 ModReloadFinish 上报后由 Logic 关闭。
  */
 @Composable
 private fun NetworkModDownloadingCard(onCancel: () -> Unit) {
+    val applying = UI.receivingModApplying
     val name = UI.receivingModName
     val progress = UI.receivingModProgress
     val receivedBytes = UI.receivingModReceivedBytes
@@ -978,7 +985,7 @@ private fun NetworkModDownloadingCard(onCancel: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
-                        readI18n("mod.downloadingMod"),
+                        if (applying) readI18n("mod.applyingMod") else readI18n("mod.downloadingMod"),
                         color = MaterialTheme.colorScheme.primary,
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
@@ -987,7 +994,11 @@ private fun NetworkModDownloadingCard(onCancel: () -> Unit) {
                     )
 
                     Text(
-                        if (name.isBlank()) detail else "$name · $detail",
+                        when {
+                            applying -> readI18n("mod.downloadingModComplete")
+                            name.isBlank() -> detail
+                            else -> "$name · $detail"
+                        },
                         color = MaterialTheme.colorScheme.onSurface,
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                         minLines = 2,
@@ -1014,39 +1025,51 @@ private fun NetworkModDownloadingCard(onCancel: () -> Unit) {
                 )
             }
 
-            // 确定值进度条 + 百分比
+            // 进度条：下载阶段为确定值 + 百分比；应用阶段无可量化进度，用脉冲（不确定）条
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                LinearProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(4.dp),
-                    color = MaterialTheme.colorScheme.primary,
-                    trackColor = MaterialTheme.colorScheme.surfaceContainer,
-                )
-                Text(
-                    "$percent%",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
-                    maxLines = 1
-                )
+                if (applying) {
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(4.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceContainer,
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(4.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceContainer,
+                    )
+                    Text(
+                        "$percent%",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
+                        maxLines = 1
+                    )
+                }
             }
 
-            // 取消按钮：主动中断下载并断开房间（与遮罩点解耦，避免误触）
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
-            ) {
-                TextButton(onClick = onCancel) {
-                    Text(
-                        readI18n("mod.cancelDownload", I18nType.RWPP),
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
-                    )
+            // 取消按钮：仅下载阶段提供；应用阶段模组已落盘、引擎正在重载，不允许中断
+            if (!applying) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onCancel) {
+                        Text(
+                            readI18n("mod.cancelDownload", I18nType.RWPP),
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
+                        )
+                    }
                 }
             }
         }
