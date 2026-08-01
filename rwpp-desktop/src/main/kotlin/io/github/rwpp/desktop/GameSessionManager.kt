@@ -20,6 +20,7 @@ sealed class GameStartMode {
     data class Skirmish(val sandbox: Boolean = false) : GameStartMode()
     data object Multiplayer : GameStartMode()
     data class Replay(val replay: io.github.rwpp.game.map.Replay) : GameStartMode()
+    data class LoadSave(val saveName: String) : GameStartMode()
     data object Continue : GameStartMode()
 }
 
@@ -55,6 +56,7 @@ class GameSessionManager(
         is GameStartMode.Skirmish -> "Skirmish(sandbox=${mode.sandbox})"
         is GameStartMode.Multiplayer -> "Multiplayer"
         is GameStartMode.Replay -> "Replay(name=${mode.replay.name})"
+        is GameStartMode.LoadSave -> "LoadSave(name=${mode.saveName})"
         is GameStartMode.Continue -> "Continue"
     }
 }

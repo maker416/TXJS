@@ -28,8 +28,10 @@ import io.github.rwpp.game.map.*
 import io.github.rwpp.game.ui.GUI
 import io.github.rwpp.game.units.UnitType
 import io.github.rwpp.game.world.World
+import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.logger
 import io.github.rwpp.net.sanitizeJoinRelayUuid
+import io.github.rwpp.ui.UI
 import kotlinx.coroutines.*
 import org.koin.core.annotation.Single
 import org.koin.core.component.get
@@ -72,7 +74,7 @@ class GameImpl : Game, CoroutineScope {
         initMap()
     }
 
-    override fun hostStartWithPasswordAndMods(isPublic: Boolean, password: String?, useMods: Boolean) {
+    override fun hostStartWithPasswordAndMods(isPublic: Boolean, password: String?, useMods: Boolean, onHosted: () -> Unit) {
         val t: k = GameEngine.t()
         GameEngine.t().bU.b("starting new")
         t.bU.n = password
@@ -86,6 +88,7 @@ class GameImpl : Game, CoroutineScope {
             RefreshUIEvent().broadcastIn()
             HostGameEvent().broadcastIn()
             PlayerJoinEvent(gameRoom.localPlayer).broadcastIn()
+            withContext(Dispatchers.Main) { onHosted() }
         }
     }
 
@@ -330,6 +333,19 @@ class GameImpl : Game, CoroutineScope {
             gameLauncher.launch(
                 Intent(get(), CustomInGameActivity::class.java)
             )
+        }
+    }
+
+    override fun loadSaveGame(saveName: String) {
+        val t = GameEngine.t()
+        t.bU.b("loading new save")
+        // 与原版 LoadLevelActivity 一致：bX.c 参数带 .rwsave 后缀、不带 saves/ 前缀
+        if (t.bX.c("$saveName.rwsave", false)) {
+            gameLauncher.launch(
+                Intent(get(), CustomInGameActivity::class.java)
+            )
+        } else {
+            UI.showWarning(readI18n("saves.loadFailed"))
         }
     }
 

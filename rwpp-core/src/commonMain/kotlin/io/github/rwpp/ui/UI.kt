@@ -109,6 +109,7 @@ object UI : Initialization, IUserInterface {
     var showOpenSourceInfoView by mutableStateOf(false)
     var showSinglePlayerView by mutableStateOf(false)
     var showSurvivalView by mutableStateOf(false)
+    var showSavesView by mutableStateOf(false)
 
     private var pendingAutoPublishQRoom = false
 
@@ -234,7 +235,8 @@ open class UIProvider {
         mods: () -> Unit,
         extension: () -> Unit,
         resourceBrowser: () -> Unit,
-        openSourceInfo: () -> Unit
+        openSourceInfo: () -> Unit,
+        saves: () -> Unit
     ) {
         val windowManager = LocalWindowManager.current
         val buttonSpacing = when (windowManager) {
@@ -337,7 +339,7 @@ open class UIProvider {
                         isFullWidth = true
                     )
 
-                    // Two-column grid for secondary buttons
+                    // Grid for secondary buttons
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(gridSpacing)
@@ -350,6 +352,11 @@ open class UIProvider {
                         MainMenuAction(
                             readI18n("menu.modsAndMaps"),
                             onClick = mods,
+                            modifier = Modifier.weight(1f)
+                        )
+                        MainMenuAction(
+                            readI18n("menu.saves"),
+                            onClick = saves,
                             modifier = Modifier.weight(1f)
                         )
                     }

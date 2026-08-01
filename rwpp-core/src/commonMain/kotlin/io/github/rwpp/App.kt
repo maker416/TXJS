@@ -81,6 +81,7 @@ import io.github.rwpp.ui.UI.showOpenSourceInfoView
 import io.github.rwpp.ui.UI.showReplayView
 import io.github.rwpp.ui.UI.showResourceBrowser
 import io.github.rwpp.ui.UI.showRoomView
+import io.github.rwpp.ui.UI.showSavesView
 import io.github.rwpp.ui.UI.showSettingsView
 import io.github.rwpp.ui.UI.showSinglePlayerView
 import io.github.rwpp.ui.UI.showSurvivalView
@@ -156,7 +157,8 @@ fun App(
             || showResourceBrowser
             || showOpenSourceInfoView
             || showSinglePlayerView
-            || showSurvivalView)
+            || showSurvivalView
+            || showSavesView)
 
     val game = koinInject<Game>()
 
@@ -232,6 +234,9 @@ fun App(
                             },
                             openSourceInfo = {
                                 showOpenSourceInfoView = true
+                            },
+                            saves = {
+                                showSavesView = true
                             }
                         )
                     }
@@ -351,6 +356,21 @@ fun App(
                     ReplaysViewDialog {
                         showReplayView = false
                     }
+                }
+
+                AnimatedVisibility(
+                    showSavesView,
+                    enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
+                    exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
+                ) {
+                    SavesViewDialog(
+                        onExit = { showSavesView = false },
+                        onOpenRoom = {
+                            isSinglePlayerGame = false
+                            showSavesView = false
+                            showRoomView = true
+                        },
+                    )
                 }
 
                 AnimatedVisibility(

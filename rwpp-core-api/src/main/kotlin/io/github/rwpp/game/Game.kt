@@ -46,11 +46,15 @@ interface Game : KoinComponent {
      * @param isPublic whether the room will be added to the room list.
      * @param password the password of the room.
      * @param useMods whether the mod will be used or not in the room.
+     * @param onHosted called after the room has been created successfully;
+     * on some platforms hosting is asynchronous, so map selection etc.
+     * should be done inside this callback instead of right after the call.
      */
     fun hostStartWithPasswordAndMods(
         isPublic: Boolean,
         password: String?,
         useMods: Boolean,
+        onHosted: () -> Unit = {},
     )
 
     /**
@@ -143,6 +147,12 @@ interface Game : KoinComponent {
      * Watch the given replay.
      */
     fun watchReplay(replay: Replay)
+
+    /**
+     * Load a saved game and start playing it as a single player game.
+     * @param saveName the save name without the `.rwsave` extension.
+     */
+    fun loadSaveGame(saveName: String)
 
     /**
      * Set effect limit for all effects (low, high, etc.).

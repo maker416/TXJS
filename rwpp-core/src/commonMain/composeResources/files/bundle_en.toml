@@ -279,6 +279,7 @@ exit = "Exit"
 openSourceInfo = "Feedback & Info"
 replay = "Watch Replay"
 singlePlayerGame = "Single Player"
+saves = "Saved Games"
 
 [menu.singlePlayer]
 title = "Single Player"
@@ -460,6 +461,25 @@ deleteFailed = "Failed to delete map"
 switchToMods = "Mods"
 switchToMaps = "Maps"
 extensionTmx = ".tmx"
+
+[saves]
+title = "Saved Games"
+search = "Search saves"
+empty = "No saved games"
+emptyFiltered = "No saves match the filter"
+count = "{0}"
+play = "Play"
+host = "Host"
+hostTitle = "Host from Save"
+hostPublic = "Public room (listed in room list)"
+hostUseMods = "Enable mods"
+hostPassword = "Room password (optional)"
+hostStart = "Create Room"
+hostFailed = "Failed to host: save not found"
+loadFailed = "Failed to load save. It may be incompatible with this game version."
+deleteConfirmTitle = "Delete Save"
+deleteConfirmMessage = "Delete '{0}'? This cannot be undone."
+deleteFailed = "Failed to delete save"
 
 [app]
 exiting = "Exiting…"
