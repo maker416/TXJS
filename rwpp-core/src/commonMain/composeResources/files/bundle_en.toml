@@ -179,6 +179,7 @@ publishTagLockedHint = "Mod sync is enabled. The room tag is locked and cannot b
 publishModSyncAutoHint = "Transfer Mod is on. The “Mod Sync” tag is added automatically; ordinary tags stay multi-selectable."
 publishModSyncTypeMissing = "This list server does not provide the “Mod Sync” tag, so the room cannot be published with Transfer Mod enabled."
 playersNotReadyModSync = "Cannot start the game. These players are still syncing or loading mods: {0}"
+startMapLoadFailed = "Failed to load the map. Please rejoin the room and try again."
 keepCurrentTeam = "Keep current"
 startingCreditsDefault = "Default ($4000)"
 

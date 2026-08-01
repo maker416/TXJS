@@ -32,8 +32,10 @@ import io.github.rwpp.game.data.RoomOption
 import io.github.rwpp.game.map.*
 import io.github.rwpp.game.team.TeamMode
 import io.github.rwpp.game.units.UnitType
+import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.mapDir
 import io.github.rwpp.net.packets.GamePacket
+import io.github.rwpp.ui.UI
 import io.github.rwpp.utils.Reflect
 import org.koin.core.component.get
 
@@ -544,6 +546,9 @@ class GameRoomImpl(private val game: GameImpl) : GameRoom {
 
     override fun disconnect(reason: String) {
         io.github.rwpp.android.isSinglePlayerGame = false
+        // 断开后必定已不在对局中。isGaming 若滞留为 true，之后任何房间的开局都会被
+        // MultiplayerRoomInject.onStartGame 的 !isGaming 守卫吞掉，导致玩家永远卡在战役室
+        isGaming = false
         if (isConnecting) GameEngine.t().bU.b(reason)
         isRWPPRoom = false
         option = RoomOption()
@@ -609,8 +614,15 @@ class GameRoomImpl(private val game: GameImpl) : GameRoom {
             val aeVar = t.bU
             aeVar.be = true
             //d("onStartGameFailed")
+            // 开局失败，必须复位 isGaming：本次没有启动 CustomInGameActivity，
+            // gameLauncher 回调不会触发，否则标志将永远滞留为 true
+            isGaming = false
             if(!aeVar.D) {
-                aeVar.b("Map load failed")
+                // 走完整的 disconnect 清理（房间状态、模组传输状态、DisconnectEvent），
+                // 并提示用户、退出已死掉的房间界面，而不是让玩家对着断线的战役室干等
+                val reason = readI18n("multiplayer.room.startMapLoadFailed")
+                disconnect(reason)
+                UI.showWarning(reason, true)
                 return@post
             }
             aeVar.aY = false
