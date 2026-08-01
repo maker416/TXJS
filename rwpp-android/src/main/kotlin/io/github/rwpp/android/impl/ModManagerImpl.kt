@@ -27,12 +27,18 @@ import org.koin.core.annotation.Single
 import org.koin.core.component.get
 import java.io.File
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 @Single
 class ModManagerImpl : ModManager {
     private val game: Game = get()
     private val isReloadingMods = AtomicBoolean(false)
+
+    private companion object {
+        /** 等待游戏主循环开始执行已投递 action 的超时；主循环存活时一帧内即会开始。 */
+        const val GAME_POST_START_TIMEOUT_MS = 5000L
+    }
 
     override suspend fun modReload(forceImmediate: Boolean, enabledByFileName: Map<String, Boolean>?) {
         if (!isReloadingMods.compareAndSet(false, true)) {
@@ -50,10 +56,19 @@ class ModManagerImpl : ModManager {
                 logger.info("[MODSYNC] modReload forceImmediate: reload core done, refreshing maps")
                 appKoin.get<Game>().getAllMaps(true)
             } else {
-                val latch = CountDownLatch(1)
+                val started = AtomicBoolean(false)
+                val startedLatch = CountDownLatch(1)
+                val doneLatch = CountDownLatch(1)
                 logger.info("[MODSYNC] modReload posting reload action to game thread")
                 game.post {
+                    if (!started.compareAndSet(false, true)) {
+                        // 超时兜底已在其他线程内联执行；此处仅释放可能存在的等待方后丢弃。
+                        logger.info("[MODSYNC] modReload game.post action STALE (inline fallback already ran)")
+                        doneLatch.countDown()
+                        return@post
+                    }
                     logger.info("[MODSYNC] modReload game.post action RUNNING on game thread")
+                    startedLatch.countDown()
                     try {
                         runReloadCore(enabledByFileName)
                         logger.info("[MODSYNC] modReload game.post action DONE")
@@ -61,16 +76,34 @@ class ModManagerImpl : ModManager {
                         logger.error("[MODSYNC] modReload game.post action THREW", e)
                         throw e
                     } finally {
-                        latch.countDown()
+                        doneLatch.countDown()
                         logger.info("[MODSYNC] modReload latch counted down")
                     }
                 }
-                logger.info("[MODSYNC] modReload waiting for game thread (latch.await, NO timeout) ...")
-                withContext(Dispatchers.IO) {
-                    awaitGamePost(latch)
-                    logger.info("[MODSYNC] modReload latch released, refreshing maps")
-                    appKoin.get<Game>().getAllMaps(true)
+                // 主循环存活时一帧内就会取出 action 并开始执行。
+                // 超时仍未开始 => 主循环已不在消费 action（例如模组同步的内联重载经 t.f() 停止了
+                // 引擎线程，之后未进对局，菜单主循环一直是死的），若无限等待将导致 loading 弹窗永久卡死。
+                val consumed = withContext(Dispatchers.IO) {
+                    startedLatch.await(GAME_POST_START_TIMEOUT_MS, TimeUnit.MILLISECONDS)
                 }
+                if (!consumed && started.compareAndSet(false, true)) {
+                    // 与 forceImmediate 相同的语义：直接在当前线程执行重载。
+                    // started 的 CAS 保证恰好执行一次；主循环若之后复活再取出该 action 会直接丢弃。
+                    logger.warn(
+                        "[MODSYNC] modReload: game loop did not consume posted action within " +
+                            "${GAME_POST_START_TIMEOUT_MS}ms, running reload inline on current thread"
+                    )
+                    runReloadCore(enabledByFileName)
+                    logger.info("[MODSYNC] modReload inline fallback done, refreshing maps")
+                } else {
+                    // 主循环已接手（含超时瞬间恰好开始执行的竞态），等待其完成。
+                    logger.info("[MODSYNC] modReload waiting for game thread (doneLatch.await) ...")
+                    withContext(Dispatchers.IO) {
+                        doneLatch.await()
+                    }
+                    logger.info("[MODSYNC] modReload latch released, refreshing maps")
+                }
+                appKoin.get<Game>().getAllMaps(true)
             }
             logger.info("[MODSYNC] modReload main work finished")
         } finally {

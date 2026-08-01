@@ -848,6 +848,9 @@ fun App(
                 var reloadingModViewVisible by remember { mutableStateOf(false) }
                 GlobalEventChannel.filter(ReloadModEvent::class).onDispose {
                     subscribeAlways(Dispatchers.Main.immediate) {
+                        // 清除启动阶段残留的最后一个引擎加载消息（如 "init complete"），
+                        // 避免重载弹窗一直显示陈旧文本。
+                        loadingMessage = ""
                         reloadingModViewVisible = true
                     }
                 }
