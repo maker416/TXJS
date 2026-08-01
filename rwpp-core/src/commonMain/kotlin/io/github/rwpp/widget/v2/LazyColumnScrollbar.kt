@@ -26,7 +26,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
@@ -488,7 +487,8 @@ private fun InternalLazyColumnScrollbar(
                         .clip(thumbShape)
                         .width(thickness)
                         .fillMaxHeight(normalizedThumbSize)
-                        .alpha(alpha)
+                        // graphicsLayer 延迟到绘制阶段读动画 state，透明度动画只触发重绘不再重组
+                        .graphicsLayer { this.alpha = alpha }
                         .background(if (isSelected) thumbSelectedColor else thumbColor)
                 )
 
@@ -496,7 +496,7 @@ private fun InternalLazyColumnScrollbar(
                 if (indicatorContent != null) {
                     Box(
                         modifier = Modifier
-                            .alpha(alpha)
+                            .graphicsLayer { this.alpha = alpha }
                         // Additional modifiers to position this Box relative to the thumb Box
                         // might be needed depending on your exact requirements.
                     ) {

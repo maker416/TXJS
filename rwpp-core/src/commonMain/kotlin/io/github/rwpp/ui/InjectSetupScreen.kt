@@ -35,7 +35,7 @@ import io.github.rwpp.widget.v2.bounceClick
 @Composable
 fun InjectSetupScreen(
     uiState: InjectBuildUiState,
-    log: AnnotatedString,
+    log: List<AnnotatedString>,
     copyLogText: String,
     onExit: () -> Unit,
     modifier: Modifier = Modifier,
@@ -52,7 +52,7 @@ fun InjectSetupScreen(
     val bodyScrollState = rememberScrollState()
     val logScrollState = rememberScrollState()
 
-    LaunchedEffect(log, logExpanded) {
+    LaunchedEffect(log.size, logExpanded) {
         if (logExpanded) {
             logScrollState.animateScrollTo(logScrollState.maxValue)
         }
@@ -178,7 +178,7 @@ fun InjectSetupScreen(
                     else -> Unit
                 }
 
-                if (log.text.isNotEmpty()) {
+                if (log.isNotEmpty()) {
                     Row(
                         modifier = Modifier
                             .align(Alignment.CenterHorizontally)
@@ -211,7 +211,9 @@ fun InjectSetupScreen(
                                     MaterialTheme.colorScheme.primary
                                 },
                                 modifier = Modifier.bounceClick {
-                                    clipboardManager.setText(AnnotatedString(copyLogText.ifBlank { log.text }))
+                                    clipboardManager.setText(
+                                        AnnotatedString(copyLogText.ifBlank { log.joinToString("\n") { it.text } })
+                                    )
                                     copiedHint = true
                                 },
                             )
@@ -227,15 +229,20 @@ fun InjectSetupScreen(
                                 .heightIn(min = 72.dp, max = 100.dp),
                         ) {
                             SelectionContainer {
-                                Text(
-                                    text = log,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurface,
+                                Column(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .verticalScroll(logScrollState)
                                         .padding(horizontal = 10.dp, vertical = 8.dp),
-                                )
+                                ) {
+                                    log.forEach { line ->
+                                        Text(
+                                            text = line,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

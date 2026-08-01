@@ -8,17 +8,21 @@
 package io.github.rwpp.platform
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.events.KeyboardEvent
 import io.github.rwpp.event.onDispose
 
 @Composable
 actual fun BackHandler(enabled: Boolean, onBack: () -> Unit) {
+    val currentEnabled by rememberUpdatedState(enabled)
+    val currentOnBack by rememberUpdatedState(onBack)
     GlobalEventChannel.filter(KeyboardEvent::class).onDispose {
         subscribeAlways {
             //ESC
-            if (it.keyCode == 0x1B && enabled) {
-                onBack()
+            if (it.keyCode == 0x1B && currentEnabled) {
+                currentOnBack()
                 it.intercept()
             }
         }

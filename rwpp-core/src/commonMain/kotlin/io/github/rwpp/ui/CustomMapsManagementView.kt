@@ -80,6 +80,21 @@ private fun formatMapBytes(bytes: Long): String {
     return "${(mb * 10).roundToInt() / 10.0} MB"
 }
 
+/**
+ * 地图列表项 UI 模型：扫描时（IO 协程）预计算磁盘状态，
+ * 避免卡片在组合期做 exists()/length() 等磁盘 stat。
+ */
+private class CustomMapListEntry(
+    val map: CustomMapFile,
+) {
+    val displayName: String = map.displayName()
+    val thumbnail: File = map.thumbnailFile()
+    val thumbnailExists: Boolean = thumbnail.exists()
+    val fileSizeText: String = formatMapBytes(map.file.length().coerceAtLeast(0L))
+    /** 列表项身份：路径 + 修改时间（覆盖导入同名文件后视为新项，缩略图等缓存随之失效）。 */
+    val key: String = "${map.file.absolutePath}#${map.file.lastModified()}"
+}
+
 @Composable
 private fun MapImportProgressDialog(progress: MapImportProgress?) {
     AnimatedAlertDialog(
@@ -184,22 +199,34 @@ fun CustomMapsManagementView(
     val windowManager = LocalWindowManager.current
     val compact = windowManager == WindowManager.Small
 
-    val maps = remember {
-        SnapshotStateList<CustomMapFile>().apply { addAll(scanCustomMapFiles()) }
-    }
+    val maps = remember { SnapshotStateList<CustomMapListEntry>() }
     var filter by remember { mutableStateOf("") }
     var importProgress by remember { mutableStateOf<MapImportProgress?>(null) }
-    var pendingDelete by remember { mutableStateOf<CustomMapFile?>(null) }
+    var pendingDelete by remember { mutableStateOf<CustomMapListEntry?>(null) }
     var pendingOverwrite by remember { mutableStateOf<File?>(null) }
     /** 文件选择已结束（进入导入/覆盖确认），忽略迟到的 Preparing 进度回调，避免叠层卡住。 */
     var suppressPrepareProgress by remember { mutableStateOf(false) }
 
-    val filtered = maps.filter { it.displayName().contains(filter, ignoreCase = true) }
+    // derivedStateOf 缓存过滤结果：仅在列表或关键字变化时重算，避免每次重组全量 filter
+    val filtered by remember {
+        derivedStateOf { maps.filter { it.displayName.contains(filter, ignoreCase = true) } }
+    }
+
+    // 初始地图列表扫描移入 IO 协程，避免组合期磁盘 IO；加载期间先显示空列表占位
+    LaunchedEffect(Unit) {
+        val scanned = withContext(Dispatchers.IO) { scanCustomMapFiles().map { CustomMapListEntry(it) } }
+        maps.clear()
+        maps.addAll(scanned)
+    }
 
     fun refreshMaps() {
-        maps.clear()
-        maps.addAll(scanCustomMapFiles())
-        game.getAllMaps(true)
+        scope.launch {
+            // 目录扫描在 IO 线程执行，结果回主线程写 state
+            val scanned = withContext(Dispatchers.IO) { scanCustomMapFiles().map { CustomMapListEntry(it) } }
+            maps.clear()
+            maps.addAll(scanned)
+            game.getAllMaps(true)
+        }
     }
 
     fun updateFileChooseProgress(progress: FileChooseProgress) {
@@ -283,9 +310,9 @@ fun CustomMapsManagementView(
         }
     }
 
-    fun deleteMap(map: CustomMapFile) {
-        if (deleteCustomMapFilesSafely(map.file)) {
-            maps.removeAll { it.file.absolutePath == map.file.absolutePath }
+    fun deleteMap(entry: CustomMapListEntry) {
+        if (deleteCustomMapFilesSafely(entry.map.file)) {
+            maps.removeAll { it.map.file.absolutePath == entry.map.file.absolutePath }
             game.getAllMaps(true)
         } else {
             UI.showWarning(readI18n("maps.deleteFailed"))
@@ -366,7 +393,7 @@ fun CustomMapsManagementView(
         }
     }
 
-    pendingDelete?.let { map ->
+    pendingDelete?.let { entry ->
         AnimatedAlertDialog(
             visible = true,
             onDismissRequest = { pendingDelete = null },
@@ -388,7 +415,7 @@ fun CustomMapsManagementView(
                         color = MaterialTheme.colorScheme.primary,
                     )
                     Text(
-                        readI18n("maps.deleteConfirmMessage", I18nType.RWPP, map.displayName()),
+                        readI18n("maps.deleteConfirmMessage", I18nType.RWPP, entry.displayName),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Row(
@@ -403,7 +430,7 @@ fun CustomMapsManagementView(
                                 Icon(Icons.Default.Delete, null, modifier = Modifier.size(24.dp))
                             },
                         ) {
-                            deleteMap(map)
+                            deleteMap(entry)
                             dismiss()
                         }
                     }
@@ -531,11 +558,11 @@ fun CustomMapsManagementView(
                 ) {
                     items(
                         items = filtered,
-                        key = { it.file.absolutePath },
-                    ) { map ->
+                        key = { it.key },
+                    ) { entry ->
                         CustomMapCard(
-                            map = map,
-                            onDelete = { pendingDelete = map },
+                            entry = entry,
+                            onDelete = { pendingDelete = entry },
                         )
                     }
                 }
@@ -602,13 +629,10 @@ fun CustomMapsManagementView(
 
 @Composable
 private fun CustomMapCard(
-    map: CustomMapFile,
+    entry: CustomMapListEntry,
     onDelete: () -> Unit,
 ) {
-    val thumb = map.thumbnailFile()
-    val fileSize = remember(map.file.absolutePath, map.file.lastModified()) {
-        formatMapBytes(map.file.length().coerceAtLeast(0L))
-    }
+    // 缩略图路径/存在性、文件大小均在扫描时预计算（见 CustomMapListEntry），组合期不做磁盘 stat
     val thumbShape = RoundedCornerShape(8.dp)
 
     BorderCard(
@@ -625,9 +649,9 @@ private fun CustomMapCard(
                     .aspectRatio(16f / 10f)
                     .clip(thumbShape),
             ) {
-                if (thumb.exists()) {
+                if (entry.thumbnailExists) {
                     AsyncImage(
-                        model = thumb,
+                        model = entry.thumbnail,
                         contentDescription = null,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop,
@@ -658,7 +682,7 @@ private fun CustomMapCard(
             }
 
             Text(
-                map.displayName(),
+                entry.displayName,
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary,
                 maxLines = 2,
@@ -674,7 +698,7 @@ private fun CustomMapCard(
                     color = MaterialTheme.colorScheme.secondary,
                 )
                 MapMetadataPill(
-                    text = fileSize,
+                    text = entry.fileSizeText,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

@@ -111,7 +111,9 @@ fun RWPPTheme(default: Boolean = false, content: @Composable () -> Unit) {
         }
     }
 
-    val typography = Typography(
+    // 缓存 Typography，避免每次重组都重建整套 TextStyle
+    val typography = remember(selectedColorScheme) {
+        Typography(
         displayLarge = TextStyle(
             color = selectedColorScheme.onSurface,
             fontFamily = valoraxFont,
@@ -149,6 +151,7 @@ fun RWPPTheme(default: Boolean = false, content: @Composable () -> Unit) {
             fontSize = 13.sp
         )
     )
+    }
 
     MaterialTheme(
         typography = typography,

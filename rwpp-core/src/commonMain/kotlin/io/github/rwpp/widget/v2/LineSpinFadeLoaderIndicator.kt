@@ -43,8 +43,10 @@ fun LineSpinFadeLoaderIndicator(
 
 
 // ------------------------ scale animation ---------------------
+    // 只保存每个条形的 state 引用，读取延迟到 Canvas 的 draw lambda：
+    // 动画每帧只触发重绘，不再重组整个 composable（视觉效果不变）。
     val alphas = (1..rectCount).map { index ->
-        var alpha: Float by remember { mutableStateOf(minAlpha) }
+        val alpha = remember { mutableStateOf(minAlpha) }
         LaunchedEffect(key1 = Unit) {
 
             when (linearAnimationType) {
@@ -72,7 +74,7 @@ fun LineSpinFadeLoaderIndicator(
                     },
                     repeatMode = RepeatMode.Reverse,
                 )
-            ) { value, _ -> alpha = value }
+            ) { value, _ -> alpha.value = value }
         }
 
         alpha
@@ -101,8 +103,8 @@ fun LineSpinFadeLoaderIndicator(
                 color = color,
                 start = Offset(startX, startY),
                 end = Offset(endX, endY),
-                strokeWidth = penThickness * alphas[index],
-                alpha = alphas[index],
+                strokeWidth = penThickness * alphas[index].value,
+                alpha = alphas[index].value,
                 cap = StrokeCap.Round,
             )
         }

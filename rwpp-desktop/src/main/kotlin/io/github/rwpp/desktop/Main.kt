@@ -19,11 +19,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.TextField
+import androidx.compose.material3.Text
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,7 +46,6 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.App
 import io.github.rwpp.AppContext
@@ -81,7 +81,6 @@ import io.github.rwpp.widget.MenuLoadingView
 import io.github.rwpp.widget.RWPPTheme
 import io.github.rwpp.widget.RWSingleOutlinedTextField
 import io.github.rwpp.widget.RWTextButton
-import io.github.rwpp.widget.RWTextFieldColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -404,9 +403,6 @@ fun swingApplication() = SwingUtilities.invokeLater {
                 shape = RectangleShape
             ) {
                 var chatMessage by remember { mutableStateOf("") }
-                var allChatMessages by remember(chatMessages) {
-                    mutableStateOf(TextFieldValue(chatMessages))
-                }
 
                 Box {
                     fun onExit() {
@@ -435,15 +431,12 @@ fun swingApplication() = SwingUtilities.invokeLater {
 
                     Column(modifier = Modifier.fillMaxSize()) {
                         Spacer(modifier = Modifier.height(30.dp))
-                        TextField(
-                            value = allChatMessages,
-                            onValueChange = { allChatMessages = it },
-                            readOnly = true,
-                            textStyle = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.fillMaxWidth().weight(1f),
-                            colors = RWTextFieldColors,
-                            maxLines = 100
-                        )
+                        // 聊天历史逐条懒加载渲染，避免单 TextField 全量重组；chatMessages 新消息在最上方
+                        LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                            items(chatMessages.size, key = { it }) { index ->
+                                Text(chatMessages[index], style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
                         RWSingleOutlinedTextField(
                             label = if (isSendingTeamChat) readI18n("ingame.sendTeamMessage") else readI18n("ingame.sendMessage"),
                             value = chatMessage,

@@ -25,8 +25,11 @@ import androidx.compose.ui.unit.dp
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.game.Game
+import io.github.rwpp.game.map.Replay
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.widget.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import my.nanihadesuka.compose.LazyVerticalGridScrollbar
 import my.nanihadesuka.compose.ScrollbarSettings
 import org.koin.compose.koinInject
@@ -44,8 +47,13 @@ fun ReplaysViewDialog(
 
     val game = koinInject<Game>()
     var filter by remember { mutableStateOf("") }
-    val allReplays = remember { game.getAllReplays() }
-    val replays = remember(filter) { allReplays.filter { it.name.contains(filter, ignoreCase = true) } }
+    var allReplays by remember { mutableStateOf(listOf<Replay>()) }
+    val replays = remember(allReplays, filter) { allReplays.filter { it.name.contains(filter, ignoreCase = true) } }
+
+    // 回放目录枚举移入 IO 协程，避免组合期磁盘 IO；加载期间先显示空列表占位
+    LaunchedEffect(Unit) {
+        allReplays = withContext(Dispatchers.IO) { game.getAllReplays() }
+    }
 
     BorderCard(
         modifier = Modifier
@@ -88,7 +96,8 @@ fun ReplaysViewDialog(
                             replays,
                             key = { it.id }
                         ) { replay ->
-                            val mapName = rememberSaveable { replay.displayName() }
+                            // key 与列表项身份一致：项复用时 displayName 不会错串到其他回放
+                            val mapName = rememberSaveable(replay.id) { replay.displayName() }
                             MapItem(mapName, null, false) {
                                 game.watchReplay(replay)
                             }

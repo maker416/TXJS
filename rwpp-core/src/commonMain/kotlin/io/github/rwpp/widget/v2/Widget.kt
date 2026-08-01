@@ -299,7 +299,9 @@ fun SettingsSlider(
     defaultValue: Float,
     onValueChange: (Float) -> Unit,
     valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
-    valueFormat: (Float) -> String = { (it * 100).roundToInt().toString() + "%" }
+    valueFormat: (Float) -> String = { (it * 100).roundToInt().toString() + "%" },
+    /** 拖动结束时回调当前值；用于拖动过程中不刷新全局状态的场景（如背景透明度）。 */
+    onValueChangeFinished: ((Float) -> Unit)? = null
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -330,6 +332,7 @@ fun SettingsSlider(
                 valueRange = valueRange,
                 modifier = Modifier.width(250.dp).padding(end = 5.dp),
                 onValueChange = { value = it },
+                onValueChangeFinished = { onValueChangeFinished?.invoke(value) },
                 colors = RWSliderColors
             )
 

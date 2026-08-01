@@ -45,8 +45,8 @@ import io.github.rwpp.ui.InjectBuildOverall
 import io.github.rwpp.ui.InjectBuildUiState
 import io.github.rwpp.ui.InjectSetupScreen
 import io.github.rwpp.ui.clearInjectLog
-import io.github.rwpp.ui.injectLogText
-import io.github.rwpp.ui.logStr
+import io.github.rwpp.ui.injectLogLines
+import io.github.rwpp.ui.injectLogPlainText
 import io.github.rwpp.utils.Reflect
 import io.github.rwpp.widget.ConstraintWindowManager
 import io.github.rwpp.widget.MenuLoadingView
@@ -241,14 +241,11 @@ class LoadingScreen : ComponentActivity() {
                                         }
                                     }
 
-                                    val buildLog by logStr
-                                    val copyLogText by injectLogText
-
                                     RWPPTheme(true) {
                                         InjectSetupScreen(
                                             uiState = buildState,
-                                            log = buildLog,
-                                            copyLogText = diagnosticsReport ?: copyLogText,
+                                            log = injectLogLines,
+                                            copyLogText = diagnosticsReport ?: injectLogPlainText(),
                                             autoRestart = true,
                                             onRestart = { scheduleAppRestart(this@LoadingScreen) },
                                             onExit = {
@@ -260,7 +257,7 @@ class LoadingScreen : ComponentActivity() {
 
                                 } else if (showEngineFailure) {
                                     val failureLog = remember(diagnosticsReport) {
-                                        AnnotatedString(diagnosticsReport.orEmpty())
+                                        listOf(AnnotatedString(diagnosticsReport.orEmpty()))
                                     }
                                     RWPPTheme(true) {
                                         InjectSetupScreen(

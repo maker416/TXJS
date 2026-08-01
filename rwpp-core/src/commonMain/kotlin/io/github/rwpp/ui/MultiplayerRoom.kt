@@ -42,8 +42,6 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -248,9 +246,20 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     var showMapSelectView by remember { mutableStateOf(false) }
     val isHost = remember(update) { room.isHost || room.isHostServer }
 
-    val updateAction = { update = !update }
-
     val scope = rememberCoroutineScope()
+
+    // RefreshUIEvent 帧级合并：同一帧内多次事件只触发一次重组
+    var updateScheduled by remember { mutableStateOf(false) }
+    val updateAction = {
+        if (!updateScheduled) {
+            updateScheduled = true
+            scope.launch {
+                withFrameNanos { }
+                update = !update
+                updateScheduled = false
+            }
+        }
+    }
 
     val renewPublishedRoom = {
         if (!isRefreshingExpiry) {
@@ -816,7 +825,8 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .heightIn(min = CompactChatMessageAreaMinHeight),
+                                        // 固定高度：外层是 verticalScroll，高度无界会导致内部 LazyColumn 测量崩溃
+                                        .height(CompactChatMessageAreaMinHeight),
                                 ) {
                                     RoomChatMessageView(modifier = Modifier.fillMaxSize())
                                 }
@@ -2646,7 +2656,13 @@ private fun RoomPlayerTableRow(
     val options = remember { game.getStartingUnitOptions() }
     val rowPadding = if (compact) 2.dp else 5.dp
     // 房主视图：该玩家是否有正在进行的 MOD 同步会话（用于显示 per-client 进度环与当前模组信息）
-    val transfer = if (room.isHost) UI.hostTransferSnapshots.firstOrNull { it.client == player.client } else null
+    // 行级 derivedStateOf：全局快照 200ms 轮询更新时，仅匹配到本行玩家的会话变化才触发本行重组
+    val transferState = remember(room.isHost, player.client) {
+        derivedStateOf {
+            if (room.isHost) UI.hostTransferSnapshots.firstOrNull { it.client == player.client } else null
+        }
+    }
+    val transfer = transferState.value
     Box(modifier) {
         KickPlayerContextMenuAreaMultiplatform(player) {
             Row(
@@ -2803,22 +2819,12 @@ private fun RoomChatMessageTextField(
 
 @Composable
 private fun RoomChatMessageView(modifier: Modifier = Modifier) {
-    var value by remember(chatMessages) { mutableStateOf(TextFieldValue(chatMessages)) }
-    LaunchedEffect(chatMessages) {
-        value = TextFieldValue(
-            annotatedString = chatMessages,
-            selection = TextRange(chatMessages.length),
-        )
+    // 聊天历史改为逐条懒加载渲染，避免单 TextField 全量重组；chatMessages 新消息在最上方
+    LazyColumn(modifier = modifier) {
+        items(chatMessages.size, key = { it }) { index ->
+            Text(chatMessages[index], style = MaterialTheme.typography.bodyMedium)
+        }
     }
-    TextField(
-        value = value,
-        onValueChange = { value = it },
-        readOnly = true,
-        textStyle = MaterialTheme.typography.bodyMedium,
-        modifier = modifier,
-        colors = RWTextFieldColors,
-        maxLines = Int.MAX_VALUE,
-    )
 }
 
 @Composable

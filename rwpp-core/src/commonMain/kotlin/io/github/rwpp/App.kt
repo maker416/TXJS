@@ -10,6 +10,8 @@
 package io.github.rwpp
 
 import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -35,6 +37,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.FontWeight
@@ -69,8 +73,11 @@ import io.github.rwpp.app.AutoUpdater
 import io.github.rwpp.app.AutoUpdater.Companion.PROGRESS_NEED_INSTALL_PERMISSION
 import io.github.rwpp.net.LatestVersionProfile
 import io.github.rwpp.net.Net
+import io.github.rwpp.rwpp_core.generated.resources.Res
+import io.github.rwpp.rwpp_core.generated.resources.title
 import io.github.rwpp.scripts.Render
 import io.github.rwpp.ui.*
+import io.github.rwpp.ui.UI.openPage
 import io.github.rwpp.ui.UI.selectedColorSchemeName
 import io.github.rwpp.utils.compareVersions
 import io.github.rwpp.ui.UI.showExtensionView
@@ -91,8 +98,8 @@ import io.github.rwpp.widget.v2.bounceClick
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
 
 var LocalWindowManager = staticCompositionLocalOf { WindowManager.Large }
@@ -178,11 +185,14 @@ fun App(
                     globalFocusRequester.requestFocus()
                     keyboardController?.hide()
                 }.onKeyEvent {
-                    runBlocking {
-                        if (it.type == KeyEventType.KeyDown) {
-                            KeyboardEvent(it.key.keyCode.toInt()).broadcast().isIntercepted
-                        } else false
+                    // broadcast() 是 suspend 函数，原先的 runBlocking 会阻塞 UI 线程；
+                    // 改为在 appScope 中异步广播，onKeyEvent 恒不拦截（与原 KeyUp 分支行为一致）
+                    if (it.type == KeyEventType.KeyDown) {
+                        appScope.launch {
+                            KeyboardEvent(it.key.keyCode.toInt()).broadcast()
+                        }
                     }
+                    false
                 }
         ) {
             CompositionLocalProvider(
@@ -191,6 +201,75 @@ fun App(
             ) {
 
                 val enableAnimations = settings.enableAnimations
+
+                // 页面切换动画播放期间拦截所有指针事件，避免动画中点击穿透到正在淡入/淡出的页面
+                @Composable
+                fun AnimatedVisibilityScope.TransitionClickBlocker() {
+                    if (transition.isRunning) {
+                        Box(Modifier.fillMaxSize().pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    event.changes.forEach { it.consume() }
+                                }
+                            }
+                        })
+                    }
+                }
+
+                // 页面切换时短暂显示品牌过渡层，掩盖切换动画期间从底层透出的黑色游戏画面
+                val pageMask = listOf(
+                    showMissionView, showMultiplayerView, showReplayView, showSettingsView,
+                    showModsView, showSurvivalView, showRoomView, showExtensionView,
+                    showResourceBrowser, showOpenSourceInfoView, showSinglePlayerView, showSavesView
+                )
+                var transitionCoverVisible by remember { mutableStateOf(false) }
+                var isFirstComposition by remember { mutableStateOf(true) }
+                LaunchedEffect(pageMask) {
+                    if (isFirstComposition || !enableAnimations) {
+                        isFirstComposition = false
+                        return@LaunchedEffect
+                    }
+                    transitionCoverVisible = true
+                    delay(650)
+                    transitionCoverVisible = false
+                }
+
+                AnimatedVisibility(
+                    visible = transitionCoverVisible,
+                    enter = EnterTransition.None,
+                    exit = fadeOut(tween(400)),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(Color(0xFF182218), Color(0xFF0A100A))
+                                )
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            Image(
+                                painter = painterResource(Res.drawable.title),
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxWidth(0.36f),
+                                contentScale = ContentScale.Fit,
+                            )
+                            Spacer(modifier = Modifier.size(40.dp))
+                            LineSpinFadeLoaderIndicator(
+                                radius = 20f,
+                                penThickness = 6f,
+                                color = Color.White,
+                            )
+                        }
+                    }
+                }
+
                 Scaffold(
                     containerColor = Color.Transparent,
                     floatingActionButton = {
@@ -215,30 +294,31 @@ fun App(
                         UI.UiProvider.MainMenu(
                             multiplayer = {
                                 isSinglePlayerGame = false
-                                showMultiplayerView = true
+                                openPage(UI.Page.Multiplayer)
                             },
                             singlePlayer = {
-                                showSinglePlayerView = true
+                                openPage(UI.Page.SinglePlayer)
                             },
                             settings = {
-                                showSettingsView = true
+                                openPage(UI.Page.Settings)
                             },
                             mods = {
-                                showModsView = true
+                                openPage(UI.Page.Mods)
                             },
                             extension = {
-                                showExtensionView = true
+                                openPage(UI.Page.Extension)
                             },
                             resourceBrowser = {
-                                showResourceBrowser = true
+                                openPage(UI.Page.ResourceBrowser)
                             },
                             openSourceInfo = {
-                                showOpenSourceInfoView = true
+                                openPage(UI.Page.OpenSourceInfo)
                             },
                             saves = {
-                                showSavesView = true
+                                openPage(UI.Page.Saves)
                             }
                         )
+                        TransitionClickBlocker()
                     }
 
                     AnimatedVisibility(
@@ -247,6 +327,7 @@ fun App(
                         exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
                     ) {
                         MissionView { showMissionView = false }
+                        TransitionClickBlocker()
                     }
 
                     AnimatedVisibility(
@@ -255,6 +336,7 @@ fun App(
                         exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
                     ) {
                         MissionView(fixedType = MissionType.Survival) { showSurvivalView = false }
+                        TransitionClickBlocker()
                     }
                 }
 
@@ -266,26 +348,23 @@ fun App(
                     SinglePlayerView(
                         onExit = { showSinglePlayerView = false },
                         onMission = {
-                            showSinglePlayerView = false
-                            showMissionView = true
+                            openPage(UI.Page.Mission)
                         },
                         onSurvival = {
-                            showSinglePlayerView = false
-                            showSurvivalView = true
+                            openPage(UI.Page.Survival)
                         },
                         onSkirmish = {
-                            showSinglePlayerView = false
-                            showRoomView = true
+                            openPage(UI.Page.Room)
                             isSinglePlayerGame = true
                             game.hostNewSinglePlayer(false)
                         },
                         onSandbox = {
-                            showSinglePlayerView = false
+                            openPage(UI.Page.Room)
                             isSinglePlayerGame = true
-                            showRoomView = true
                             game.hostNewSinglePlayer(sandbox = true)
                         },
                     )
+                    TransitionClickBlocker()
                 }
 
                 AnimatedVisibility(
@@ -297,9 +376,10 @@ fun App(
                         { showMultiplayerView = false },
                         {
                             isSinglePlayerGame = false
-                            showRoomView = true
+                            openPage(UI.Page.Room)
                         },
                     )
+                    TransitionClickBlocker()
                 }
 
                 AnimatedVisibility(
@@ -320,6 +400,7 @@ fun App(
                         },
                         onChangeBackgroundImage
                     ) { showSettingsView = false }
+                    TransitionClickBlocker()
                 }
 
                 AnimatedVisibility(
@@ -328,6 +409,7 @@ fun App(
                     exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
                 ) {
                     ModsAndMapsView { showModsView = false }
+                    TransitionClickBlocker()
                 }
 
                 AnimatedVisibility(
@@ -336,6 +418,7 @@ fun App(
                     exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
                 ) {
                     ResourceBrowser { showResourceBrowser = false }
+                    TransitionClickBlocker()
                 }
 
                 AnimatedVisibility(
@@ -346,6 +429,7 @@ fun App(
                     ExtensionView {
                         showExtensionView = false
                     }
+                    TransitionClickBlocker()
                 }
 
                 AnimatedVisibility(
@@ -356,6 +440,7 @@ fun App(
                     ReplaysViewDialog {
                         showReplayView = false
                     }
+                    TransitionClickBlocker()
                 }
 
                 AnimatedVisibility(
@@ -367,10 +452,10 @@ fun App(
                         onExit = { showSavesView = false },
                         onOpenRoom = {
                             isSinglePlayerGame = false
-                            showSavesView = false
-                            showRoomView = true
+                            openPage(UI.Page.Room)
                         },
                     )
+                    TransitionClickBlocker()
                 }
 
                 AnimatedVisibility(
@@ -381,6 +466,7 @@ fun App(
                     OpenSourceInfoView {
                         showOpenSourceInfoView = false
                     }
+                    TransitionClickBlocker()
                 }
 
                 AnimatedVisibility(
@@ -415,6 +501,7 @@ fun App(
                             }
                         }
                     }
+                    TransitionClickBlocker()
                 }
 
                 var warningDialogVisible by remember { mutableStateOf(false) }
@@ -423,15 +510,14 @@ fun App(
                     if (UI.warning != null) {
                         warningDialogVisible = true
                         if (UI.warning?.isKicked == true) {
-                            showRoomView = false
-                            showMultiplayerView = true
+                            openPage(UI.Page.Multiplayer)
                         }
                     }
                 }
 
                 AnimatedAlertDialog(
                     warningDialogVisible,
-                    onDismissRequest = { warningDialogVisible = false }) { dismiss ->
+                    onDismissRequest = { warningDialogVisible = false; UI.warning = null }) { dismiss ->
                     BorderCard(
                         modifier = Modifier
                             .fillMaxWidth(0.72f)
@@ -762,10 +848,6 @@ fun App(
                     onDismissRequest = {
                         questionDialogVisible = false
                         UI.question?.callback?.invoke(null)
-                        if(showRoomView) {
-                            showRoomView = false
-                            showMultiplayerView = true
-                        }
 
                         UI.question = null
                     }
@@ -874,8 +956,7 @@ fun App(
                     UI.receivingModDoneCount = 0
                     val game = appKoin.get<Game>()
                     game.gameRoom.disconnect("cancelled by user")
-                    UI.showMultiplayerView = true
-                    UI.showRoomView = false
+                    UI.openPage(UI.Page.Multiplayer)
                 }
 
                 AnimatedAlertDialog(

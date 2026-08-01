@@ -14,7 +14,7 @@ import io.github.rwpp.coreVersion
 import io.github.rwpp.generatedLibDir
 import io.github.rwpp.packageName
 import io.github.rwpp.projectVersion
-import io.github.rwpp.ui.injectLogText
+import io.github.rwpp.ui.injectLogPlainText
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -71,7 +71,7 @@ fun buildDiagnosticsReport(stage: String, error: Throwable? = null): String = bu
         appendLine(error.stackTraceToString().trim())
     }
 
-    val injectLog = runCatching { injectLogText.value }.getOrNull()
+    val injectLog = runCatching { injectLogPlainText() }.getOrNull()
     if (!injectLog.isNullOrBlank()) {
         appendLine()
         appendLine("-- inject log --")

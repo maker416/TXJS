@@ -10,31 +10,40 @@ package io.github.rwpp.ui
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.*
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.inject.BuildLogger
 import io.github.rwpp.logger
 import io.github.rwpp.widget.BorderCard
-import io.github.rwpp.widget.RWTextFieldColors
 
-var logStr = mutableStateOf(AnnotatedString(""))
-var injectLogText = mutableStateOf("")
+/** 注入日志最大保留行数，超出后丢弃最旧行，防止无界增长。 */
+private const val MaxInjectLogLines = 500
+
+/**
+ * 注入构建日志：有界 SnapshotStateList，追加为 O(1) 且逐行渲染；
+ * 替代原先 String/AnnotatedString 的 `+=` 全量拼接（O(n²)，构建后期严重掉帧）。
+ */
+val injectLogLines = mutableStateListOf<AnnotatedString>()
 private val injectLogLock = Any()
 
 fun clearInjectLog() {
     synchronized(injectLogLock) {
-        logStr.value = AnnotatedString("")
-        injectLogText.value = ""
+        injectLogLines.clear()
     }
+}
+
+/** 纯文本导出（复制到剪贴板 / 诊断报告用）。 */
+fun injectLogPlainText(): String = synchronized(injectLogLock) {
+    injectLogLines.joinToString("\n") { it.text }
 }
 
 private fun appendInjectLog(
@@ -42,27 +51,22 @@ private fun appendInjectLog(
     message: String,
     color: Color,
 ) {
-    synchronized(injectLogLock) {
-        val line = "[$level] $message"
-        injectLogText.value += "$line\n"
-        logStr.value = logStr.value + buildAnnotatedString {
-            withStyle(style = SpanStyle(color = color)) {
-                append(line)
-            }
-            append("\n")
+    val line = buildAnnotatedString {
+        withStyle(style = SpanStyle(color = color)) {
+            append("[$level] $message")
         }
+    }
+    synchronized(injectLogLock) {
+        if (injectLogLines.size >= MaxInjectLogLines) {
+            injectLogLines.removeRange(0, injectLogLines.size - MaxInjectLogLines + 1)
+        }
+        injectLogLines.add(line)
     }
 }
 
 @Deprecated("Use InjectSetupScreen on Android; kept for desktop inject rebuild UI")
 @Composable
 fun InjectConsole() {
-    val message by remember(logStr) { logStr }
-    var log by remember(message) {
-        mutableStateOf(
-            TextFieldValue(message, TextRange(message.lastIndex.coerceAtLeast(0)))
-        )
-    }
     BorderCard(
         modifier = Modifier
             .fillMaxSize(.7f),
@@ -81,14 +85,17 @@ fun InjectConsole() {
             color = MaterialTheme.colorScheme.primary
         )
 
-        TextField(
-            value = log,
-            onValueChange = { log = it },
-            readOnly = true,
-            textStyle = MaterialTheme.typography.bodyMedium,
+        LazyColumn(
             modifier = Modifier.fillMaxWidth().weight(1f).padding(5.dp),
-            colors = RWTextFieldColors,
-        )
+        ) {
+            items(injectLogLines.size) { index ->
+                Text(
+                    injectLogLines[index],
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
     }
 }
 

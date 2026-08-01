@@ -217,32 +217,39 @@ fun ModsView(
     val settings = koinInject<Settings>()
 
     var deletedMod by remember { mutableStateOf(false) }
-    val initialEngineMods = remember { modManager.getAllMods() }
-    val mods = remember {
-        SnapshotStateList<Mod>().apply {
-            addAll(initialEngineMods)
-            addAll(scanUnloadedMods(initialEngineMods))
-        }
-    }
-    var loadedEnabledFileNames by remember {
-        mutableStateOf(
-            initialEngineMods
-                .filter { it.isEnabled }
-                .map { File(it.path).name.lowercase() }
-                .toSet()
-        )
-    }
+    val mods = remember { SnapshotStateList<Mod>() }
+    var loadedEnabledFileNames by remember { mutableStateOf(setOf<String>()) }
     var filter by remember { mutableStateOf("") }
 
     val scope = rememberCoroutineScope()
     var updated by remember { mutableStateOf(false) }
     var enabledChanged by remember { mutableStateOf(false) }
     var isApplying by remember { mutableStateOf(false) }
+    // 初始模组列表加载期间显示 Loading 占位（引擎扫描与目录枚举移出组合阶段）
+    var isInitialLoading by remember { mutableStateOf(true) }
     var applySucceeded by remember { mutableStateOf(false) }
     var isClosingAfterDelete by remember { mutableStateOf(false) }
     var importProgress by remember { mutableStateOf<ModImportProgress?>(null) }
     var pendingDeleteMod by remember { mutableStateOf<Mod?>(null) }
     var failedModsAfterReload by remember { mutableStateOf<List<FailedModLoadInfo>?>(null) }
+
+    // 初始加载：引擎模组扫描与 units/ 目录枚举在 LoadingView 的 IO 协程中执行，避免组合期磁盘 IO
+    LoadingView(isInitialLoading, onLoaded = { isInitialLoading = false }) {
+        val engineMods = modManager.getAllMods()
+        val unloadedMods = scanUnloadedMods(engineMods)
+        withContext(Dispatchers.Main) {
+            loadedEnabledFileNames = engineMods
+                .filter { it.isEnabled }
+                .map { File(it.path).name.lowercase() }
+                .toSet()
+            mods.clear()
+            mods.addAll(engineMods)
+            mods.addAll(unloadedMods)
+            updated = !updated
+            enabledChanged = !enabledChanged
+        }
+        true
+    }
 
     LoadingView(isApplying, onLoaded = {
         isApplying = false
@@ -492,8 +499,9 @@ fun ModsView(
 
     fun changeModEnabled(mod: Mod, enabled: Boolean) {
         if (mod.isEnabled == enabled) return
+        // 只写内存状态，不再翻转 enabledChanged：勾选由卡片自身 state 反映（仅重组本卡片）；
+        // enabledChanged 仅用于重载/应用/全部禁用后的分组整体刷新
         mod.isEnabled = enabled
-        enabledChanged = !enabledChanged
     }
 
     fun deleteMod(mod: Mod) {
@@ -617,8 +625,7 @@ fun ModsView(
     }
 
     @Composable
-    fun ModCard(mod: Mod) {
-        val isEnabled = mod.isEnabled
+    fun ModCard(mod: Mod, isEnabled: Boolean, onEnabledChange: (Boolean) -> Unit) {
         val statusText = readI18n("mod.${if (isEnabled) "enabled" else "disabled"}")
         val statusColor = if (isEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
         val sourceTypeText = when (mod.sourceType) {
@@ -627,8 +634,9 @@ fun ModsView(
             ModSourceType.Ini -> readI18n("mod.sourceTypeIni")
             ModSourceType.Unknown -> readI18n("mod.sourceTypeUnknown")
         }
-        val ramUsed = remember(updated, enabledChanged, mod.id) { mod.getRamUsed() }
-        val errorMessage = remember(updated, enabledChanged, mod.id) { mod.errorMessage }
+        // 引擎调用结果缓存：updated（重载/应用）后重新取读数；勾选开关不再触发重算
+        val ramUsed = remember(updated, mod.id) { mod.getRamUsed() }
+        val errorMessage = remember(updated, mod.id) { mod.errorMessage }
         val description = remember(updated, mod.id) { mod.description.trim() }
         val clipboardManager = LocalClipboardManager.current
         var showErrorDialog by remember(mod.id) { mutableStateOf(false) }
@@ -775,7 +783,7 @@ fun ModsView(
             ) {
                 Switch(
                     checked = isEnabled,
-                    onCheckedChange = { changeModEnabled(mod, it) },
+                    onCheckedChange = onEnabledChange,
                     colors = SwitchDefaults.colors(
                         checkedTrackColor = MaterialTheme.colorScheme.primary,
                         checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
@@ -906,9 +914,12 @@ fun ModsView(
             key = { data[it].id }
         ) { index ->
             val mod = data[index]
+            // 勾选状态按卡片隔离：翻转开关只重组本卡片；
+            // updated / enabledChanged 变化（重载/应用/全部禁用）时回读引擎侧状态
+            var isEnabled by remember(mod.id, updated, enabledChanged) { mutableStateOf(mod.isEnabled) }
             BorderCard(
                 backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(
-                    if (mod.isEnabled) .72f else .5f
+                    if (isEnabled) .72f else .5f
                 ),
                 shape = RoundedCornerShape(8.dp),
                 modifier = Modifier.then(
@@ -920,7 +931,14 @@ fun ModsView(
                     .wrapContentHeight()
                     .padding(horizontal = 4.dp, vertical = 5.dp)
             ) {
-                ModCard(mod)
+                ModCard(
+                    mod = mod,
+                    isEnabled = isEnabled,
+                    onEnabledChange = { enabled ->
+                        isEnabled = enabled
+                        changeModEnabled(mod, enabled)
+                    },
+                )
             }
         }
     }

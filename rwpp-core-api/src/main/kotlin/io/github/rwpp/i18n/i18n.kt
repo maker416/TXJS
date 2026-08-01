@@ -36,7 +36,9 @@ fun readI18n(path: String, i18nType: I18nType = I18nType.RWPP, vararg arg: Strin
             }
         }
 
-        cacheMap[path]?.let { return MessageFormat.format(it, *arg) }
+        // 无参调用跳过 MessageFormat 的 pattern 解析，直接返回缓存模板；
+        // 注意这会让无参文本中的单引号按原样显示（修正 MessageFormat 吞引号的既有缺陷，属预期）
+        cacheMap[path]?.let { return if (arg.isEmpty()) it else MessageFormat.format(it, *arg) }
         val strArray = path.split(".")
         val iterator = strArray.iterator()
         var table: TomlTable = i18nTable
@@ -45,7 +47,7 @@ fun readI18n(path: String, i18nType: I18nType = I18nType.RWPP, vararg arg: Strin
             if(!iterator.hasNext()) {
                 return table[next]!!.asTomlLiteral().content.let {
                     cacheMap[path] = it
-                    MessageFormat.format(it, *arg)
+                    if (arg.isEmpty()) it else MessageFormat.format(it, *arg)
                 }
             } else table = table[next]!!.asTomlTable()
         }

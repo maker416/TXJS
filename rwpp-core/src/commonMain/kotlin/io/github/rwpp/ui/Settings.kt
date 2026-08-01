@@ -630,7 +630,9 @@ fun SettingsView(
                                             SettingsSlider(
                                                 readI18n("settings.backgroundTransparency"),
                                                 settings.backgroundTransparency,
-                                                {
+                                                // 拖动过程中不刷新全局状态，避免全屏逐帧重组；松手时才写入
+                                                onValueChange = { },
+                                                onValueChangeFinished = {
                                                     settings.backgroundTransparency = it
                                                     UI.backgroundTransparency = it
                                                 }

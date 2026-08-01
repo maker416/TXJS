@@ -32,6 +32,9 @@ import io.github.rwpp.game.map.MapType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.RWIconButton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.koin.compose.koinInject
 
 @Composable
@@ -55,6 +58,7 @@ fun MapViewDialog(
             Column {
 
                 val game = koinInject<Game>()
+                val scope = rememberCoroutineScope()
                 var filter by remember { mutableStateOf("") }
                 val room = koinInject<Game>().gameRoom
 
@@ -108,9 +112,15 @@ fun MapViewDialog(
                         modifier = Modifier.offset(y = 10.dp).padding(5.dp),
                         size = 50.dp
                     ) {
-                        game.getAllMaps(true)
-                        maps = game.getAllMapsByMapType(mapType)
-                            .filter { it.displayName().contains(filter, true) }
+                        // 地图目录枚举移入 IO 线程，结果回主线程写 state
+                        scope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                game.getAllMaps(true)
+                                game.getAllMapsByMapType(mapType)
+                                    .filter { it.displayName().contains(filter, true) }
+                            }
+                            maps = result
+                        }
                     }
                 }
 
@@ -119,8 +129,11 @@ fun MapViewDialog(
                 with(game) {
                     LaunchedEffect(selectedIndex0, filter) {
                         mapType = MapType.entries[selectedIndex0]
-                        maps = getAllMapsByMapType(mapType).filter {
-                            it.displayName().contains(filter, true)
+                        // 地图目录枚举移入 IO 线程，结果回主线程写 state
+                        maps = withContext(Dispatchers.IO) {
+                            getAllMapsByMapType(mapType).filter {
+                                it.displayName().contains(filter, true)
+                            }
                         }
                     }
 
@@ -139,7 +152,8 @@ fun MapViewDialog(
                             key = { maps[it].mapName + maps[it].id }
                         ) {
                             val map = maps[it]
-                            val name = rememberSaveable { map.displayName() }
+                            // key 与列表项身份一致：项复用时 displayName 不会错串到其他地图
+                            val name = rememberSaveable(map.mapName + map.id) { map.displayName() }
                             MapItem(
                                 name,
                                 map,

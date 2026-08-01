@@ -36,6 +36,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -90,8 +91,8 @@ object UI : Initialization, IUserInterface {
         internal set
     var dialogWidget by mutableStateOf<Widget?>(null)
         internal set
-    var chatMessages by mutableStateOf(AnnotatedString(""))
-        internal set
+    // 聊天历史：有界逐条列表，新消息在最上方，避免无界拼接的 O(n²)
+    val chatMessages = mutableStateListOf<AnnotatedString>()
 
     var showMissionView by mutableStateOf(false)
     var showMultiplayerView by mutableStateOf(false)
@@ -110,6 +111,34 @@ object UI : Initialization, IUserInterface {
     var showSinglePlayerView by mutableStateOf(false)
     var showSurvivalView by mutableStateOf(false)
     var showSavesView by mutableStateOf(false)
+
+    enum class Page {
+        Mission, Multiplayer, Replay, Settings, Mods, Survival,
+        Room, Extension, ResourceBrowser, OpenSourceInfo, SinglePlayer, Saves
+    }
+
+    /** 打开指定页面并关闭其余所有页面，保证任意时刻至多一个页面可见。 */
+    fun openPage(page: Page) {
+        showMissionView = page == Page.Mission
+        showMultiplayerView = page == Page.Multiplayer
+        showReplayView = page == Page.Replay
+        showSettingsView = page == Page.Settings
+        showModsView = page == Page.Mods
+        showSurvivalView = page == Page.Survival
+        showRoomView = page == Page.Room
+        showExtensionView = page == Page.Extension
+        showResourceBrowser = page == Page.ResourceBrowser
+        showOpenSourceInfoView = page == Page.OpenSourceInfo
+        showSinglePlayerView = page == Page.SinglePlayer
+        showSavesView = page == Page.Saves
+    }
+
+    fun closeAllPages() {
+        showMissionView = false; showMultiplayerView = false; showReplayView = false
+        showSettingsView = false; showModsView = false; showSurvivalView = false
+        showRoomView = false; showExtensionView = false; showResourceBrowser = false
+        showOpenSourceInfoView = false; showSinglePlayerView = false; showSavesView = false
+    }
 
     private var pendingAutoPublishQRoom = false
 
@@ -176,7 +205,7 @@ object UI : Initialization, IUserInterface {
     fun onReceiveChatMessage(sender: String,  message: String, color: Int) {
         val configIO = appKoin.get<ConfigIO>()
         synchronized(UI) {
-            chatMessages =
+            chatMessages.add(0,
                 buildAnnotatedString {
                     if (sender == "RELAY_CN-ADMIN") {
                         val result = relayRegex.find(message)?.value
@@ -202,7 +231,9 @@ object UI : Initialization, IUserInterface {
                     }
 
                     append("\n")
-                } + chatMessages
+                })
+            // 限长 200 条，超出丢弃最旧消息
+            if (chatMessages.size > 200) chatMessages.removeAt(chatMessages.lastIndex)
         }
 
     }
@@ -219,7 +250,7 @@ object UI : Initialization, IUserInterface {
 
     override fun init() {
         GlobalEventChannel.filter(DisconnectEvent::class).subscribeAlways(Dispatchers.Main.immediate, priority = EventPriority.MONITOR) {
-            chatMessages = AnnotatedString("")
+            chatMessages.clear()
         }
     }
 }

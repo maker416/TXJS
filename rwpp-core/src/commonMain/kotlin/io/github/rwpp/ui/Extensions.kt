@@ -53,6 +53,9 @@ import io.github.rwpp.scripts.Render
 import io.github.rwpp.utils.compareVersions
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.LazyColumnScrollbar
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
 import java.io.File
@@ -71,6 +74,7 @@ fun ExtensionView(
     val appContext = koinInject<AppContext>()
     val externalHandler = koinInject<ExternalHandler>()
     var updateExtensions by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     val extensions = remember(updateExtensions) {
         externalHandler.getAllExtensions(true).onFailure {
@@ -194,15 +198,20 @@ fun ExtensionView(
                     modifier = Modifier.padding(5.dp)
                 ) {
                     appKoin.get<ExternalHandler>().openFileChooser { file ->
-                        runCatching {
-                            if (file.extension == "rwres" || file.extension == "rwext") {
-                                file.copyTo(File("$extensionPath/${file.name}"))
-                                updateExtensions = !updateExtensions
-                            } else {
-                                UI.showWarning(readI18n("extension.loadInfo"))
+                        // 扩展文件复制移入 IO 协程，避免主线程磁盘 IO；UI 反馈留在主线程
+                        scope.launch {
+                            runCatching {
+                                if (file.extension == "rwres" || file.extension == "rwext") {
+                                    withContext(Dispatchers.IO) {
+                                        file.copyTo(File("$extensionPath/${file.name}"))
+                                    }
+                                    updateExtensions = !updateExtensions
+                                } else {
+                                    UI.showWarning(readI18n("extension.loadInfo"))
+                                }
+                            }.onFailure {
+                                UI.showWarning(it.message ?: "Unknown error")
                             }
-                        }.onFailure {
-                            UI.showWarning(it.message ?: "Unknown error")
                         }
                     }
                 }

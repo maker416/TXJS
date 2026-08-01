@@ -44,7 +44,7 @@ class ExternalHelperActivity : AppCompatActivity() {
                 val path =
                     if (dataString.endsWith(".rwres") || dataString.endsWith(".rwext") || dataString.endsWith(".jar")) {
                         endsAction = {
-                            UI.showExtensionView = true
+                            UI.openPage(UI.Page.Extension)
                             UI.showWarning(
                                 readI18n("android.importExtension", I18nType.RWPP, fileName)
                             )
@@ -52,7 +52,7 @@ class ExternalHelperActivity : AppCompatActivity() {
                         extensionPath
                     } else if (dataString.endsWith(".rwmod")) {
                         endsAction = {
-                            UI.showModsView = true
+                            UI.openPage(UI.Page.Mods)
                             UI.showWarning(
                                 readI18n("android.importMod", I18nType.RWPP, fileName)
                             )
@@ -75,7 +75,7 @@ class ExternalHelperActivity : AppCompatActivity() {
                     } else if (dataString.endsWith(".tmx")) {
                         endsAction = {
                             UI.pendingModsMapsTab = ModsMapsTab.Maps
-                            UI.showModsView = true
+                            UI.openPage(UI.Page.Mods)
                             UI.showWarning(
                                 readI18n("android.importMap", I18nType.RWPP, fileName)
                             )
