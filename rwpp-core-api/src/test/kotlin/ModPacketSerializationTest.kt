@@ -123,6 +123,89 @@ class ModPacketSerializationTest {
     }
 
     @Test
+    fun manifestResponseRoundTripsWithChunkHashes() {
+        val descriptors = listOf(NetworkModDescriptor("mod", 100L, hash64))
+        val packet = ModPacket.ManifestResponsePacket().apply {
+            requestId = 8L
+            success = true
+            this.descriptors = descriptors
+            chunkHashes = mapOf("mod" to listOf(hash64, hash64))
+        }
+        val out = roundTrip(packet) as ModPacket.ManifestResponsePacket
+        assertEquals(8L, out.requestId)
+        assertEquals(descriptors, out.descriptors)
+        assertEquals(mapOf("mod" to listOf(hash64, hash64)), out.chunkHashes)
+    }
+
+    @Test
+    fun requestPacketRoundTripsWithBitmaps() {
+        val descriptors = listOf(NetworkModDescriptor("mod", 100L, hash64))
+        val bitmap = byteArrayOf(0b101)
+        val packet = ModPacket.RequestPacket().apply {
+            requestId = 10L
+            requestedDescriptors = descriptors
+            haveBitmaps = mapOf("mod" to bitmap)
+        }
+        val out = roundTrip(packet) as ModPacket.RequestPacket
+        assertEquals(10L, out.requestId)
+        assertEquals(descriptors, out.requestedDescriptors)
+        assertTrue(bitmap.contentEquals(out.haveBitmaps["mod"]))
+    }
+
+    @Test
+    fun chunkNakRoundTrips() {
+        val packet = ModPacket.ModChunkNakPacket().apply {
+            requestId = 43L
+            name = "mod"
+            chunkIndex = 5
+        }
+        val out = roundTrip(packet) as ModPacket.ModChunkNakPacket
+        assertEquals(43L, out.requestId)
+        assertEquals("mod", out.name)
+        assertEquals(5, out.chunkIndex)
+    }
+
+    @Test
+    fun rejectChunkHashesForUnknownMod() {
+        val descriptor = NetworkModDescriptor("mod", 100L, hash64)
+        val bytes = gameOutput {
+            writeLong(1L)
+            writeBoolean(true)
+            writeUTF("")
+            ModPacket.writeDescriptorList(this, listOf(descriptor))
+            // manifest 里没有名为 "evil" 的 descriptor，读侧必须拒绝
+            writeInt(1)
+            writeUTF("evil")
+            writeInt(1)
+            writeUTF(hash64)
+        }
+        val decoded = ModPacket.ManifestResponsePacket()
+        assertNull(runCatching {
+            ByteArrayInputStream(bytes).use { input ->
+                decoded.readPacket(GameInputStream(DataInputStream(input)))
+            }
+        }.getOrNull())
+    }
+
+    @Test
+    fun rejectBitmapForUnknownMod() {
+        val descriptor = NetworkModDescriptor("mod", 100L, hash64)
+        val bytes = gameOutput {
+            writeLong(1L)
+            ModPacket.writeDescriptorList(this, listOf(descriptor))
+            writeInt(1)
+            writeUTF("evil")
+            writeBytesWithSize(byteArrayOf(1))
+        }
+        val decoded = ModPacket.RequestPacket()
+        assertNull(runCatching {
+            ByteArrayInputStream(bytes).use { input ->
+                decoded.readPacket(GameInputStream(DataInputStream(input)))
+            }
+        }.getOrNull())
+    }
+
+    @Test
     fun rejectTooManyDescriptors() {
         val tooMany = (0..ModPacket.MAX_DESCRIPTOR_COUNT).joinToString(",") { "x" }
         val bytes = gameOutput {

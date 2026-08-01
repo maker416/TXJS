@@ -13,6 +13,8 @@ import java.io.DataOutputStream
 import java.io.File
 import java.io.IOException
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.Locale
 
@@ -79,6 +81,21 @@ interface NetworkModCache {
 
     /** Best-effort cleanup of runtime plaintext copies. */
     fun cleanupWorkingCopiesOnExit() {}
+
+    /**
+     * 存储一个已通过块级 SHA-256 校验的分块（断点续传用）。
+     * 与整包缓存共用 24h TTL；进程重启后仍可通过 [partialChunks] 读回。
+     */
+    fun storePartialChunk(descriptor: NetworkModDescriptor, chunkIndex: Int, bytes: ByteArray) {}
+
+    /**
+     * 读取某 descriptor 全部已缓存的未完成分块（块序号 → 字节）。
+     * 无 partial、已过期或内容损坏的块会被忽略，返回空 map 表示「从头下载」。
+     */
+    fun partialChunks(descriptor: NetworkModDescriptor): Map<Int, ByteArray> = emptyMap()
+
+    /** 传输完成（或主动放弃）后清理该 descriptor 的全部 partial 数据。 */
+    fun discardPartial(descriptor: NetworkModDescriptor) {}
 }
 
 object NetworkModCacheFiles {
@@ -88,6 +105,13 @@ object NetworkModCacheFiles {
     const val ACTIVE_SUFFIX = ".network.rwmod"
     const val TEMP_SUFFIX = ".tmp"
     const val QUARANTINE_MARKER = ".quarantine-"
+
+    /** 断点续传 partial 目录名前缀（`{前缀}{cacheKey}`）。 */
+    const val PARTIAL_DIR_PREFIX = "partial-"
+    /** partial 目录内分块文件名前缀（`{前缀}{chunkIndex}`）。 */
+    const val PARTIAL_CHUNK_PREFIX = "chunk-"
+    /** partial 目录内记录创建时间的元数据文件名。 */
+    const val PARTIAL_META_FILE = "partial.meta"
 
     fun cacheKey(descriptor: NetworkModDescriptor): String {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -139,6 +163,39 @@ object NetworkModCacheFiles {
     fun metadataFile(root: File, descriptor: NetworkModDescriptor): File =
         File(root, "${descriptor.cacheKey()}.$META_EXTENSION")
 
+    fun partialDir(root: File, descriptor: NetworkModDescriptor): File =
+        File(root, "$PARTIAL_DIR_PREFIX${descriptor.cacheKey()}")
+
+    fun partialChunkFile(dir: File, chunkIndex: Int): File =
+        File(dir, "$PARTIAL_CHUNK_PREFIX$chunkIndex")
+
+    /** 写入 partial 目录的创建时间（仅首次写入生效，后续追加分块不刷新 TTL）。 */
+    fun ensurePartialMeta(dir: File, createdAtMillis: Long) {
+        val meta = File(dir, PARTIAL_META_FILE)
+        if (meta.isFile) return
+        atomicWrite(meta, "createdAtMillis=$createdAtMillis".toByteArray(StandardCharsets.UTF_8), dir)
+    }
+
+    fun readPartialCreatedAt(dir: File): Long? = runCatching {
+        val meta = File(dir, PARTIAL_META_FILE)
+        if (!meta.isFile) return null
+        meta.readText(StandardCharsets.UTF_8).lineSequence()
+            .mapNotNull { line -> line.removePrefix("createdAtMillis=").toLongOrNull() }
+            .firstOrNull()
+    }.getOrNull()
+
+    /** 清理 root 下所有过期的 partial 目录（启动时调用）。 */
+    fun cleanupExpiredPartialDirs(root: File, nowMillis: Long) {
+        root.listFiles().orEmpty()
+            .filter { it.isDirectory && it.name.startsWith(PARTIAL_DIR_PREFIX) }
+            .forEach { dir ->
+                val createdAt = readPartialCreatedAt(dir)
+                if (createdAt == null || isExpired(createdAt, nowMillis)) {
+                    deleteOrQuarantine(root, dir)
+                }
+            }
+    }
+
     fun requireInside(root: File, file: File): File {
         val canonicalRoot = root.canonicalFile
         val canonicalFile = file.canonicalFile
@@ -164,16 +221,41 @@ object NetworkModCacheFiles {
         val tmp = File.createTempFile(target.name, TEMP_SUFFIX, target.parentFile)
         try {
             tmp.writeBytes(bytes)
-            if (target.exists() && !target.delete()) {
-                throw IOException("Failed to replace existing file: $target")
-            }
-            if (!tmp.renameTo(target)) {
-                throw IOException("Failed to publish temp file: $target")
+            // 快速路径：目标不存在（或能被直接删除）时走普通 delete+rename。
+            // 目标已存在且删除失败（Windows 上常见于文件仍被引擎持有句柄，例如正在使用中的
+            // 已激活网络模组）不再直接抛异常——统一落到下面更健壮的 NIO 替换链，其中
+            // Files.move(..., REPLACE_EXISTING) 在纯 delete 失败的场景下仍有机会成功。
+            val fastPathOk = (!target.exists() || target.delete()) && tmp.renameTo(target)
+            if (!fastPathOk) {
+                publishTempFile(tmp, target)
             }
             return target
         } catch (t: Throwable) {
             tmp.delete()
             throw t
+        }
+    }
+
+    private fun publishTempFile(tmp: File, target: File) {
+        val tmpPath = tmp.toPath()
+        val targetPath = target.toPath()
+        try {
+            Files.move(tmpPath, targetPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            return
+        } catch (_: Exception) {
+            // ATOMIC_MOVE 在部分文件系统不受支持，继续回退
+        }
+        try {
+            Files.move(tmpPath, targetPath, StandardCopyOption.REPLACE_EXISTING)
+            return
+        } catch (_: Exception) {
+            // 继续复制覆盖
+        }
+        try {
+            Files.copy(tmpPath, targetPath, StandardCopyOption.REPLACE_EXISTING)
+            Files.deleteIfExists(tmpPath)
+        } catch (e: Exception) {
+            throw IOException("Failed to publish temp file: $target", e)
         }
     }
 

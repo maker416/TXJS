@@ -21,6 +21,11 @@ class AndroidNetworkModCache(
 ) : NetworkModCache {
     private val lock = Any()
     private val root: File get() = File(appContext.internalStoragePath("units/"))
+    /**
+     * 断点续传 partial 根目录。必须位于引擎模组扫描目录（units/）**之外**，
+     * 否则 `partial-*` 文件夹会被引擎当作文件夹型模组扫描。
+     */
+    private val partialRoot: File get() = File(appContext.internalStoragePath("network-mod-partial/"))
     private val entries = mutableMapOf<String, NetworkModCacheEntry>()
     private var prepared = false
 
@@ -29,6 +34,7 @@ class AndroidNetworkModCache(
         val now = System.currentTimeMillis()
         val cacheRoot = root.apply { mkdirs() }
         entries.clear()
+        NetworkModCacheFiles.cleanupExpiredPartialDirs(partialRoot.apply { mkdirs() }, now)
 
         cacheRoot.listFiles().orEmpty().forEach { file ->
             when {
@@ -111,6 +117,41 @@ class AndroidNetworkModCache(
         prepareStartup()
         val file = runCatching { File(path).canonicalFile }.getOrNull() ?: return@synchronized null
         entries.values.firstOrNull { it.payloadFile.canonicalFile == file }?.descriptor
+    }
+
+    override fun storePartialChunk(descriptor: NetworkModDescriptor, chunkIndex: Int, bytes: ByteArray): Unit = synchronized(lock) {
+        prepareStartup()
+        val partialBase = partialRoot.apply { mkdirs() }
+        val dir = NetworkModCacheFiles.partialDir(partialBase, descriptor).apply { mkdirs() }
+        NetworkModCacheFiles.ensurePartialMeta(dir, System.currentTimeMillis())
+        NetworkModCacheFiles.atomicWrite(
+            NetworkModCacheFiles.partialChunkFile(dir, chunkIndex),
+            bytes,
+            partialBase,
+        )
+    }
+
+    override fun partialChunks(descriptor: NetworkModDescriptor): Map<Int, ByteArray> = synchronized(lock) {
+        prepareStartup()
+        val partialBase = partialRoot
+        val dir = NetworkModCacheFiles.partialDir(partialBase, descriptor)
+        if (!dir.isDirectory) return@synchronized emptyMap()
+        val createdAt = NetworkModCacheFiles.readPartialCreatedAt(dir)
+        if (createdAt == null || NetworkModCacheFiles.isExpired(createdAt, System.currentTimeMillis())) {
+            NetworkModCacheFiles.deleteOrQuarantine(partialBase, dir)
+            return@synchronized emptyMap()
+        }
+        dir.listFiles().orEmpty().mapNotNull { file ->
+            if (!file.isFile || !file.name.startsWith(NetworkModCacheFiles.PARTIAL_CHUNK_PREFIX)) return@mapNotNull null
+            val index = file.name.removePrefix(NetworkModCacheFiles.PARTIAL_CHUNK_PREFIX).toIntOrNull()
+                ?: return@mapNotNull null
+            runCatching { index to file.readBytes() }.getOrNull()
+        }.toMap()
+    }
+
+    override fun discardPartial(descriptor: NetworkModDescriptor): Unit = synchronized(lock) {
+        val dir = NetworkModCacheFiles.partialDir(partialRoot, descriptor)
+        if (dir.exists()) NetworkModCacheFiles.deleteOrQuarantine(partialRoot, dir)
     }
 
     private fun demoteSameName(cacheRoot: File, descriptor: NetworkModDescriptor) {

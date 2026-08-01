@@ -19,15 +19,19 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
+import java.util.BitSet
 import java.util.LinkedHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 房主侧 MOD 分块传输调度器。
  *
- * **核心设计（两件事）：**
+ * **核心设计（四件事）：**
  * 1. **轮询公平**：所有加入者共享一个轮询队列，新加入者会在老加入者传完之前就开始收块。
  * 2. **流量控制窗口**：每个 client 同时「在途（已发送但尚未被 ACK）」的分块数有上限 [windowSize]。
+ * 3. **断点跳块**：[submit] 携带客户端已有分块位图（断点续传），已持有的块不再重发。
+ * 4. **NAK 重传**：客户端块级校验失败会回 NAK（[onNak]），坏块进入重传队列**优先于**正常序列重发；
+ *    已发完的 payload 字节会保留到会话结束，以支持跨 mod 的迟到的重传请求。
  */
 class HostModTransferScheduler(
     private val scope: CoroutineScope,
@@ -45,10 +49,19 @@ class HostModTransferScheduler(
     private val sessions = LinkedHashMap<Client, HostModTransferSession>()
     private var schedulerJob: Job? = null
 
-    fun submit(client: Client, playerName: String, requestId: Long, mods: List<HostModTransferSource>) {
+    /**
+     * @param haveBitmaps mod 名 → 客户端已持有分块位图（断点续传）。对应位为 1 的块不再发送。
+     */
+    fun submit(
+        client: Client,
+        playerName: String,
+        requestId: Long,
+        mods: List<HostModTransferSource>,
+        haveBitmaps: Map<String, BitSet> = emptyMap(),
+    ) {
         synchronized(lock) {
             sessions.remove(client)?.releaseRemaining()
-            sessions[client] = HostModTransferSession(client, playerName, requestId, mods, logInfo)
+            sessions[client] = HostModTransferSession(client, playerName, requestId, mods, haveBitmaps, logInfo)
             ensureSchedulerLocked()
         }
     }
@@ -87,6 +100,19 @@ class HostModTransferScheduler(
             if (session.inFlight > 0) {
                 session.inFlight--
             }
+            ensureSchedulerLocked()
+        }
+    }
+
+    /**
+     * 客户端报告某块内容校验失败（坏块）：把该块压入重传队列，优先于正常序列重发。
+     * 会话不存在 / requestId 不符 / 块越界时静默忽略。
+     */
+    fun onNak(client: Client, requestId: Long, name: String, chunkIndex: Int) {
+        synchronized(lock) {
+            val session = sessions[client] ?: return
+            if (session.requestId != requestId) return
+            session.enqueueResend(name, chunkIndex)
             ensureSchedulerLocked()
         }
     }
@@ -203,15 +229,22 @@ private class HostModTransferSession(
     val playerName: String,
     val requestId: Long,
     sources: List<HostModTransferSource>,
+    haveBitmaps: Map<String, BitSet>,
     private val logInfo: (String) -> Unit,
 ) {
     private val sources = sources.toMutableList()
+    private val haveBitmaps = haveBitmaps.toMap()
     private var sourceIndex = 0
     private var currentPayload: HostModPayload? = null
-    private var offset = 0
-    private var chunkIndex = 0
+    private var nextChunkIndex = 0
+    /** (mod 名, 块序号) 重传队列：NAK 驱动的坏块重发，优先于正常发送序列。 */
+    private val resendQueue = ArrayDeque<Pair<String, Int>>()
+    /** 已发完的 payload（按 mod 名），保留到会话结束以支持迟到的 NAK 重传。 */
+    private val sentPayloads = LinkedHashMap<String, HostModPayload>()
     /** 已发送但尚未被客户端 ACK 的分块数（流量控制窗口占用）。 */
     var inFlight: Int = 0
+    /** 累计已发字节（进度快照用）。 */
+    private var sentBytesTotal = 0L
 
     fun toSnapshot(): HostTransferSnapshot {
         val payload = currentPayload
@@ -222,40 +255,63 @@ private class HostModTransferSession(
             client = client,
             playerName = playerName,
             currentModName = modName,
-            sentBytes = if (payload != null) offset.toLong() else 0L,
+            sentBytes = sentBytesTotal,
             totalBytes = total.toLong(),
             modIndex = sourceIndex,
             modCount = sources.size,
         )
     }
 
+    /** NAK 请求重传。仅当对应 payload 仍在内存（当前或已发完）时入队，否则静默丢弃。 */
+    fun enqueueResend(name: String, chunkIndex: Int) {
+        val payload = payloadFor(name) ?: return
+        if (chunkIndex !in 0 until payload.totalChunks) return
+        if (resendQueue.any { it.first == name && it.second == chunkIndex }) return
+        resendQueue.addLast(name to chunkIndex)
+        logInfo("[MODSYNC-HOST] queued chunk resend for $playerName: $name#$chunkIndex")
+    }
+
     fun nextPacket(): ModPacket.ModChunkPacket? {
-        val payload = currentPayload ?: loadNextPayload() ?: return null
-        val end = if (payload.bytes.isEmpty()) 0 else minOf(offset + ModPacket.CHUNK_SIZE, payload.bytes.size)
-        val packet = ModPacket.ModChunkPacket().apply {
+        // 重传优先：NAK 的块先于正常序列发出
+        while (resendQueue.isNotEmpty()) {
+            val (name, index) = resendQueue.removeFirst()
+            val payload = payloadFor(name) ?: continue
+            if (index !in 0 until payload.totalChunks) continue
+            return buildChunk(payload, index)
+        }
+
+        while (true) {
+            val payload = currentPayload ?: loadNextPayload() ?: return null
+            var index = nextChunkIndex
+            while (index < payload.totalChunks && payload.skip.get(index)) index++
+            if (index >= payload.totalChunks) {
+                finishCurrentPayload()
+                continue
+            }
+            nextChunkIndex = index + 1
+            return buildChunk(payload, index)
+        }
+    }
+
+    private fun buildChunk(payload: HostModPayload, index: Int): ModPacket.ModChunkPacket {
+        val start = index * ModPacket.CHUNK_SIZE
+        val end = if (payload.bytes.isEmpty()) 0 else minOf(start + ModPacket.CHUNK_SIZE, payload.bytes.size)
+        sentBytesTotal += (end - start)
+        return ModPacket.ModChunkPacket().apply {
             requestId = this@HostModTransferSession.requestId
             name = payload.descriptor.name
-            chunkIndex = this@HostModTransferSession.chunkIndex
+            chunkIndex = index
             totalChunks = payload.totalChunks
-            if (chunkIndex == 0) {
+            if (index == 0) {
                 totalSize = payload.descriptor.payloadSize
                 sha256 = payload.descriptor.normalizedSha256
             }
-            chunkBytes = payload.bytes.copyOfRange(offset, end)
+            chunkBytes = payload.bytes.copyOfRange(start, end)
         }
-
-        if (payload.bytes.isEmpty()) {
-            finishCurrentPayload(1)
-        } else {
-            offset = end
-            chunkIndex++
-            if (offset >= payload.bytes.size) {
-                finishCurrentPayload(chunkIndex)
-            }
-        }
-
-        return packet
     }
+
+    private fun payloadFor(name: String): HostModPayload? =
+        currentPayload?.takeIf { it.descriptor.name == name } ?: sentPayloads[name]
 
     private fun loadNextPayload(): HostModPayload? {
         if (sourceIndex >= sources.size) return null
@@ -264,38 +320,44 @@ private class HostModTransferSession(
             "Prepared bytes do not match descriptor for ${source.descriptor.name}"
         }
         val totalChunks = maxOf(1, (source.bytes.size + ModPacket.CHUNK_SIZE - 1) / ModPacket.CHUNK_SIZE)
-        val payload = HostModPayload(source.descriptor, source.bytes, totalChunks, source)
+        val skip = haveBitmaps[source.descriptor.name] ?: BitSet(0)
+        val payload = HostModPayload(source.descriptor, source.bytes, totalChunks, source, skip)
         currentPayload = payload
-        offset = 0
-        chunkIndex = 0
-        logInfo("[MODSYNC-HOST] sending mod to $playerName (chunked): ${source.descriptor.name}, size=${source.bytes.size}, chunks=$totalChunks")
+        nextChunkIndex = 0
+        val skipped = (0 until totalChunks).count { skip.get(it) }
+        logInfo("[MODSYNC-HOST] sending mod to $playerName (chunked): ${source.descriptor.name}, size=${source.bytes.size}, chunks=$totalChunks, skippedByResume=$skipped")
         return payload
     }
 
-    private fun finishCurrentPayload(sentChunks: Int) {
+    private fun finishCurrentPayload() {
         val payload = currentPayload
         if (payload != null) {
-            logInfo("[MODSYNC-HOST] finished sending mod to $playerName: ${payload.descriptor.name}, sentChunks=$sentChunks")
-            payload.source.release()
+            logInfo("[MODSYNC-HOST] finished sending mod to $playerName: ${payload.descriptor.name}")
+            // 字节保留在 sentPayloads 中直到会话结束，以支持迟到的 NAK 重传；
+            // source 统一由 releaseRemaining 释放。
+            sentPayloads[payload.descriptor.name] = payload
         }
         sourceIndex++
         currentPayload = null
-        offset = 0
-        chunkIndex = 0
+        nextChunkIndex = 0
     }
 
     fun releaseRemaining() {
-        currentPayload?.source?.release()
         currentPayload = null
+        resendQueue.clear()
+        sentPayloads.values.forEach { it.source.release() }
+        sentPayloads.clear()
         for (i in sourceIndex until sources.size) {
             sources[i].release()
         }
     }
 }
 
-private data class HostModPayload(
+private class HostModPayload(
     val descriptor: NetworkModDescriptor,
     val bytes: ByteArray,
     val totalChunks: Int,
     val source: HostModTransferSource,
+    /** 客户端已持有的分块位图（断点续传），对应位为 1 的块跳过不发。 */
+    val skip: BitSet,
 )

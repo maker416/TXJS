@@ -5,6 +5,7 @@
  * https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
  */
 
+import io.github.rwpp.game.mod.NETWORK_MOD_CACHE_TTL_MILLIS
 import io.github.rwpp.game.mod.NetworkModCacheFiles
 import io.github.rwpp.game.mod.NetworkModDescriptor
 import kotlin.io.path.createTempDirectory
@@ -91,6 +92,33 @@ class NetworkModCacheFilesTest {
         // Normal delete succeeds:
         assertTrue(NetworkModCacheFiles.deleteOrQuarantine(root, file))
         assertFalse(file.exists())
+    }
+
+    @Test
+    fun partialMetaRoundTripsAndExpiryCleanupWorks() {
+        val root = createTempDirectory().toFile()
+        val descriptor = NetworkModDescriptor("mod", 7L, hash64)
+        val dir = NetworkModCacheFiles.partialDir(root, descriptor).apply { mkdirs() }
+        NetworkModCacheFiles.ensurePartialMeta(dir, 1_000L)
+        assertEquals(1_000L, NetworkModCacheFiles.readPartialCreatedAt(dir))
+        // 已存在 meta 时不覆盖：追加块不刷新 TTL
+        NetworkModCacheFiles.ensurePartialMeta(dir, 2_000L)
+        assertEquals(1_000L, NetworkModCacheFiles.readPartialCreatedAt(dir))
+        // 未过期 → 保留
+        NetworkModCacheFiles.cleanupExpiredPartialDirs(root, 1_500L)
+        assertTrue(dir.exists())
+        // 过期 → 清理
+        NetworkModCacheFiles.cleanupExpiredPartialDirs(root, 1_000L + NETWORK_MOD_CACHE_TTL_MILLIS + 1)
+        assertFalse(dir.exists())
+    }
+
+    @Test
+    fun partialFileNamingIsStable() {
+        val root = createTempDirectory().toFile()
+        val descriptor = NetworkModDescriptor("mod", 7L, hash64)
+        val dir = NetworkModCacheFiles.partialDir(root, descriptor)
+        assertTrue(dir.name.startsWith(NetworkModCacheFiles.PARTIAL_DIR_PREFIX))
+        assertEquals("chunk-3", NetworkModCacheFiles.partialChunkFile(dir, 3).name)
     }
 
     @Test

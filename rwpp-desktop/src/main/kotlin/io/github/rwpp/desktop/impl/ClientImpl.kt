@@ -21,4 +21,7 @@ interface ClientImpl : Client {
     override fun sendPacketToClient(packet: Packet) {
         GameEngine.B().bX.a(self, packet.asGamePacket())
     }
+
+    override val remoteAddress: String?
+        get() = runCatching { self.d?.inetAddress?.hostAddress }.getOrNull()
 }

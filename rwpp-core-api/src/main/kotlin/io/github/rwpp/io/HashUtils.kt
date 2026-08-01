@@ -28,6 +28,26 @@ object HashUtils {
     }
 
     /**
+     * 按 [chunkSize] 把 [bytes] 切块，返回逐块 SHA-256（小写 hex）。
+     * 空字节数组返回单个空内容的哈希，与传输层「空 payload 也发 1 个空块」的约定一致。
+     */
+    fun sha256Chunks(bytes: ByteArray, chunkSize: Int): List<String> {
+        require(chunkSize > 0) { "chunkSize must be positive" }
+        if (bytes.isEmpty()) return listOf(sha256(ByteArray(0)))
+        val digest = MessageDigest.getInstance("SHA-256")
+        val result = ArrayList<String>((bytes.size + chunkSize - 1) / chunkSize)
+        var offset = 0
+        while (offset < bytes.size) {
+            val end = minOf(offset + chunkSize, bytes.size)
+            digest.reset()
+            digest.update(bytes, offset, end - offset)
+            result.add(toHex(digest.digest()))
+            offset = end
+        }
+        return result
+    }
+
+    /**
      * 流式读取 [file] 计算 SHA-256，避免大文件二次全量进内存。
      * 用 8KB 缓冲区分块 update。
      */

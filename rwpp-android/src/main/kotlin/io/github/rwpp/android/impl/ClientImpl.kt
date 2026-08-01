@@ -17,4 +17,7 @@ interface ClientImpl : Client {
     override fun sendPacketToClient(packet: Packet) {
         self.a(packet.asGamePacket())
     }
+
+    override val remoteAddress: String?
+        get() = runCatching { self.e?.inetAddress?.hostAddress }.getOrNull()
 }

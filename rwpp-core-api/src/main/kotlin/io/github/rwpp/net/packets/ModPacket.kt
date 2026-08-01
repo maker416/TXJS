@@ -37,6 +37,8 @@ sealed class ModPacket : Packet() {
         var success: Boolean = false
         var errorMessage: String = ""
         var descriptors: List<NetworkModDescriptor> = emptyList()
+        /** mod 名 → 按 [CHUNK_SIZE] 切分的逐块 SHA-256（小写 hex）。接收端据此做块级校验与多源互传验证。 */
+        var chunkHashes: Map<String, List<String>> = emptyMap()
 
         override val type: Int = MOD_MANIFEST_RESPONSE
 
@@ -45,6 +47,7 @@ sealed class ModPacket : Packet() {
             success = input.readBoolean()
             errorMessage = input.readUTF().also { require(it.length <= MAX_ERROR_LENGTH) { "manifest error too long" } }
             descriptors = readDescriptorList(input)
+            chunkHashes = readChunkHashMap(input, descriptors.map { it.name }.toSet())
         }
 
         override fun writePacket(output: GameOutputStream) {
@@ -52,23 +55,31 @@ sealed class ModPacket : Packet() {
             output.writeBoolean(success)
             output.writeUTF(errorMessage.take(MAX_ERROR_LENGTH))
             writeDescriptorList(output, descriptors)
+            writeChunkHashMap(output, chunkHashes)
         }
     }
 
     class RequestPacket : ModPacket() {
         var requestId: Long = 0L
         var requestedDescriptors: List<NetworkModDescriptor> = emptyList()
+        /**
+         * mod 名 → 已有分块位图（bit i = 本地已持有第 i 块，来自断点续传缓存）。
+         * 房主据此跳过已有块；空 map / 空数组 = 全缺，与旧语义一致。
+         */
+        var haveBitmaps: Map<String, ByteArray> = emptyMap()
 
         override val type: Int = MOD_DOWNLOAD_REQUEST
 
         override fun readPacket(input: GameInputStream) {
             requestId = input.readLong()
             requestedDescriptors = readDescriptorList(input)
+            haveBitmaps = readBitmapMap(input, requestedDescriptors.map { it.name }.toSet())
         }
 
         override fun writePacket(output: GameOutputStream) {
             output.writeLong(requestId)
             writeDescriptorList(output, requestedDescriptors)
+            writeBitmapMap(output, haveBitmaps)
         }
     }
 
@@ -150,6 +161,8 @@ sealed class ModPacket : Packet() {
 
     /**
      * 分块接收确认包：客户端每成功接收并缓冲一个 [ModChunkPacket] 后回发给房主，用于**流量控制**。
+     *
+     * 语义为「包已到达」（无论内容是否通过块级校验），内容被拒绝走 [ModChunkNakPacket]。
      */
     class ModChunkAckPacket : ModPacket() {
         var requestId: Long = 0L
@@ -173,6 +186,32 @@ sealed class ModPacket : Packet() {
         }
     }
 
+    /**
+     * 分块否定确认包：客户端收到的分块未通过块级 SHA-256 校验时回发给房主，请求重传该块。
+     * 与 [ModChunkAckPacket] 成对出现（ACK 释放流量窗口，NAK 请求内容重发）。
+     */
+    class ModChunkNakPacket : ModPacket() {
+        var requestId: Long = 0L
+        /** 被拒绝的 mod 名 */
+        var name: String = ""
+        /** 被拒绝的块序号 */
+        var chunkIndex: Int = 0
+
+        override val type: Int = MOD_CHUNK_NAK
+
+        override fun readPacket(input: GameInputStream) {
+            requestId = input.readLong()
+            name = input.readUTF().also { validateName(it) }
+            chunkIndex = input.readInt().also { require(it >= 0) { "negative nak index" } }
+        }
+
+        override fun writePacket(output: GameOutputStream) {
+            output.writeLong(requestId)
+            output.writeUTF(name)
+            output.writeInt(chunkIndex)
+        }
+    }
+
     companion object {
         const val MOD_DOWNLOAD_REQUEST = 500
         const val DOWNLOAD_MOD_PACK = 510
@@ -182,11 +221,19 @@ sealed class ModPacket : Packet() {
         const val MOD_CHUNK_ACK = 503
         const val MOD_MANIFEST_REQUEST = 504
         const val MOD_MANIFEST_RESPONSE = 505
+        /** 客户端→房主：分块内容校验失败，请求重传（与 ACK 成对，ACK 释放窗口、NAK 请求重发）。 */
+        const val MOD_CHUNK_NAK = 506
 
         /** 单个分块的最大字节数：64KB。足够小以避免大包风险，又不至于包数过多拖慢。 */
         const val CHUNK_SIZE = 64 * 1024
         const val MAX_DESCRIPTOR_COUNT = 128
         const val MAX_ERROR_LENGTH = 512
+        /** 单个 mod 允许的最大分块数（64KB × 65536 ≈ 4GB），用于限制 manifest 中的块哈希列表长度。 */
+        const val MAX_CHUNK_COUNT = 65536
+        /** 分块位图的最大字节数（[MAX_CHUNK_COUNT] bit）。 */
+        const val MAX_BITMAP_BYTES = MAX_CHUNK_COUNT / 8
+
+        private val CHUNK_HASH_REGEX = Regex("^[0-9a-f]{64}$")
 
         fun writeDescriptor(output: GameOutputStream, descriptor: NetworkModDescriptor) {
             output.writeUTF(descriptor.name)
@@ -224,6 +271,64 @@ sealed class ModPacket : Packet() {
         fun readStringList(input: GameInputStream): List<String> {
             val count = input.readInt().also { require(it in 0..MAX_DESCRIPTOR_COUNT) { "invalid string count" } }
             return List(count) { input.readUTF().also { value -> validateName(value) } }
+        }
+
+        /**
+         * 写入 mod 名 → 逐块 SHA-256 列表的映射。
+         * 读侧用 descriptor 名单校验条目归属，防止携带无关 mod 的数据。
+         */
+        fun writeChunkHashMap(output: GameOutputStream, map: Map<String, List<String>>) {
+            require(map.size <= MAX_DESCRIPTOR_COUNT) { "too many chunk hash entries" }
+            output.writeInt(map.size)
+            map.forEach { (name, hashes) ->
+                validateName(name)
+                require(hashes.size <= MAX_CHUNK_COUNT) { "too many chunk hashes for '$name'" }
+                output.writeUTF(name)
+                output.writeInt(hashes.size)
+                hashes.forEach { hash ->
+                    require(hash.matches(CHUNK_HASH_REGEX)) { "invalid chunk sha256: $hash" }
+                    output.writeUTF(hash)
+                }
+            }
+        }
+
+        fun readChunkHashMap(input: GameInputStream, allowedNames: Set<String>): Map<String, List<String>> {
+            val count = input.readInt().also { require(it in 0..MAX_DESCRIPTOR_COUNT) { "invalid chunk hash entry count" } }
+            val result = LinkedHashMap<String, List<String>>(count)
+            repeat(count) {
+                val name = input.readUTF().also { value -> validateName(value) }
+                require(allowedNames.isEmpty() || name in allowedNames) { "chunk hashes for unknown mod: $name" }
+                val hashCount = input.readInt().also { require(it in 0..MAX_CHUNK_COUNT) { "invalid chunk hash count" } }
+                val hashes = List(hashCount) {
+                    input.readUTF().lowercase().also { hash -> require(hash.matches(CHUNK_HASH_REGEX)) { "invalid chunk sha256" } }
+                }
+                result[name] = hashes
+            }
+            return result
+        }
+
+        /** 写入 mod 名 → 分块位图（[java.util.BitSet.toByteArray] 格式）的映射。 */
+        fun writeBitmapMap(output: GameOutputStream, map: Map<String, ByteArray>) {
+            require(map.size <= MAX_DESCRIPTOR_COUNT) { "too many bitmap entries" }
+            output.writeInt(map.size)
+            map.forEach { (name, bitmap) ->
+                validateName(name)
+                require(bitmap.size <= MAX_BITMAP_BYTES) { "bitmap too large for '$name'" }
+                output.writeUTF(name)
+                output.writeBytesWithSize(bitmap)
+            }
+        }
+
+        fun readBitmapMap(input: GameInputStream, allowedNames: Set<String>): Map<String, ByteArray> {
+            val count = input.readInt().also { require(it in 0..MAX_DESCRIPTOR_COUNT) { "invalid bitmap entry count" } }
+            val result = LinkedHashMap<String, ByteArray>(count)
+            repeat(count) {
+                val name = input.readUTF().also { value -> validateName(value) }
+                require(allowedNames.isEmpty() || name in allowedNames) { "bitmap for unknown mod: $name" }
+                val bitmap = input.readNextBytes().also { require(it.size <= MAX_BITMAP_BYTES) { "bitmap too large" } }
+                result[name] = bitmap
+            }
+            return result
         }
 
         private fun validateName(name: String) {

@@ -31,8 +31,10 @@ const val coreVersion = "v1.15"
 /**
  * The protocol version.
  * The clients which have different protocol version can not join to each other
+ *
+ * v6：模组同步协议升级——manifest 携带块级 SHA-256、下载请求携带断点位图、新增分块 NAK 重传。
  */
-const val protocolVersion = 5
+const val protocolVersion = 6
 
 /**
  * 1.15 -> 176

@@ -9,4 +9,10 @@ package io.github.rwpp.net
 
 interface Client {
     fun sendPacketToClient(packet: Packet)
+
+    /**
+     * 该连接的对端 IP（房主视角）。relay 连接下为中继服务器地址，不可用于 P2P 直连；
+     * 引擎未暴露 socket 的平台返回 null。
+     */
+    val remoteAddress: String? get() = null
 }

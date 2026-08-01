@@ -224,12 +224,35 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 注入模式（`InjectMode`）：`Override`（覆盖原方法）、`InsertBefore`（插入前置逻辑，要求返回 `Any`）等。
 
+## 模组同步协议（protocolVersion 6）
+
+联机房主模组同步分两层（均位于 `io.github.rwpp.net`，协调器为 `rwpp-core/.../core/Logic.kt`）：
+
+**星型分发层（基础路径，包 ID 500-511，见 `net/packets/ModPacket.kt`）**
+- 进房缺 mod → `ManifestRequest(504)` → 房主回 `ManifestResponse(505)`（descriptor + **逐块 SHA-256**）→ 客户端按内容哈希比对本地/缓存 → `Request(500)`（带**断点位图** `haveBitmaps`）→ 房主 `HostModTransferScheduler` 64KB 分块轮询推送（511，多 client 公平 + 每 client 32 块 ACK 窗口）。
+- 客户端 `ModChunkAssembler` **稀疏重组**（允许乱序），每块先过块级 SHA-256：坏块回 `NAK(506)` 单块重传（重试上限 3），每块都回 `ACK(503)` 释放窗口；收齐再做整包 SHA-256 复核 → `NetworkModCache.storeVerified/activate` → `ModReloadFinish(502)` 解除房主 ready 门控。
+- **断点续传**：已校验块即时落盘（`NetworkModCache.storePartialChunk`，桌面端 AES-GCM 逐块加密，Android 明文存引擎扫描目录之外的 `network-mod-partial/`），24h TTL；掉线/取消/被杀后下次进房按位图续传。
+- 乱序不再是致命错误；结构性错误（序号越界/大小不符）仍会断连。
+- 房主掉线：客户端传输活跃时断开 → 显示 `mod.hostDisconnected` 专属提示（区别于 generic 断连/传输失败）。
+
+**P2P 网状互传层（加速路径，信令包 512-514 + 独立 TCP 数据面）**
+- 信令走游戏连接：客户端进房时 `Announce(512)` 自报 P2P 监听端口与 LAN 地址；房主随 manifest 下发 `PeerList(513)`（房间级会话令牌 + peer 表，含各 peer `remoteAddress`）；客户端收齐某 mod 后成为 seed 并发 `Have(514)`，房主转发给其他 peer。
+- 数据面（`rwpp-core/.../core/p2p/ModSwarmManager.kt` + `rwpp-core-api/.../net/p2p/ModPeerWire.kt`）：拉取方对 seed 候选逐个 TCP 直连（LAN 地址优先，2s 连接超时），握手 = 令牌 + cacheKey + 缺失位图，服务方按位图流式发块；每块同样过块级 SHA-256，恶意 peer 无法注入内容。
+- **退化底线**：relay 房（`GameRoom.isRelayRoom`）、未拿到令牌、peer 表为空或对端 port=0 时，完全退化为星型分发；P2P 拉取失败/不完整按当前位图回炉房主补请求（房主把 manifest 预读字节保留到 ModReloadFinish，TTL 兜底随请求刷新）。
+- 房主压力来自「先完成者分担后完成者」，互联网 NAT 下 client↔client 直连不一定成功（失败自动回退，不会比纯星型更差）；不做 UDP 打洞。
+
 ## 测试策略
 
-当前测试覆盖度**极低**，以手动/集成测试为主：
+以手动/集成测试为主，模组同步协议层有单元测试覆盖：
 
-- **单元测试**：`rwpp-core-api/src/test/kotlin/RwListParserTest.kt`
-  - 测试房间列表 JSON 解析、URL 迁移、可加入性过滤、mod 房间版本映射等
+- **单元测试**：`rwpp-core-api/src/test/kotlin/`
+  - `RwListParserTest.kt` — 房间列表 JSON 解析、URL 迁移、可加入性过滤、mod 房间版本映射等
+  - `ModPacketSerializationTest.kt` / `ModPeerPacketSerializationTest.kt` — 模组同步星型协议（500-511）与 P2P 信令（512-514）的序列化往返与恶意输入拒绝
+  - `ModPeerWireTest.kt` — P2P 数据线协议（握手/状态码/chunk frame）编解码
+  - `ModChunkAssemblerTest.kt` — 分块稀疏重组：乱序、重复块、坏块重试耗尽、位图、空 payload
+  - `HostModTransferSchedulerTest.kt` — 房主调度器：轮询公平、ACK 窗口、断点跳块、NAK 重传优先
+  - `NetworkModCacheFilesTest.kt` / `NetworkModDescriptorTest.kt` — 缓存文件布局、原子写、partial 元数据与过期清理
+  - `I18nBundleTest.kt` — 用与线上一致的 `Toml.parseToTomlTable` 实跑 `bundle_zh/en.toml`，校验关键键存在（TOML 编译期零校验，必须靠它兜底）
   - 使用 `kotlin.test` 断言（`assertEquals`、`assertTrue`、`assertFalse`、`assertNull`）
 - **集成/调试用测试**：`rwpp-core/src/test/kotlin/MainTest.kt`
   - 包含对外部 HTTP API（`rtsbox.cn`）的真实网络请求测试

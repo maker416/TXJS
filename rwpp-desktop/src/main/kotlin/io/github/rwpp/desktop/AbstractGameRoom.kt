@@ -42,6 +42,8 @@ abstract class AbstractGameRoom  : GameRoom {
         get() = GameEngine.B().bX.C || singlePlayer
     override val isHostServer: Boolean
         get() = GameEngine.B().bX.H
+    override val isRelayRoom: Boolean
+        get() = GameEngine.B().bX.bw != null
     override val localPlayer: Player
         get() {
             return (GameEngine.B().bX.z ?: GameEngine.B().bs ?: ConnectingPlayer) as Player

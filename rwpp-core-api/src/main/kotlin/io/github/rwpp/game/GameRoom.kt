@@ -43,6 +43,13 @@ interface GameRoom {
     val isSinglePlayerGame: Boolean
 
     /**
+     * 本房间连接是否经官方 relay 中转（join 时带 `uuid:` 短码的 relay 房）。
+     * relay 房所有流量都过第三方中继，client 间不可能直连，模组 P2P 互传此时整体关闭。
+     * 不支持 relay 的平台保持默认 false。
+     */
+    val isRelayRoom: Boolean get() = false
+
+    /**
      * Experimental
      */
     var gameSpeed: Float

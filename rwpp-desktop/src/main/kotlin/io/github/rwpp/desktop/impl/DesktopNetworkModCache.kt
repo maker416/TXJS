@@ -12,6 +12,7 @@ import io.github.rwpp.game.mod.NetworkModCache
 import io.github.rwpp.game.mod.NetworkModCacheEntry
 import io.github.rwpp.game.mod.NetworkModCacheFiles
 import io.github.rwpp.game.mod.NetworkModDescriptor
+import io.github.rwpp.modDir
 import org.koin.core.annotation.Single
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
@@ -28,8 +29,16 @@ class DesktopNetworkModCache(
     private val appContext: AppContext,
 ) : NetworkModCache {
     private val lock = Any()
-    private val encryptedRoot: File get() = File(appContext.externalStoragePath(".rwpp/network-mod-cache/"))
-    private val workingRoot: File get() = File(appContext.externalStoragePath("units/"))
+    /**
+     * 加密缓存必须可写：一体包装在 Program Files 时 `user.dir/.rwpp` 常因权限导致
+     * atomicWrite/rename 失败。迁到 %LOCALAPPDATA%\Minxyzgo\RWJS\network-mod-cache\。
+     */
+    private val encryptedRoot: File get() = resolveEncryptedCacheRoot()
+    /**
+     * 引擎可见明文目录：Desktop 在 `l.aU=true` 时扫描 `mods/units/`（非裸 `units/`）。
+     * 与 [modDir] / [customMapDir] 的桌面路径约定一致。
+     */
+    private val workingRoot: File get() = File(modDir)
     private val entries = mutableMapOf<String, DesktopEntry>()
     private val random = SecureRandom()
     private var prepared = false
@@ -47,6 +56,7 @@ class DesktopNetworkModCache(
             }
         }
         val key = loadOrCreateKey(cacheRoot)
+        NetworkModCacheFiles.cleanupExpiredPartialDirs(cacheRoot, now)
         cacheRoot.listFiles { file -> file.extension == CACHE_EXTENSION }.orEmpty().forEach { cacheFile ->
             val entry = runCatching { readEnvelope(cacheFile, key) }.getOrNull()
             if (entry == null || NetworkModCacheFiles.isExpired(entry.createdAtMillis, now)) {
@@ -89,9 +99,15 @@ class DesktopNetworkModCache(
         val workRoot = workingRoot.apply { mkdirs() }
         demoteSameName(workRoot, descriptor)
         val active = NetworkModCacheFiles.activeFile(workRoot, descriptor)
-        val key = loadOrCreateKey(encryptedRoot.apply { mkdirs() })
-        val bytes = readEnvelopeBytes(entry.cacheFile, key, descriptor)
-        NetworkModCacheFiles.atomicWrite(active, bytes, workRoot)
+        if (!active.exists()) {
+            // 目标文件名由内容哈希派生：已存在即代表内容一定正确，直接复用。
+            // 重复加入同一房间时该文件通常仍被引擎持有句柄（当前对局正在使用），
+            // 无条件重新解密写入在 Windows 上会因文件被占用直接失败
+            // （java.io.IOException: Failed to replace existing file）。
+            val key = loadOrCreateKey(encryptedRoot.apply { mkdirs() })
+            val bytes = readEnvelopeBytes(entry.cacheFile, key, descriptor)
+            NetworkModCacheFiles.atomicWrite(active, bytes, workRoot)
+        }
         entry.asCacheEntry(active)
     }
 
@@ -104,6 +120,67 @@ class DesktopNetworkModCache(
     override fun cleanupWorkingCopiesOnExit() = synchronized(lock) {
         cleanupWorkingCopies(workingRoot.apply { mkdirs() })
     }
+
+    override fun storePartialChunk(descriptor: NetworkModDescriptor, chunkIndex: Int, bytes: ByteArray): Unit = synchronized(lock) {
+        prepareStartup()
+        val cacheRoot = encryptedRoot.apply { mkdirs() }
+        val key = loadOrCreateKey(cacheRoot)
+        val dir = NetworkModCacheFiles.partialDir(cacheRoot, descriptor).apply { mkdirs() }
+        NetworkModCacheFiles.ensurePartialMeta(dir, System.currentTimeMillis())
+        NetworkModCacheFiles.atomicWrite(
+            NetworkModCacheFiles.partialChunkFile(dir, chunkIndex),
+            encryptChunk(descriptor, chunkIndex, bytes, key),
+            cacheRoot,
+        )
+    }
+
+    override fun partialChunks(descriptor: NetworkModDescriptor): Map<Int, ByteArray> = synchronized(lock) {
+        prepareStartup()
+        val cacheRoot = encryptedRoot
+        val dir = NetworkModCacheFiles.partialDir(cacheRoot, descriptor)
+        if (!dir.isDirectory) return@synchronized emptyMap()
+        val createdAt = NetworkModCacheFiles.readPartialCreatedAt(dir)
+        if (createdAt == null || NetworkModCacheFiles.isExpired(createdAt, System.currentTimeMillis())) {
+            NetworkModCacheFiles.deleteOrQuarantine(cacheRoot, dir)
+            return@synchronized emptyMap()
+        }
+        val key = loadOrCreateKey(cacheRoot)
+        dir.listFiles().orEmpty().mapNotNull { file ->
+            if (!file.isFile || !file.name.startsWith(NetworkModCacheFiles.PARTIAL_CHUNK_PREFIX)) return@mapNotNull null
+            val index = file.name.removePrefix(NetworkModCacheFiles.PARTIAL_CHUNK_PREFIX).toIntOrNull()
+                ?: return@mapNotNull null
+            runCatching { index to decryptChunk(descriptor, index, file.readBytes(), key) }.getOrNull()
+        }.toMap()
+    }
+
+    override fun discardPartial(descriptor: NetworkModDescriptor): Unit = synchronized(lock) {
+        val dir = NetworkModCacheFiles.partialDir(encryptedRoot, descriptor)
+        if (dir.exists()) NetworkModCacheFiles.deleteOrQuarantine(encryptedRoot, dir)
+    }
+
+    /**
+     * 分块级 AES-GCM：每块独立随机 nonce，AAD 绑定 cacheKey+块序号，
+     * 防止 partial 文件被跨 mod/跨块调换。与整包加密共用 cache.key。
+     */
+    private fun encryptChunk(descriptor: NetworkModDescriptor, chunkIndex: Int, bytes: ByteArray, key: ByteArray): ByteArray {
+        val nonce = ByteArray(NONCE_SIZE_BYTES).also { random.nextBytes(it) }
+        val cipher = Cipher.getInstance(CIPHER)
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(TAG_BITS, nonce))
+        cipher.updateAAD(chunkAad(descriptor, chunkIndex))
+        return nonce + cipher.doFinal(bytes)
+    }
+
+    private fun decryptChunk(descriptor: NetworkModDescriptor, chunkIndex: Int, envelope: ByteArray, key: ByteArray): ByteArray {
+        require(envelope.size > NONCE_SIZE_BYTES) { "partial chunk too small" }
+        val nonce = envelope.copyOfRange(0, NONCE_SIZE_BYTES)
+        val cipher = Cipher.getInstance(CIPHER)
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(TAG_BITS, nonce))
+        cipher.updateAAD(chunkAad(descriptor, chunkIndex))
+        return cipher.doFinal(envelope.copyOfRange(NONCE_SIZE_BYTES, envelope.size))
+    }
+
+    private fun chunkAad(descriptor: NetworkModDescriptor, chunkIndex: Int): ByteArray =
+        "${descriptor.cacheKey()}:$chunkIndex".toByteArray(StandardCharsets.UTF_8)
 
     private fun cleanupWorkingCopies(root: File) {
         root.listFiles().orEmpty()
@@ -224,5 +301,15 @@ class DesktopNetworkModCache(
         private const val CIPHER = "AES/GCM/NoPadding"
         private const val MAGIC = 0x52574d43 // RWMC
         private const val FORMAT_VERSION = 1
+        private const val CACHE_VENDOR = "Minxyzgo"
+        private const val CACHE_PRODUCT = "RWJS"
+        private const val CACHE_DIR_NAME = "network-mod-cache"
+
+        internal fun resolveEncryptedCacheRoot(): File {
+            val localAppData = System.getenv("LOCALAPPDATA")
+                ?.takeIf { it.isNotBlank() }
+                ?: File(System.getProperty("user.home"), "AppData/Local").absolutePath
+            return File(localAppData, "$CACHE_VENDOR/$CACHE_PRODUCT/$CACHE_DIR_NAME")
+        }
     }
 }

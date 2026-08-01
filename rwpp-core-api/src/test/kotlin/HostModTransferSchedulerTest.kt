@@ -88,6 +88,67 @@ class HostModTransferSchedulerTest {
         scheduler.cancelAll()
     }
 
+    @Test
+    fun skipsChunksClientAlreadyHas() = runBlocking {
+        val events = mutableListOf<String>()
+        lateinit var scheduler: HostModTransferScheduler
+        lateinit var client: RecordingClient
+        client = RecordingClient("c", events) { packet ->
+            scheduler.onAck(client, packet.requestId, packet.name, packet.chunkIndex)
+        }
+        scheduler = HostModTransferScheduler(this, windowSize = 16, chunkDelayMillis = 0)
+        val fourChunks = ByteArray(ModPacket.CHUNK_SIZE * 4)
+        // 客户端断点续传：已持有第 0、1 块，房主只应补发 2、3
+        scheduler.submit(
+            client,
+            "c",
+            1L,
+            listOf(source("mod", fourChunks)),
+            mapOf("mod" to java.util.BitSet().apply { set(0); set(1) }),
+        )
+
+        withTimeout(1000) {
+            while (scheduler.activeClientCount() > 0) {
+                yield()
+            }
+        }
+
+        assertEquals(listOf("c:2", "c:3"), events)
+    }
+
+    @Test
+    fun nakResendIsSentBeforeRemainingSequence() = runBlocking {
+        val events = mutableListOf<String>()
+        val client = RecordingClient("c", events)
+        val scheduler = HostModTransferScheduler(
+            this,
+            windowSize = 2,
+            chunkDelayMillis = 0,
+            pollWhenBlockedMillis = 1,
+        )
+        scheduler.submit(
+            client,
+            "c",
+            1L,
+            listOf(source("mod", ByteArray(ModPacket.CHUNK_SIZE * 3))),
+        )
+
+        withTimeout(1000) { while (events.size < 2) yield() }
+        assertEquals(listOf("c:0", "c:1"), events)
+
+        // 客户端报告 0 号块损坏；ACK 释放窗口后，重传的 0 号块应优先于 2 号块发出
+        scheduler.onNak(client, 1L, "mod", 0)
+        scheduler.onAck(client, 1L, "mod", 0)
+        withTimeout(1000) { while (events.size < 3) yield() }
+        assertEquals(listOf("c:0", "c:1", "c:0"), events)
+
+        scheduler.onAck(client, 1L, "mod", 0)
+        withTimeout(1000) { while (events.size < 4) yield() }
+        assertEquals(listOf("c:0", "c:1", "c:0", "c:2"), events)
+
+        scheduler.cancelAll()
+    }
+
     private fun source(name: String, bytes: ByteArray): HostModTransferSource =
         HostModTransferSource(NetworkModDescriptor.fromBytes(name, bytes), bytes)
 
