@@ -28,5 +28,7 @@ interface UnitTypeImpl : UnitType {
     override val isBuilder: Boolean
         get() = self.l()
     override val mod: Mod?
-        get() = (self as? com.corrodinggames.rts.game.units.custom.l)?.J?.q?.let(appKoin.get<ModManager>()::getModByName)
+        // 与 Mod.name 同一口径：用引擎的 i.b.a() 回退链（title ?: ?: 文件名），
+        // 否则无 title 的模组无法归属到所属 mod
+        get() = (self as? com.corrodinggames.rts.game.units.custom.l)?.J?.a()?.let(appKoin.get<ModManager>()::getModByName)
 }

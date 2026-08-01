@@ -198,8 +198,11 @@ class ModManagerImpl : ModManager {
                 add(object : Mod {
                     override val id: Int
                         get() = it.a
+                    // 引擎的模组唯一名是 i.b.a() 的回退链（mod-info title ?: ?: 文件名），
+                    // 联机协议（缺 mod 校验/模组同步 manifest）用的正是这个名字。
+                    // 只取 title 字段会在 mod 无 title 时得到空串，导致房主 prepareHostManifest 查无此 mod。
                     override val name: String
-                        get() = it.s ?: ""
+                        get() = it.a() ?: ""
                     override val description: String
                         get() = it.u ?: ""
                     override val minVersion: String

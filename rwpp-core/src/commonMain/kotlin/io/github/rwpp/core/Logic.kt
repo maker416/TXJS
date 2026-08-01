@@ -365,8 +365,13 @@ object Logic : Initialization {
             if (packet.requestId != gen) return@registerPacketListener true
             manifestTimeoutJob?.cancel()
             if (!packet.success) {
+                // 房主拒绝了 manifest（如房主端找不到所需模组）。旧实现静默断开：
+                // 既无日志也无弹窗，加入者只会看到房间页以旧状态滞留（背景透出游戏画面）。
+                logger.error("[MODSYNC] host rejected manifest: ${packet.errorMessage}")
                 cleanupTransfer()
-                room.disconnect(packet.errorMessage.ifBlank { readI18n("mod.manifestFailed") })
+                val reason = packet.errorMessage.ifBlank { readI18n("mod.manifestFailed") }
+                room.disconnect(reason)
+                UI.showWarning(readI18n("mod.manifestFailedDetail", I18nType.RWPP, reason), true)
                 return@registerPacketListener true
             }
             scope.launch(Dispatchers.IO) {
@@ -571,8 +576,17 @@ object Logic : Initialization {
         val byName = enabled.groupBy { it.name }
         val sources = requiredNames.distinct().map { name ->
             val candidates = byName[name].orEmpty()
-            require(candidates.size == 1) { "Host mod '$name' is missing or ambiguous" }
-            val mod = candidates.single()
+            require(candidates.isNotEmpty()) {
+                "Host mod '$name' is missing (enabled mods: ${enabled.map { it.name }})"
+            }
+            // 同一模组被引擎从多个扫描目录重复登记时（同名同内容）取其一：
+            // 描述符自带逐块 SHA-256，加入者按内容校验，选哪份文件都不影响正确性。
+            if (candidates.size > 1) {
+                logger.warn(
+                    "[MODSYNC-HOST] mod '$name' registered ${candidates.size} times, using first: ${candidates.map { it.path }}"
+                )
+            }
+            val mod = candidates.first()
             val bytes = mod.getBytes()
             HostModTransferSource(NetworkModDescriptor.fromBytes(mod.name, bytes), bytes)
         }
