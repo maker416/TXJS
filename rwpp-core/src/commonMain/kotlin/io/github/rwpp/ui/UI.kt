@@ -192,8 +192,6 @@ object UI : Initialization, IUserInterface {
     var hostTransferSnapshots by mutableStateOf<List<HostTransferSnapshot>>(emptyList())
     /** 房主侧：已 announce 的 P2P peer 登记（client → P2P 监听端口；0 = 不支持 P2P），玩家行据此显示 P2P 徽章。 */
     var hostP2pPeerPorts by mutableStateOf<Map<Client, Int>>(emptyMap())
-    /** 房主侧：各客户端通过 P2P 拉取完成的模组数（P2P 加速效果统计）。 */
-    var hostP2pViaP2PCount by mutableStateOf<Map<Client, Int>>(emptyMap())
     /** 主界面公告/更新入口共享的最新版本信息。 */
     var latestVersionProfile by mutableStateOf<LatestVersionProfile?>(null)
     var UiProvider: UIProvider = UIProvider()

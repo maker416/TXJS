@@ -77,8 +77,6 @@ object Logic : Initialization {
 
     /** 房主侧：已 announce 的 P2P peer 登记（房间级，跨多次同步保留）。 */
     private val hostP2pPeers: MutableMap<Client, HostP2pPeer> = mutableMapOf()
-    /** 房主侧：各客户端通过 P2P 拉取完成的模组数（P2P 加速效果统计）。 */
-    private val hostP2pViaP2PCount: MutableMap<Client, Int> = mutableMapOf()
     /** 房间级 P2P 会话令牌（HostGameEvent 时生成；空串 = 未在开房）。 */
     private var p2pToken: String = ""
 
@@ -460,13 +458,6 @@ object Logic : Initialization {
                 val conn = client ?: return@registerPacketListener true
                 val peer = synchronized(Logic) { hostP2pPeers[conn] } ?: return@registerPacketListener true
                 peer.completedMods.addAll(packet.modNames)
-                // P2P 加速统计：该客户端通过 P2P 完成的模组数（UI 展示用）
-                if (packet.viaP2P) {
-                    synchronized(Logic) {
-                        hostP2pViaP2PCount[conn] = (hostP2pViaP2PCount[conn] ?: 0) + packet.modNames.size
-                    }
-                    scope.launch(Dispatchers.Main.immediate) { publishHostP2pViaP2PCount() }
-                }
                 val forwarded = ModPeerPacket.HavePacket().apply {
                     requestId = packet.requestId
                     modNames = packet.modNames
@@ -827,7 +818,7 @@ object Logic : Initialization {
         val complete = synchronized(Logic) { assemblers[descriptor.cacheKey()]?.isComplete == true }
         if (pulled && complete) {
             logger.info("[MODSYNC] p2p pull complete for '${descriptor.name}'")
-            completeAssemblerIfReady(descriptor, requestId, room, net, viaP2P = true)
+            completeAssemblerIfReady(descriptor, requestId, room, net)
         } else {
             reRequestFromHost(descriptor, requestId, net)
         }
@@ -977,7 +968,7 @@ object Logic : Initialization {
      * 重组器收齐某 mod 后：整包 SHA-256 复核（块级校验之上的双保险）→ 验证落盘并激活 →
      * 清理断点续传 partial → 登记为 P2P seed 并向房主宣告 → 队列清空时 finalize。
      */
-    private suspend fun completeAssemblerIfReady(descriptor: NetworkModDescriptor, requestId: Long, room: GameRoom, net: Net, viaP2P: Boolean = false) {
+    private suspend fun completeAssemblerIfReady(descriptor: NetworkModDescriptor, requestId: Long, room: GameRoom, net: Net) {
         val fullBytes = synchronized(Logic) {
             val assembler = assemblers[descriptor.cacheKey()] ?: return
             if (!assembler.isComplete) return
@@ -1010,7 +1001,6 @@ object Logic : Initialization {
                 net.sendPacketToServer(ModPeerPacket.HavePacket().apply {
                     this.requestId = requestId
                     modNames = listOf(descriptor.name)
-                    this.viaP2P = viaP2P
                 })
             }.onFailure { logger.warn("[MODSYNC] failed to announce seed for '${descriptor.name}': ${it.message}") }
         }
@@ -1170,12 +1160,6 @@ object Logic : Initialization {
             hostP2pPeers.mapValues { (_, info) -> info.listenPort }
         }
         scope.launch(Dispatchers.Main.immediate) { UI.hostP2pPeerPorts = ports }
-    }
-
-    /** 房主视角：发布各客户端通过 P2P 拉取完成的模组数到 UI 状态。 */
-    private fun publishHostP2pViaP2PCount() {
-        val counts = synchronized(Logic) { hostP2pViaP2PCount.toMap() }
-        scope.launch(Dispatchers.Main.immediate) { UI.hostP2pViaP2PCount = counts }
     }
 
     /**
