@@ -21,13 +21,18 @@ import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.base.Difficulty
 import io.github.rwpp.game.map.Mission
+import io.github.rwpp.game.map.MissionType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.widget.*
 import org.koin.compose.koinInject
 
+/**
+ * 任务/生存模式关卡列表。
+ * @param fixedType 固定任务类型（如生存模式）；为 null 时显示类型下拉框，行为同原任务页面。
+ */
 @Composable
-fun MissionView(onExit: () -> Unit) {
+fun MissionView(fixedType: MissionType? = null, onExit: () -> Unit) {
     BackHandler(true, onExit)
     DisposableEffect(Unit) {
         onDispose {
@@ -52,10 +57,19 @@ fun MissionView(onExit: () -> Unit) {
                     modifier = Modifier.fillMaxWidth().scaleFit(),
                     horizontalArrangement = Arrangement.Center
                 ) {
-                    Text(readI18n("mission.title"), style = MaterialTheme.typography.headlineLarge)
+                    Text(
+                        if (fixedType == null) readI18n("mission.title")
+                        else readI18n("menu.singlePlayer.survival"),
+                        style = MaterialTheme.typography.headlineLarge
+                    )
                 }
 
-                var selectedIndex0 by remember { mutableStateOf(0) }
+                var selectedIndex0 by remember {
+                    mutableStateOf(
+                        fixedType?.let { game.getAllMissionTypes().indexOf(it) }
+                            ?.takeIf { it >= 0 } ?: 0
+                    )
+                }
                 var selectedIndex1 by remember { mutableStateOf(configIO.getGameConfig<Int>("aiDifficulty") + 2) }
 
                 Row(
@@ -66,14 +80,16 @@ fun MissionView(onExit: () -> Unit) {
                         .padding(top = 5.dp)
                         .scaleFit()
                 ) {
-                    with(game) {
-                        LargeDropdownMenu(
-                            modifier = Modifier.wrapContentSize().padding(5.dp),
-                            label = readI18n("mission.type"),
-                            items = getAllMissionTypes(),
-                            selectedIndex = selectedIndex0,
-                            onItemSelected = { index, _ -> selectedIndex0 = index }
-                        )
+                    if (fixedType == null) {
+                        with(game) {
+                            LargeDropdownMenu(
+                                modifier = Modifier.wrapContentSize().padding(5.dp),
+                                label = readI18n("mission.type"),
+                                items = getAllMissionTypes(),
+                                selectedIndex = selectedIndex0,
+                                onItemSelected = { index, _ -> selectedIndex0 = index }
+                            )
+                        }
                     }
 
                     LargeDropdownMenu(

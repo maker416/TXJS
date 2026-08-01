@@ -61,6 +61,7 @@ import io.github.rwpp.event.events.ReloadModEvent
 import io.github.rwpp.event.events.ReloadModFinishedEvent
 import io.github.rwpp.event.onDispose
 import io.github.rwpp.game.Game
+import io.github.rwpp.game.map.MissionType
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.io.SizeUtils
@@ -82,6 +83,7 @@ import io.github.rwpp.ui.UI.showResourceBrowser
 import io.github.rwpp.ui.UI.showRoomView
 import io.github.rwpp.ui.UI.showSettingsView
 import io.github.rwpp.ui.UI.showSinglePlayerView
+import io.github.rwpp.ui.UI.showSurvivalView
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.LineSpinFadeLoaderIndicator
 import io.github.rwpp.widget.v2.bounceClick
@@ -153,7 +155,8 @@ fun App(
             || showReplayView
             || showResourceBrowser
             || showOpenSourceInfoView
-            || showSinglePlayerView)
+            || showSinglePlayerView
+            || showSurvivalView)
 
     val game = koinInject<Game>()
 
@@ -189,7 +192,7 @@ fun App(
                 Scaffold(
                     containerColor = Color.Transparent,
                     floatingActionButton = {
-                        if(game.isGameCouldContinue() && (showMainMenu || showMissionView || showSinglePlayerView)) {
+                        if(game.isGameCouldContinue() && (showMainMenu || showMissionView || showSinglePlayerView || showSurvivalView)) {
                             FloatingActionButton(
                                 onClick = { game.continueGame() },
                                 shape = CircleShape,
@@ -240,6 +243,14 @@ fun App(
                     ) {
                         MissionView { showMissionView = false }
                     }
+
+                    AnimatedVisibility(
+                        showSurvivalView,
+                        enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
+                        exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
+                    ) {
+                        MissionView(fixedType = MissionType.Survival) { showSurvivalView = false }
+                    }
                 }
 
                 AnimatedVisibility(
@@ -252,6 +263,10 @@ fun App(
                         onMission = {
                             showSinglePlayerView = false
                             showMissionView = true
+                        },
+                        onSurvival = {
+                            showSinglePlayerView = false
+                            showSurvivalView = true
                         },
                         onSkirmish = {
                             showSinglePlayerView = false
