@@ -91,12 +91,33 @@ private class UnloadedMod(private val file: File) : Mod {
     override val name: String get() = metadata.name
     override val description: String get() = metadata.description
     override val minVersion: String get() = metadata.minVersion
-    override val errorMessage: String? = null
+    override val errorMessage: String?
+        get() = if (metadata.titleMissing) missingTitleError(file.name) else null
     override var isEnabled: Boolean = false
     override val path: String = file.absolutePath
     override fun getRamUsed(): String = "0"
     override fun getSize(): Long = file.length()
     override fun getBytes(): ByteArray = file.readBytes()
+}
+
+private fun missingTitleError(fileName: String): String =
+    readI18n("mod.missingTitle", I18nType.RWPP, fileName)
+
+/** 包装 [Mod]，把 title 缺失错误透传到 [Mod.errorMessage]，其余行为完全委托。 */
+private class TitleErrorMod(delegate: Mod, private val error: String) : Mod by delegate {
+    override val errorMessage: String get() = error
+}
+
+/**
+ * 校验所有模组的 mod-info.txt `[mod]` title：缺失时包装为错误模组，
+ * 列表中显示错误标识，重载后也会进入失败列表（拿不到模组名是大问题，必须显式报错）。
+ */
+private fun List<Mod>.withTitleErrors(): List<Mod> = map { mod ->
+    // 引擎加载错误与 UnloadedMod 自带的 title 检查已覆盖的情况不重复解析
+    if (mod.errorMessage != null) return@map mod
+    val file = File(mod.path)
+    val meta = ModInfoParser.parseFromModFile(file) ?: return@map mod
+    if (meta.titleMissing) TitleErrorMod(mod, missingTitleError(file.name)) else mod
 }
 
 private fun scanUnloadedMods(existing: List<Mod>): List<Mod> {
@@ -224,10 +245,8 @@ fun ModsView(
     val scope = rememberCoroutineScope()
     var updated by remember { mutableStateOf(false) }
     var enabledChanged by remember { mutableStateOf(false) }
-    var isApplying by remember { mutableStateOf(false) }
     // 初始模组列表加载期间显示 Loading 占位（引擎扫描与目录枚举移出组合阶段）
     var isInitialLoading by remember { mutableStateOf(true) }
-    var applySucceeded by remember { mutableStateOf(false) }
     var isClosingAfterDelete by remember { mutableStateOf(false) }
     var importProgress by remember { mutableStateOf<ModImportProgress?>(null) }
     var pendingDeleteMod by remember { mutableStateOf<Mod?>(null) }
@@ -235,7 +254,7 @@ fun ModsView(
 
     // 初始加载：引擎模组扫描与 units/ 目录枚举在 LoadingView 的 IO 协程中执行，避免组合期磁盘 IO
     LoadingView(isInitialLoading, onLoaded = { isInitialLoading = false }) {
-        val engineMods = modManager.getAllMods()
+        val engineMods = modManager.getAllMods().withTitleErrors()
         val unloadedMods = scanUnloadedMods(engineMods)
         withContext(Dispatchers.Main) {
             loadedEnabledFileNames = engineMods
@@ -249,52 +268,6 @@ fun ModsView(
             enabledChanged = !enabledChanged
         }
         true
-    }
-
-    LoadingView(isApplying, onLoaded = {
-        isApplying = false
-        if (applySucceeded) {
-            applySucceeded = false
-            onExit()
-        }
-    }) {
-        try {
-            val knownStates = mods.associate { File(it.path).name.lowercase() to it.isEnabled }
-            // 引擎重建单位表时也会扫描目录，必须传入完整 UI 状态，防止新文件按默认值启用。
-            modManager.modSaveChange(enabledByFileName = knownStates)
-            val engineMods = modManager.getAllMods()
-            engineMods.forEach { mod ->
-                val fileName = File(mod.path).name.lowercase()
-                mod.isEnabled = knownStates[fileName] ?: false
-            }
-            val failed = collectFailedMods(engineMods)
-            withContext(Dispatchers.Main) {
-                loadedEnabledFileNames = engineMods
-                    .filter { it.isEnabled }
-                    .map { File(it.path).name.lowercase() }
-                    .toSet()
-                mods.clear()
-                mods.addAll(engineMods)
-                mods.addAll(scanUnloadedMods(engineMods))
-                updated = !updated
-                enabledChanged = !enabledChanged
-                if (failed.isNotEmpty()) {
-                    failedModsAfterReload = failed
-                    applySucceeded = false
-                } else {
-                    applySucceeded = true
-                }
-            }
-            true
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            message(e.message ?: "Unknown error")
-            withContext(Dispatchers.Main) {
-                applySucceeded = false
-            }
-            false
-        }
     }
 
     ModImportProgressDialog(importProgress)
@@ -329,7 +302,7 @@ fun ModsView(
             modManager.modReload(enabledByFileName = knownStates)
         }
         mods.clear()
-        val engineMods = modManager.getAllMods()
+        val engineMods = modManager.getAllMods().withTitleErrors()
         // 再同步一次 UI 侧状态（与加载前写入引擎的状态一致）
         engineMods.forEach { mod ->
             val fileName = File(mod.path).name.lowercase()
@@ -344,6 +317,8 @@ fun ModsView(
         mods.addAll(scanUnloadedMods(engineMods))
         updated = !updated
         enabledChanged = !enabledChanged
+        // 重载已完成单位表重建，删除标记随之失效（否则“应用”会被永久拦截）
+        deletedMod = false
         return collectFailedMods(engineMods)
     }
 
@@ -1087,15 +1062,15 @@ fun ModsView(
                 val needsUnitRebuild = deletedMod || mods.any { mod ->
                     !mod.isEnabled && File(mod.path).name.lowercase() in loadedEnabledFileNames
                 }
-                if (!needsUnitRebuild) {
-                    // 仅导入了默认禁用的模组时无需触碰引擎；文件继续保持未加载状态。
-                    onExit()
+                if (needsUnitRebuild) {
+                    // 禁用/删除已加载模组后必须先重载：直接应用会在错误线程重建单位表，
+                    // 与存活的对局世界并发导致单位贴图丢失（紫色 M 占位）
+                    UI.showWarning(readI18n("mod.applyNeedReload"))
                     return@RWTextButton
                 }
 
-                applySucceeded = false
-                loadingMessage = ""
-                isApplying = true
+                // 仅导入了默认禁用的模组时无需触碰引擎；文件继续保持未加载状态。
+                onExit()
             }
         }
     }

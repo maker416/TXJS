@@ -22,13 +22,21 @@ object ModInfoParser {
         val name: String,
         val description: String,
         val minVersion: String,
+        /**
+         * `[mod]` 段的 title 缺失或为空白时为 true（含 mod-info.txt 不存在、文件损坏等
+         * 一切无法取得模组名的情况）。此时 [name] 回退为文件名。
+         */
+        val titleMissing: Boolean = false,
     )
 
     private val MOD_KEYS = setOf("title", "description", "minversion")
 
     fun parseFromRwmod(file: File): Metadata {
-        val fallback = Metadata(file.nameWithoutExtension, "", "")
-        if (!file.extension.equals("rwmod", ignoreCase = true)) return fallback
+        val fallback = Metadata(file.nameWithoutExtension, "", "", titleMissing = true)
+        if (!file.extension.equals("rwmod", ignoreCase = true)) {
+            // 非 .rwmod 不由本函数检查，不标记错误
+            return Metadata(file.nameWithoutExtension, "", "")
+        }
         if (!file.exists() || file.length() == 0L) return fallback
 
         return runCatching {
@@ -43,6 +51,26 @@ object ModInfoParser {
                 }
             }
         }.getOrDefault(fallback)
+    }
+
+    /**
+     * 按文件类型解析任意模组文件的元数据：
+     * `.rwmod` 走 ZIP；文件夹递归查找其中的 `mod-info.txt`；
+     * 其余类型（如 `.ini`）返回 null，表示不适用 title 检查。
+     */
+    fun parseFromModFile(file: File): Metadata? {
+        return when {
+            file.extension.equals("rwmod", ignoreCase = true) -> parseFromRwmod(file)
+            file.isDirectory -> {
+                val info = file.walk().firstOrNull {
+                    it.isFile && it.name.equals("mod-info.txt", ignoreCase = true)
+                } ?: return Metadata(file.name, "", "", titleMissing = true)
+                runCatching {
+                    parseIni(info.readText(Charsets.UTF_8), file.name)
+                }.getOrElse { Metadata(file.name, "", "", titleMissing = true) }
+            }
+            else -> null
+        }
     }
 
     fun parseIni(content: String, fallbackName: String): Metadata {
@@ -89,6 +117,7 @@ object ModInfoParser {
             name = title?.takeIf { it.isNotBlank() } ?: fallbackName,
             description = description ?: "",
             minVersion = minVersion ?: "",
+            titleMissing = title.isNullOrBlank(),
         )
     }
 

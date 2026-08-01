@@ -167,7 +167,8 @@ Android 在 `i.a.j()`、Desktop 在 `i.a.k()` 返回后注入，将状态写入�
 模组对象。该时点位于单位解析之前。
 
 **`loadedEnabledFileNames`** — Mods 页面记录最近一次成功重载时真正启用的文件名。
-若用户打开了不在集合中的模组，“应用”只提示“已启用但尚未加载”，要求先点“重载”。
+若用户打开了不在集合中的模组，“应用”只提示“已启用但尚未加载”，要求先点“重载”；
+有模组被删除或已加载模组被禁用（单位表需重建）时同样禁止直接应用，要求先点“重载”。
 
 ```
 导入流程：
@@ -190,8 +191,11 @@ Android 在 `i.a.j()`、Desktop 在 `i.a.k()` 返回后注入，将状态写入�
 
 点击应用：
   若存在 isEnabled=true 且不在 loadedEnabledFileNames 中的模组 → 提示先重载
+  若有模组被删除（deletedMod），或已加载模组被禁用（单位表需重建）
+    → 提示 mod.applyNeedReload，禁止直接应用
+    （直接走 modSaveChange 重建单位表缺少游戏线程投递与拆世界包裹，
+      会与存活的对局世界并发，导致单位被替换为 missing 占位/贴图丢失）
   若只是导入了默认禁用模组且没有已加载模组被禁用 → 直接退出，不调用引擎
-  否则 modSaveChange(knownStates) → 扫描后注入同样保证禁用新文件不被加载
 ```
 
 ### 涉及的类与方法
@@ -228,9 +232,11 @@ sourceFolder=music/
 3. 如果是目录（`h==false`）→ 直接读文件（`a.k(path)`）
 4. 解析 INI：`ae.get("mod", "title", null)` → `q` 字段，`ae.get("mod", "description", null)` → `s` 字段
 
-### RWPP 中的轻量解析（`parseModMetadata`）
+### RWPP 中的轻量解析（`ModInfoParser`）
 
-`UnloadedMod` 在构造时调用 `parseModMetadata(file)`，打开 `.rwmod` 作为 `ZipFile`，读取 `mod-info.txt` 并解析 `[mod]` 段的 `title`/`description`/`minVersion`。开销极小（只读一个小文本文件），不触及单位 `.ini` 文件。
+`UnloadedMod` 在构造时调用 `ModInfoParser.parseFromRwmod(file)`，打开 `.rwmod` 作为 `ZipFile`，读取 `mod-info.txt` 并解析 `[mod]` 段的 `title`/`description`/`minVersion`。开销极小（只读一个小文本文件），不触及单位 `.ini` 文件。
+
+**title 缺失报错**：`ModInfoParser.Metadata.titleMissing` 标记 `[mod]` title 缺失/空白（含 mod-info.txt 不存在、ZIP 损坏等一切无法取得模组名的情况）。`Mods` 页面在初始加载与重载后用 `withTitleErrors()` 检查全部模组（`parseFromModFile` 同时支持 `.rwmod` 与文件夹形式），title 缺失的模组被包装为 `TitleErrorMod`，其 `errorMessage` 携带 `mod.missingTitle` 文案 —— 列表中显示红色错误标识，重载后也会进入失败列表弹窗。
 
 ## 9. 模组状态持久化格式
 

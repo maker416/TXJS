@@ -12,6 +12,8 @@ import java.util.zip.ZipOutputStream
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ModInfoParserTest {
@@ -84,6 +86,60 @@ class ModInfoParserTest {
         )
         assertEquals("FileName", meta.name)
         assertEquals("仅描述", meta.description)
+        assertTrue(meta.titleMissing)
+    }
+
+    @Test
+    fun parseIniBlankTitleIsFlagged() {
+        val meta = ModInfoParser.parseIni("[mod]\ntitle=   \n", "fallback")
+        assertEquals("fallback", meta.name)
+        assertTrue(meta.titleMissing)
+    }
+
+    @Test
+    fun parseIniWithTitleIsNotFlagged() {
+        val meta = ModInfoParser.parseIni("[mod]\ntitle=Alpha\n", "fallback")
+        assertEquals("Alpha", meta.name)
+        assertFalse(meta.titleMissing)
+    }
+
+    @Test
+    fun parseFromRwmodWithoutModInfoIsFlagged() {
+        val root = createTempDirectory().toFile()
+        val rwmod = File(root, "notitle.rwmod")
+        ZipOutputStream(rwmod.outputStream()).use { zip ->
+            zip.putNextEntry(ZipEntry("units/unit.ini"))
+            zip.write("[core]\nname: x\n".toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
+        }
+
+        val meta = ModInfoParser.parseFromRwmod(rwmod)
+        assertEquals("notitle", meta.name)
+        assertTrue(meta.titleMissing)
+        assertTrue(rwmod.delete())
+        root.deleteRecursively()
+    }
+
+    @Test
+    fun parseFromModFileHandlesFolder() {
+        val root = createTempDirectory().toFile()
+        val withTitle = File(root, "withTitle").apply { mkdirs() }
+        File(withTitle, "mod-info.txt").writeText("[mod]\ntitle=FolderMod\n", Charsets.UTF_8)
+        val noInfo = File(root, "noInfo").apply { mkdirs() }
+
+        val ok = ModInfoParser.parseFromModFile(withTitle)
+        assertEquals("FolderMod", ok?.name)
+        assertFalse(ok!!.titleMissing)
+
+        val missing = ModInfoParser.parseFromModFile(noInfo)
+        assertEquals("noInfo", missing?.name)
+        assertTrue(missing!!.titleMissing)
+        root.deleteRecursively()
+    }
+
+    @Test
+    fun parseFromModFileReturnsNullForUnsupportedType() {
+        assertNull(ModInfoParser.parseFromModFile(File("units/some_unit.ini")))
     }
 
     @Test
