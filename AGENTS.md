@@ -73,7 +73,7 @@
   - `runtime/InjectApi.kt` — 注入 API
   - `InjectInfo.kt`、`InjectMode.kt`、`InterruptResult.kt`、`ClassTree.kt`、`GameLibraries.kt`、`BuildLogger.kt`
 - `io/` — IO 工具
-- `net/` — 网络层：房间列表解析、数据包定义、版本查询；**此处包含唯一一组真正的单元测试**（`RwListParserTest.kt`）
+- `net/` — 网络层：房间列表解析、数据包定义、版本查询、房主模组传输调度与清单缓存；**真正的单元测试集中于此**（`RwListParserTest.kt`、`ModPacketTest.kt`、`HostManifestCacheTest.kt`）
 - `ui/` — UI 工具接口
 - `utils/` — 通用工具
 
@@ -228,9 +228,13 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 当前测试覆盖度**极低**，以手动/集成测试为主：
 
-- **单元测试**：`rwpp-core-api/src/test/kotlin/RwListParserTest.kt`
-  - 测试房间列表 JSON 解析、URL 迁移、可加入性过滤、mod 房间版本映射等
+- **单元测试**：`rwpp-core-api/src/test/kotlin/`
+  - `RwListParserTest.kt` — 房间列表 JSON 解析、URL 迁移、可加入性过滤、mod 房间版本映射等
+  - `ModPacketTest.kt` — 模组同步协议包（含 507 清单心跳包）的序列化往返与非法输入拒绝
+  - `HostManifestCacheTest.kt` — 房主清单缓存的指纹计算（顺序无关、目录递归、mtime/size 敏感）与单条目语义
   - 使用 `kotlin.test` 断言（`assertEquals`、`assertTrue`、`assertFalse`、`assertNull`）
+- **资源校验测试**：`rwpp-core/src/test/kotlin/BundleParseTest.kt`
+  - 用与运行时相同的方式实解析两个 `bundle_*.toml`，并检查模组同步相关键存在，把 TOML 非法挡在编译期
 - **集成/调试用测试**：`rwpp-core/src/test/kotlin/MainTest.kt`
   - 包含对外部 HTTP API（`rtsbox.cn`）的真实网络请求测试
   - 主要用于开发调试，**不应在 CI 中运行**
@@ -276,7 +280,7 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
    ```
    正确做法是让两者名称错开，例如标量项用 `menu.singlePlayerGame`，子表用 `menu.singlePlayer`。
 2. **新增键后必须肉眼沿点分路径逐层核对**：确认没有任何祖先/兄弟键与自己冲突，也不要重复定义同一个键。
-3. **不要用「编译通过」当作资源正确的证据**：Gradle `BUILD SUCCESSFUL` 只说明 Kotlin 代码合法，对 TOML 资源零校验。改了 `bundle_*.toml` 后，应当用解析器实跑一遍（或至少通读全文）确认合法，再交付。
+3. **不要用「编译通过」当作资源正确的证据**：Gradle `BUILD SUCCESSFUL` 只说明 Kotlin 代码合法，对 TOML 资源零校验。改了 `bundle_*.toml` 后，运行 `./gradlew :rwpp-core:testDebugUnitTest --tests BundleParseTest`（用与运行时相同的方式实解析两个 bundle）确认合法，再交付。
 4. `readI18n(path)` 在路径不存在时会抛 NPE（`table[next]!!`），不会静默回退；非法 bundle 更会导致全局解析失败。两种情况都可能在运行期才暴露。
 
 ## 安全与部署注意事项

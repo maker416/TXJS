@@ -19,6 +19,9 @@ import java.util.zip.ZipOutputStream
 fun File.zipFolderToByte(): ByteArray {
     val byteOut = ByteArrayOutputStream(SizeUtils.mBToByte(1).toInt())
     val zipOut = ZipOutputStream(CheckedOutputStream(byteOut, CRC32()))
+    // 用最低压缩级别换取 2~3 倍打包速度：模组资源（png/ogg 等）大多已压缩过，
+    // 高级别收益很小，却会让房主清单准备耗时成倍增加（联机模组同步在关键路径上）。
+    zipOut.setLevel(1)
     zipRecursive(this, Paths.get(this.absolutePath), zipOut)
     zipOut.flush()
     zipOut.finish()

@@ -1,0 +1,46 @@
+/*
+ * Copyright 2023-2025 RWPP contributors
+ * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
+ * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
+ * https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
+ */
+
+import net.peanuuutz.tomlkt.Toml
+import net.peanuuutz.tomlkt.TomlTable
+import java.io.File
+import kotlin.test.Test
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+
+/**
+ * i18n bundle 在运行时才被解析，TOML 非法（如点分键路径冲突）会导致 App 启动即闪退，
+ * 且编译期无任何校验。本测试用与 [io.github.rwpp.impl.BaseGameI18nResolverImpl]
+ * 相同的解析方式实跑两个 bundle，把这类错误挡在编译期。
+ */
+class BundleParseTest {
+
+    private val bundleDir = File("src/commonMain/composeResources/files")
+    private val bundleNames = listOf("bundle_zh.toml", "bundle_en.toml")
+
+    @Test
+    fun bundlesAreValidToml() {
+        bundleNames.forEach { name ->
+            val file = File(bundleDir, name)
+            assertTrue(file.exists(), "bundle not found: ${file.absolutePath}")
+            // 非法即抛异常，测试随之失败
+            Toml.parseToTomlTable(file.readText())
+        }
+    }
+
+    @Test
+    fun modManifestKeysExistInAllBundles() {
+        bundleNames.forEach { name ->
+            val table = Toml.parseToTomlTable(File(bundleDir, name).readText())
+            val mod = table["mod"] as? TomlTable
+            assertNotNull(mod, "[mod] table missing in $name")
+            listOf("manifestTimeout", "manifestPreparing", "manifestFailed", "manifestFailedDetail").forEach { key ->
+                assertTrue(mod.containsKey(key), "mod.$key missing in $name")
+            }
+        }
+    }
+}

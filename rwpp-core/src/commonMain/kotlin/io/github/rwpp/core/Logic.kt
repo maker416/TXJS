@@ -30,6 +30,7 @@ import io.github.rwpp.io.HashUtils
 import io.github.rwpp.io.SizeUtils
 import io.github.rwpp.logger
 import io.github.rwpp.net.Client
+import io.github.rwpp.net.HostManifestCache
 import io.github.rwpp.net.HostModTransferScheduler
 import io.github.rwpp.net.HostModTransferSource
 import io.github.rwpp.net.InternalPacketType
@@ -45,10 +46,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.LinkedList
+import java.util.concurrent.atomic.AtomicLong
 
 object Logic : Initialization {
     private var playerCount = 0
@@ -66,6 +69,23 @@ object Logic : Initialization {
 
     private val hostPreparedManifests: MutableMap<Client, HostPreparedManifest> = mutableMapOf()
 
+    /** 房主侧已准备清单缓存：同一模组集合跨请求/跨加入者共享，避免重复读取/压缩/哈希。 */
+    private val hostManifestCache = HostManifestCache()
+    /** 串行化房主侧清单准备：并发请求排队，后者等待后通常直接命中缓存。 */
+    private val hostPrepareMutex = Mutex()
+    /** 当前准备轮次已完成的字节数，作为心跳包负载供客户端展示进度。 */
+    private val hostPreparedBytes = AtomicLong(0L)
+
+    /** 客户端侧：清单请求发出时间（超时判断与进度展示用）。 */
+    @Volatile
+    private var manifestRequestedAt = 0L
+    /** 客户端侧：最近一次收到房主清单消息（505/507）的时间。 */
+    @Volatile
+    private var manifestLastActivityAt = 0L
+    /** 客户端侧：是否已收到过房主心跳（收到说明房主具备心跳能力，可改用更短的静默超时）。 */
+    @Volatile
+    private var manifestHeartbeatSeen = false
+
     private val scope = CoroutineScope(SupervisorJob())
     private val hostModTransferScheduler = HostModTransferScheduler(
         scope = scope,
@@ -74,7 +94,14 @@ object Logic : Initialization {
     )
 
     private const val HOST_PROGRESS_POLL_MS = 200L
-    private const val MANIFEST_TIMEOUT_MS = 30_000L
+    /** 收到过房主心跳后：超过该时长无任何清单消息视为房主卡死。 */
+    private const val MANIFEST_SILENCE_TIMEOUT_MS = 30_000L
+    /** 未收到过任何心跳：兼容无心跳能力的旧房主，给予更长的单次准备宽限。 */
+    private const val MANIFEST_LEGACY_TIMEOUT_MS = 120_000L
+    /** 清单阶段总时长上限，即使心跳不断也不无限等待。 */
+    private const val MANIFEST_OVERALL_TIMEOUT_MS = 10 * 60_000L
+    /** 房主侧清单准备心跳发送间隔。 */
+    private const val HOST_MANIFEST_HEARTBEAT_MS = 2_000L
     /** 房主侧：为客户端预读的 mod 字节在未被消费时的最长保留时间，超时即释放，防止内存泄漏。 */
     private const val HOST_MANIFEST_TTL_MS = 60_000L
     private var hostProgressPollJob: Job? = null
@@ -96,6 +123,18 @@ object Logic : Initialization {
             val room = game.gameRoom
             val net = appKoin.get<Net>()
             if (room.isRWPPRoom && room.option.canTransferMod) {
+                // 原版在进房/开局等多个时点都会触发模组校验；若相同模组集合的清单请求仍在
+                // 等待房主应答，直接复用该请求，避免房主端重复准备清单（读取/压缩/哈希全部模组）。
+                val duplicateInFlight = synchronized(Logic) {
+                    manifestTimeoutJob?.isActive == true &&
+                        requiredDescriptors == null &&
+                        requiredMods?.toSet() == e.requiredMods.toSet()
+                }
+                e.intercept()
+                if (duplicateInFlight) {
+                    logger.info("[MODSYNC] same required mods already requested, reuse in-flight manifest request")
+                    return@subscribeAlways
+                }
                 val requestId = synchronized(Logic) {
                     transferGeneration++
                     currentRequestId = transferGeneration
@@ -105,21 +144,42 @@ object Logic : Initialization {
                     clearReceivingLocked()
                     currentRequestId
                 }
-                e.intercept()
                 logger.info("[MODSYNC] requesting host manifest: requestId=$requestId, required=${e.requiredMods}")
                 net.sendPacketToServer(ModPacket.ManifestRequestPacket().apply {
                     this.requestId = requestId
                     requiredNames = e.requiredMods.distinct()
                 })
+                val now = System.currentTimeMillis()
+                manifestRequestedAt = now
+                manifestLastActivityAt = now
+                manifestHeartbeatSeen = false
                 manifestTimeoutJob?.cancel()
                 manifestTimeoutJob = scope.launch {
-                    delay(MANIFEST_TIMEOUT_MS)
-                    val stillWaiting = synchronized(Logic) { currentRequestId == requestId && requiredDescriptors == null }
-                    if (stillWaiting) {
-                        cleanupTransfer()
-                        room.disconnect(readI18n("mod.manifestTimeout"))
-                        withContext(Dispatchers.Main.immediate) {
-                            UI.showWarning(readI18n("mod.manifestTimeout"), true)
+                    // 看门狗：房主每发一次心跳/应答都会刷新 manifestLastActivityAt。
+                    // - 收到过心跳（新房主）：30s 静默视为房主卡死；
+                    // - 从未收到心跳（旧房主或房主无响应）：给予 120s 准备宽限；
+                    // - 无论是否有心跳，总等待不超过 10 分钟。
+                    while (true) {
+                        delay(1_000)
+                        val stillWaiting = synchronized(Logic) { currentRequestId == requestId && requiredDescriptors == null }
+                        if (!stillWaiting) break
+                        val nowMs = System.currentTimeMillis()
+                        val silenceLimit = if (manifestHeartbeatSeen) MANIFEST_SILENCE_TIMEOUT_MS else MANIFEST_LEGACY_TIMEOUT_MS
+                        val silentFor = nowMs - manifestLastActivityAt
+                        val waitingFor = nowMs - manifestRequestedAt
+                        if (silentFor >= silenceLimit || waitingFor >= MANIFEST_OVERALL_TIMEOUT_MS) {
+                            logger.warn(
+                                "[MODSYNC] manifest timeout: silentFor=${silentFor}ms, waitingFor=${waitingFor}ms, " +
+                                    "heartbeatSeen=$manifestHeartbeatSeen"
+                            )
+                            val message = readI18n("mod.manifestTimeout")
+                            // 先弹警告再清理：cleanupTransfer 会取消本协程自身，顺序反了警告会被吞掉
+                            withContext(Dispatchers.Main.immediate) {
+                                UI.showWarning(message, true)
+                            }
+                            cleanupTransfer()
+                            room.disconnect(message)
+                            break
                         }
                     }
                 }
@@ -241,43 +301,66 @@ object Logic : Initialization {
                 )
             }
             scope.launch(Dispatchers.IO) {
-                val response = runCatching {
-                    prepareHostManifest(conn, packet.requestId, packet.requiredNames)
-                }.fold(
-                    onSuccess = { prepared ->
+                // 心跳：准备期间每 HOST_MANIFEST_HEARTBEAT_MS 告知客户端进度，让客户端区分
+                // 「房主正在打包（慢）」与「房主无响应」；旧客户端会安全忽略 507 包。
+                val heartbeat = launch {
+                    runCatching {
+                        conn.sendPacketToClient(ModPacket.ManifestProgressPacket().apply {
+                            requestId = packet.requestId
+                            preparedBytes = hostPreparedBytes.get()
+                        })
+                    }
+                    while (true) {
+                        delay(HOST_MANIFEST_HEARTBEAT_MS)
+                        runCatching {
+                            conn.sendPacketToClient(ModPacket.ManifestProgressPacket().apply {
+                                requestId = packet.requestId
+                                preparedBytes = hostPreparedBytes.get()
+                            })
+                        }
+                    }
+                }
+                try {
+                    val response = runCatching {
+                        prepareHostManifest(conn, packet.requestId, packet.requiredNames)
+                    }.fold(
+                        onSuccess = { prepared ->
+                            synchronized(Logic) {
+                                hostPreparedManifests.remove(conn)?.release()
+                                hostPreparedManifests[conn] = prepared
+                            }
+                            ModPacket.ManifestResponsePacket().apply {
+                                requestId = packet.requestId
+                                success = true
+                                descriptors = prepared.sources.map { it.descriptor }
+                            }
+                        },
+                        onFailure = { error ->
+                            logger.error("[MODSYNC-HOST] manifest request failed: ${error.stackTraceToString()}")
+                            ModPacket.ManifestResponsePacket().apply {
+                                requestId = packet.requestId
+                                success = false
+                                errorMessage = error.message ?: "Failed to prepare mod manifest"
+                            }
+                        }
+                    )
+                    conn.sendPacketToClient(response)
+                    // Safety net: if the client never follows up with a download request or finish packet
+                    // (e.g. it cache-hits but drops before ModReloadFinish, or stalls), release the prepared
+                    // payload bytes after a grace period so they do not linger on the host.
+                    scope.launch {
+                        delay(HOST_MANIFEST_TTL_MS)
                         synchronized(Logic) {
-                            hostPreparedManifests.remove(conn)?.release()
-                            hostPreparedManifests[conn] = prepared
-                        }
-                        ModPacket.ManifestResponsePacket().apply {
-                            requestId = packet.requestId
-                            success = true
-                            descriptors = prepared.sources.map { it.descriptor }
-                        }
-                    },
-                    onFailure = { error ->
-                        logger.error("[MODSYNC-HOST] manifest request failed: ${error.stackTraceToString()}")
-                        ModPacket.ManifestResponsePacket().apply {
-                            requestId = packet.requestId
-                            success = false
-                            errorMessage = error.message ?: "Failed to prepare mod manifest"
+                            val pending = hostPreparedManifests[conn]
+                            if (pending != null && pending.requestId == packet.requestId) {
+                                hostPreparedManifests.remove(conn)
+                                pending.release()
+                                logger.info("[MODSYNC-HOST] released unconsumed prepared manifest for client after TTL (requestId=${packet.requestId})")
+                            }
                         }
                     }
-                )
-                conn.sendPacketToClient(response)
-                // Safety net: if the client never follows up with a download request or finish packet
-                // (e.g. it cache-hits but drops before ModReloadFinish, or stalls), release the prepared
-                // payload bytes after a grace period so they do not linger on the host.
-                scope.launch {
-                    delay(HOST_MANIFEST_TTL_MS)
-                    synchronized(Logic) {
-                        val pending = hostPreparedManifests[conn]
-                        if (pending != null && pending.requestId == packet.requestId) {
-                            hostPreparedManifests.remove(conn)
-                            pending.release()
-                            logger.info("[MODSYNC-HOST] released unconsumed prepared manifest for client after TTL (requestId=${packet.requestId})")
-                        }
-                    }
+                } finally {
+                    heartbeat.cancel()
                 }
             }
             true
@@ -305,6 +388,29 @@ object Logic : Initialization {
                         UI.showWarning(readI18n("mod.manifestFailedDetail", I18nType.RWPP, it.message.orEmpty()), true)
                     }
                 }
+            }
+            true
+        }
+
+        net.registerPacketListener<ModPacket.ManifestProgressPacket>(
+            ModPacket.MOD_MANIFEST_PROGRESS
+        ) { _, packet ->
+            val room = game.gameRoom
+            if (room.isHost) return@registerPacketListener true
+            val gen = synchronized(Logic) { currentRequestId }
+            if (packet.requestId != gen) return@registerPacketListener true
+            // 心跳到达 = 房主在线且正在准备：刷新静默计时，并向用户展示等待进度
+            manifestLastActivityAt = System.currentTimeMillis()
+            manifestHeartbeatSeen = true
+            val elapsedSec = (System.currentTimeMillis() - manifestRequestedAt) / 1000
+            scope.launch(Dispatchers.Main.immediate) {
+                UI.receivingNetworkDialogTitle = readI18n(
+                    "mod.manifestPreparing",
+                    I18nType.RWPP,
+                    SizeUtils.byteToMB(packet.preparedBytes).toString(),
+                    elapsedSec.toString(),
+                )
+                UI.showNetworkDialog = true
             }
             true
         }
@@ -395,7 +501,12 @@ object Logic : Initialization {
         }
     }
 
-    private fun prepareHostManifest(client: Client, requestId: Long, requiredNames: List<String>): HostPreparedManifest {
+    /**
+     * 为客户端准备清单：指纹（模组集合 + 文件签名）一致时直接复用缓存的已准备字节，
+     * 否则串行执行「读取/目录压缩 + SHA-256」并写入缓存。并发加入者的相同请求在
+     * [hostPrepareMutex] 上排队，等待后通常直接命中缓存，从根本上避免重复准备导致的超时。
+     */
+    private suspend fun prepareHostManifest(client: Client, requestId: Long, requiredNames: List<String>): HostPreparedManifest {
         val manager = appKoin.get<ModManager>()
         val enabled = manager.getAllMods().filter { it.isEnabled && it.name in requiredNames }
         val networkMods = enabled.filter { it.isNetworkMod }
@@ -407,18 +518,45 @@ object Logic : Initialization {
             throw IllegalStateException("Network cache mods cannot be transferred when hosting")
         }
         val byName = enabled.groupBy { it.name }
-        val sources = requiredNames.distinct().map { name ->
+        val mods = requiredNames.distinct().map { name ->
             val candidates = byName[name].orEmpty()
             require(candidates.size == 1) { "Host mod '$name' is missing or ambiguous" }
-            val mod = candidates.single()
-            val bytes = mod.getBytes()
-            HostModTransferSource(NetworkModDescriptor.fromBytes(mod.name, bytes), bytes)
+            candidates.single()
         }
-        return HostPreparedManifest(client, requestId, sources)
+        val fingerprint = HostManifestCache.fingerprint(mods.map { it.name to File(it.path) })
+        hostPrepareMutex.lock()
+        try {
+            hostManifestCache.get(fingerprint)?.let { cached ->
+                hostPreparedBytes.set(cached.sources.sumOf { it.descriptor.payloadSize })
+                logger.info(
+                    "[MODSYNC-HOST] manifest cache hit, reusing ${cached.sources.size} prepared mod(s), " +
+                        "total=${hostPreparedBytes.get()} bytes"
+                )
+                return HostPreparedManifest(client, requestId, cached.sources)
+            }
+            logger.info("[MODSYNC-HOST] manifest cache miss, preparing ${mods.size} mod(s)...")
+            val startedAt = System.currentTimeMillis()
+            hostPreparedBytes.set(0)
+            val sources = mods.map { mod ->
+                val bytes = mod.getBytes()
+                HostModTransferSource(NetworkModDescriptor.fromBytes(mod.name, bytes), bytes).also {
+                    hostPreparedBytes.addAndGet(it.descriptor.payloadSize)
+                }
+            }
+            hostManifestCache.put(HostManifestCache.Entry(fingerprint, sources))
+            logger.info(
+                "[MODSYNC-HOST] manifest prepared in ${System.currentTimeMillis() - startedAt}ms, " +
+                    "total=${hostPreparedBytes.get()} bytes"
+            )
+            return HostPreparedManifest(client, requestId, sources)
+        } finally {
+            hostPrepareMutex.unlock()
+        }
     }
 
     private fun abortHostDueToNetworkMods() {
         hostModTransferScheduler.cancelAll()
+        hostManifestCache.clear()
         synchronized(Logic) {
             hostPreparedManifests.values.forEach { it.release() }
             hostPreparedManifests.clear()
@@ -653,6 +791,7 @@ object Logic : Initialization {
         manifestTimeoutJob?.cancel()
         manifestTimeoutJob = null
         hostModTransferScheduler.cancelAll()
+        hostManifestCache.clear()
         synchronized(Logic) {
             hostPreparedManifests.values.forEach { it.release() }
             hostPreparedManifests.clear()

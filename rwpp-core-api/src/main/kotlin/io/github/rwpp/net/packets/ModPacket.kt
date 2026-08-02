@@ -134,6 +134,30 @@ sealed class ModPacket : Packet() {
         }
     }
 
+    /**
+     * 清单准备心跳包：房主在收到 [ManifestRequestPacket] 后立即开始、并在准备期间周期性发送，
+     * 让客户端区分「房主正在打包模组（慢但在工作）」与「房主无响应（卡死/旧版本）」。
+     *
+     * 旧版本客户端收到本包时会落到原版 default 分支（仅日志 "we did not handle packet"），安全忽略。
+     */
+    class ManifestProgressPacket : ModPacket() {
+        var requestId: Long = 0L
+        /** 当前准备轮次已完成（读取/压缩+哈希）的字节数，仅供展示进度。 */
+        var preparedBytes: Long = 0L
+
+        override val type: Int = MOD_MANIFEST_PROGRESS
+
+        override fun readPacket(input: GameInputStream) {
+            requestId = input.readLong()
+            preparedBytes = input.readLong().also { require(it >= 0L) { "negative prepared bytes" } }
+        }
+
+        override fun writePacket(output: GameOutputStream) {
+            output.writeLong(requestId)
+            output.writeLong(preparedBytes)
+        }
+    }
+
     class ModReloadFinishPacket : ModPacket() {
         var requestId: Long = 0L
 
@@ -182,6 +206,8 @@ sealed class ModPacket : Packet() {
         const val MOD_CHUNK_ACK = 503
         const val MOD_MANIFEST_REQUEST = 504
         const val MOD_MANIFEST_RESPONSE = 505
+        /** 房主→客户端：清单准备心跳（旧客户端安全忽略，见 [ManifestProgressPacket]）。 */
+        const val MOD_MANIFEST_PROGRESS = 507
 
         /** 单个分块的最大字节数：64KB。足够小以避免大包风险，又不至于包数过多拖慢。 */
         const val CHUNK_SIZE = 64 * 1024
