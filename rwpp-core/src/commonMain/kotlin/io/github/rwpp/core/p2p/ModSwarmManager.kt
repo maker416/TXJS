@@ -15,8 +15,11 @@ import io.github.rwpp.net.packets.ModPeerPacket
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -156,7 +159,11 @@ class ModSwarmManager(
         false
     }
 
-    /** 同网段优先：地址候选按 `lanAddresses + observedAddress` 顺序去重尝试。 */
+    /**
+     * 地址候选**并行**尝试：LAN 地址与房主观察地址同时发起直连，第一个成功的连接胜出，
+     * 其余连接随即取消。避免跨网段 peer 的站点本地地址逐个 2s 超时串行等待
+     * （最坏 ~18s 才换源）。全部失败时按「REFUSED（对端明确拒绝，换 peer）> RETRYABLE」收敛。
+     */
     private suspend fun pullFromPeer(
         peer: ModPeerPacket.PeerInfo,
         token: String,
@@ -166,25 +173,43 @@ class ModSwarmManager(
         onChunkPulled: suspend (Int, ByteArray) -> Unit,
     ): Boolean {
         val addresses = (peer.lanAddresses + peer.observedAddress).filter { it.isNotBlank() }.distinct()
-        for (address in addresses) {
-            when (
-                runCatching {
-                    pullFromAddress(address, peer.listenPort, token, descriptor, wantBitmap, offerChunk, onChunkPulled)
-                }.getOrElse {
-                    log("[MODSWARM] pull from $address:${peer.listenPort} failed: ${it.message}")
-                    PullOutcome.RETRYABLE_FAILURE
+        if (addresses.isEmpty()) return false
+        return coroutineScope {
+            val attempts = addresses.map { address ->
+                async(Dispatchers.IO) {
+                    runCatching {
+                        pullFromAddress(address, peer.listenPort, token, descriptor, wantBitmap, offerChunk, onChunkPulled)
+                    }.getOrElse {
+                        log("[MODSWARM] pull from $address:${peer.listenPort} failed: ${it.message}")
+                        PullOutcome.RETRYABLE_FAILURE
+                    }
                 }
-            ) {
-                PullOutcome.SUCCESS -> {
-                    log("[MODSWARM] pulled '${descriptor.name}' from $address:${peer.listenPort}")
-                    return true
+            }
+            var result = PullOutcome.RETRYABLE_FAILURE
+            val pending = attempts.toMutableList()
+            while (pending.isNotEmpty()) {
+                val outcome = select<PullOutcome> {
+                    pending.forEach { it.onAwait { outcome -> outcome } }
                 }
-                // 对端明确拒绝（令牌不符/没有该 mod）：换地址无意义，直接换 peer
-                PullOutcome.REFUSED -> return false
-                PullOutcome.RETRYABLE_FAILURE -> Unit
+                when (outcome) {
+                    // 成功或对端明确拒绝（令牌不符/没有该 mod）：换地址无意义，立即收手
+                    PullOutcome.SUCCESS,
+                    PullOutcome.REFUSED -> {
+                        result = outcome
+                        break
+                    }
+                    PullOutcome.RETRYABLE_FAILURE -> Unit
+                }
+                pending.removeAll { it.isCompleted }
+            }
+            attempts.forEach { it.cancel() }
+            if (result == PullOutcome.SUCCESS) {
+                log("[MODSWARM] pulled '${descriptor.name}' from peer port ${peer.listenPort}")
+                true
+            } else {
+                false
             }
         }
-        return false
     }
 
     private enum class PullOutcome { SUCCESS, RETRYABLE_FAILURE, REFUSED }
@@ -291,8 +316,10 @@ class ModSwarmManager(
         }
         ModPeerWire.encodeStatus(output, ModPeerWire.STATUS_OK)
         val want = BitSet.valueOf(handshake.wantBitmap)
-        val fileSize = seedFile.length().toInt()
-        val totalChunks = maxOf(1, (fileSize + ModPacket.CHUNK_SIZE - 1) / ModPacket.CHUNK_SIZE)
+        // 全程 Long 计算：模组文件可大于 2GB（协议上限 ~4GB），toInt() 会溢出为负导致
+        // ByteArray(负值) 抛 NegativeArraySizeException，P2P 服务直接报废
+        val fileSize = seedFile.length()
+        val totalChunks = maxOf(1L, (fileSize + ModPacket.CHUNK_SIZE - 1) / ModPacket.CHUNK_SIZE).toInt()
         var sent = 0
         // 从磁盘按块读取，避免内存持有完整模组字节
         java.io.RandomAccessFile(seedFile, "r").use { raf ->
@@ -302,10 +329,10 @@ class ModSwarmManager(
                     log("[MODSWARM] serve hit total time cap, closing connection")
                     return
                 }
-                val start = index * ModPacket.CHUNK_SIZE
-                val length = minOf(ModPacket.CHUNK_SIZE, fileSize - start)
+                val start = index.toLong() * ModPacket.CHUNK_SIZE
+                val length = minOf(ModPacket.CHUNK_SIZE.toLong(), fileSize - start).toInt()
                 val chunk = ByteArray(length)
-                raf.seek(start.toLong())
+                raf.seek(start)
                 raf.readFully(chunk)
                 ModPeerWire.encodeChunkFrame(output, index, chunk)
                 sent++

@@ -32,6 +32,8 @@ class I18nBundleTest {
     fun zhAndEnBundlesParseAndContainModSyncKeys() {
         val requiredModKeys = listOf(
             "manifestTimeout",
+            "chunkTimeout",
+            "chunkInvalid",
             "manifestFailed",
             "downloadFailed",
             "integrityFailed",

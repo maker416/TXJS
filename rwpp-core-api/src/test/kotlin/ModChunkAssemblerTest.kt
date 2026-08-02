@@ -67,12 +67,15 @@ class ModChunkAssemblerTest {
     fun corruptedChunkIsRejectedAndRetriesExhaust() {
         val assembler = assemblerFor(payload, maxRetries = 3)
         val bad = chunkOf(payload, 0).also { it[0] = (it[0] + 1).toByte() }
+        // 语义：maxRetries=3 允许 3 次重传（共 4 次尝试）；retriesLeft 从 3 递减到 0
         val r1 = assembler.offer(0, bad)
         val r2 = assembler.offer(0, bad)
         val r3 = assembler.offer(0, bad)
-        assertEquals(2, (r1 as ModChunkAssembler.OfferResult.Corrupted).retriesLeft)
-        assertEquals(1, (r2 as ModChunkAssembler.OfferResult.Corrupted).retriesLeft)
-        assertEquals(0, (r3 as ModChunkAssembler.OfferResult.Corrupted).retriesLeft)
+        val r4 = assembler.offer(0, bad)
+        assertEquals(3, (r1 as ModChunkAssembler.OfferResult.Corrupted).retriesLeft)
+        assertEquals(2, (r2 as ModChunkAssembler.OfferResult.Corrupted).retriesLeft)
+        assertEquals(1, (r3 as ModChunkAssembler.OfferResult.Corrupted).retriesLeft)
+        assertEquals(0, (r4 as ModChunkAssembler.OfferResult.Corrupted).retriesLeft)
         assertEquals(0, assembler.receivedCount)
         assertFalse(assembler.isComplete)
         // 坏块不占位：之后收到正确块仍可接受

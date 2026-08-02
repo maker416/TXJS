@@ -27,7 +27,10 @@ class ModChunkAssembler(
     val descriptor: NetworkModDescriptor,
     /** manifest 下发的逐块 SHA-256（小写 hex）。空列表 = 不做块级校验（仅整包校验兜底）。 */
     private val chunkHashes: List<String> = emptyList(),
-    /** 单块校验失败允许的最大重传次数，超过后调用方应中止传输。 */
+    /**
+     * 单个分块内容被拒后允许的最大**重传**次数（首次交付不计，默认 3 次重传 = 最多 4 次尝试），
+     * 重传次数超过上限后调用方应中止传输。
+     */
     private val maxRetriesPerChunk: Int = DEFAULT_MAX_RETRIES_PER_CHUNK,
 ) {
     val totalChunks: Int = maxOf(
@@ -99,7 +102,13 @@ class ModChunkAssembler(
             val expected = chunkHashes[chunkIndex]
             if (!HashUtils.sha256(bytes).equals(expected, ignoreCase = true)) {
                 retries[chunkIndex]++
-                return OfferResult.Corrupted(chunkIndex, (maxRetriesPerChunk - retries[chunkIndex]).coerceAtLeast(0))
+                // 语义：maxRetriesPerChunk = 允许的最大重传次数（首次交付不计）。
+                // 第 N 次坏块（已重传 N-1 次）仍允许再重传一次，直到重传次数超过上限。
+                val exhausted = retries[chunkIndex] > maxRetriesPerChunk
+                return OfferResult.Corrupted(
+                    chunkIndex,
+                    if (exhausted) 0 else maxRetriesPerChunk - retries[chunkIndex] + 1
+                )
             }
         }
         chunks[chunkIndex] = bytes
@@ -131,6 +140,7 @@ class ModChunkAssembler(
     }
 
     companion object {
+        /** 单块默认最大重传次数：3 次重传（最多 4 次交付尝试），与 AGENTS.md「重试上限 3」一致。 */
         const val DEFAULT_MAX_RETRIES_PER_CHUNK = 3
     }
 }

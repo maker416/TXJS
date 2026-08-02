@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-**铁锈战争极速版**（仓库名 RWPP，内部版本号 1.6.4）是从上游 [RWPP](https://github.com/Minxyzgo/RWPP) 体系 fork 并独立维护的多平台启动器，面向「萌新云」生态与更清爽的铁锈战争（Rusted Warfare）联机体验。产品方向聚焦于降低上手门槛、优化服务器列表、减少广告干扰，以及改善公开房间曝光。
+**铁锈战争极速版**（仓库名 RWPP/TXJS，`coreVersion = v1.15`、根 Gradle `version = 1.13.116`）是从上游 [RWPP](https://github.com/Minxyzgo/RWPP) 体系 fork 并独立维护的多平台启动器，面向「萌新云」生态与更清爽的铁锈战争（Rusted Warfare）联机体验。产品方向聚焦于降低上手门槛、优化服务器列表、减少广告干扰，以及改善公开房间曝光。
 
 项目采用 **AGPL-3.0** 许可证。所有源文件头部必须保留版权声明模板（参见 `settings.gradle.kts` 中的注释块）。
 
@@ -229,15 +229,18 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 联机房主模组同步分两层（均位于 `io.github.rwpp.net`，协调器为 `rwpp-core/.../core/Logic.kt`）：
 
 **星型分发层（基础路径，包 ID 500-511，见 `net/packets/ModPacket.kt`）**
-- 进房缺 mod → `ManifestRequest(504)` → 房主回 `ManifestResponse(505)`（descriptor + **逐块 SHA-256**）→ 客户端按内容哈希比对本地/缓存 → `Request(500)`（带**断点位图** `haveBitmaps`）→ 房主 `HostModTransferScheduler` 64KB 分块轮询推送（511，多 client 公平 + 每 client 32 块 ACK 窗口）。
+- 进房缺 mod → `ManifestRequest(504)` → 房主回 `ManifestResponse(505)`（descriptor + **逐块 SHA-256**）→ 客户端按内容哈希比对本地/缓存 → `Request(500)`（带**断点位图** `haveBitmaps`）→ 房主 `HostModTransferScheduler` 64KB 分块轮询推送（511，多 client 公平 + 每 client 128 块 ACK 窗口 ≈ 8MB 在途，吞吐 ≈ 窗口/RTT）。
 - 客户端 `ModChunkAssembler` **稀疏重组**（允许乱序），每块先过块级 SHA-256：坏块回 `NAK(506)` 单块重传（重试上限 3），每块都回 `ACK(503)` 释放窗口；收齐再做整包 SHA-256 复核 → `NetworkModCache.storeVerified/activate` → `ModReloadFinish(502)` 解除房主 ready 门控。
 - **断点续传**：已校验块即时落盘（`NetworkModCache.storePartialChunk`，桌面端 AES-GCM 逐块加密，Android 明文存引擎扫描目录之外的 `network-mod-partial/`），24h TTL；掉线/取消/被杀后下次进房按位图续传。
 - 乱序不再是致命错误；结构性错误（序号越界/大小不符）仍会断连。
+- **进度广播**：房主每 200ms 轮询调度器快照，经 `HostTransferProgress(507)` 广播全员（不缺 mod 的加入者也能看到），房间页玩家行 `RoomModSyncStrip` 渲染每个加入者的同步进度；会话发完标记 `awaitingReloadFinish`（应用阶段转脉冲条并显示引擎实时加载消息），全部结束广播**空包**清残留进度条。`HostTransferSnapshot.client` 可空——加入者端其他玩家的连接为 null。
+- **模组唯一名口径**：`Mod.name` 与引擎一致（`mod-info.txt` 的 `[mod] title ?: 文件名` 回退链），缺 mod 校验、manifest 查找、单位→模组归属统一；无 title 模组不再被静默踢出，模组页以红色错误标出（`ModInfoParser.Metadata.titleMissing`），重载后进失败列表弹窗。
+- **重载安全**：`modReload(forceImmediate=true)` 在协程线程内联执行 `runReloadCore`，会 join 并停住引擎线程——退房/取消后菜单主循环为死；非 force 路径改为**有界等待**主循环消费（5s，`started` CAS 保证恰好一次，主循环复活后丢弃过期 action），超时退化内联执行，修复 Mods 页重载永久卡死。
 - 房主掉线：引擎检测到「客户端→房主/中继」连接断开（`c.a(boolean,boolean,String)`，关联玩家为 null 且本机非主机）时，两端 `ClientInject` 会异步调用 `gameRoom.disconnect()` 补发 `DisconnectEvent`。两个约束：① 判定取**「最后一条活跃连接」**语义——本条断开后连接队列（桌面 `ad.aM` / Android `ae.aO`）中已无其他活跃连接（`c.h()/c.g()` 为 true）才触发，否则进房时的探测/辅助连接断开会误杀同步；主连接先断、辅助连接苟延时稍滞后但不漏报；② 必须异步：`ad/ae.b()` 会 join 连接读线程，而钩子正运行在该线程上，同步调用自我 join 死锁。Logic 据此 `cleanupTransfer()` 关闭下载卡片，客户端传输活跃时断开 → 显示 `mod.hostDisconnected` 专属提示并返回房间列表（区别于 generic 断连/传输失败）。
 
 **P2P 网状互传层（加速路径，信令包 512-514 + 独立 TCP 数据面）**
 - 信令走游戏连接：客户端进房时 `Announce(512)` 自报 P2P 监听端口与 LAN 地址；房主随 manifest 下发 `PeerList(513)`（房间级会话令牌 + peer 表，含各 peer `remoteAddress`）；客户端收齐某 mod 后成为 seed 并发 `Have(514)`，房主转发给其他 peer。
-- 数据面（`rwpp-core/.../core/p2p/ModSwarmManager.kt` + `rwpp-core-api/.../net/p2p/ModPeerWire.kt`）：拉取方对 seed 候选逐个 TCP 直连（LAN 地址优先，2s 连接超时），握手 = 令牌 + cacheKey + 缺失位图，服务方按位图流式发块；每块同样过块级 SHA-256，恶意 peer 无法注入内容。
+- 数据面（`rwpp-core/.../core/p2p/ModSwarmManager.kt` + `rwpp-core-api/.../net/p2p/ModPeerWire.kt`）：拉取方对 seed 候选逐个 TCP 直连（LAN 地址优先，2s 连接超时），握手 = 令牌 + cacheKey + 缺失位图，服务方按位图流式发块；每块同样过块级 SHA-256，恶意 peer 无法注入内容。seed 服务从**磁盘明文文件**按块读取（`activate()` 返回的明文，不用加密 partial 缓存），避免重载时内存叠加 OOM。
 - **退化底线**：relay 房（`GameRoom.isRelayRoom`）、未拿到令牌、peer 表为空或对端 port=0 时，完全退化为星型分发；P2P 拉取失败/不完整按当前位图回炉房主补请求（房主把 manifest 预读字节保留到 ModReloadFinish，TTL 兜底随请求刷新）。
 - 房主压力来自「先完成者分担后完成者」，互联网 NAT 下 client↔client 直连不一定成功（失败自动回退，不会比纯星型更差）；不做 UDP 打洞。
 
@@ -252,6 +255,8 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
   - `ModChunkAssemblerTest.kt` — 分块稀疏重组：乱序、重复块、坏块重试耗尽、位图、空 payload
   - `HostModTransferSchedulerTest.kt` — 房主调度器：轮询公平、ACK 窗口、断点跳块、NAK 重传优先
   - `NetworkModCacheFilesTest.kt` / `NetworkModDescriptorTest.kt` — 缓存文件布局、原子写、partial 元数据与过期清理
+  - `ModInfoParserTest.kt` — mod-info.txt / ini 解析与 title 缺失回退；`ModEnabledLookupTest.kt` / `ModFileTest.kt` — 模组启用查找与文件类型识别
+  - `LanguageHelperTest.kt` — 语言助手
   - `I18nBundleTest.kt` — 用与线上一致的 `Toml.parseToTomlTable` 实跑 `bundle_zh/en.toml`，校验关键键存在（TOML 编译期零校验，必须靠它兜底）
   - 使用 `kotlin.test` 断言（`assertEquals`、`assertTrue`、`assertFalse`、`assertNull`）
 - **集成/调试用测试**：`rwpp-core/src/test/kotlin/MainTest.kt`

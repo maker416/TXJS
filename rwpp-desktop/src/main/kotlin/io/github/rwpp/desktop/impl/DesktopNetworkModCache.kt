@@ -127,10 +127,10 @@ class DesktopNetworkModCache(
         val key = loadOrCreateKey(cacheRoot)
         val dir = NetworkModCacheFiles.partialDir(cacheRoot, descriptor).apply { mkdirs() }
         NetworkModCacheFiles.ensurePartialMeta(dir, System.currentTimeMillis())
-        NetworkModCacheFiles.atomicWrite(
-            NetworkModCacheFiles.partialChunkFile(dir, chunkIndex),
-            encryptChunk(descriptor, chunkIndex, bytes, key),
-            cacheRoot,
+        // 非原子直写：partial 块读侧有块级 SHA-256 兜底（解密/校验失败即丢弃重下），
+        // 半写文件天然容错，无需 temp+rename——这是接收热路径，原子写每块多 2 次文件操作。
+        NetworkModCacheFiles.partialChunkFile(dir, chunkIndex).writeBytes(
+            encryptChunk(descriptor, chunkIndex, bytes, key)
         )
     }
 

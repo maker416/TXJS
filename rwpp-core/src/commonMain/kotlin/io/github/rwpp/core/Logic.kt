@@ -67,6 +67,10 @@ object Logic : Initialization {
     private var currentRequestId: Long = 0L
     private var transferGeneration: Long = 0L
     private var manifestTimeoutJob: Job? = null
+    /** 分块接收空闲超时兜底 job（下载开始后启动，断连/完成时取消）。 */
+    private var chunkIdleTimeoutJob: Job? = null
+    /** 最近一次同步推进信号的时间戳（收到新块 / P2P 回炉请求），供空闲超时判定。 */
+    private var lastChunkActivityAt: Long = 0L
 
     /** cacheKey → 稀疏重组器（乱序接收 + 块级校验 + 断点续传播种）。 */
     private val assemblers: MutableMap<String, ModChunkAssembler> = mutableMapOf()
@@ -94,6 +98,12 @@ object Logic : Initialization {
     /** 房主侧进度广播间隔：每 5 次 200ms 轮询广播一次（即 1 秒一次），避免频繁发包。 */
     private const val HOST_PROGRESS_BROADCAST_INTERVAL_TICKS = 5
     private const val MANIFEST_TIMEOUT_MS = 30_000L
+    /**
+     * 分块接收空闲超时：下载开始后若连续这么久没有任何推进信号（新分块/P2P 回炉），
+     * 视为传输卡死（如房主进程挂起但 TCP 未断开），断连而非无限等待。
+     * 需大于 P2P 拉取的候选尝试周期（连接超时 2s + 单地址 60s 上限 × 多个候选），取 5 分钟。
+     */
+    private const val CHUNK_IDLE_TIMEOUT_MS = 5 * 60_000L
     /** 房主侧：为客户端预读的 mod 字节在未被消费时的最长保留时间，超时即释放，防止内存泄漏。 */
     private const val HOST_MANIFEST_TTL_MS = 60_000L
     /**
@@ -770,6 +780,39 @@ object Logic : Initialization {
         })
         logger.info("[MODSYNC] requested from host: ${hostMods.map { it.name }}; from peers: ${p2pMods.map { it.name }}")
         setDownloadingTitle(0)
+        startChunkIdleTimeout(requestId)
+    }
+
+    /**
+     * 分块接收空闲超时兜底：下载开始后若连续 [CHUNK_IDLE_TIMEOUT_MS] 没有任何推进信号
+     * （新分块 / P2P 回炉请求），视为传输卡死（如房主进程挂起但 TCP 未断开），断连而不是无限等待。
+     * 正常传输中分块持续到达会刷新活动时间，不会误杀。
+     */
+    private fun startChunkIdleTimeout(requestId: Long) {
+        chunkIdleTimeoutJob?.cancel()
+        synchronized(Logic) { lastChunkActivityAt = System.currentTimeMillis() }
+        chunkIdleTimeoutJob = scope.launch {
+            while (true) {
+                delay(CHUNK_IDLE_TIMEOUT_MS)
+                val stale = synchronized(Logic) {
+                    currentRequestId == requestId && modQueue?.isNotEmpty() == true &&
+                        System.currentTimeMillis() - lastChunkActivityAt >= CHUNK_IDLE_TIMEOUT_MS
+                }
+                if (!stale) continue
+                logger.warn("[MODSYNC] chunk transfer idle for ${CHUNK_IDLE_TIMEOUT_MS}ms, disconnecting")
+                cleanupTransfer()
+                appKoin.get<Game>().gameRoom.disconnect(readI18n("mod.chunkTimeout"))
+                withContext(Dispatchers.Main.immediate) {
+                    UI.showWarning(readI18n("mod.chunkTimeout"), true)
+                }
+                return@launch
+            }
+        }
+    }
+
+    /** 记录一次同步推进信号（收到新块 / P2P 回炉请求），供空闲超时判定。仅在持 [Logic] 锁时调用。 */
+    private fun markChunkActivityLocked() {
+        lastChunkActivityAt = System.currentTimeMillis()
     }
 
     /**
@@ -827,6 +870,7 @@ object Logic : Initialization {
     /** P2P 拉取失败/不完整：回退房主路径，按当前重组器位图补请求剩余分块。 */
     private suspend fun reRequestFromHost(descriptor: NetworkModDescriptor, requestId: Long, net: Net) {
         val stillActive = synchronized(Logic) {
+            markChunkActivityLocked()
             currentRequestId == requestId && modQueue?.any { it.cacheKey() == descriptor.cacheKey() } == true
         }
         if (!stillActive) return
@@ -875,6 +919,7 @@ object Logic : Initialization {
         var descriptorRef: NetworkModDescriptor? = null
         var nakChunkIndex: Int? = null
         var retryExhausted = false
+        var invalidReason: String? = null
         val offerResult = synchronized(Logic) {
             if (requestId != currentRequestId || packet.requestId != currentRequestId) return@synchronized null
             val queue = modQueue ?: return@synchronized null
@@ -901,6 +946,14 @@ object Logic : Initialization {
                     }
                     result
                 }
+                is ModChunkAssembler.OfferResult.Invalid -> {
+                    // 结构性错误（大小不符/序号越界/manifest 缺块哈希）只能来自损坏或恶意的房主：
+                    // 按 ModChunkAssembler 契约视为致命，断连而非静默忽略（否则重组器永不完整，
+                    // 客户端会无限期卡在下载弹窗）。
+                    invalidReason = result.reason
+                    logger.error("[MODSYNC] invalid chunk for '${packet.name}' idx=${packet.chunkIndex}: ${result.reason}")
+                    result
+                }
                 else -> result
             }
         } ?: return
@@ -919,6 +972,16 @@ object Logic : Initialization {
             )
         }.onFailure {
             logger.warn("[MODSYNC] failed to send chunk ACK for '${packet.name}' idx=${packet.chunkIndex}: ${it.message}")
+        }
+
+        if (invalidReason != null) {
+            // 结构性错误无法通过重传修复，直接按契约断连（见 ModChunkAssembler.OfferResult.Invalid）
+            cleanupTransfer()
+            room.disconnect(readI18n("mod.downloadFailed"))
+            withContext(Dispatchers.Main.immediate) {
+                UI.showWarning(readI18n("mod.chunkInvalid", I18nType.RWPP, descriptor.name), true)
+            }
+            return
         }
 
         if (retryExhausted) {
@@ -1222,6 +1285,8 @@ object Logic : Initialization {
         }
         manifestTimeoutJob?.cancel()
         manifestTimeoutJob = null
+        chunkIdleTimeoutJob?.cancel()
+        chunkIdleTimeoutJob = null
         hostModTransferScheduler.cancelAll()
         synchronized(Logic) {
             hostPreparedManifests.values.forEach { it.release() }
@@ -1278,6 +1343,7 @@ object Logic : Initialization {
 
     private suspend fun updateDownloadingTitle(name: String) {
         val data = synchronized(Logic) {
+            markChunkActivityLocked()
             val descriptor = modQueue?.firstOrNull { it.name == name }
             val assembler = descriptor?.let { assemblers[it.cacheKey()] }
             val totalSize = descriptor?.payloadSize ?: 0L

@@ -14,10 +14,12 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
 import java.util.BitSet
 import java.util.LinkedHashMap
@@ -36,11 +38,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 class HostModTransferScheduler(
     private val scope: CoroutineScope,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
-    /** 每个客户端允许的最大在途（已发未 ACK）分块数。默认 16 ≈ 1MB 在途。 */
+    /** 每个客户端允许的最大在途（已发未 ACK）分块数。默认 128 ≈ 8MB 在途。 */
     private val windowSize: Int = DEFAULT_WINDOW_SIZE,
     /** 突发内每块之间的间隔（0 = 靠窗口限流）。 */
     private val chunkDelayMillis: Long = 0L,
-    /** 所有会话都被窗口挡住（等待 ACK）时，轮询间隔，避免 CPU 空转。 */
+    /**
+     * 窗口满时的唤醒超时兜底（正常路径由 ACK/NAK/submit 信号立即唤醒，不依赖此值）。
+     * 仅当唤醒信号因极端时序丢失时作为保底轮询间隔，避免永久挂起。
+     */
     private val pollWhenBlockedMillis: Long = DEFAULT_POLL_WHEN_BLOCKED_MILLIS,
     private val logInfo: (String) -> Unit = {},
     private val logError: (String, Throwable) -> Unit = { _, _ -> },
@@ -48,6 +53,18 @@ class HostModTransferScheduler(
     private val lock = Any()
     private val sessions = LinkedHashMap<Client, HostModTransferSession>()
     private var schedulerJob: Job? = null
+    /**
+     * 调度唤醒信号（CONFLATED：多个信号合并为一次唤醒）。
+     * 窗口满时调度器挂起在 [runScheduler] 的 receive 上，ACK/NAK/submit/cancel 到达时
+     * [signalWake] 立即唤醒——事件驱动替代固定间隔轮询。固定轮询会把稳态吞吐锁死在
+     * 64KB/pollInterval（如 10ms 轮询 = 6.4MB/s），事件驱动可达「窗口/RTT」理论上限。
+     */
+    private val wakeUp = Channel<Unit>(Channel.CONFLATED)
+
+    /** 唤醒调度器（非挂起，可安全地在持锁路径调用）。 */
+    private fun signalWake() {
+        runCatching { wakeUp.trySend(Unit) }
+    }
 
     /**
      * @param haveBitmaps mod 名 → 客户端已持有分块位图（断点续传）。对应位为 1 的块不再发送。
@@ -66,12 +83,14 @@ class HostModTransferScheduler(
             sessions[client] = HostModTransferSession(client, playerName, connectHexId, requestId, mods, haveBitmaps, logInfo)
             ensureSchedulerLocked()
         }
+        signalWake()
     }
 
     fun cancel(client: Client) {
         synchronized(lock) {
             sessions.remove(client)?.releaseRemaining()
         }
+        signalWake()
     }
 
     fun cancelAll() {
@@ -81,6 +100,7 @@ class HostModTransferScheduler(
             schedulerJob?.cancel()
             schedulerJob = null
         }
+        signalWake()
     }
 
     fun activeClientCount(): Int = synchronized(lock) { sessions.size }
@@ -104,6 +124,8 @@ class HostModTransferScheduler(
             }
             ensureSchedulerLocked()
         }
+        // 释放了窗口槽位：立即唤醒调度器（若其正挂起等待），避免吞吐被轮询间隔锁死
+        signalWake()
     }
 
     /**
@@ -117,6 +139,7 @@ class HostModTransferScheduler(
             session.enqueueResend(name, chunkIndex)
             ensureSchedulerLocked()
         }
+        signalWake()
     }
 
     private fun ensureSchedulerLocked() {
@@ -150,11 +173,14 @@ class HostModTransferScheduler(
                     // 应用阶段：所有分块已发完，等待客户端 ModReloadFinish，不再发新包
                     if (session.awaitingReloadFinish) continue
 
+                    // 每轮每 session 一块：调度开销（~µs 级）远小于 ACK 往返（ms 级），
+                    // 突发发送没有实际收益，反而破坏「新加入者尽快参与轮询」的公平语义，
+                    // 故保持单块轮转；吞吐上限由「窗口大小 × 64KB / ACK 往返时间」决定。
                     val roomInWindow = synchronized(lock) { session.inFlight < windowSize }
                     if (!roomInWindow) continue
 
                     val packet = try {
-                        session.nextPacket()
+                        synchronized(lock) { session.nextPacket() }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Throwable) {
@@ -174,13 +200,34 @@ class HostModTransferScheduler(
 
                     if (!isActive(session)) continue
                     synchronized(lock) { session.inFlight++ }
-                    session.client.sendPacketToClient(packet)
+                    try {
+                        session.client.sendPacketToClient(packet)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        // 发送失败（如序列化异常）：归还窗口槽位并移除该会话，避免 inFlight
+                        // 永久泄漏（窗口被占满后该客户端再也收不到块）以及异常杀死整个调度器
+                        // 协程导致**其他客户端**一并停摆。
+                        synchronized(lock) {
+                            if (sessions[session.client] === session) session.inFlight--
+                        }
+                        removeIfCurrent(session)
+                        session.releaseRemaining()
+                        logError("[MODSYNC-HOST] failed to send chunk to ${session.playerName}", e)
+                        continue
+                    }
                     sentAny = true
                     yield()
                     if (chunkDelayMillis > 0) delay(chunkDelayMillis)
                 }
 
-                if (!sentAny) delay(pollWhenBlockedMillis) else yield()
+                if (!sentAny) {
+                    // 窗口满/无事可做：挂起等待唤醒信号（ACK/NAK/submit/cancel 到达时发出）。
+                    // 超时仅作兜底（CONFLATED 信号不会丢失，正常路径由 ACK 立即唤醒）。
+                    withTimeoutOrNull(pollWhenBlockedMillis) { wakeUp.receive() }
+                } else {
+                    yield()
+                }
             }
         } finally {
             synchronized(lock) {
@@ -201,9 +248,15 @@ class HostModTransferScheduler(
     }
 
     companion object {
-        /** 默认在途窗口：32 块 ≈ 2MB。 */
-        const val DEFAULT_WINDOW_SIZE: Int = 32
-        const val DEFAULT_POLL_WHEN_BLOCKED_MILLIS: Long = 3L
+        /**
+         * 默认在途窗口：128 块 ≈ 8MB（64KB × 128）。
+         * 吞吐上限 = 窗口字节 / ACK 往返时间：公网 RTT 50ms 时约 160MB/s（旧值 32 块仅 40MB/s）。
+         * 窗口是唯一流量护栏（游戏引擎 per-client 发送队列无界），128 不改变护栏性质，
+         * 只抬高水位；8MB/client 内存占用可接受。若实测引擎发包线程被拖累可调回 64。
+         */
+        const val DEFAULT_WINDOW_SIZE: Int = 128
+        /** 窗口满时调度器的唤醒超时兜底（ACK 信号正常会立即唤醒，此值仅防信号丢失）。 */
+        const val DEFAULT_POLL_WHEN_BLOCKED_MILLIS: Long = 10L
     }
 }
 
@@ -317,6 +370,12 @@ private class HostModTransferSession(
         logInfo("[MODSYNC-HOST] queued chunk resend for $playerName: $name#$chunkIndex")
     }
 
+    /**
+     * 取下一块待发送的分块。**调用方必须持有 [HostModTransferScheduler] 的 `lock`**：
+     * 本方法读写 [resendQueue]/[sentPayloads]/[currentPayload] 等状态，
+     * 而 NAK/ACK 监听器（游戏网络线程）经 [enqueueResend] 在锁内并发修改同一批结构，
+     * 锁外访问 ArrayDeque/LinkedHashMap 存在跨线程数据竞争（IndexOutOfBoundsException/状态损坏）。
+     */
     fun nextPacket(): ModPacket.ModChunkPacket? {
         // 重传优先：NAK 的块先于正常序列发出
         while (resendQueue.isNotEmpty()) {
