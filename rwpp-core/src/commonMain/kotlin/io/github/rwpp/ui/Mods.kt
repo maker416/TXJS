@@ -30,6 +30,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -91,12 +92,33 @@ private class UnloadedMod(private val file: File) : Mod {
     override val name: String get() = metadata.name
     override val description: String get() = metadata.description
     override val minVersion: String get() = metadata.minVersion
-    override val errorMessage: String? = null
+    override val errorMessage: String?
+        get() = if (metadata.titleMissing) missingTitleError(file.name) else null
     override var isEnabled: Boolean = false
     override val path: String = file.absolutePath
     override fun getRamUsed(): String = "0"
     override fun getSize(): Long = file.length()
     override fun getBytes(): ByteArray = file.readBytes()
+}
+
+private fun missingTitleError(fileName: String): String =
+    readI18n("mod.missingTitle", I18nType.RWPP, fileName)
+
+/** 包装 [Mod]，把 title 缺失错误透传到 [Mod.errorMessage]，其余行为完全委托。 */
+private class TitleErrorMod(delegate: Mod, private val error: String) : Mod by delegate {
+    override val errorMessage: String get() = error
+}
+
+/**
+ * 校验所有模组的 mod-info.txt `[mod]` title：缺失时包装为错误模组，
+ * 列表中显示错误标识，重载后也会进入失败列表（拿不到模组名是大问题，必须显式报错）。
+ */
+private fun List<Mod>.withTitleErrors(): List<Mod> = map { mod ->
+    // 引擎加载错误与 UnloadedMod 自带的 title 检查已覆盖的情况不重复解析
+    if (mod.errorMessage != null) return@map mod
+    val file = File(mod.path)
+    val meta = ModInfoParser.parseFromModFile(file) ?: return@map mod
+    if (meta.titleMissing) TitleErrorMod(mod, missingTitleError(file.name)) else mod
 }
 
 private fun scanUnloadedMods(existing: List<Mod>): List<Mod> {
@@ -217,7 +239,7 @@ fun ModsView(
     val settings = koinInject<Settings>()
 
     var deletedMod by remember { mutableStateOf(false) }
-    val initialEngineMods = remember { modManager.getAllMods() }
+    val initialEngineMods = remember { modManager.getAllMods().withTitleErrors() }
     val mods = remember {
         SnapshotStateList<Mod>().apply {
             addAll(initialEngineMods)
@@ -237,58 +259,10 @@ fun ModsView(
     val scope = rememberCoroutineScope()
     var updated by remember { mutableStateOf(false) }
     var enabledChanged by remember { mutableStateOf(false) }
-    var isApplying by remember { mutableStateOf(false) }
-    var applySucceeded by remember { mutableStateOf(false) }
     var isClosingAfterDelete by remember { mutableStateOf(false) }
     var importProgress by remember { mutableStateOf<ModImportProgress?>(null) }
     var pendingDeleteMod by remember { mutableStateOf<Mod?>(null) }
     var failedModsAfterReload by remember { mutableStateOf<List<FailedModLoadInfo>?>(null) }
-
-    LoadingView(isApplying, onLoaded = {
-        isApplying = false
-        if (applySucceeded) {
-            applySucceeded = false
-            onExit()
-        }
-    }) {
-        try {
-            val knownStates = mods.associate { File(it.path).name.lowercase() to it.isEnabled }
-            // 引擎重建单位表时也会扫描目录，必须传入完整 UI 状态，防止新文件按默认值启用。
-            modManager.modSaveChange(enabledByFileName = knownStates)
-            val engineMods = modManager.getAllMods()
-            engineMods.forEach { mod ->
-                val fileName = File(mod.path).name.lowercase()
-                mod.isEnabled = knownStates[fileName] ?: false
-            }
-            val failed = collectFailedMods(engineMods)
-            withContext(Dispatchers.Main) {
-                loadedEnabledFileNames = engineMods
-                    .filter { it.isEnabled }
-                    .map { File(it.path).name.lowercase() }
-                    .toSet()
-                mods.clear()
-                mods.addAll(engineMods)
-                mods.addAll(scanUnloadedMods(engineMods))
-                updated = !updated
-                enabledChanged = !enabledChanged
-                if (failed.isNotEmpty()) {
-                    failedModsAfterReload = failed
-                    applySucceeded = false
-                } else {
-                    applySucceeded = true
-                }
-            }
-            true
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            message(e.message ?: "Unknown error")
-            withContext(Dispatchers.Main) {
-                applySucceeded = false
-            }
-            false
-        }
-    }
 
     ModImportProgressDialog(importProgress)
 
@@ -322,7 +296,7 @@ fun ModsView(
             modManager.modReload(enabledByFileName = knownStates)
         }
         mods.clear()
-        val engineMods = modManager.getAllMods()
+        val engineMods = modManager.getAllMods().withTitleErrors()
         // 再同步一次 UI 侧状态（与加载前写入引擎的状态一致）
         engineMods.forEach { mod ->
             val fileName = File(mod.path).name.lowercase()
@@ -337,6 +311,8 @@ fun ModsView(
         mods.addAll(scanUnloadedMods(engineMods))
         updated = !updated
         enabledChanged = !enabledChanged
+        // 重载已完成单位表重建，删除标记随之失效（否则“应用”会被永久拦截）
+        deletedMod = false
         return collectFailedMods(engineMods)
     }
 
@@ -392,6 +368,20 @@ fun ModsView(
         )
     }
 
+    /**
+     * 重复导入时确保既有模组在列表中可见：
+     * - 清空搜索关键字，避免模组被当前过滤条件隐藏；
+     * - 列表中没有该文件时（例如绕开导入流程直接放进 units/ 的文件），以 UnloadedMod 补入。
+     */
+    fun revealExistingMod(target: File) {
+        filter = ""
+        val alreadyListed = mods.any { File(it.path).name.equals(target.name, ignoreCase = true) }
+        if (!alreadyListed && target.isFile) {
+            mods.add(UnloadedMod(target))
+        }
+        updated = !updated
+    }
+
     fun importModFile(file: File) {
         if (importProgress?.stage == ModImportStage.Importing) return
 
@@ -403,6 +393,17 @@ fun ModsView(
             }
 
             val target = File(modDir, file.name)
+
+            // 目标已存在（重复导入）：不复制，确保列表中能看到既有模组，并给出明确提示。
+            // 原实现直接展示 FileAlreadyExistsException 的英文异常信息；且当文件经导入流程
+            // 之外的途径进入 units/（手动复制、资源浏览器下载、联机同步激活）时列表中并没有它，
+            // 造成「提示已导入但界面看不到该模组」。
+            if (target.exists()) {
+                revealExistingMod(target)
+                importProgress = null
+                UI.showWarning(readI18n("mod.importAlreadyExists", I18nType.RWPP, file.name))
+                return@launch
+            }
 
             try {
                 importProgress = ModImportProgress(
@@ -438,6 +439,10 @@ fun ModsView(
                 UI.showWarning(readI18n("mod.importSuccess", I18nType.RWPP, file.name))
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: FileAlreadyExistsException) {
+                // 预检查与复制之间存在竞态（复制期间目标被其他流程创建），按重复导入处理。
+                revealExistingMod(target)
+                UI.showWarning(readI18n("mod.importAlreadyExists", I18nType.RWPP, file.name))
             } catch (e: Throwable) {
                 UI.showWarning(e.message ?: "Unknown error")
             } finally {
@@ -541,9 +546,9 @@ fun ModsView(
     }
 
     @Composable
-    fun ModsTopBar(compact: Boolean) {
+    fun ModsTopBar(compact: Boolean, modifier: Modifier = Modifier) {
         Column(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth()
                 .padding(
                     start = 16.dp,
@@ -1040,15 +1045,15 @@ fun ModsView(
                 val needsUnitRebuild = deletedMod || mods.any { mod ->
                     !mod.isEnabled && File(mod.path).name.lowercase() in loadedEnabledFileNames
                 }
-                if (!needsUnitRebuild) {
-                    // 仅导入了默认禁用的模组时无需触碰引擎；文件继续保持未加载状态。
-                    onExit()
+                if (needsUnitRebuild) {
+                    // 禁用/删除已加载模组后必须先重载：直接应用会在错误线程重建单位表，
+                    // 与存活的对局世界并发导致单位贴图丢失（紫色 M 占位）
+                    UI.showWarning(readI18n("mod.applyNeedReload"))
                     return@RWTextButton
                 }
 
-                applySucceeded = false
-                loadingMessage = ""
-                isApplying = true
+                // 仅导入了默认禁用的模组时无需触碰引擎；文件继续保持未加载状态。
+                onExit()
             }
         }
     }
@@ -1212,7 +1217,14 @@ fun ModsView(
     fun ModsBody(compact: Boolean, modifier: Modifier = Modifier) {
         if (!compact) {
             Column(modifier = modifier.fillMaxSize()) {
-                ModsTopBar(compact = false)
+                // 顶栏高度按百分比分配：按内容收缩、但上限为可用高度的 34%（超出部分裁剪），
+                // 防止系统大字体或横屏矮屏下顶部搜索框区域挤占列表空间，列表始终获得剩余空间
+                ModsTopBar(
+                    compact = false,
+                    modifier = Modifier
+                        .weight(0.34f, fill = false)
+                        .clipToBounds()
+                )
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()

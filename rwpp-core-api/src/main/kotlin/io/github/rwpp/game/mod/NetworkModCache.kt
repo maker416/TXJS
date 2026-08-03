@@ -13,6 +13,8 @@ import java.io.DataOutputStream
 import java.io.File
 import java.io.IOException
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.Locale
 
@@ -164,16 +166,41 @@ object NetworkModCacheFiles {
         val tmp = File.createTempFile(target.name, TEMP_SUFFIX, target.parentFile)
         try {
             tmp.writeBytes(bytes)
-            if (target.exists() && !target.delete()) {
-                throw IOException("Failed to replace existing file: $target")
-            }
-            if (!tmp.renameTo(target)) {
-                throw IOException("Failed to publish temp file: $target")
+            // 快速路径：目标不存在（或能被直接删除）时走普通 delete+rename。
+            // 目标已存在且删除失败（Windows 上常见于文件仍被引擎持有句柄，例如正在使用中的
+            // 已激活网络模组）不再直接抛异常——统一落到下面更健壮的 NIO 替换链，其中
+            // Files.move(..., REPLACE_EXISTING) 在纯 delete 失败的场景下仍有机会成功。
+            val fastPathOk = (!target.exists() || target.delete()) && tmp.renameTo(target)
+            if (!fastPathOk) {
+                publishTempFile(tmp, target)
             }
             return target
         } catch (t: Throwable) {
             tmp.delete()
             throw t
+        }
+    }
+
+    private fun publishTempFile(tmp: File, target: File) {
+        val tmpPath = tmp.toPath()
+        val targetPath = target.toPath()
+        try {
+            Files.move(tmpPath, targetPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            return
+        } catch (_: Exception) {
+            // ATOMIC_MOVE 在部分文件系统不受支持，继续回退
+        }
+        try {
+            Files.move(tmpPath, targetPath, StandardCopyOption.REPLACE_EXISTING)
+            return
+        } catch (_: Exception) {
+            // 继续复制覆盖
+        }
+        try {
+            Files.copy(tmpPath, targetPath, StandardCopyOption.REPLACE_EXISTING)
+            Files.deleteIfExists(tmpPath)
+        } catch (e: Exception) {
+            throw IOException("Failed to publish temp file: $target", e)
         }
     }
 

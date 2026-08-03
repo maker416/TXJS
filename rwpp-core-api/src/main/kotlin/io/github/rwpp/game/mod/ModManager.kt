@@ -16,9 +16,12 @@ interface ModManager : KoinComponent {
      * @param forceImmediate 是否强制在当前线程立即执行重载，而非投递到游戏主线程后等待。
      *        默认 false：通过 [io.github.rwpp.game.Game.post] 把重载逻辑投递到游戏主循环消费，
      *        适用于游戏已运行（主循环在跑）的场景，如 Mods 页手动重载。
+     *        若投递后超过 5s 主循环仍未开始执行（主循环已死，例如模组同步的内联重载停止过
+     *        引擎线程且之后未进对局），自动退化为与 forceImmediate 相同的当前线程内联执行，
+     *        避免 latch 永久阻塞、loading 弹窗卡死。
      *        传 true：直接在当前协程线程同步执行引擎重载方法，绕过主循环依赖。
      *        用于 mod 同步：下载完成时加入者仍处于加载阶段、游戏主循环 [com.corrodinggames.rts.game.i.b] 尚未启动，
-     *        此时投递到主线程的 action 永远不会被消费，会导致 latch 永久阻塞、loading 弹窗卡死。
+     *        此时投递到主线程的 action 永远不会被消费。
      * @param enabledByFileName 按磁盘文件名指定期望启用状态。在引擎扫完目录、加载单位定义之前应用。
      *        传入时：map 中有的按指定值启用/禁用；不在 map 中的新模组默认禁用。
      *        未启用的模组只登记元数据，不解析其单位定义。
