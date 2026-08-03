@@ -17,6 +17,7 @@ import androidx.core.graphics.ColorUtils
 import io.github.rwpp.android.impl.GamePaintImpl
 import io.github.rwpp.android.impl.OffscreenGameCanvasImpl
 import io.github.rwpp.appKoin
+import io.github.rwpp.config.Settings
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.units.comp.EntityRangeUnitComp
 import io.github.rwpp.game.units.comp.EntityRangeUnitComp.Companion.drawRange
@@ -28,6 +29,7 @@ class OffscreenSurfaceView @JvmOverloads constructor(
     attrs: AttributeSet? = null
 ) : SurfaceView(context, attrs), SurfaceHolder.Callback {
 
+    @Volatile
     private var isRunning = false
     private var renderThread: Thread? = null
 
@@ -40,23 +42,38 @@ class OffscreenSurfaceView @JvmOverloads constructor(
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
+        // 攻击范围显示功能已下线（Settings.migrate 每次加载强制关闭）：功能未启用时
+        // 不启动渲染线程，避免忙等空转耗电，以及 surface 销毁竞态导致的未捕获异常闪退
+        if (!isAttackRangeEnabled()) return
         isRunning = true
         renderThread = thread(start = true, name = "CircleRenderThread") {
             renderLoop()
         }
     }
 
+    private fun isAttackRangeEnabled(): Boolean {
+        val settings = runCatching { appKoin.get<Settings>() }.getOrNull() ?: return false
+        return settings.showBuildingAttackRange || settings.showAttackRangeUnit != "Never"
+    }
+
     private fun renderLoop() {
         while (isRunning) {
-            val canvas = holder.lockHardwareCanvas() ?: continue
             try {
-              //  canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
-                renderer.render(canvas)
-             //   Thread.sleep(16)
+                // surface 销毁/页面切换（如对局中打开设置页）时 lockHardwareCanvas 会抛
+                // IllegalStateException，必须放进捕获范围，否则渲染线程的未捕获异常会
+                // 触发全局 handler 直接杀掉进程（闪退）
+                val canvas = holder.lockHardwareCanvas() ?: continue
+                try {
+                    renderer.render(canvas)
+                } finally {
+                    // surface 半毁状态下 unlockCanvasAndPost 同样可能抛异常，不能让异常
+                    // 从 finally 中逃逸出捕获范围
+                    runCatching { holder.unlockCanvasAndPost(canvas) }
+                }
+                // 帧节流：无 sleep 的忙等循环会占满 CPU，并极大放大 surface 竞态窗口
+                Thread.sleep(16)
             } catch (e: Exception) {
                 e.printStackTrace()
-            } finally {
-                holder.unlockCanvasAndPost(canvas)
             }
         }
     }
@@ -67,7 +84,9 @@ class OffscreenSurfaceView @JvmOverloads constructor(
 
     override fun surfaceDestroyed(h: SurfaceHolder) {
         isRunning = false
-        renderThread?.join()
+        // 渲染线程可能仍阻塞在 lockHardwareCanvas 内部，无超时 join 会拖死 UI 线程（ANR）
+        renderThread?.join(1000)
+        renderThread = null
     }
 
     class RangeRenderer(val width: Int, val height: Int) {

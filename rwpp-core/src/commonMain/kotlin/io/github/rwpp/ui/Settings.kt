@@ -264,15 +264,6 @@ fun SettingsView(
                                             }
                                             SettingsSwitchComp(
                                                 "",
-                                                readI18n("settings.enhancedReinforceTroops"),
-                                                settings.enhancedReinforceTroops
-                                            ) {
-                                                settings.enhancedReinforceTroops = it
-                                            }
-
-
-                                            SettingsSwitchComp(
-                                                "",
                                                 readI18n("settings.showUnitTargetLine"),
                                                 settings.showUnitTargetLine
                                             ) {
@@ -384,30 +375,6 @@ fun SettingsView(
                                                 settings.showExtraButton
                                             ) {
                                                 settings.showExtraButton = it
-                                            }
-                                        }
-
-                                        SettingsGroup("", readI18n("settings.buildings")) {
-                                            SettingsSwitchComp(
-                                                "",
-                                                readI18n("settings.showAttackRange"),
-                                                settings.showBuildingAttackRange
-                                            ) {
-                                                settings.showBuildingAttackRange = it
-                                            }
-                                        }
-
-                                        SettingsGroup("", readI18n("settings.units")) {
-                                            val rangeKeys = Settings.unitAttackRangeTypes
-                                            val rangeLabels = remember {
-                                                rangeKeys.map { readI18n("settings.attackRange$it") }
-                                            }
-                                            var selectedIndex by remember {
-                                                mutableIntStateOf(rangeKeys.indexOf(settings.showAttackRangeUnit).coerceAtLeast(0))
-                                            }
-                                            SettingsDropDown("showAttackRange", rangeLabels, selectedIndex) { index, _ ->
-                                                selectedIndex = index
-                                                settings.showAttackRangeUnit = rangeKeys[index]
                                             }
                                         }
 
