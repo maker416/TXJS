@@ -108,6 +108,7 @@ object UI : Initialization, IUserInterface {
     var showResourceBrowser by mutableStateOf(false)
     var showOpenSourceInfoView by mutableStateOf(false)
     var showSinglePlayerView by mutableStateOf(false)
+    var showSurvivalView by mutableStateOf(false)
 
     private var pendingAutoPublishQRoom = false
 

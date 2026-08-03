@@ -592,6 +592,8 @@ fun MultiplayerView(
                             onClick = {
                                 hostPrefix = HostCommandPrefix.R
                                 roomId = ""
+                                // R 房的模组同步尚未适配，切到 R 房时强制关闭传输模组
+                                transferMod = false
                             },
                             label = { Text(readI18n("multiplayer.hostPrefixR")) },
                         )
@@ -630,7 +632,13 @@ fun MultiplayerView(
                     ToggleLine(
                         label = readI18n("multiplayer.transferMod"),
                         checked = transferMod,
-                        enabled = enableMods,
+                        // R 房的模组同步正在适配中，不可开启
+                        enabled = enableMods && hostPrefix == HostCommandPrefix.Q,
+                        supportingText = if (hostPrefix == HostCommandPrefix.R) {
+                            readI18n("multiplayer.transferModRAdapting")
+                        } else {
+                            null
+                        },
                     ) {
                         // 开启「传输模组」前需阅读免责声明并二次确认；关闭则直接关闭。
                         if (!transferMod) showTransferConfirm = true else transferMod = false

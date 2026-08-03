@@ -503,7 +503,7 @@ class GameRoomImpl(private val game: GameImpl) : GameRoom {
             }
 
             if (aiDifficulty != this.aiDifficulty) {
-                t.bU.i("-ai aiDifficulty")
+                t.bU.i("-ai $aiDifficulty")
             }
 
             if (startingUnits != this.startingUnits) {
