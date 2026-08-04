@@ -301,6 +301,12 @@ exit = "退出"
 openSourceInfo = "反馈与说明"
 replay = "观看回放"
 singlePlayerGame = "单人游戏"
+announcement = "公告"
+announcementLatest = "最新版本"
+announcementCurrent = "当前版本"
+announcementUpToDate = "当前已是最新版本"
+announcementUpdateAvailable = "发现新版本，请及时更新"
+announcementNoData = "暂无公告信息"
 
 [menu.singlePlayer]
 title = "单人游戏"

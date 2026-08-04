@@ -300,6 +300,12 @@ exit = "Exit"
 openSourceInfo = "Feedback & Info"
 replay = "Watch Replay"
 singlePlayerGame = "Single Player"
+announcement = "Announcement"
+announcementLatest = "Latest Version"
+announcementCurrent = "Current Version"
+announcementUpToDate = "You are using the latest version"
+announcementUpdateAvailable = "A new version is available, please update"
+announcementNoData = "No announcement data"
 
 [menu.singlePlayer]
 title = "Single Player"

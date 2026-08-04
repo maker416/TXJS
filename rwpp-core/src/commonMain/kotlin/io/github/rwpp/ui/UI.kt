@@ -7,6 +7,11 @@
 
 package io.github.rwpp.ui
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -30,13 +35,23 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Email
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,8 +66,12 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mikepenz.markdown.compose.Markdown
+import com.mikepenz.markdown.m3.markdownColor
+import com.mikepenz.markdown.m3.markdownTypography
 import io.github.rwpp.AppContext
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.appKoin
@@ -68,15 +87,22 @@ import io.github.rwpp.game.Player
 import io.github.rwpp.game.units.GameUnit
 import io.github.rwpp.game.units.MovementType
 import io.github.rwpp.game.world.World
+import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.net.LatestVersionProfile
+import io.github.rwpp.net.Net
 import io.github.rwpp.projectVersion
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.title
 import io.github.rwpp.ui.UI.showQuestion
 import io.github.rwpp.ui.UI.showWarning
 import io.github.rwpp.ui.color.getTeamColor
+import io.github.rwpp.utils.compareVersions
+import io.github.rwpp.widget.AnimatedAlertDialog
+import io.github.rwpp.widget.BorderCard
 import io.github.rwpp.widget.WindowManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
 
@@ -128,6 +154,8 @@ object UI : Initialization, IUserInterface {
     var receivingModTotalCount by mutableStateOf(0)
     /** 已下载完成的 mod 数（含当前正在下载的那个，从 1 开始）。 */
     var receivingModDoneCount by mutableStateOf(0)
+    /** 主界面公告/更新入口共享的最新版本信息。 */
+    var latestVersionProfile by mutableStateOf<LatestVersionProfile?>(null)
     var UiProvider: UIProvider = UIProvider()
 
     private val relayRegex = Regex("""R\d+""")
@@ -234,6 +262,21 @@ open class UIProvider {
         openSourceInfo: () -> Unit
     ) {
         val windowManager = LocalWindowManager.current
+        val net = koinInject<Net>()
+        var showAnnouncement by remember { mutableStateOf(false) }
+
+        LaunchedEffect(Unit) {
+            if (UI.latestVersionProfile == null) {
+                val profile = withContext(Dispatchers.IO) {
+                    net.getLatestVersionProfile()
+                }
+                UI.latestVersionProfile = profile
+            }
+        }
+
+        val latestProfile = UI.latestVersionProfile
+        val hasUpdate = latestProfile?.let { compareVersions(it.version, projectVersion) > 0 } == true
+
         val buttonSpacing = when (windowManager) {
             WindowManager.Small -> 8.dp
             WindowManager.Middle -> 10.dp
@@ -268,14 +311,22 @@ open class UIProvider {
                 WindowManager.Large -> maxWidth * 0.65f
             }.coerceAtMost(520.dp)
 
-            Text(
-                "$coreVersion (app $projectVersion)",
+            Column(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(top = 8.dp, end = 10.dp),
-                style = versionStyle,
-                color = Color.White
-            )
+                horizontalAlignment = Alignment.End
+            ) {
+                AnnouncementEnvelope(
+                    hasUpdate = hasUpdate,
+                    onClick = { showAnnouncement = true },
+                )
+                Text(
+                    "$coreVersion (app $projectVersion)",
+                    style = versionStyle,
+                    color = Color.White,
+                )
+            }
 
             Column(
                 modifier = Modifier
@@ -398,6 +449,185 @@ open class UIProvider {
                     onClick = { appContext.exit() },
                     label = readI18n("menu.exit")
                 )
+            }
+
+            if (showAnnouncement) {
+                AnnouncementDialog(
+                    profile = latestProfile,
+                    maxHeight = maxHeight,
+                    onDismiss = { showAnnouncement = false },
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun AnnouncementEnvelope(
+        hasUpdate: Boolean,
+        onClick: () -> Unit,
+    ) {
+        val infiniteTransition = rememberInfiniteTransition(label = "envelopePulse")
+        val scale by infiniteTransition.animateFloat(
+            initialValue = 1f,
+            targetValue = if (hasUpdate) 1.2f else 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(800),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "envelopeScale",
+        )
+        val badgeAlpha by infiniteTransition.animateFloat(
+            initialValue = 1f,
+            targetValue = if (hasUpdate) 0.4f else 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(600),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "envelopeBadgeAlpha",
+        )
+
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Default.Email,
+                contentDescription = readI18n("menu.announcement", I18nType.RWPP),
+                tint = if (hasUpdate) Color(0xFFFF5252) else Color.White,
+                modifier = Modifier
+                    .size(28.dp)
+                    .scale(scale),
+            )
+            if (hasUpdate) {
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .align(Alignment.TopEnd)
+                        .offset(x = (-4).dp, y = 4.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFFF5252).copy(alpha = badgeAlpha)),
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun AnnouncementDialog(
+        profile: LatestVersionProfile?,
+        maxHeight: Dp,
+        onDismiss: () -> Unit,
+    ) {
+        AnimatedAlertDialog(
+            visible = true,
+            onDismissRequest = onDismiss,
+        ) { dismiss ->
+            BorderCard(
+                modifier = Modifier
+                    .fillMaxWidth(0.88f)
+                    .heightIn(max = maxHeight * 0.85f)
+                    .verticalScroll(rememberScrollState()),
+                backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        readI18n("menu.announcement", I18nType.RWPP),
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+
+                    if (profile == null) {
+                        Text(
+                            readI18n("menu.announcementNoData", I18nType.RWPP),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        )
+                    } else {
+                        val hasUpdate = compareVersions(profile.version, projectVersion) > 0
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Surface(
+                                color = if (hasUpdate) {
+                                    MaterialTheme.colorScheme.errorContainer
+                                } else {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                            ) {
+                                Text(
+                                    "${readI18n("menu.announcementLatest", I18nType.RWPP)}: ${profile.version}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (hasUpdate) {
+                                        MaterialTheme.colorScheme.onErrorContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.onPrimaryContainer
+                                    },
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+                                )
+                            }
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceContainer,
+                                shape = RoundedCornerShape(8.dp),
+                            ) {
+                                Text(
+                                    "${readI18n("menu.announcementCurrent", I18nType.RWPP)}: $projectVersion",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = if (hasUpdate) {
+                                readI18n("menu.announcementUpdateAvailable", I18nType.RWPP)
+                            } else {
+                                readI18n("menu.announcementUpToDate", I18nType.RWPP)
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (hasUpdate) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            },
+                        )
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceContainer)
+
+                        BorderCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.5f),
+                        ) {
+                            Markdown(
+                                profile.body,
+                                modifier = Modifier.padding(10.dp).fillMaxWidth(),
+                                colors = markdownColor(),
+                                typography = markdownTypography(),
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TextButton(onClick = dismiss) {
+                            Text(
+                                readI18n("common.close", I18nType.RWPP),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                            )
+                        }
+                    }
+                }
             }
         }
     }

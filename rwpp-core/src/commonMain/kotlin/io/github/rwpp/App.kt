@@ -126,6 +126,7 @@ fun App(
 
             if (latestProfile != null) {
                 coreData.lastAutoCheckUpdateTime = now
+                UI.latestVersionProfile = latestProfile
 
                 if (compareVersions(latestProfile.version, projectVersion) > 0 || coreData.debug) {
                     profile = latestProfile
@@ -305,6 +306,7 @@ fun App(
                     SettingsView(
                         {
                             if (compareVersions(it.version, projectVersion) <= 0) return@SettingsView
+                            UI.latestVersionProfile = it
                             profile = it
                             checkUpdateDialogVisible = true
                         },

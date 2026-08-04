@@ -63,4 +63,23 @@ class BundleParseTest {
             )
         }
     }
+
+    @Test
+    fun menuAnnouncementKeysExistInAllBundles() {
+        bundleNames.forEach { name ->
+            val table = Toml.parseToTomlTable(File(bundleDir, name).readText())
+            val menu = table["menu"] as? TomlTable
+            assertNotNull(menu, "[menu] table missing in $name")
+            listOf(
+                "announcement",
+                "announcementLatest",
+                "announcementCurrent",
+                "announcementUpToDate",
+                "announcementUpdateAvailable",
+                "announcementNoData",
+            ).forEach { key ->
+                assertTrue(menu.containsKey(key), "menu.$key missing in $name")
+            }
+        }
+    }
 }
