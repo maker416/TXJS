@@ -28,7 +28,6 @@ import io.github.rwpp.event.events.StartGameEvent
 import io.github.rwpp.game.ConnectingPlayer
 import io.github.rwpp.game.GameRoom
 import io.github.rwpp.game.Player
-import io.github.rwpp.game.data.RoomOption
 import io.github.rwpp.game.map.*
 import io.github.rwpp.game.team.TeamMode
 import io.github.rwpp.game.units.UnitType
@@ -126,8 +125,6 @@ class GameRoomImpl(private val game: GameImpl) : GameRoom {
         get() = _gameSpeed
         set(value) { _gameSpeed = value }
     override var gameMapTransformer: ((XMLMap) -> Unit)? = null
-    override var isRWPPRoom: Boolean = false
-    override var option: RoomOption = RoomOption()
     override val isConnecting: Boolean
         get() = GameEngine.t().bU.C
 
@@ -550,8 +547,6 @@ class GameRoomImpl(private val game: GameImpl) : GameRoom {
         // MultiplayerRoomInject.onStartGame 的 !isGaming 守卫吞掉，导致玩家永远卡在战役室
         isGaming = false
         if (isConnecting) GameEngine.t().bU.b(reason)
-        isRWPPRoom = false
-        option = RoomOption()
         roomMods = arrayOf()
         teamMode = null
         defeatedPlayerSet.clear()

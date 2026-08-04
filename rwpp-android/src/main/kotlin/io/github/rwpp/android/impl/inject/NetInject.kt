@@ -29,7 +29,6 @@ import io.github.rwpp.event.events.PlayerJoinEvent
 import io.github.rwpp.event.events.SystemMessageEvent
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.Player
-import io.github.rwpp.game.data.RoomOption
 import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
@@ -39,7 +38,6 @@ import io.github.rwpp.net.InternalPacketType
 import io.github.rwpp.net.Net
 import io.github.rwpp.ui.UI
 import io.github.rwpp.utils.Reflect
-import net.peanuuutz.tomlkt.Toml
 import java.io.ByteArrayInputStream
 import java.io.DataInputStream
 import java.util.*
@@ -171,18 +169,7 @@ object NetInject {
                 val r0 = com.corrodinggames.rts.gameFramework.j.j(packet);     // Catch: java.lang.Throwable -> L603
                 val r1 = packet.a
                 val r14 = GameEngine.t().bU
-                val str = r0.b.readUTF() // Catch: java.lang.Throwable -> L603
-                if (str.startsWith(packageName)) {
-                    val gameRoom = appKoin.get<Game>().gameRoom
-                    gameRoom.isRWPPRoom = true
-                    gameRoom.option = Toml.decodeFromString(RoomOption.serializer(), str.removePrefix(packageName))
-                    val v = gameRoom.option.protocolVersion
-                    if (v != protocolVersion) {
-                        gameRoom.disconnect()
-                        UI.showWarning("Different protocol version. yours: $protocolVersion server's: $v", true)
-                        return InterruptResult(Unit)
-                    }
-                }
+                r0.b.readUTF() // Catch: java.lang.Throwable -> L603
                 val r2 = r0.b.readInt() // Catch: java.lang.Throwable -> L603
                 val r3 = r0.b.readInt() // Catch: java.lang.Throwable -> L603
                 r0.b.readInt() // Catch: java.lang.Throwable -> L603
@@ -222,9 +209,8 @@ object NetInject {
                 if (i >= 4) GameEngine.ab()
 
                 val t = GameEngine.t()
-                val gameRoom = appKoin.get<Game>().gameRoom
                 val a = com.corrodinggames.rts.gameFramework.j.bg()
-                a.b(packageName + Toml.encodeToString(RoomOption.serializer(), gameRoom.option))
+                a.b(packageName)
                 a.c(2)
                 a.c(t.bU.e)
                 a.c(t.a(true))

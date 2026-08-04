@@ -97,8 +97,6 @@ abstract class AbstractGame : Game {
         B.bX.q = isPublic
         B.bX.o = useMods
 
-        gameRoom.isRWPPRoom = true
-
         initMap(true)
         if(B.bX.b(false)) {
             MapChangedEvent(gameRoom.selectedMap.displayName()).broadcastIn()

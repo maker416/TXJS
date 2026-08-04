@@ -52,11 +52,11 @@ import androidx.compose.ui.unit.dp
 import io.github.rwpp.AppContext
 import io.github.rwpp.config.*
 import io.github.rwpp.core.Logic
+import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.event.events.JoinGameEvent
 import io.github.rwpp.game.Game
-import io.github.rwpp.game.data.RoomOption
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.gameVersion
 import io.github.rwpp.i18n.readI18n
@@ -120,7 +120,7 @@ private fun roomModSyncStatusI18nKey(desc: RoomDescription): String? = when (des
     ModSyncStatus.Enabled, ModSyncStatus.NotModded -> null
 }
 
-private const val LIST_POSITION_APPLICATION_URL = "http://listup.xn--rhqr8xvr4ahqsgka.com/"
+private const val LIST_POSITION_APPLICATION_URL = "http://listup.xn--rhqr8xvr4ahqsgka.com:11452/"
 
 @Composable
 private fun FilterSectionCard(
@@ -313,6 +313,8 @@ fun MultiplayerView(
     var isConnecting by remember { mutableStateOf(false) }
     /** 本次连接是否为开房（而非加入他人房间）；开房前需禁用网络缓存模组。 */
     var pendingHostSession by remember { mutableStateOf(false) }
+    /** 本次开房是否勾选了「启动模组」；未勾选时 Loading 阶段会清空全部已加载模组。 */
+    var pendingHostEnableMods by remember { mutableStateOf(false) }
     var keepAutoPublishAfterLoading by remember { mutableStateOf(false) }
 
     var editingServerConfig by remember { mutableStateOf<ServerConfig?>(null) }
@@ -361,50 +363,71 @@ fun MultiplayerView(
     LoadingView(
         isConnecting,
         onLoaded = {
+            // 取消 Loading：掐断带外同步 + 清 Presence + 取消游戏侧加入，避免关闭后仍进房
+            ModSyncController.cancelPreJoin()
+            ModSyncController.finishJoinerPresence()
             game.cancelJoinServer()
             if (!keepAutoPublishAfterLoading) {
                 UI.clearAutoPublishQRoom()
             }
             keepAutoPublishAfterLoading = false
             pendingHostSession = false
+            pendingHostEnableMods = false
             isConnecting = false
         },
         cancellable = true,
     ) {
-        if(serverAddress.isBlank()) {
-            message("That server no longer exists")
-            UI.clearAutoPublishQRoom()
-            return@LoadingView false
-        }
-
-        if (pendingHostSession) {
-            val disabled = Logic.disableNetworkModsBeforeHosting()
-            if (disabled) {
-                message(readI18n("multiplayer.networkModDisabledOnHost"))
+        try {
+            if(serverAddress.isBlank()) {
+                message("That server no longer exists")
+                UI.clearAutoPublishQRoom()
+                return@LoadingView false
             }
-        }
 
-        message("connecting...")
+            if (pendingHostSession) {
+                if (!pendingHostEnableMods) {
+                    val cleared = Logic.disableAllModsBeforeHosting()
+                    if (cleared) {
+                        message(readI18n("multiplayer.modsClearedForVanillaHost"))
+                    }
+                } else {
+                    val disabled = Logic.disableNetworkModsBeforeHosting()
+                    if (disabled) {
+                        message(readI18n("multiplayer.networkModDisabledOnHost"))
+                    }
+                }
+            } else {
+                // 加入者：建立游戏连接之前先走带外模组同步（同步服无记录则直接放行，按原版加入）
+                if (!ModSyncController.preJoinSync(selectedRoomDescription, serverAddress, this)) {
+                    return@LoadingView false
+                }
+            }
 
-        game.setUserName(userName)
-        configIO.setGameConfig("lastNetworkIP", serverAddress)
+            message("connecting...")
 
-        val result = game.directJoinServer(
-            serverAddress,
-            selectedRoomDescription?.joinRelayUuid(),
-            this,
-        )
-        selectedRoomDescription = null
-        if(result.isSuccess) {
-            keepAutoPublishAfterLoading = true
-            onExit()
-            onOpenRoomView()
-            JoinGameEvent(serverAddress).broadcastIn()
-            true
-        } else {
-            UI.clearAutoPublishQRoom()
-            message(result.exceptionOrNull()!!.message!!)
-            false
+            game.setUserName(userName)
+            configIO.setGameConfig("lastNetworkIP", serverAddress)
+
+            val result = game.directJoinServer(
+                serverAddress,
+                selectedRoomDescription?.joinRelayUuid(),
+                this,
+            )
+            selectedRoomDescription = null
+            if(result.isSuccess) {
+                keepAutoPublishAfterLoading = true
+                onExit()
+                onOpenRoomView()
+                JoinGameEvent(serverAddress).broadcastIn()
+                true
+            } else {
+                UI.clearAutoPublishQRoom()
+                message(result.exceptionOrNull()!!.message!!)
+                false
+            }
+        } finally {
+            // 进房成功或失败后清理 joining Presence（与 onLoaded 幂等）
+            ModSyncController.finishJoinerPresence()
         }
     }
 
@@ -427,19 +450,14 @@ fun MultiplayerView(
             val modManager = koinInject<ModManager>()
             var enableMods by remember { mutableStateOf(false) }
             var transferMod by remember { mutableStateOf(false) }
+            var showVanillaHostConfirm by remember { mutableStateOf(false) }
             val hasNetworkMods = remember {
                 modManager.getAllMods().any { it.isNetworkMod }
             }
             val hasEnabledNetworkMods = remember {
                 modManager.getAllMods().any { it.isNetworkMod && it.isEnabled }
             }
-            val modSize by remember {
-                mutableLongStateOf(
-                    modManager.getAllMods()
-                        .filter { it.isEnabled }
-                        .sumOf { it.getSize() }
-                )
-            }
+            val hasEnabledMods = modManager.getAllMods().any { it.isEnabled }
             var hostPrefix by remember { mutableStateOf(HostCommandPrefix.Q) }
             var disableDefaultPublish by remember { mutableStateOf(false) }
             var roomId by remember { mutableStateOf("") }
@@ -450,6 +468,29 @@ fun MultiplayerView(
 
             remember(enableMods) {
                 if (!enableMods) transferMod = false
+            }
+
+            fun beginHost() {
+                dismiss()
+                if (hostPrefix == HostCommandPrefix.Q && !disableDefaultPublish) {
+                    UI.requestAutoPublishQRoom()
+                } else {
+                    UI.clearAutoPublishQRoom()
+                }
+                keepAutoPublishAfterLoading = false
+                ModSyncController.hostSyncRequested = transferMod && enableMods
+                serverAddress = net.buildQuickHostCommand(
+                    enableMods = enableMods,
+                    roomId = if (hostPrefix == HostCommandPrefix.Q) roomId.ifBlank { null } else null,
+                    maxPlayer = maxPlayer,
+                    unitLimit = unitLimit,
+                    credits = credits,
+                    speedMultiplier = speedMultiplier,
+                    prefix = hostPrefix,
+                )
+                pendingHostEnableMods = enableMods
+                pendingHostSession = true
+                isConnecting = true
             }
 
             @Composable
@@ -592,8 +633,6 @@ fun MultiplayerView(
                             onClick = {
                                 hostPrefix = HostCommandPrefix.R
                                 roomId = ""
-                                // R 房的模组同步尚未适配，切到 R 房时强制关闭传输模组
-                                transferMod = false
                             },
                             label = { Text(readI18n("multiplayer.hostPrefixR")) },
                         )
@@ -632,13 +671,7 @@ fun MultiplayerView(
                     ToggleLine(
                         label = readI18n("multiplayer.transferMod"),
                         checked = transferMod,
-                        // R 房的模组同步正在适配中，不可开启
-                        enabled = enableMods && hostPrefix == HostCommandPrefix.Q,
-                        supportingText = if (hostPrefix == HostCommandPrefix.R) {
-                            readI18n("multiplayer.transferModRAdapting")
-                        } else {
-                            null
-                        },
+                        enabled = enableMods,
                     ) {
                         // 开启「传输模组」前需阅读免责声明并二次确认；关闭则直接关闭。
                         if (!transferMod) showTransferConfirm = true else transferMod = false
@@ -943,25 +976,75 @@ fun MultiplayerView(
                     horizontalArrangement = Arrangement.End,
                 ) {
                     RWTextButton(readI18n("multiplayer.host"), modifier = Modifier.padding(4.dp)) {
-                        dismiss()
-                        if (hostPrefix == HostCommandPrefix.Q && !disableDefaultPublish) {
-                            UI.requestAutoPublishQRoom()
+                        // 未勾选「启动模组」但引擎仍有已加载模组：先提醒，确认后再清空重载并开房
+                        if (!enableMods && hasEnabledMods) {
+                            showVanillaHostConfirm = true
                         } else {
-                            UI.clearAutoPublishQRoom()
+                            beginHost()
                         }
-                        keepAutoPublishAfterLoading = false
-                        game.gameRoom.option = RoomOption(transferMod, modSize.toInt())
-                        serverAddress = net.buildQuickHostCommand(
-                            enableMods = enableMods,
-                            roomId = if (hostPrefix == HostCommandPrefix.Q) roomId.ifBlank { null } else null,
-                            maxPlayer = maxPlayer,
-                            unitLimit = unitLimit,
-                            credits = credits,
-                            speedMultiplier = speedMultiplier,
-                            prefix = hostPrefix,
-                        )
-                        pendingHostSession = true
-                        isConnecting = true
+                    }
+                }
+            }
+
+            AnimatedAlertDialog(
+                visible = showVanillaHostConfirm,
+                onDismissRequest = { showVanillaHostConfirm = false },
+            ) { confirmDismiss ->
+                BorderCard(
+                    modifier = Modifier
+                        .fillMaxWidth(LargeProportion())
+                        .widthIn(max = 480.dp)
+                        .padding(10.dp),
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 360.dp)
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 18.dp, vertical = 16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.Warning,
+                                contentDescription = null,
+                                modifier = Modifier.size(40.dp),
+                                tint = Color(0xFFFF9800),
+                            )
+                            Text(
+                                readI18n("multiplayer.vanillaHostClearModsTitle"),
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                textAlign = TextAlign.Center,
+                            )
+                            HorizontalDivider(
+                                thickness = 2.dp,
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                            )
+                            Text(
+                                readI18n("multiplayer.vanillaHostClearModsMessage").trimIndent(),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                        ) {
+                            RWTextButton(readI18n("common.cancel"), modifier = Modifier.padding(4.dp)) {
+                                confirmDismiss()
+                            }
+                            RWTextButton(
+                                readI18n("multiplayer.vanillaHostClearModsAccept"),
+                                modifier = Modifier.padding(4.dp),
+                            ) {
+                                confirmDismiss()
+                                beginHost()
+                            }
+                        }
                     }
                 }
             }

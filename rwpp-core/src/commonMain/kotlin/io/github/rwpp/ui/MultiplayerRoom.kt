@@ -9,7 +9,13 @@ package io.github.rwpp.ui
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -37,16 +43,28 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.rwpp.net.sync.SyncPeerPhase
+import io.github.rwpp.net.sync.SyncPeerSnapshot
 import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
@@ -80,6 +98,8 @@ import io.github.rwpp.net.composePublishRoomType
 import io.github.rwpp.net.roomListPublishAddress
 import io.github.rwpp.config.DEFAULT_ROOM_LIST_API_URLS
 import com.eclipsesource.json.Json
+import io.github.rwpp.core.ModSyncController
+import io.github.rwpp.io.SizeUtils
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.platform.KickPlayerContextMenuAreaMultiplatform
 import io.github.rwpp.scripts.Render
@@ -305,19 +325,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     }
 
 
-//    LoadingView(loadModViewVisible, { loadModViewVisible = false }) {
-//        message("reloading mods...")
-//        modManager.modReload()
-//        net.sendPacketToServer(ModPacket.ModReloadFinishPacket())
-//        true
-//    }
-//
-//    LoadingView(downloadModViewVisible, { downloadModViewVisible = false }) {
-//        message("downloading mods...")
-//        delay(Long.MAX_VALUE)
-//        false
-//    }
-
+// （旧协议内同步的残留占位已随重构移除）
     val players = remember(update) { room.getPlayers().sortedBy { it.team } }
     var selectedPlayer by remember { mutableStateOf(players.firstOrNull() ?: ConnectingPlayer) }
     var playerOverrideVisible by remember { mutableStateOf(false) }
@@ -409,6 +417,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                     hasPublishedInfo = true
                     remainingSeconds = 0
                     totalSeconds = 0
+                    ModSyncController.bindPublishedServerId(serverId)
                     kickListDetectorPlayers()
                     publishState = PublishToListUiState.Success(roomId, serverId)
                 } else {
@@ -466,7 +475,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                 // - 始终不作为可手选的普通标签出现；
                 // - 开启传输模组时由客户端自动追加该协议哨兵，普通标签仍可自由多选；
                 // - 未开启传输模组时不追加，也不会出现在候选中。
-                val canTransferMod = room.option.canTransferMod
+                val canTransferMod = ModSyncController.hostSyncRequested
                 val selectableTypes = types.filterNot { it.equals(MOD_SYNC_ROOM_TYPE, ignoreCase = true) }
                 if (canTransferMod && types.none { it.equals(MOD_SYNC_ROOM_TYPE, ignoreCase = true) }) {
                     // 房间列表白名单未提供模组同步标签，发布必然被服务端白名单拒绝
@@ -557,6 +566,10 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
             .filter { !it.startsWith("Map:") && it.isNotBlank() }
             .joinToString("\n")
         roomIdForPublish = Regex("""[QR]\d+""").find(raw)?.value
+        // 房主开启「传输模组」时：拿到短码即启动带外同步会话（内部幂等）
+        roomIdForPublish?.let { code ->
+            if (room.isHost) ModSyncController.startHostSession(code)
+        }
     }
 
     LaunchedEffect(roomIdForPublish, isHost, hasPublishedInfo) {
@@ -590,19 +603,29 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
         }
 
         val startGame: () -> Unit = {
+            val syncingPeers = ModSyncController.hostPeerSnapshots
             val unpreparedPlayers = game.gameRoom.getPlayers().filter { !it.data.ready }
-            if (unpreparedPlayers.isNotEmpty()) {
-                UI.showWarning(
-                    readI18n(
-                        "multiplayer.room.playersNotReadyModSync",
-                        I18nType.RWPP,
-                        unpreparedPlayers.joinToString(", ") { it.name },
-                    ),
-                )
-            } else if (room.isHostServer) {
-                room.sendQuickGameCommand("-start")
-            } else {
-                room.startGame()
+            when {
+                syncingPeers.isNotEmpty() -> {
+                    UI.showWarning(
+                        readI18n(
+                            "multiplayer.room.playersStillSyncing",
+                            I18nType.RWPP,
+                            syncingPeers.joinToString(", ") { it.displayName },
+                        ),
+                    )
+                }
+                unpreparedPlayers.isNotEmpty() -> {
+                    UI.showWarning(
+                        readI18n(
+                            "multiplayer.room.playersNotReadyModSync",
+                            I18nType.RWPP,
+                            unpreparedPlayers.joinToString(", ") { it.name },
+                        ),
+                    )
+                }
+                room.isHostServer -> room.sendQuickGameCommand("-start")
+                else -> room.startGame()
             }
         }
 
@@ -691,6 +714,16 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                         )
                     }
+
+                    ModSyncHostStatusBar(
+                        isHost = isHost,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                    )
+                    RoomPendingSyncPanel(
+                        isHost = isHost,
+                        compact = true,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                    )
 
                     CompactRoomDetailsBar(
                         roomDetails = roomDetails,
@@ -836,6 +869,15 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
             Box {
                 ExitButton(onExit)
                 Column {
+                    ModSyncHostStatusBar(
+                        isHost = isHost,
+                        modifier = Modifier.padding(horizontal = 10.dp),
+                    )
+                    RoomPendingSyncPanel(
+                        isHost = isHost,
+                        compact = false,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+                    )
                     Column(modifier = Modifier.fillMaxWidth().weight(1f)) {
                         Row(modifier = Modifier.fillMaxWidth()) {
                             val mapType = remember(update) { room.mapType }
@@ -2059,11 +2101,6 @@ private fun PublishToListDialog(
 
 private val RoomPlayerNameWeight = 0.6f
 
-/** 字节数格式化为一位小数 MB（如 1.2）。commonMain 无 String.format，故手写截断到一位小数。 */
-private fun fmtMB(bytes: Long): String {
-    val tenths = (bytes / 1048576.0 * 10).toLong()
-    return "${tenths / 10}.${tenths % 10}"
-}
 private val RoomPlayerSpawnWeight = 0.1f
 private val RoomPlayerTeamWeight = 0.1f
 private val RoomPlayerPingWeight = 0.2f
@@ -2645,8 +2682,6 @@ private fun RoomPlayerTableRow(
 ) {
     val options = remember { game.getStartingUnitOptions() }
     val rowPadding = if (compact) 2.dp else 5.dp
-    // 房主视图：该玩家是否有正在进行的 MOD 同步会话（用于显示 per-client 进度环与当前模组信息）
-    val transfer = if (room.isHost) UI.hostTransferSnapshots.firstOrNull { it.client == player.client } else null
     Box(modifier) {
         KickPlayerContextMenuAreaMultiplatform(player) {
             Row(
@@ -2665,17 +2700,8 @@ private fun RoomPlayerTableRow(
                 val baseName = player.name + if (player.startingUnit != -1) {
                     " - ${options.firstOrNull { it.first == player.startingUnit }?.second ?: "Unknown"}"
                 } else ""
-                val nameText = if (transfer != null) {
-                    val pct = if (transfer.totalBytes > 0)
-                        (transfer.sentBytes * 100 / transfer.totalBytes).coerceIn(0, 100) else 0
-                    if (compact) {
-                        "$baseName · ${transfer.currentModName} $pct%"
-                    } else {
-                        "$baseName · ${transfer.currentModName} ${fmtMB(transfer.sentBytes)}/${fmtMB(transfer.totalBytes)}MB $pct%"
-                    }
-                } else baseName
                 TableCell(
-                    nameText,
+                    baseName,
                     color = if (player.color != -1) {
                         Player.getTeamColor(player.color)
                     } else {
@@ -2685,29 +2711,17 @@ private fun RoomPlayerTableRow(
                     drawStroke = false,
                     modifier = Modifier.fillMaxHeight(),
                 ) {
-                    if (transfer != null || !player.data.ready) {
+                    if (!player.data.ready) {
                         // Box 纵向 fillMaxHeight + 居中，修复原实现里小圆圈在格内偏上、视觉中心偏离的问题
                         Box(
                             modifier = Modifier.fillMaxHeight().padding(end = 4.dp),
                             contentAlignment = Alignment.Center,
                         ) {
-                            if (transfer != null) {
-                                val ringProgress = if (transfer.totalBytes > 0) {
-                                    (transfer.sentBytes.toFloat() / transfer.totalBytes).coerceIn(0f, 1f)
-                                } else 0f
-                                CircularProgressIndicator(
-                                    progress = { ringProgress },
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(if (compact) 12.dp else 16.dp),
-                                    strokeWidth = if (compact) 1.5.dp else 2.dp,
-                                )
-                            } else {
-                                CircularProgressIndicator(
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(if (compact) 12.dp else 16.dp),
-                                    strokeWidth = if (compact) 1.5.dp else 2.dp,
-                                )
-                            }
+                            CircularProgressIndicator(
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(if (compact) 12.dp else 16.dp),
+                                strokeWidth = if (compact) 1.5.dp else 2.dp,
+                            )
                         }
                     }
                 }
@@ -2917,6 +2931,333 @@ private fun PublishedRoomExpiryBar(
             modifier = Modifier.fillMaxWidth().height(if (compact) 4.dp else 5.dp),
             color = barColor,
             trackColor = MaterialTheme.colorScheme.surfaceContainer
+        )
+    }
+}
+
+
+/**
+ * 房主视角的模组同步状态条：仅在开启「传输模组」且为房主时显示。
+ * 状态由 [ModSyncController.hostSyncState] 驱动，上传中显示进度，就绪/失败常显。
+ */
+@Composable
+private fun ModSyncHostStatusBar(
+    isHost: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    if (!isHost) return
+    val state = ModSyncController.hostSyncState
+    if (state is ModSyncController.HostSyncState.Off) return
+
+    val (text, color) = when (state) {
+        is ModSyncController.HostSyncState.Preparing -> readI18n(
+            "modSync.statusUploading",
+            I18nType.RWPP,
+            state.doneCount.toString(),
+            state.totalCount.toString(),
+            SizeUtils.byteToMB(state.uploadedBytes).toString(),
+            SizeUtils.byteToMB(state.totalBytes).toString(),
+        ) to MaterialTheme.colorScheme.primary
+
+        ModSyncController.HostSyncState.Ready ->
+            readI18n("modSync.statusReady", I18nType.RWPP) to Color(0xFF4CAF50)
+
+        is ModSyncController.HostSyncState.Error -> readI18n(
+            "modSync.statusError",
+            I18nType.RWPP,
+            state.message,
+        ) to MaterialTheme.colorScheme.error
+
+        ModSyncController.HostSyncState.Off -> return
+    }
+
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (state is ModSyncController.HostSyncState.Preparing) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(12.dp),
+                strokeWidth = 1.5.dp,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        Text(
+            text,
+            style = MaterialTheme.typography.bodySmall,
+            color = color,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** 字节数格式化为一位小数 MB（如 1.2）。commonMain 无 String.format，故手写截断到一位小数。 */
+private fun fmtMB(bytes: Long): String {
+    val tenths = (bytes / 1048576.0 * 10).toLong()
+    return "${tenths / 10}.${tenths % 10}"
+}
+
+/**
+ * 房主视角：尚未进房、正在带外同步模组的加入者列表。
+ * 视觉复刻旧 [RoomModSyncStrip]（下载图标 + 流光进度条 + 百分比 + 模组计数徽章）。
+ */
+@Composable
+private fun RoomPendingSyncPanel(
+    isHost: Boolean,
+    compact: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    if (!isHost) return
+    if (ModSyncController.hostSyncState is ModSyncController.HostSyncState.Off &&
+        !ModSyncController.hostSyncRequested
+    ) {
+        return
+    }
+    val peers = ModSyncController.hostPeerSnapshots
+    if (peers.isEmpty()) return
+
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp),
+    ) {
+        Text(
+            readI18n("modSync.pendingPeersTitle", I18nType.RWPP, peers.size.toString()),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        peers.forEach { peer ->
+            RoomPendingSyncPeerRow(peer = peer, compact = compact)
+        }
+    }
+}
+
+@Composable
+private fun RoomPendingSyncPeerRow(
+    peer: SyncPeerSnapshot,
+    compact: Boolean,
+) {
+    val borderPulse by rememberInfiniteTransition(label = "pending sync border").animateFloat(
+        initialValue = 0.45f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "pending sync border alpha",
+    )
+    val rowShape = RoundedCornerShape(if (compact) 6.dp else 8.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(
+                BorderStroke(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = borderPulse)),
+                rowShape,
+            )
+            .padding(if (compact) 4.dp else 6.dp),
+    ) {
+        Text(
+            peer.displayName,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = if (compact) 8.dp else 12.dp),
+        )
+        RoomPendingSyncStrip(peer = peer, compact = compact)
+    }
+}
+
+/**
+ * 待进房同步者进度条（复刻旧房主玩家行内 strip）。
+ * [SyncPeerPhase.WAITING_HOST] / [SyncPeerPhase.APPLYING] / [SyncPeerPhase.JOINING] 使用不确定进度条。
+ */
+@Composable
+private fun RoomPendingSyncStrip(peer: SyncPeerSnapshot, compact: Boolean) {
+    val indeterminate = peer.phase == SyncPeerPhase.WAITING_HOST ||
+        peer.phase == SyncPeerPhase.APPLYING ||
+        peer.phase == SyncPeerPhase.JOINING
+    val progress = if (!indeterminate && peer.currentTotal > 0) {
+        (peer.currentBytes.toFloat() / peer.currentTotal).coerceIn(0f, 1f)
+    } else 0f
+    val animatedProgress by animateFloatAsState(
+        targetValue = progress,
+        animationSpec = tween(220),
+        label = "pending sync progress",
+    )
+    val percent = (progress * 100).roundToInt()
+    val statusLabel = when (peer.phase) {
+        SyncPeerPhase.WAITING_HOST -> readI18n("modSync.phaseWaitingHost", I18nType.RWPP)
+        SyncPeerPhase.APPLYING -> readI18n("modSync.phaseApplying", I18nType.RWPP)
+        SyncPeerPhase.JOINING -> readI18n("modSync.phaseJoining", I18nType.RWPP)
+        else -> peer.currentModName.ifBlank { readI18n("modSync.phaseDownloading", I18nType.RWPP) }
+    }
+    val modCount = peer.modCount.coerceAtLeast(1)
+    val modIndexDisplay = (peer.modIndex + 1).coerceIn(1, modCount)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                start = if (compact) 8.dp else 12.dp,
+                end = if (compact) 8.dp else 12.dp,
+                bottom = if (compact) 4.dp else 6.dp,
+                top = 2.dp,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 8.dp),
+    ) {
+        ModSyncDownloadGlyph(
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(if (compact) 9.dp else 11.dp),
+        )
+        Text(
+            statusLabel,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (!compact && !indeterminate) {
+            Text(
+                "${fmtMB(peer.currentBytes)}/${fmtMB(peer.currentTotal)}MB",
+                style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+        if (indeterminate) {
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .weight(if (compact) 0.9f else 1.2f)
+                    .height(if (compact) 4.dp else 5.dp),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceContainer,
+            )
+        } else {
+            ModSyncProgressBar(
+                progress = animatedProgress,
+                modifier = Modifier
+                    .weight(if (compact) 0.9f else 1.2f)
+                    .height(if (compact) 4.dp else 5.dp),
+            )
+            Text(
+                "$percent%",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontFeatureSettings = "tnum",
+                ),
+                color = MaterialTheme.colorScheme.primary,
+                textAlign = TextAlign.End,
+                maxLines = 1,
+                modifier = Modifier.widthIn(min = if (compact) 26.dp else 32.dp),
+            )
+            Text(
+                "$modIndexDisplay/$modCount",
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f))
+                    .padding(horizontal = if (compact) 4.dp else 6.dp, vertical = 2.dp),
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontFeatureSettings = "tnum",
+                ),
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/** 细圆角渐变进度条：轨道 + 主色渐变填充 + 流光扫过 + 进度端点光斑。 */
+@Composable
+private fun ModSyncProgressBar(progress: Float, modifier: Modifier = Modifier) {
+    val trackColor = MaterialTheme.colorScheme.surfaceContainer
+    val fillStartColor = MaterialTheme.colorScheme.inversePrimary
+    val fillEndColor = MaterialTheme.colorScheme.primary
+    val shimmer by rememberInfiniteTransition(label = "room mod sync shimmer").animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1400, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "room mod sync shimmer offset",
+    )
+
+    Canvas(modifier = modifier) {
+        val radius = size.height / 2f
+        drawRoundRect(color = trackColor, cornerRadius = CornerRadius(radius, radius))
+
+        val fillWidth = size.width * progress.coerceIn(0f, 1f)
+        if (fillWidth > 0f) {
+            val fillPath = Path().apply {
+                addRoundRect(RoundRect(0f, 0f, fillWidth, size.height, CornerRadius(radius, radius)))
+            }
+            clipPath(fillPath) {
+                drawRoundRect(
+                    brush = Brush.horizontalGradient(
+                        colors = listOf(fillStartColor, fillEndColor),
+                        startX = 0f,
+                        endX = size.width,
+                    ),
+                    cornerRadius = CornerRadius(radius, radius),
+                )
+                val bandWidth = size.height * 2.5f
+                val sweep = shimmer * (fillWidth + bandWidth * 2f) - bandWidth
+                val band = Path().apply {
+                    moveTo(sweep, size.height)
+                    lineTo(sweep + bandWidth * 0.5f, 0f)
+                    lineTo(sweep + bandWidth, 0f)
+                    lineTo(sweep + bandWidth * 0.5f, size.height)
+                    close()
+                }
+                drawPath(band, Color.White.copy(alpha = 0.16f))
+            }
+            drawCircle(
+                color = Color.White.copy(alpha = 0.85f),
+                radius = radius * 0.45f,
+                center = Offset((fillWidth - radius).coerceAtLeast(radius), size.height / 2f),
+            )
+        }
+    }
+}
+
+/** 手绘下载图标（箭杆 + 两翼 + 托盘线）。 */
+@Composable
+private fun ModSyncDownloadGlyph(tint: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val strokeWidth = minOf(w, h) * 0.16f
+        val cx = w / 2f
+        drawLine(
+            color = tint,
+            start = Offset(cx, h * 0.06f),
+            end = Offset(cx, h * 0.52f),
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Round,
+        )
+        val head = Path().apply {
+            moveTo(cx - w * 0.26f, h * 0.38f)
+            lineTo(cx, h * 0.64f)
+            lineTo(cx + w * 0.26f, h * 0.38f)
+        }
+        drawPath(
+            head,
+            tint,
+            style = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round),
+        )
+        drawLine(
+            color = tint,
+            start = Offset(w * 0.10f, h * 0.88f),
+            end = Offset(w * 0.90f, h * 0.88f),
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Round,
         )
     }
 }

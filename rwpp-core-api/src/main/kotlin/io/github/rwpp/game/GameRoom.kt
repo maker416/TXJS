@@ -8,7 +8,6 @@
 package io.github.rwpp.game
 
 import io.github.rwpp.commands
-import io.github.rwpp.game.data.RoomOption
 import io.github.rwpp.game.map.FogMode
 import io.github.rwpp.game.map.GameMap
 import io.github.rwpp.game.map.MapType
@@ -51,16 +50,6 @@ interface GameRoom {
      * Transform the map before loading. (if host)
      */
     var gameMapTransformer: ((XMLMap) -> Unit)?
-
-    /**
-     * Describe the current room is whether hosted by a RWPP protocol client (or server).
-     */
-    var isRWPPRoom: Boolean
-
-    /**
-     * The extra option of the RWPP room. If not, all the options are default.
-     */
-    var option: RoomOption
 
     /**
      * Describe whether client is connecting a network game.

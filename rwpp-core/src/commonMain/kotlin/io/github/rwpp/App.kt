@@ -53,7 +53,7 @@ import io.github.rwpp.coil.ImageableFetcherFactory
 import io.github.rwpp.coil.ImageableKeyer
 import io.github.rwpp.config.CoreData
 import io.github.rwpp.config.Settings
-import io.github.rwpp.core.Logic
+import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.broadcast
 import io.github.rwpp.event.events.KeyboardEvent
@@ -843,22 +843,11 @@ fun App(
 
                 LoadingView(reloadingModViewVisible, onLoaded = {}) { null }
 
-                // 主动取消下载：同步作废传输状态 + 断开房间（触发房主 PlayerLeaveEvent 取消其发送 Job）+ 回列表。
-                // 弹窗 enableDismiss=false，点遮罩/空白不再误触断连；取消仅走卡片内的显式按钮。
+                // 主动取消下载：取消正在进行的加入前带外同步。此时尚未建立游戏连接，无需断连；
+                // 同步协程取消后会自行复位 UI.receivingMod* 状态并中止加入流程。
                 val onCancelDownload: () -> Unit = {
-                    Logic.cancelTransfer()
+                    ModSyncController.cancelPreJoin()
                     UI.showNetworkDialog = false
-                    UI.receivingNetworkDialogTitle = ""
-                    UI.receivingModName = ""
-                    UI.receivingModProgress = 0f
-                    UI.receivingModReceivedBytes = 0L
-                    UI.receivingModTotalBytes = 0L
-                    UI.receivingModTotalCount = 0
-                    UI.receivingModDoneCount = 0
-                    val game = appKoin.get<Game>()
-                    game.gameRoom.disconnect("cancelled by user")
-                    UI.showMultiplayerView = true
-                    UI.showRoomView = false
                 }
 
                 AnimatedAlertDialog(
@@ -908,9 +897,9 @@ fun App(
 }
 
 /**
- * 房主 MOD 同步下载进度卡片。
+ * 加入前模组同步下载进度卡片。
  * 复用 [io.github.rwpp.widget.LoadingView] 的视觉语言：左侧色条 + 阶段标签 + 计数徽章 + 字节详情 + 确定值进度条。
- * 进度数据来自 [io.github.rwpp.ui.UI] 的 receivingMod* 状态，由 Logic 下载流程实时刷新。
+ * 进度数据来自 [io.github.rwpp.ui.UI] 的 receivingMod* 状态，由 ModSyncController 带外同步流程实时刷新。
  */
 @Composable
 private fun NetworkModDownloadingCard(onCancel: () -> Unit) {

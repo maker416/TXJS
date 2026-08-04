@@ -33,14 +33,34 @@ class BundleParseTest {
     }
 
     @Test
-    fun modManifestKeysExistInAllBundles() {
+    fun modSyncKeysExistInAllBundles() {
         bundleNames.forEach { name ->
             val table = Toml.parseToTomlTable(File(bundleDir, name).readText())
-            val mod = table["mod"] as? TomlTable
-            assertNotNull(mod, "[mod] table missing in $name")
-            listOf("manifestTimeout", "manifestPreparing", "manifestFailed", "manifestFailedDetail").forEach { key ->
-                assertTrue(mod.containsKey(key), "mod.$key missing in $name")
+            val modSync = table["modSync"] as? TomlTable
+            assertNotNull(modSync, "[modSync] table missing in $name")
+            listOf(
+                "hostPreparing",
+                "hostPreparingTimeout",
+                "syncFailed",
+                "syncFailedDetail",
+                "statusUploading",
+                "statusReady",
+                "statusError",
+                "pendingPeersTitle",
+                "phaseWaitingHost",
+                "phaseDownloading",
+                "phaseApplying",
+                "phaseJoining",
+            ).forEach { key ->
+                assertTrue(modSync.containsKey(key), "modSync.$key missing in $name")
             }
+            val room = table["multiplayer"] as? TomlTable
+            val roomTable = room?.get("room") as? TomlTable
+            assertNotNull(roomTable, "[multiplayer.room] missing in $name")
+            assertTrue(
+                roomTable.containsKey("playersStillSyncing"),
+                "multiplayer.room.playersStillSyncing missing in $name",
+            )
         }
     }
 }

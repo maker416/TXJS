@@ -53,7 +53,14 @@ fun isLegacyMasterserverRoomListUrl(url: String): Boolean {
 }
 
 /**
- * Drop legacy masterserver URLs; fall back to [DEFAULT_ROOM_LIST_API_URLS] when none remain.
+ * 旧版 RWList 服务基地址（已迁移至新域名），命中时映射为 [DEFAULT_ROOM_LIST_API_URLS]，
+ * 使已持久化的玩家配置自动跟随迁移，无需手动改设置。
+ */
+private const val DEPRECATED_RWLIST_IP_BASE_URL = "http://210.16.166.71:11450"
+
+/**
+ * Drop legacy masterserver URLs and migrate deprecated mirrors to the current
+ * default; fall back to [DEFAULT_ROOM_LIST_API_URLS] when none remain.
  */
 fun migrateRoomListApiUrls(roomListApiUrls: String): String {
     val parts = roomListApiUrls
@@ -61,8 +68,11 @@ fun migrateRoomListApiUrls(roomListApiUrls: String): String {
         .map { normalizeRwListBaseUrl(it) }
         .filter { it.isNotEmpty() }
     if (parts.isEmpty()) return DEFAULT_ROOM_LIST_API_URLS
-    val rwListBases = parts.filterNot(::isLegacyMasterserverRoomListUrl)
-    return if (rwListBases.isEmpty()) DEFAULT_ROOM_LIST_API_URLS else rwListBases.joinToString(";")
+    val migrated = parts
+        .filterNot(::isLegacyMasterserverRoomListUrl)
+        .map { if (it == DEPRECATED_RWLIST_IP_BASE_URL) DEFAULT_ROOM_LIST_API_URLS else it }
+        .distinct()
+    return if (migrated.isEmpty()) DEFAULT_ROOM_LIST_API_URLS else migrated.joinToString(";")
 }
 
 fun parseRwListBaseUrls(roomListApiUrls: String): List<String> =

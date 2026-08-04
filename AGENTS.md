@@ -73,7 +73,7 @@
   - `runtime/InjectApi.kt` — 注入 API
   - `InjectInfo.kt`、`InjectMode.kt`、`InterruptResult.kt`、`ClassTree.kt`、`GameLibraries.kt`、`BuildLogger.kt`
 - `io/` — IO 工具
-- `net/` — 网络层：房间列表解析、数据包定义、版本查询、房主模组传输调度与清单缓存；**真正的单元测试集中于此**（`RwListParserTest.kt`、`ModPacketTest.kt`、`HostManifestCacheTest.kt`）
+- `net/` — 网络层：房间列表解析、数据包定义、版本查询；`net/sync/` — 模组同步服务器客户端（DTO、key 推导、OkHttp 客户端）；**真正的单元测试集中于此**（`RwListParserTest.kt`、`ModSyncKeysTest.kt`、`ModSyncModelsTest.kt`）
 - `ui/` — UI 工具接口
 - `utils/` — 通用工具
 
@@ -224,14 +224,27 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 注入模式（`InjectMode`）：`Override`（覆盖原方法）、`InsertBefore`（插入前置逻辑，要求返回 `Any`）等。
 
+## 模组同步（带外方案）
+
+**游戏联机通讯完全保持原版**，模组同步是启动器自身的带外功能，不注入任何自定义联机包。
+
+- **中转服务端**：独立 Go 服务 `relaymod`（源码在 `D:\workspace\RW\relaymod`，非本仓库模块），部署在公网 IPv4；仅标准库 `net/http`。房间同步记录（清单 + TTL + secret）与内容寻址 blob（按 SHA-256 去重存储）；另提供加入者进度 Presence（内存态，15s TTL，不落盘）。
+- **客户端协议层**：`rwpp-core-api` 的 `net/sync/` —— `ModSyncModels.kt`（DTO，snake_case 与 Go 对齐）、`ModSyncKeys.kt`（房间 key 推导：`code:<短码>`、发布后绑定 `sid:<server_id>` 别名；直连 IP 房不提供同步）、`ModSyncClient.kt`（OkHttp，多 baseUrl failover；含 peer upsert/list/delete）。
+- **编排层**：`rwpp-core` 的 `core/ModSyncController.kt` ——
+  - 房主侧：开房勾选「传输模组」后进房拿到短码即注册（status=preparing）→ `files/check` 查缺 → 上传缺失 blob → ready → 60s 心跳续期 → 发布列表后绑定 sid 别名 → 离房（`DisconnectEvent`）注销；注册成功后每 1s `GET /rooms/{key}/peers` 刷新 `hostPeerSnapshots`。
+  - 加入者侧：`Multiplayer.kt` 的 `LoadingView.loadContent` 中、`directJoinServer` **之前**执行 `preJoinSync`：查清单（404=无同步，按原版加入）→ preparing 轮询（≤60s，同时上报 `waiting_host`）→ diff 本地（三路匹配）→ 若引擎当前启用集合已与清单完全一致则跳过下载/`modReload` 直接 `joining`；否则下载缺失 → 启用所需 mod + `modReload(forceImmediate=true)`（`applying` + 5s 心跳）→ 切 `joining` 心跳并延后清理 → `directJoinServer` → `finishJoinerPresence()`；失败/取消用 NonCancellable DELETE。
+- **房主进度 UI**：`MultiplayerRoom` 的 `RoomPendingSyncPanel`（复刻旧 `RoomModSyncStrip` 视觉：流光进度条 / 百分比 / 模组计数；`joining` 显示「正在进入房间」）；有活跃 peer 时拦截开局（`playersStillSyncing`）。
+- **服务器地址配置**：`MultiplayerPreferences.modSyncApiUrls`（`;` 分隔多镜像，常量 `DEFAULT_MOD_SYNC_API_URLS`）。
+- **已移除的旧方案**（勿恢复）：自定义联机包 500-511（`ModPacket`）、`HostModTransferScheduler`、`HostManifestCache`、`UnitEngineInject` 校验拦截、PREREGISTER_INFO(161) 中的 `RoomOption` TOML 与 `GameRoom.isRWPPRoom/option`、协议版本检查。
+
 ## 测试策略
 
 当前测试覆盖度**极低**，以手动/集成测试为主：
 
 - **单元测试**：`rwpp-core-api/src/test/kotlin/`
   - `RwListParserTest.kt` — 房间列表 JSON 解析、URL 迁移、可加入性过滤、mod 房间版本映射等
-  - `ModPacketTest.kt` — 模组同步协议包（含 507 清单心跳包）的序列化往返与非法输入拒绝
-  - `HostManifestCacheTest.kt` — 房主清单缓存的指纹计算（顺序无关、目录递归、mtime/size 敏感）与单条目语义
+  - `ModSyncKeysTest.kt` — 模组同步 key 推导（`sid:`/`code:`）与模组集合指纹计算（顺序无关、目录递归、mtime/size 敏感）
+  - `ModSyncModelsTest.kt` — 同步协议 DTO 的 JSON 序列化往返与 snake_case 字段名锚定（防与 Go 端漂移）
   - 使用 `kotlin.test` 断言（`assertEquals`、`assertTrue`、`assertFalse`、`assertNull`）
 - **资源校验测试**：`rwpp-core/src/test/kotlin/BundleParseTest.kt`
   - 用与运行时相同的方式实解析两个 `bundle_*.toml`，并检查模组同步相关键存在，把 TOML 非法挡在编译期

@@ -24,8 +24,11 @@ import androidx.compose.ui.unit.dp
 import io.github.rwpp.core.LoadingContext
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 var loadingMessage by mutableStateOf("")
 
@@ -43,15 +46,32 @@ fun LoadingView(
     cancellable: Boolean = false,
     loadContent: suspend LoadingContext.() -> Boolean?
 ) {
+    // 必须持有可取消的 Job：关闭对话框时立刻 cancel，避免退出动画期间后台仍跑完
+    // preJoinSync / directJoinServer 导致「取消后仍进房」。
+    var loadJob by remember { mutableStateOf<Job?>(null) }
+    var loadFinished by remember { mutableStateOf(false) }
 
-    val scope = rememberCoroutineScope()
+    fun cancelLoadIfRunning() {
+        if (!loadFinished) {
+            loadJob?.cancel()
+            loadJob = null
+        }
+    }
 
     AnimatedAlertDialog(
         visible,
-        onDismissRequest = onLoaded,
+        onDismissRequest = {
+            cancelLoadIfRunning()
+            onLoaded()
+        },
         enableDismiss = cancellable
     ) { dismiss ->
         var cancel by remember { mutableStateOf(false) }
+
+        fun dismissAndCancel() {
+            cancelLoadIfRunning()
+            dismiss()
+        }
 
         BorderCard(
             modifier = Modifier
@@ -61,19 +81,33 @@ fun LoadingView(
             backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
         ) {
             LaunchedEffect(Unit) {
-                scope.launch(Dispatchers.IO) {
-                    val result = loadContent(LoadingContext { loadingMessage = it })
-                    if (result == true) {
-                        loadingMessage = ""
-                        dismiss()
-                    } else if (result == false) {
-                        cancel = true
+                val job = launch(Dispatchers.IO) {
+                    try {
+                        val result = loadContent(LoadingContext { loadingMessage = it })
+                        loadFinished = true
+                        withContext(Dispatchers.Main.immediate) {
+                            when (result) {
+                                true -> {
+                                    loadingMessage = ""
+                                    dismiss()
+                                }
+                                false -> cancel = true
+                                null -> Unit
+                            }
+                        }
+                    } catch (_: CancellationException) {
+                        // 用户关闭对话框或组合销毁：中止后续进房/开房逻辑
                     }
                 }
+                loadJob = job
+                job.join()
             }
 
             Box(modifier = Modifier.fillMaxWidth()) {
-                if (cancellable || cancel) ExitButton(dismiss)
+                // 可取消时点关闭必须走 dismissAndCancel，在退出动画开始前就掐断 IO 协程
+                if (cancellable || cancel) {
+                    ExitButton(if (cancellable) ({ dismissAndCancel() }) else dismiss)
+                }
 
                 Column(
                     modifier = Modifier

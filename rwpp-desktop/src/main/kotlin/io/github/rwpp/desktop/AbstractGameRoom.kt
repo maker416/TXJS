@@ -19,7 +19,6 @@ import io.github.rwpp.game.ConnectingPlayer
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.GameRoom
 import io.github.rwpp.game.Player
-import io.github.rwpp.game.data.RoomOption
 import io.github.rwpp.game.map.*
 import io.github.rwpp.game.team.TeamMode
 import io.github.rwpp.game.units.UnitType
@@ -142,8 +141,6 @@ abstract class AbstractGameRoom  : GameRoom {
         }
     override val mods: Array<String>
         get() = roomMods
-    override var isRWPPRoom: Boolean = false
-    override var option: RoomOption = RoomOption()
     override val isConnecting: Boolean
         get() = GameEngine.B().bX.B
     override val isStartGame: Boolean
@@ -351,8 +348,6 @@ abstract class AbstractGameRoom  : GameRoom {
 
     override fun disconnect(reason: String) {
         singlePlayer = false
-        isRWPPRoom = false
-        option = RoomOption()
         bannedUnitList = listOf()
         roomMods = arrayOf()
         teamMode = null

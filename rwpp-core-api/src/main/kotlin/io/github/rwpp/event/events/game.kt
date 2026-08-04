@@ -73,13 +73,6 @@ class ChatMessageEvent(var sender: String, var message: String, val player: Play
 class SystemMessageEvent(val message: String) : GameEvent()
 
 /**
- * Event that is fired when the game compares the local player's mod list with the required unit data from the server.
- *
- * If it is intercepted, the game continues as normal.
- */
-class ModCheckEvent(val requiredMods: List<String>) : GameEvent()
-
-/**
  * Event that is fired when the game reloads the mod list.
  */
 class ReloadModEvent : GameEvent()

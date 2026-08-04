@@ -9,8 +9,12 @@ package io.github.rwpp.config
 
 import io.github.rwpp.rwpp_core_api.BuildConfig
 
-/** Base URL of the online presence service (no trailing path). */
-const val DEFAULT_ONLINE_PRESENCE_API_URL = "http://210.16.166.71:11451"
+/**
+ * 在线人数/会话 Presence 服务 base URL（不含路径）。
+ *
+ * 注意子域是 **`oline`**（不是 `online`）：线上即按此主机名部署，属有意拼写，勿「纠正」为 online。
+ */
+const val DEFAULT_ONLINE_PRESENCE_API_URL = "http://oline.xn--rhqr8xvr4ahqsgka.com:11451"
 
 /**
  * 安装包来源渠道标识，随注册 Session 上报，用于按渠道统计新增/留存（如广告投放效果）。

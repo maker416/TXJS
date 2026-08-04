@@ -373,6 +373,23 @@ class RwListParserTest {
     }
 
     @Test
+    fun migrateDeprecatedRwListIpToNewDomain() {
+        // 旧 IP 默认地址迁移为新域名默认
+        assertEquals(
+            DEFAULT_ROOM_LIST_API_URLS,
+            migrateRoomListApiUrls("http://210.16.166.71:11450"),
+        )
+        // 多镜像时旧 IP 原位替换，其它镜像保留
+        assertEquals(
+            listOf(DEFAULT_ROOM_LIST_API_URLS, "http://example.com"),
+            parseRwListBaseUrls("http://210.16.166.71:11450;http://example.com"),
+        )
+        // 幂等：迁移结果再次迁移不变化
+        val migratedOnce = migrateRoomListApiUrls("http://210.16.166.71:11450;http://example.com")
+        assertEquals(migratedOnce, migrateRoomListApiUrls(migratedOnce))
+    }
+
+    @Test
     fun parseBaseUrls() {
         assertEquals(
             listOf(DEFAULT_ROOM_LIST_API_URLS, "http://example.com"),

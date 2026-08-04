@@ -11,7 +11,10 @@ import kotlinx.serialization.Serializable
 import org.koin.core.annotation.Single
 
 /** Default RWList service base URLs (no path); multiple mirrors separated by `;`. */
-const val DEFAULT_ROOM_LIST_API_URLS = "http://210.16.166.71:11450"
+const val DEFAULT_ROOM_LIST_API_URLS = "http://list.xn--rhqr8xvr4ahqsgka.com:11450"
+
+/** 默认模组同步服务器 base URL（不含路径）；多个镜像用 `;` 分隔。 */
+const val DEFAULT_MOD_SYNC_API_URLS = "http://modsync.铁壳锈世纪.com:11453"
 
 /**
  * Multiplayer player preferences
@@ -25,6 +28,7 @@ data class MultiplayerPreferences(
     var playerLimitRangeTo: Int = 100,
     var joinServerAddress: String = "",
     var roomListApiUrls: String = DEFAULT_ROOM_LIST_API_URLS,
+    var modSyncApiUrls: String = DEFAULT_MOD_SYNC_API_URLS,
     var allServerConfig: MutableList<ServerConfig> = mutableListOf(),
     var roomLabelFilterSelection: List<String> = emptyList(),
 ) : Config

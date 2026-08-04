@@ -17,7 +17,6 @@ import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.ChatMessageEvent
 import io.github.rwpp.event.events.SystemMessageEvent
 import io.github.rwpp.game.Game
-import io.github.rwpp.game.data.RoomOption
 import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
@@ -26,7 +25,6 @@ import io.github.rwpp.net.Client
 import io.github.rwpp.net.InternalPacketType
 import io.github.rwpp.net.Net
 import io.github.rwpp.ui.UI
-import net.peanuuutz.tomlkt.Toml
 import java.io.ByteArrayInputStream
 import java.io.DataInputStream
 import java.io.IOException
@@ -49,20 +47,7 @@ object NetworkInject {
                     if (this.C) return@with
                     val kVar16 = k(auVar)
                     val cVar14 = auVar.a
-                    val str = kVar16.l()
-                    if (str.startsWith(packageName)) {
-                        gameRoom.isRWPPRoom = true
-                        gameRoom.option = Toml.decodeFromString(RoomOption.serializer(), str.removePrefix(packageName))
-                        val v = gameRoom.option.protocolVersion
-                        if (v != protocolVersion) {
-                            gameRoom.disconnect()
-                            UI.showWarning(
-                                "Different protocol version. yours: $protocolVersion server's: $v",
-                                true
-                            )
-                            return@with
-                        }
-                    }
+                    kVar16.l()
                     val f11 = kVar16.f()
                     val f12 = kVar16.f()
                     kVar16.f()
@@ -106,7 +91,7 @@ object NetworkInject {
         val asVar = `as`()
         try {
             val B = GameEngine.B()
-            asVar.c(packageName + Toml.encodeToString(RoomOption.serializer(), gameRoom.option))
+            asVar.c(packageName)
             asVar.a(2)
             asVar.a(B.bX.e)
             asVar.a(B.c(true))
