@@ -1363,7 +1363,11 @@ private fun MultiplayerOption(
     var startingCredits by remember { mutableStateOf(room.startingCredits) }
     var maxPlayerCount by remember { mutableStateOf(room.maxPlayerCount) }
     var realIncomeMultiplier by remember { mutableStateOf(room.incomeMultiplier) }
+    var incomeMultiplierText by remember { mutableStateOf(room.incomeMultiplier.toString()) }
     var gameSpeed by remember { mutableStateOf(room.gameSpeed) }
+    var teamUnitCapHostedGame by remember {
+        mutableStateOf(configIO.getGameConfig<Int?>("teamUnitCapHostedGame"))
+    }
 
     val teamModes = remember { TeamMode.modes }
     val startingOptionList = remember { game.getStartingUnitOptions() }
@@ -1387,6 +1391,13 @@ private fun MultiplayerOption(
             addAll(teamModes)
         }
     }
+    // 下拉索引必须挂在对话框层：LazyColumn item 滚出视口会 dispose remember，
+    // 若在 item 内用 room.* 重建，会把尚未 apply 的修改打回默认值。
+    val selectedDifficulty = (aiDifficulty + 2).coerceAtMost(Difficulty.entries.size - 1)
+    val selectedFog = fogMode.ordinal
+    val selectedStartingUnit =
+        startingOptionList.indexOfFirst { it.first == startingUnits }.coerceAtLeast(0)
+    val selectedTeam = teamMode?.let { teamModes.indexOf(it) + 1 } ?: 0
 
     BorderCard(
         modifier = Modifier
@@ -1434,72 +1445,51 @@ private fun MultiplayerOption(
 
             item {
                 RoomOptionFieldRow {
-                    var selectedDifficulty by remember(room) {
-                        mutableStateOf((room.aiDifficulty + 2).coerceAtMost(Difficulty.entries.size - 1))
-                    }
                     LargeDropdownMenu(
                         modifier = Modifier.weight(1f),
                         label = readI18n("common.difficulty"),
                         items = Difficulty.entries,
                         selectedIndex = selectedDifficulty,
                         selectedItemToString = ::difficultyDisplayName,
-                        onItemSelected = { index, _ -> selectedDifficulty = index },
+                        onItemSelected = { index, _ -> aiDifficulty = index - 2 },
                     )
-                    LaunchedEffect(selectedDifficulty) {
-                        aiDifficulty = selectedDifficulty - 2
-                    }
 
-                    var selectedFog by remember(room) { mutableStateOf(room.fogMode.ordinal) }
                     LargeDropdownMenu(
                         modifier = Modifier.weight(1f),
                         label = readI18n("common.fog"),
                         items = FogMode.entries,
                         selectedIndex = selectedFog,
                         selectedItemToString = ::fogModeDisplayName,
-                        onItemSelected = { index, _ -> selectedFog = index },
+                        onItemSelected = { index, _ -> fogMode = FogMode.entries[index] },
                     )
-                    LaunchedEffect(selectedFog) {
-                        fogMode = FogMode.entries[selectedFog]
-                    }
                 }
             }
 
             item {
                 RoomOptionFieldRow {
-                    var selectedStartingUnit by remember(room) {
-                        mutableStateOf(startingOptionList.indexOfFirst { it.first == room.startingUnits }.coerceAtLeast(0))
-                    }
                     LargeDropdownMenu(
                         modifier = Modifier.weight(1f),
                         label = readI18n("multiplayer.room.startingUnit"),
                         items = startingOptionList,
                         selectedIndex = selectedStartingUnit,
                         selectedItemToString = { (_, s) -> localizeStartingUnitOption(s) },
-                        onItemSelected = { index, _ -> selectedStartingUnit = index },
+                        onItemSelected = { index, _ ->
+                            startingUnits = startingOptionList[index].first
+                        },
                     )
-                    LaunchedEffect(selectedStartingUnit) {
-                        startingUnits = startingOptionList[selectedStartingUnit].first
-                    }
 
-                    var selectedCredits by remember(room) { mutableStateOf(room.startingCredits) }
                     LargeDropdownMenu(
                         modifier = Modifier.weight(1f),
                         label = readI18n("multiplayer.room.startingCredits"),
                         items = startingCreditLabels,
-                        selectedIndex = selectedCredits,
-                        onItemSelected = { index, _ -> selectedCredits = index },
+                        selectedIndex = startingCredits,
+                        onItemSelected = { index, _ -> startingCredits = index },
                     )
-                    LaunchedEffect(selectedCredits) {
-                        startingCredits = selectedCredits
-                    }
                 }
             }
 
             item {
                 RoomOptionFieldRow {
-                    var selectedTeam by remember {
-                        mutableStateOf(teamMode?.let { teamModes.indexOf(it) + 1 } ?: 0)
-                    }
                     LargeDropdownMenu(
                         modifier = Modifier.weight(1f),
                         label = readI18n("multiplayer.room.setTeam"),
@@ -1510,16 +1500,14 @@ private fun MultiplayerOption(
                             if (it is TeamMode) teamModeDisplayName(it) else it.toString()
                         },
                         onItemSelected = { index, _ ->
-                            selectedTeam = index
                             teamMode = if (index == 0) null else teamModes[index - 1]
                         },
                     )
 
-                    var incomeMultiplier by remember { mutableStateOf(room.incomeMultiplier.toString()) }
                     var incomeExpanded by remember { mutableStateOf(false) }
                     RWSingleOutlinedTextField(
                         readI18n("multiplayer.room.incomeMultiplier"),
-                        incomeMultiplier,
+                        incomeMultiplierText,
                         lengthLimitCount = 5,
                         typeInNumberOnly = true,
                         modifier = Modifier.weight(1f),
@@ -1536,25 +1524,23 @@ private fun MultiplayerOption(
                             BasicDropdownMenu(
                                 incomeExpanded,
                                 listOf(1f, 1.5f, 2f, 2.5f, 3f, 10f),
-                                onItemSelected = { _, v -> incomeMultiplier = v.toString() },
+                                onItemSelected = { _, v ->
+                                    incomeMultiplierText = v.toString()
+                                    realIncomeMultiplier = v
+                                },
                             ) {
                                 incomeExpanded = false
                             }
                         },
                     ) {
-                        incomeMultiplier = it
-                    }
-                    LaunchedEffect(incomeMultiplier) {
-                        realIncomeMultiplier = incomeMultiplier.toFloatOrNull() ?: 1f
+                        incomeMultiplierText = it
+                        realIncomeMultiplier = it.toFloatOrNull() ?: 1f
                     }
                 }
             }
 
             item {
                 RoomOptionFieldRow {
-                    var teamUnitCapHostedGame by remember {
-                        mutableStateOf(configIO.getGameConfig<Int?>("teamUnitCapHostedGame"))
-                    }
                     var unitCapExpanded by remember { mutableStateOf(false) }
                     LaunchedEffect(teamUnitCapHostedGame) {
                         val count = teamUnitCapHostedGame ?: 100
@@ -1628,10 +1614,9 @@ private fun MultiplayerOption(
             }
 
             item {
-                var range by remember { mutableStateOf(room.maxPlayerCount) }
                 Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp)) {
                     Text(
-                        "${readI18n("multiplayer.room.maxPlayer")}：$range",
+                        "${readI18n("multiplayer.room.maxPlayer")}：$maxPlayerCount",
                         modifier = Modifier.align(Alignment.CenterHorizontally).padding(bottom = 4.dp),
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurface,
@@ -1639,13 +1624,11 @@ private fun MultiplayerOption(
                     Slider(
                         valueRange = players.size.toFloat()..100f,
                         modifier = Modifier.fillMaxWidth(),
-                        value = range.toFloat(),
+                        value = maxPlayerCount.toFloat(),
                         enabled = room.isHost,
                         colors = RWSliderColors,
-                        onValueChange = { range = it.roundToInt().coerceAtLeast(10) },
-                        onValueChangeFinished = {
-                            if (range >= players.size) maxPlayerCount = range
-                            else range = room.maxPlayerCount
+                        onValueChange = {
+                            maxPlayerCount = it.roundToInt().coerceAtLeast(players.size.coerceAtLeast(10))
                         },
                     )
                 }
