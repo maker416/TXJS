@@ -30,7 +30,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -486,25 +485,25 @@ fun ModsView(
     @Composable
     fun StatPill(label: String, value: String, color: Color) {
         Surface(
-            shape = RoundedCornerShape(8.dp),
+            shape = RoundedCornerShape(6.dp),
             color = color.copy(alpha = .14f),
             border = BorderStroke(1.dp, color.copy(alpha = .45f))
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
                     label,
                     color = MaterialTheme.colorScheme.onSurface,
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     maxLines = 1
                 )
                 Text(
                     value,
                     color = color,
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.labelLarge,
                     maxLines = 1
                 )
             }
@@ -513,9 +512,9 @@ fun ModsView(
 
     @Composable
     fun SummaryStrip() {
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             StatPill(readI18n("mod.total"), mods.size.toString(), MaterialTheme.colorScheme.onSurfaceVariant)
             StatPill(readI18n("mod.enabled"), enabledTotal.toString(), MaterialTheme.colorScheme.primary)
@@ -546,54 +545,74 @@ fun ModsView(
     }
 
     @Composable
-    fun ModsTopBar(compact: Boolean, modifier: Modifier = Modifier) {
-        Column(
+    fun ModsTopBar(modifier: Modifier = Modifier) {
+        // 顶栏固定单行：分段/标题 + 统计 + 搜索图标（展开后同排输入框），高度留给左右模组列表
+        var searchExpanded by remember { mutableStateOf(filter.isNotBlank()) }
+        LaunchedEffect(filter) {
+            if (filter.isNotBlank()) searchExpanded = true
+        }
+        Row(
             modifier = modifier
                 .fillMaxWidth()
                 .padding(
-                    start = 16.dp,
-                    top = if (embedded) 6.dp else 14.dp,
-                    end = if (embedded || compact) 10.dp else 46.dp,
-                    bottom = 10.dp
+                    start = 12.dp,
+                    top = if (embedded) 8.dp else 12.dp,
+                    end = if (embedded) 10.dp else 46.dp,
+                    bottom = 6.dp,
                 ),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // 嵌入模式下分段由外壳提供；搜索独占一行，避免 IntrinsicSize.Max 与 weight 冲突。
-            if (!embedded) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+            if (onTabChange != null) {
+                ModsMapsSegmentedControl(
+                    selected = selectedTab,
+                    onSelect = onTabChange,
+                    modifier = Modifier.widthIn(min = 140.dp, max = 220.dp),
+                )
+            } else {
+                Text(
+                    readI18n("menu.mods"),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            if (searchExpanded) {
+                FilterField(modifier = Modifier.weight(1f))
+                IconButton(
+                    onClick = {
+                        filter = ""
+                        searchExpanded = false
+                    },
+                    modifier = Modifier.size(36.dp),
                 ) {
-                    if (onTabChange != null) {
-                        ModsMapsSegmentedControl(
-                            selected = selectedTab,
-                            onSelect = onTabChange,
-                            modifier = if (compact) Modifier.weight(1f) else Modifier,
-                        )
-                    } else {
-                        Text(
-                            readI18n("menu.mods"),
-                            style = MaterialTheme.typography.headlineSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
-                    }
-                    if (!compact) {
-                        Box(modifier = Modifier.weight(1f))
-                    }
-                    SummaryStrip()
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             } else {
                 SummaryStrip()
+                Spacer(modifier = Modifier.weight(1f))
+                IconButton(
+                    onClick = { searchExpanded = true },
+                    modifier = Modifier.size(36.dp),
+                ) {
+                    Icon(
+                        Icons.Default.Search,
+                        contentDescription = readI18n("mod.search"),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
-            FilterField(Modifier.fillMaxWidth())
         }
     }
 
     @Composable
-    fun ModCard(mod: Mod) {
+    fun ModCard(mod: Mod, dense: Boolean = false) {
         val isEnabled = mod.isEnabled
         val statusText = readI18n("mod.${if (isEnabled) "enabled" else "disabled"}")
         val statusColor = if (isEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
@@ -635,12 +654,14 @@ fun ModsView(
             }
         }
 
+        val thumbSize = if (dense) 48.dp else 72.dp
+        val cardPad = if (dense) 6.dp else 10.dp
         Row(
-            modifier = Modifier.fillMaxWidth().padding(10.dp),
+            modifier = Modifier.fillMaxWidth().padding(cardPad),
             verticalAlignment = Alignment.Top
         ) {
             Surface(
-                modifier = Modifier.size(72.dp),
+                modifier = Modifier.size(thumbSize),
                 shape = RoundedCornerShape(8.dp),
                 color = MaterialTheme.colorScheme.surface,
                 border = BorderStroke(2.dp, statusColor.copy(alpha = .75f))
@@ -652,11 +673,11 @@ fun ModsView(
                 )
             }
 
-            Spacer(Modifier.width(10.dp))
+            Spacer(modifier = Modifier.width(if (dense) 8.dp else 10.dp))
 
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                verticalArrangement = Arrangement.spacedBy(if (dense) 2.dp else 4.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -665,7 +686,11 @@ fun ModsView(
                 ) {
                     Text(
                         mod.name,
-                        style = MaterialTheme.typography.titleMedium,
+                        style = if (dense) {
+                            MaterialTheme.typography.titleSmall
+                        } else {
+                            MaterialTheme.typography.titleMedium
+                        },
                         color = MaterialTheme.colorScheme.primary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -677,7 +702,10 @@ fun ModsView(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    MetadataPill(statusText, statusColor)
+                    // dense 下状态已由左右分栏表达，省略状态 pill
+                    if (!dense) {
+                        MetadataPill(statusText, statusColor)
+                    }
                     MetadataPill(sourceTypeText, MaterialTheme.colorScheme.tertiary)
                     if (mod.isNetworkMod) {
                         MetadataPill(readI18n("mod.networkMod"), MaterialTheme.colorScheme.secondary)
@@ -730,7 +758,7 @@ fun ModsView(
                 if (description.isNotBlank()) {
                     ExpandableText(
                         text = description,
-                        collapsedMaxLine = 2,
+                        collapsedMaxLine = if (dense) 1 else 2,
                         style = MaterialTheme.typography.bodySmall.copy(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         ),
@@ -745,9 +773,9 @@ fun ModsView(
             Spacer(Modifier.width(8.dp))
 
             Column(
-                modifier = Modifier.width(70.dp),
+                modifier = Modifier.width(if (dense) 56.dp else 70.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(if (dense) 4.dp else 8.dp)
             ) {
                 Switch(
                     checked = isEnabled,
@@ -871,7 +899,7 @@ fun ModsView(
         }
     }
 
-    fun LazyListScope.ModList(data: List<Mod>) {
+    fun LazyListScope.ModList(data: List<Mod>, dense: Boolean = false) {
         if (data.isEmpty()) {
             item { EmptyModList() }
             return
@@ -894,9 +922,9 @@ fun ModsView(
                 )
                     .fillMaxWidth()
                     .wrapContentHeight()
-                    .padding(horizontal = 4.dp, vertical = 5.dp)
+                    .padding(horizontal = 4.dp, vertical = if (dense) 3.dp else 5.dp)
             ) {
-                ModCard(mod)
+                ModCard(mod, dense = dense)
             }
         }
     }
@@ -905,12 +933,12 @@ fun ModsView(
     fun Header(isEnabledList: Boolean, count: Int) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp)) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 5.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 3.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     readI18n("mod.${if (isEnabledList) "enabled" else "disabled"}"),
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.primary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -935,6 +963,7 @@ fun ModsView(
     fun ModListPanel(
         isEnabledList: Boolean,
         data: List<Mod>,
+        denseCards: Boolean = false,
         modifier: Modifier = Modifier
     ) {
         val state = rememberLazyListState()
@@ -942,7 +971,7 @@ fun ModsView(
             Header(isEnabledList, data.size)
             LazyColumnScrollbar(
                 listState = state,
-                modifier = Modifier.fillMaxWidth().weight(1f).padding(top = 3.dp),
+                modifier = Modifier.fillMaxWidth().weight(1f).padding(top = 2.dp),
                 thickness = ModListScrollbarThickness,
                 padding = ModListScrollbarPadding,
                 alwaysShowScrollBar = false,
@@ -957,7 +986,7 @@ fun ModsView(
                         bottom = 8.dp
                     )
                 ) {
-                    ModList(data)
+                    ModList(data, dense = denseCards)
                 }
             }
         }
@@ -1214,73 +1243,36 @@ fun ModsView(
     }
 
     @Composable
-    fun ModsBody(compact: Boolean, modifier: Modifier = Modifier) {
-        if (!compact) {
-            Column(modifier = modifier.fillMaxSize()) {
-                // 顶栏高度按百分比分配：按内容收缩、但上限为可用高度的 34%（超出部分裁剪），
-                // 防止系统大字体或横屏矮屏下顶部搜索框区域挤占列表空间，列表始终获得剩余空间
-                ModsTopBar(
-                    compact = false,
-                    modifier = Modifier
-                        .weight(0.34f, fill = false)
-                        .clipToBounds()
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    ModListPanel(
-                        isEnabledList = true,
-                        data = enabledMods,
-                        modifier = Modifier.weight(1f)
-                    )
-                    VerticalDivider(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .align(Alignment.CenterVertically),
-                        thickness = 2.dp,
-                        color = MaterialTheme.colorScheme.surfaceContainerHighest
-                    )
-                    ModListPanel(
-                        isEnabledList = false,
-                        data = disabledMods,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-        } else {
-            val state = rememberLazyListState()
-            LazyColumnScrollbar(
-                listState = state,
-                modifier = modifier
-                    .fillMaxSize()
-                    .padding(start = 8.dp, end = if (embedded) 8.dp else 40.dp),
-                thickness = ModListScrollbarThickness,
-                padding = ModListScrollbarPadding,
-                alwaysShowScrollBar = false,
-                selectionActionable = ScrollbarSelectionActionable.WhenVisible,
-                showItemIndicator = ListIndicatorSettings.Disabled
+    fun ModsBody(denseCards: Boolean, modifier: Modifier = Modifier) {
+        // 始终左右分栏：左=已启用，右=未启用；顶栏按内容高度，剩余全给列表
+        Column(modifier = modifier.fillMaxSize()) {
+            ModsTopBar()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    state = state,
-                    contentPadding = PaddingValues(
-                        end = if (embedded) 0.dp else ModListScrollbarReservedWidth,
-                        bottom = 12.dp
-                    )
-                ) {
-                    item { ModsTopBar(compact = true) }
-                    item { Header(true, enabledMods.size) }
-                    ModList(enabledMods)
-                    item {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Header(false, disabledMods.size)
-                    }
-                    ModList(disabledMods)
-                }
+                ModListPanel(
+                    isEnabledList = true,
+                    data = enabledMods,
+                    denseCards = denseCards,
+                    modifier = Modifier.weight(1f)
+                )
+                VerticalDivider(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .align(Alignment.CenterVertically),
+                    thickness = 2.dp,
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest
+                )
+                ModListPanel(
+                    isEnabledList = false,
+                    data = disabledMods,
+                    denseCards = denseCards,
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
     }
@@ -1289,27 +1281,19 @@ fun ModsView(
         containerColor = Color.Transparent,
         bottomBar = { ActionBar() }
     ) { paddingValues ->
-        // 左右分栏只依赖可用宽度：原先用 WindowManager.Small（宽或高任一不足即触发）
-        // 会在高度偏矮但宽度足够的分辨率下错误变成上下堆叠。
+        // 始终左右分栏；窄屏仅收紧卡片密度，不再跌回上下堆叠
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            val useSideBySide = maxWidth >= 700.dp
+            val denseCards = maxWidth < 840.dp
             if (embedded) {
-                ModsBody(compact = !useSideBySide, modifier = Modifier.fillMaxSize())
-            } else if (useSideBySide) {
-                ExpandedCard {
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        ModsBody(compact = false, modifier = Modifier.fillMaxSize())
-                        ExitButton { exit() }
-                    }
-                }
+                ModsBody(denseCards = denseCards, modifier = Modifier.fillMaxSize())
             } else {
                 ExpandedCard {
-                    Box {
-                        ModsBody(compact = true, modifier = Modifier.fillMaxSize())
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        ModsBody(denseCards = denseCards, modifier = Modifier.fillMaxSize())
                         ExitButton { exit() }
                     }
                 }

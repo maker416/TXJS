@@ -436,48 +436,68 @@ fun CustomMapsManagementView(
 
     @Composable
     fun MapsTopBar() {
-        Column(
+        // 与模组页一致：顶栏单行（分段 + 数量 + 搜索图标）
+        var searchExpanded by remember { mutableStateOf(filter.isNotBlank()) }
+        LaunchedEffect(filter) {
+            if (filter.isNotBlank()) searchExpanded = true
+        }
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(
-                    start = 16.dp,
-                    top = if (embedded) 6.dp else 14.dp,
+                    start = 12.dp,
+                    top = if (embedded) 8.dp else 12.dp,
                     end = if (embedded || compact) 10.dp else 46.dp,
-                    bottom = 10.dp,
+                    bottom = 6.dp,
                 ),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // 嵌入模式下分段由外壳提供。
-            if (!embedded) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+            if (onTabChange != null) {
+                ModsMapsSegmentedControl(
+                    selected = selectedTab,
+                    onSelect = onTabChange,
+                    modifier = Modifier.widthIn(min = 140.dp, max = 220.dp),
+                )
+            } else {
+                Text(
+                    readI18n("maps.title"),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            if (searchExpanded) {
+                SearchField(modifier = Modifier.weight(1f))
+                IconButton(
+                    onClick = {
+                        filter = ""
+                        searchExpanded = false
+                    },
+                    modifier = Modifier.size(36.dp),
                 ) {
-                    if (onTabChange != null) {
-                        ModsMapsSegmentedControl(
-                            selected = selectedTab,
-                            onSelect = onTabChange,
-                            modifier = if (compact) Modifier.weight(1f) else Modifier,
-                        )
-                    } else {
-                        Text(
-                            readI18n("maps.title"),
-                            style = MaterialTheme.typography.headlineSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
-                    }
-                    if (!compact) {
-                        Box(modifier = Modifier.weight(1f))
-                    }
-                    MapCountPill(filtered.size)
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             } else {
                 MapCountPill(filtered.size)
+                Spacer(modifier = Modifier.weight(1f))
+                IconButton(
+                    onClick = { searchExpanded = true },
+                    modifier = Modifier.size(36.dp),
+                ) {
+                    Icon(
+                        Icons.Default.Search,
+                        contentDescription = readI18n("maps.search"),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
-            SearchField(Modifier.fillMaxWidth())
         }
     }
 

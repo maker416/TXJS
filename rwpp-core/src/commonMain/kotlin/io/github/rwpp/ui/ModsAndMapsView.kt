@@ -17,7 +17,6 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -118,7 +117,7 @@ private fun Segment(
             text = label,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 8.dp),
+                .padding(horizontal = 12.dp, vertical = 6.dp),
             style = MaterialTheme.typography.labelLarge,
             color = fg,
             textAlign = TextAlign.Center,
@@ -130,8 +129,8 @@ private fun Segment(
 /**
  * 模组与自定义地图合一管理页。
  *
- * 共用一个 ExpandedCard 外壳：顶部分段与关闭按钮固定，
- * 仅内容区（含底栏）左右滑动切换。
+ * 共用 ExpandedCard 外壳与关闭按钮；分段控件下沉到各子页顶栏，
+ * 避免外壳再占一行高度。内容区左右滑动切换。
  */
 @Composable
 fun ModsAndMapsView(onExit: () -> Unit) {
@@ -152,50 +151,37 @@ fun ModsAndMapsView(onExit: () -> Unit) {
 
     ExpandedCard {
         Box(modifier = Modifier.fillMaxSize()) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, top = 14.dp, end = 46.dp, bottom = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    ModsMapsSegmentedControl(
-                        selected = tab,
-                        onSelect = { tab = it },
-                        modifier = Modifier.widthIn(min = 200.dp, max = 280.dp),
-                    )
-                }
-
-                AnimatedContent(
-                    targetState = tab,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    transitionSpec = {
-                        val toMaps = targetState == ModsMapsTab.Maps
-                        val enter = slideInHorizontally(
-                            animationSpec = tween(320),
-                            initialOffsetX = { full -> if (toMaps) full else -full },
-                        ) + fadeIn(animationSpec = tween(240))
-                        val exit = slideOutHorizontally(
-                            animationSpec = tween(320),
-                            targetOffsetX = { full -> if (toMaps) -full else full },
-                        ) + fadeOut(animationSpec = tween(200))
-                        enter togetherWith exit
-                    },
-                    label = "modsMapsContent",
-                ) { current ->
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        when (current) {
-                            ModsMapsTab.Mods -> ModsView(
-                                onExit = onExit,
-                                embedded = true,
-                            )
-                            ModsMapsTab.Maps -> CustomMapsManagementView(
-                                onExit = onExit,
-                                embedded = true,
-                            )
-                        }
+            AnimatedContent(
+                targetState = tab,
+                modifier = Modifier.fillMaxSize(),
+                transitionSpec = {
+                    val toMaps = targetState == ModsMapsTab.Maps
+                    val enter = slideInHorizontally(
+                        animationSpec = tween(320),
+                        initialOffsetX = { full -> if (toMaps) full else -full },
+                    ) + fadeIn(animationSpec = tween(240))
+                    val exit = slideOutHorizontally(
+                        animationSpec = tween(320),
+                        targetOffsetX = { full -> if (toMaps) -full else full },
+                    ) + fadeOut(animationSpec = tween(200))
+                    enter togetherWith exit
+                },
+                label = "modsMapsContent",
+            ) { current ->
+                Box(modifier = Modifier.fillMaxSize()) {
+                    when (current) {
+                        ModsMapsTab.Mods -> ModsView(
+                            onExit = onExit,
+                            selectedTab = tab,
+                            onTabChange = { tab = it },
+                            embedded = true,
+                        )
+                        ModsMapsTab.Maps -> CustomMapsManagementView(
+                            onExit = onExit,
+                            selectedTab = tab,
+                            onTabChange = { tab = it },
+                            embedded = true,
+                        )
                     }
                 }
             }
