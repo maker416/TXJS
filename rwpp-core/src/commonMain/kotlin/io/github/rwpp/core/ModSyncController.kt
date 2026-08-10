@@ -186,7 +186,7 @@ object ModSyncController {
                 )
             )
             // 注册成功后即轮询加入者进度（preparing 阶段也会有 waiting_host 上报）
-            startPeerPolling(key)
+            startPeerPolling(key, secret)
 
             val missing = client.checkFiles(key, secret, descriptors.map { it.normalizedSha256 }).toSet()
             logger.info("[MODSYNC-HOST] registered; server missing ${missing.size}/${descriptors.size} blob(s)")
@@ -231,18 +231,32 @@ object ModSyncController {
         }
     }
 
-    private fun startPeerPolling(key: String) {
+    private fun startPeerPolling(key: String, secret: String) {
         peerPollJob?.cancel()
         peerPollJob = scope.launch(Dispatchers.IO) {
             while (true) {
                 runCatching {
-                    val peers = newClient().listPeers(key).map { it.toSnapshot() }
+                    val peers = newClient().listPeers(key, secret).map { it.toSnapshot() }
                     withContext(Dispatchers.Main.immediate) { hostPeerSnapshots = peers }
                 }.onFailure {
                     logger.warn("[MODSYNC-HOST] listPeers failed: ${it.message}")
                 }
                 delay(PEER_POLL_MS)
             }
+        }
+    }
+
+    /** 房主清空异常/伪造的 Presence 占槽，并立即刷新本地快照。 */
+    fun clearHostPeers() {
+        val key = hostKey ?: return
+        val secret = hostSecret ?: return
+        scope.launch(Dispatchers.IO) {
+            runCatching { newClient().clearPeers(key, secret) }
+                .onSuccess {
+                    withContext(Dispatchers.Main.immediate) { hostPeerSnapshots = emptyList() }
+                    logger.info("[MODSYNC-HOST] cleared all peer presence for key=$key")
+                }
+                .onFailure { logger.warn("[MODSYNC-HOST] clearPeers failed: ${it.message}") }
         }
     }
 
@@ -316,7 +330,13 @@ object ModSyncController {
                 polls++
                 loadingContext.message(readI18n("modSync.hostPreparing", I18nType.RWPP, (polls * PREPARING_POLL_MS / 1000).toString()))
                 delay(PREPARING_POLL_MS)
-                response = client.fetchManifest(usedKey) ?: return true
+                // 轮询中 404：此前已存在 preparing 记录，说明房主已注销/离房，不得当作「无需同步」继续加入
+                val polled = client.fetchManifest(usedKey)
+                if (polled == null) {
+                    fail(loadingContext, readI18n("modSync.hostPreparingGone"), null)
+                    return false
+                }
+                response = polled
             }
             if (!response.isReady) return true
 
@@ -659,6 +679,8 @@ object ModSyncController {
         val displayName: String,
     ) {
         private val peerId: String = "p" + UUID.randomUUID().toString().replace("-", "")
+        private val peerSecret = AtomicReference<String?>(null)
+        private val upsertMutex = Mutex()
         private val lastReportAt = AtomicLong(0L)
         private val heartbeatRequest = AtomicReference<SyncPeerUpsertRequest?>(null)
         private var heartbeatJob: Job? = null
@@ -669,8 +691,13 @@ object ModSyncController {
             lastReportAt.set(now)
             heartbeatRequest.set(request)
             scope.launch(Dispatchers.IO) {
-                runCatching { client.upsertPeer(roomKey, peerId, request) }
-                    .onFailure { logger.warn("[MODSYNC] upsertPeer failed: ${it.message}") }
+                runCatching {
+                    // 串行化 claim/更新，避免并发首次 PUT 只有一个拿到 secret、其余 401
+                    upsertMutex.withLock {
+                        val issued = client.upsertPeer(roomKey, peerId, request, peerSecret.get())
+                        if (!issued.isNullOrBlank()) peerSecret.set(issued)
+                    }
+                }.onFailure { logger.warn("[MODSYNC] upsertPeer failed: ${it.message}") }
             }
         }
 
@@ -696,7 +723,7 @@ object ModSyncController {
         suspend fun clear() {
             stopHeartbeat()
             withContext(NonCancellable) {
-                runCatching { client.deletePeer(roomKey, peerId) }
+                runCatching { client.deletePeer(roomKey, peerId, peerSecret = peerSecret.get()) }
                     .onFailure { logger.warn("[MODSYNC] deletePeer failed: ${it.message}") }
             }
         }

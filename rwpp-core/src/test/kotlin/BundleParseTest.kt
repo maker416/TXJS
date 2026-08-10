@@ -41,12 +41,14 @@ class BundleParseTest {
             listOf(
                 "hostPreparing",
                 "hostPreparingTimeout",
+                "hostPreparingGone",
                 "syncFailed",
                 "syncFailedDetail",
                 "statusUploading",
                 "statusReady",
                 "statusError",
                 "pendingPeersTitle",
+                "clearPeers",
                 "phaseWaitingHost",
                 "phaseDownloading",
                 "phaseApplying",
@@ -57,10 +59,14 @@ class BundleParseTest {
             val room = table["multiplayer"] as? TomlTable
             val roomTable = room?.get("room") as? TomlTable
             assertNotNull(roomTable, "[multiplayer.room] missing in $name")
-            assertTrue(
-                roomTable.containsKey("playersStillSyncing"),
-                "multiplayer.room.playersStillSyncing missing in $name",
-            )
+            listOf(
+                "playersStillSyncing",
+                "forceStartTitle",
+                "forceStartMessage",
+                "forceStartConfirm",
+            ).forEach { key ->
+                assertTrue(roomTable.containsKey(key), "multiplayer.room.$key missing in $name")
+            }
         }
     }
 

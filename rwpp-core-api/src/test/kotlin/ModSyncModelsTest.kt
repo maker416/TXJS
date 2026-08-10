@@ -169,10 +169,23 @@ class ModSyncModelsTest {
         assertEquals("peer-abc", peer.peerId)
         assertEquals("萌新", peer.displayName)
         assertEquals(SyncPeerPhase.APPLYING, peer.phase)
+        assertEquals("", peer.peerSecret)
         val snap = peer.toSnapshot()
         assertEquals(peer.peerId, snap.peerId)
         assertEquals(50L, snap.currentBytes)
         assertEquals(100L, snap.currentTotal)
+
+        val createWire = """
+            {
+              "peer_id": "peer-abc",
+              "display_name": "萌新",
+              "phase": "waiting_host",
+              "peer_secret": "s3cr3t-once"
+            }
+        """.trimIndent()
+        val created = json.decodeFromString<SyncPeerProgress>(createWire)
+        assertEquals("s3cr3t-once", created.peerSecret)
+        assertTrue(json.encodeToString(created).contains("\"peer_secret\""), "peer_secret snake_case")
     }
 
     @Test

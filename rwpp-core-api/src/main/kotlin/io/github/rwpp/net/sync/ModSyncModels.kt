@@ -120,6 +120,8 @@ data class SyncPeerUpsertRequest(
 
 /**
  * 服务端返回的加入者进度快照。对应 list/upsert 响应中的单个 peer。
+ *
+ * [peerSecret] 仅在**新建** upsert 的 `201` 响应中出现一次；列表与后续更新响应均为空。
  */
 @Serializable
 data class SyncPeerProgress(
@@ -132,6 +134,7 @@ data class SyncPeerProgress(
     @SerialName("mod_index") val modIndex: Int = 0,
     @SerialName("mod_count") val modCount: Int = 0,
     @SerialName("updated_at") val updatedAt: String = "",
+    @SerialName("peer_secret") val peerSecret: String = "",
 )
 
 /** `GET /rooms/{key}/peers` 响应体。 */

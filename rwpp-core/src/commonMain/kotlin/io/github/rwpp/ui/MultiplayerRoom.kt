@@ -177,6 +177,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 
     var optionVisible by remember { mutableStateOf(false) }
     var banUnitVisible by remember { mutableStateOf(false) }
+    var showForceStartConfirm by remember { mutableStateOf(false) }
     var publishState by remember { mutableStateOf<PublishToListUiState>(PublishToListUiState.Hidden) }
     var pendingPublishRoomType by remember { mutableStateOf<String?>(null) }
     var pendingPublishRoomName by remember { mutableStateOf<String?>(null) }
@@ -606,15 +607,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
             val syncingPeers = ModSyncController.hostPeerSnapshots
             val unpreparedPlayers = game.gameRoom.getPlayers().filter { !it.data.ready }
             when {
-                syncingPeers.isNotEmpty() -> {
-                    UI.showWarning(
-                        readI18n(
-                            "multiplayer.room.playersStillSyncing",
-                            I18nType.RWPP,
-                            syncingPeers.joinToString(", ") { it.displayName },
-                        ),
-                    )
-                }
+                syncingPeers.isNotEmpty() -> showForceStartConfirm = true
                 unpreparedPlayers.isNotEmpty() -> {
                     UI.showWarning(
                         readI18n(
@@ -1048,6 +1041,60 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     }
 
     ContentView()
+
+    val forceStartPeers = ModSyncController.hostPeerSnapshots
+    AnimatedAlertDialog(
+        visible = showForceStartConfirm,
+        onDismissRequest = { showForceStartConfirm = false },
+    ) { dismiss ->
+        BorderCard(
+            modifier = Modifier
+                .fillMaxWidth(LargeProportion())
+                .widthIn(max = 480.dp)
+                .padding(10.dp),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    readI18n("multiplayer.room.forceStartTitle"),
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    textAlign = TextAlign.Center,
+                )
+                Text(
+                    readI18n(
+                        "multiplayer.room.forceStartMessage",
+                        I18nType.RWPP,
+                        forceStartPeers.joinToString(", ") { it.displayName },
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                ) {
+                    RWTextButton(readI18n("common.cancel")) {
+                        dismiss()
+                    }
+                    RWTextButton(readI18n("modSync.clearPeers")) {
+                        ModSyncController.clearHostPeers()
+                        dismiss()
+                    }
+                    RWTextButton(readI18n("multiplayer.room.forceStartConfirm")) {
+                        dismiss()
+                        if (room.isHostServer) room.sendQuickGameCommand("-start")
+                        else room.startGame()
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -3005,13 +3052,26 @@ private fun RoomPendingSyncPanel(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp),
     ) {
-        Text(
-            readI18n("modSync.pendingPeersTitle", I18nType.RWPP, peers.size.toString()),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                readI18n("modSync.pendingPeersTitle", I18nType.RWPP, peers.size.toString()),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            RWTextButton(
+                readI18n("modSync.clearPeers"),
+                modifier = Modifier.defaultMinSize(minHeight = 28.dp),
+            ) {
+                ModSyncController.clearHostPeers()
+            }
+        }
         peers.forEach { peer ->
             RoomPendingSyncPeerRow(peer = peer, compact = compact)
         }

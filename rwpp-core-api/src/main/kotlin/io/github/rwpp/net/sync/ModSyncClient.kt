@@ -26,6 +26,7 @@ import java.net.URLEncoder
 
 private const val API_PREFIX = "/api/v1"
 private const val SECRET_HEADER = "X-Secret"
+private const val PEER_SECRET_HEADER = "X-Peer-Secret"
 private const val BUFFER_SIZE = 64 * 1024
 
 private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
@@ -154,29 +155,60 @@ class ModSyncClient(
 
     /**
      * 加入者 upsert 带外同步进度。对应 `PUT /rooms/{key}/peers/{peer_id}`。
-     * 房间不存在时抛 [ModSyncException]（404）。
+     *
+     * 新建时 [peerSecret] 可空，服务端返回一次性 secret；更新时必须传入已保存的 secret。
+     * @return 新建时返回 `peer_secret`；更新时返回 null。
      */
-    suspend fun upsertPeer(key: String, peerId: String, progress: SyncPeerUpsertRequest) {
-        withFailover("$API_PREFIX/rooms/${enc(key)}/peers/${enc(peerId)}", {
-            put(json.encodeToString(progress).toRequestBody(JSON_MEDIA_TYPE))
-        }) { }
+    suspend fun upsertPeer(
+        key: String,
+        peerId: String,
+        progress: SyncPeerUpsertRequest,
+        peerSecret: String? = null,
+    ): String? = withFailover("$API_PREFIX/rooms/${enc(key)}/peers/${enc(peerId)}", {
+        if (!peerSecret.isNullOrEmpty()) header(PEER_SECRET_HEADER, peerSecret)
+        put(json.encodeToString(progress).toRequestBody(JSON_MEDIA_TYPE))
+    }) { response ->
+        val body = response.body?.string().orEmpty()
+        val decoded = json.decodeFromString<SyncPeerProgress>(body)
+        decoded.peerSecret.takeIf { it.isNotBlank() }
     }
 
     /**
      * 加入者清理进度 Presence。对应 `DELETE /rooms/{key}/peers/{peer_id}`（幂等）。
+     * 加入者传 [peerSecret]；房主亦可传 [roomSecret]（`X-Secret`）。
      */
-    suspend fun deletePeer(key: String, peerId: String) {
+    suspend fun deletePeer(
+        key: String,
+        peerId: String,
+        peerSecret: String? = null,
+        roomSecret: String? = null,
+    ) {
         withFailover("$API_PREFIX/rooms/${enc(key)}/peers/${enc(peerId)}", {
+            if (!peerSecret.isNullOrEmpty()) header(PEER_SECRET_HEADER, peerSecret)
+            if (!roomSecret.isNullOrEmpty()) header(SECRET_HEADER, roomSecret)
             delete()
         }) { }
     }
 
     /**
-     * 房主拉取未过期的加入者进度列表。对应 `GET /rooms/{key}/peers`。
+     * 房主清空该房全部 Presence。对应 `DELETE /rooms/{key}/peers`。
+     */
+    suspend fun clearPeers(key: String, roomSecret: String) {
+        withFailover("$API_PREFIX/rooms/${enc(key)}/peers", {
+            header(SECRET_HEADER, roomSecret)
+            delete()
+        }) { }
+    }
+
+    /**
+     * 房主拉取未过期的加入者进度列表。对应 `GET /rooms/{key}/peers`（须 [roomSecret]）。
      * 房间不存在时抛 [ModSyncException]（404）。
      */
-    suspend fun listPeers(key: String): List<SyncPeerProgress> =
-        withFailover("$API_PREFIX/rooms/${enc(key)}/peers", { get() }) { response ->
+    suspend fun listPeers(key: String, roomSecret: String): List<SyncPeerProgress> =
+        withFailover("$API_PREFIX/rooms/${enc(key)}/peers", {
+            header(SECRET_HEADER, roomSecret)
+            get()
+        }) { response ->
             json.decodeFromString<SyncPeerListResponse>(response.body?.string().orEmpty()).peers
         }
 
