@@ -47,7 +47,12 @@ class AutoUpdaterImpl : AutoUpdater, KoinComponent {
         unregisterInstallPermissionRetry()
     }
 
-    override fun downloadAndInstall(downloadUrl: String, onProgress: (Float) -> Unit) {
+    override fun downloadAndInstall(downloadUrls: List<String>, sha256Url: String?, onProgress: (Float) -> Unit) {
+        val downloadUrl = downloadUrls.firstOrNull() ?: run {
+            onProgress(PROGRESS_FAILED)
+            return
+        }
+
         synchronized(downloadLock) {
             if (downloadInProgress) return
             downloadInProgress = true
@@ -170,7 +175,7 @@ class AutoUpdaterImpl : AutoUpdater, KoinComponent {
                 unregisterInstallPermissionRetry()
                 thread(name = "rwpp-auto-update-retry") {
                     onProgress(0f)
-                    downloadAndInstall(downloadUrl, onProgress)
+                    downloadAndInstall(listOf(downloadUrl), onProgress = onProgress)
                 }
             }
 

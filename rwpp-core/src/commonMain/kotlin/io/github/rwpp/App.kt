@@ -69,6 +69,8 @@ import io.github.rwpp.app.AutoUpdater
 import io.github.rwpp.app.AutoUpdater.Companion.PROGRESS_NEED_INSTALL_PERMISSION
 import io.github.rwpp.net.LatestVersionProfile
 import io.github.rwpp.net.Net
+import io.github.rwpp.net.resolveAndroidUpdatePlan
+import io.github.rwpp.net.resolveDesktopUpdatePlan
 import io.github.rwpp.scripts.Render
 import io.github.rwpp.ui.*
 import io.github.rwpp.ui.UI.selectedColorSchemeName
@@ -467,9 +469,14 @@ fun App(
                         Box(modifier = Modifier.fillMaxWidth()) {
                             val appContextInner = koinInject<AppContext>()
                             val autoUpdater = remember { appKoin.getOrNull<AutoUpdater>() }
-                            val exeAsset = profile!!.assets.find { it.name.endsWith(".exe") }
-                            val apkAsset = profile!!.assets.find { it.name.endsWith(".apk") }
-                            val autoUpdateAsset = if (appContextInner.isDesktop()) exeAsset else apkAsset
+                            // 桌面端优先识别 zip 分卷（xxx.zip.001/.002…），无分卷时回退单 exe；Android 取 apk
+                            val updatePlan = remember(profile) {
+                                if (appContextInner.isDesktop()) {
+                                    profile!!.resolveDesktopUpdatePlan()
+                                } else {
+                                    profile!!.resolveAndroidUpdatePlan()
+                                }
+                            }
                             val scopeInner = rememberCoroutineScope()
                             var updating by remember { mutableStateOf(false) }
                             var downloadProgress by remember { mutableStateOf(0f) }
@@ -541,14 +548,14 @@ fun App(
                                     }
                                 }
 
-                                if (autoUpdater != null && autoUpdater.isSupported() && autoUpdateAsset != null && !updating) {
+                                if (autoUpdater != null && autoUpdater.isSupported() && updatePlan != null && !updating) {
                                     Surface(
                                         color = MaterialTheme.colorScheme.primary,
                                         shape = RoundedCornerShape(8.dp),
                                         modifier = Modifier.fillMaxWidth().bounceClick {
                                             updating = true
                                             scopeInner.launch(Dispatchers.IO) {
-                                                autoUpdater.downloadAndInstall(autoUpdateAsset.downloadUrl) { progress ->
+                                                autoUpdater.downloadAndInstall(updatePlan!!.partUrls, updatePlan!!.sha256Url) { progress ->
                                                     scopeInner.launch(Dispatchers.Main) {
                                                         downloadProgress = progress
                                                     }
@@ -604,7 +611,7 @@ fun App(
                                                 modifier = Modifier.bounceClick {
                                                     downloadProgress = 0f
                                                     scopeInner.launch(Dispatchers.IO) {
-                                                        autoUpdater!!.downloadAndInstall(autoUpdateAsset!!.downloadUrl) { progress ->
+                                                        autoUpdater!!.downloadAndInstall(updatePlan!!.partUrls, updatePlan!!.sha256Url) { progress ->
                                                             scopeInner.launch(Dispatchers.Main) {
                                                                 downloadProgress = progress
                                                             }

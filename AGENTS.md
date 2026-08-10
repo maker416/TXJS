@@ -177,6 +177,12 @@ Gradle JVM 参数在根目录 `gradle.properties` 中定义（`-Xmx2048M`）。
 - 桌面端：`build/desktop-jar/` 下生成 `.jar`，配合 `launcher.bat` 等脚本使用；MSI 通过 `wix/` 下的 .NET 项目生成
 - Android：`rwpp-android/build/outputs/apk/` 下生成 APK
 
+### 自动更新（Gitee release）
+
+- 版本检查：`Net.getLatestVersionProfile()` 拉取 `gitee.com/maker416/TXJS` 的最新 release 资产列表。
+- **Gitee 单文件限制 100MB**，桌面安装包（`RWJS-Setup.exe` 超 100MB）以 **zip 分卷**发布：`build.ps1` 的 `msi` 目标收集产物时自动生成 `RWJS-Setup.zip.001/.002/…`（7-Zip/WinRAR 分卷命名约定，用户可直接解压）与 `RWJS-Setup.zip.sha256`（合并 zip 的 SHA-256）。
+- 客户端：`LatestVersionProfile.resolveDesktopUpdatePlan()`（`rwpp-core-api` 的 `net/UpdateDownloadPlan.kt`）识别分卷组（≥2 卷且序号连续，否则回退旧版单 `.exe` 资产）；桌面端 `AutoUpdaterImpl` 顺序下载分卷、sha256 强校验（无校验资产时降级为 zip CRC）、`SequenceInputStream` + `ZipInputStream` 流式合并解出 exe（不落合并后的大 zip），随后以 `RWPP_UPDATE_MODE=1` 启动安装并退出进程。Android 仍为单 `.apk` 资产走系统安装器。
+
 ## 平台抽象模式
 
 `rwpp-core/src/commonMain/` 中通过 `expect` 声明平台差异：
@@ -228,12 +234,12 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 **游戏联机通讯完全保持原版**，模组同步是启动器自身的带外功能，不注入任何自定义联机包。
 
-- **中转服务端**：独立 Go 服务 `relaymod`（源码在 `D:\workspace\RW\relaymod`，非本仓库模块），部署在公网 IPv4；仅标准库 `net/http`。房间同步记录（清单 + TTL + secret）与内容寻址 blob（按 SHA-256 去重存储）；另提供加入者进度 Presence（内存态，15s TTL，不落盘）。
-- **客户端协议层**：`rwpp-core-api` 的 `net/sync/` —— `ModSyncModels.kt`（DTO，snake_case 与 Go 对齐）、`ModSyncKeys.kt`（房间 key 推导：`code:<短码>`、发布后绑定 `sid:<server_id>` 别名；直连 IP 房不提供同步）、`ModSyncClient.kt`（OkHttp，多 baseUrl failover；含 peer upsert/list/delete）。
+- **中转服务端**：独立 Go 服务 `relaymod`（源码在 `D:\workspace\RW\relaymod`，非本仓库模块），部署在公网 IPv4；仅标准库 `net/http`。房间同步记录（清单 + TTL + secret）与内容寻址 blob（按 SHA-256 去重存储）；另提供加入者进度 Presence（内存态，45s TTL，不落盘；新建 PUT 返回一次性 `peer_secret`，后续须 `X-Peer-Secret`；房主 `GET/DELETE .../peers` 须房间 `X-Secret`）。
+- **客户端协议层**：`rwpp-core-api` 的 `net/sync/` —— `ModSyncModels.kt`（DTO，snake_case 与 Go 对齐）、`ModSyncKeys.kt`（房间 key 推导：`code:<短码>`、发布后绑定 `sid:<server_id>` 别名；直连 IP 房不提供同步）、`ModSyncClient.kt`（OkHttp，多 baseUrl failover；Presence 带 peer/room secret）。
 - **编排层**：`rwpp-core` 的 `core/ModSyncController.kt` ——
-  - 房主侧：开房勾选「传输模组」后进房拿到短码即注册（status=preparing）→ `files/check` 查缺 → 上传缺失 blob → ready → 60s 心跳续期 → 发布列表后绑定 sid 别名 → 离房（`DisconnectEvent`）注销；注册成功后每 1s `GET /rooms/{key}/peers` 刷新 `hostPeerSnapshots`。
-  - 加入者侧：`Multiplayer.kt` 的 `LoadingView.loadContent` 中、`directJoinServer` **之前**执行 `preJoinSync`：查清单（404=无同步，按原版加入）→ preparing 轮询（≤60s，同时上报 `waiting_host`）→ diff 本地（三路匹配）→ 若引擎当前启用集合已与清单完全一致则跳过下载/`modReload` 直接 `joining`；否则下载缺失 → 启用所需 mod + `modReload(forceImmediate=true)`（`applying` + 5s 心跳）→ 切 `joining` 心跳并延后清理 → `directJoinServer` → `finishJoinerPresence()`；失败/取消用 NonCancellable DELETE。
-- **房主进度 UI**：`MultiplayerRoom` 的 `RoomPendingSyncPanel`（复刻旧 `RoomModSyncStrip` 视觉：流光进度条 / 百分比 / 模组计数；`joining` 显示「正在进入房间」）；有活跃 peer 时拦截开局（`playersStillSyncing`）。
+  - 房主侧：开房勾选「传输模组」后进房拿到短码即注册（status=preparing）→ `files/check` 查缺 → 上传缺失 blob → ready → 60s 心跳续期 → 发布列表后绑定 sid 别名 → 离房（`DisconnectEvent`）注销；注册成功后每 1s 带 `X-Secret` 拉 peers；可 `clearHostPeers()`。
+  - 加入者侧：`Multiplayer.kt` 的 `LoadingView.loadContent` 中、`directJoinServer` **之前**执行 `preJoinSync`：查清单（404=无同步，按原版加入）→ preparing 轮询（≤60s，同时上报 `waiting_host`；轮询中 404=房主已注销则中止）→ diff 本地（三路匹配）→ 若引擎当前启用集合已与清单完全一致则跳过下载/`modReload` 直接 `joining`；否则下载缺失 → 启用所需 mod + `modReload(forceImmediate=true)`（`applying` + 5s 心跳）→ 切 `joining` 心跳并延后清理 → `directJoinServer` → `finishJoinerPresence()`；失败/取消用 NonCancellable DELETE（带 peer_secret）。
+- **房主进度 UI**：`MultiplayerRoom` 的 `RoomPendingSyncPanel`（流光进度条 / 百分比 / 模组计数；「清除同步状态」）；有活跃 peer 时开局二次确认强制开始。
 - **服务器地址配置**：`MultiplayerPreferences.modSyncApiUrls`（`;` 分隔多镜像，常量 `DEFAULT_MOD_SYNC_API_URLS`）。
 - **已移除的旧方案**（勿恢复）：自定义联机包 500-511（`ModPacket`）、`HostModTransferScheduler`、`HostManifestCache`、`UnitEngineInject` 校验拦截、PREREGISTER_INFO(161) 中的 `RoomOption` TOML 与 `GameRoom.isRWPPRoom/option`、协议版本检查。
 
