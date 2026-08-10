@@ -161,7 +161,6 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     DisposableEffect(Unit) {
         onDispose {
             CloseUIPanelEvent("multiplayerRoom").broadcastIn()
-            UI.clearAutoPublishQRoom()
         }
     }
 
@@ -183,7 +182,6 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     var pendingPublishRoomName by remember { mutableStateOf<String?>(null) }
     var roomIdForPublish by remember { mutableStateOf<String?>(null) }
     var publishJob by remember { mutableStateOf<Job?>(null) }
-    var publishDialogCloseExitsRoom by remember { mutableStateOf(false) }
     val isPublishing = publishState is PublishToListUiState.Loading || publishJob?.isActive == true
     //var downloadModViewVisible by remember { mutableStateOf(false) }
     //var loadModViewVisible by remember { mutableStateOf(false) }
@@ -512,13 +510,11 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
         publishJob = null
         pendingPublishRoomType = null
         pendingPublishRoomName = null
-        publishDialogCloseExitsRoom = false
         publishState = PublishToListUiState.Hidden
     }
 
-    fun publishToList(roomId: String, closeExitsRoom: Boolean = false) {
+    fun publishToList(roomId: String) {
         if (isPublishing || hasPublishedInfo) return
-        publishDialogCloseExitsRoom = closeExitsRoom
         launchPublish { runPublishFlow(roomId) }
     }
 
@@ -526,17 +522,11 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
         state = publishState,
         defaultRoomName = roomIdForPublish?.let { "公开房-$it" } ?: "",
         onDismiss = {
-            publishDialogCloseExitsRoom = false
             publishState = PublishToListUiState.Hidden
         },
         onCancel = ::cancelPublishRequest,
         onCloseButtonClick = {
-            if (publishDialogCloseExitsRoom) {
-                onExit()
-            } else {
-                publishDialogCloseExitsRoom = false
-                publishState = PublishToListUiState.Hidden
-            }
+            publishState = PublishToListUiState.Hidden
         },
         onPublish = { roomType, roomName ->
             val roomId = roomIdForPublish ?: return@PublishToListDialog
@@ -570,23 +560,6 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
         // 房主开启「传输模组」时：拿到短码即启动带外同步会话（内部幂等）
         roomIdForPublish?.let { code ->
             if (room.isHost) ModSyncController.startHostSession(code)
-        }
-    }
-
-    LaunchedEffect(roomIdForPublish, isHost, hasPublishedInfo) {
-        val roomId = roomIdForPublish ?: return@LaunchedEffect
-        if (!roomId.startsWith('Q') || hasPublishedInfo) {
-            UI.clearAutoPublishQRoom()
-            return@LaunchedEffect
-        }
-        if (!isHost) return@LaunchedEffect
-        val publishedInfo = configIO.readConfig(PublishedRoomInfo::class)
-        if (publishedInfo?.roomId == roomId && publishedInfo.isPublished) {
-            UI.clearAutoPublishQRoom()
-            return@LaunchedEffect
-        }
-        if (UI.consumeAutoPublishQRoom()) {
-            publishToList(roomId, closeExitsRoom = true)
         }
     }
 
@@ -762,7 +735,10 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                             room.lockedRoom = isLocked
                                         },
                                         isDesktop = isDesktop,
-                                        showPublishButton = roomIdForPublish != null && !isPublishing && !hasPublishedInfo,
+                                        // Q 房本身已公开，无需再走 RWList「公开到列表」
+                                        showPublishButton = roomIdForPublish.let { id ->
+                                            id != null && !id.startsWith('Q') && !isPublishing && !hasPublishedInfo
+                                        },
                                         onOption = { optionVisible = true },
                                         onStart = startGame,
                                         onAddAI = { room.addAI() },
@@ -811,7 +787,9 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                             room.lockedRoom = isLocked
                                         },
                                         isDesktop = isDesktop,
-                                        showPublishButton = roomIdForPublish != null && !isPublishing && !hasPublishedInfo,
+                                        showPublishButton = roomIdForPublish.let { id ->
+                                            id != null && !id.startsWith('Q') && !isPublishing && !hasPublishedInfo
+                                        },
                                         onOption = { optionVisible = true },
                                         onStart = startGame,
                                         onAddAI = { room.addAI() },
@@ -894,7 +872,10 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                     totalSeconds = totalSeconds,
                                     isRefreshingExpiry = isRefreshingExpiry,
                                     onRenew = renewPublishedRoom,
-                                    showPublishButton = roomIdForPublish != null && !isPublishing && !hasPublishedInfo,
+                                    // Q 房本身已公开，无需再走 RWList「公开到列表」
+                                    showPublishButton = roomIdForPublish.let { id ->
+                                        id != null && !id.startsWith('Q') && !isPublishing && !hasPublishedInfo
+                                    },
                                     onMapClick = { showMapSelectView = true },
                                     onOption = { optionVisible = true },
                                     onStart = startGame,

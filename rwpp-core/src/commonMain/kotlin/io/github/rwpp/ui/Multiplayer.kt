@@ -315,7 +315,6 @@ fun MultiplayerView(
     var pendingHostSession by remember { mutableStateOf(false) }
     /** 本次开房是否勾选了「启动模组」；未勾选时 Loading 阶段会清空全部已加载模组。 */
     var pendingHostEnableMods by remember { mutableStateOf(false) }
-    var keepAutoPublishAfterLoading by remember { mutableStateOf(false) }
 
     var editingServerConfig by remember { mutableStateOf<ServerConfig?>(null) }
     var showServerInfoConfig by remember { mutableStateOf(false) }
@@ -367,10 +366,6 @@ fun MultiplayerView(
             ModSyncController.cancelPreJoin()
             ModSyncController.finishJoinerPresence()
             game.cancelJoinServer()
-            if (!keepAutoPublishAfterLoading) {
-                UI.clearAutoPublishQRoom()
-            }
-            keepAutoPublishAfterLoading = false
             pendingHostSession = false
             pendingHostEnableMods = false
             isConnecting = false
@@ -380,7 +375,6 @@ fun MultiplayerView(
         try {
             if(serverAddress.isBlank()) {
                 message("That server no longer exists")
-                UI.clearAutoPublishQRoom()
                 return@LoadingView false
             }
 
@@ -415,13 +409,11 @@ fun MultiplayerView(
             )
             selectedRoomDescription = null
             if(result.isSuccess) {
-                keepAutoPublishAfterLoading = true
                 onExit()
                 onOpenRoomView()
                 JoinGameEvent(serverAddress).broadcastIn()
                 true
             } else {
-                UI.clearAutoPublishQRoom()
                 message(result.exceptionOrNull()!!.message!!)
                 false
             }
@@ -459,7 +451,6 @@ fun MultiplayerView(
             }
             val hasEnabledMods = modManager.getAllMods().any { it.isEnabled }
             var hostPrefix by remember { mutableStateOf(HostCommandPrefix.Q) }
-            var disableDefaultPublish by remember { mutableStateOf(false) }
             var roomId by remember { mutableStateOf("") }
             var maxPlayer: Int? by remember { mutableStateOf(null) }
             var unitLimit: Int? by remember { mutableStateOf(null) }
@@ -472,12 +463,6 @@ fun MultiplayerView(
 
             fun beginHost() {
                 dismiss()
-                if (hostPrefix == HostCommandPrefix.Q && !disableDefaultPublish) {
-                    UI.requestAutoPublishQRoom()
-                } else {
-                    UI.clearAutoPublishQRoom()
-                }
-                keepAutoPublishAfterLoading = false
                 ModSyncController.hostSyncRequested = transferMod && enableMods
                 serverAddress = net.buildQuickHostCommand(
                     enableMods = enableMods,
@@ -638,12 +623,23 @@ fun MultiplayerView(
                         )
                     }
                     if (hostPrefix == HostCommandPrefix.Q) {
-                        ToggleLine(
-                            label = readI18n("multiplayer.disableDefaultPublish"),
-                            checked = disableDefaultPublish,
-                        ) {
-                            disableDefaultPublish = !disableDefaultPublish
-                        }
+                        Text(
+                            readI18n("multiplayer.qRoomAutoPublishHint"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surface.copy(alpha = .18f))
+                                .border(
+                                    BorderStroke(
+                                        1.dp,
+                                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f),
+                                    ),
+                                    RoundedCornerShape(8.dp),
+                                )
+                                .padding(horizontal = 10.dp, vertical = 10.dp),
+                        )
                     }
                 }
             }

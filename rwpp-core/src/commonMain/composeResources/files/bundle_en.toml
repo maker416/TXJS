@@ -48,7 +48,7 @@ hostPrivate = "Host Private"
 hostPrefix = "Host protocol"
 hostPrefixQ = "Q room"
 hostPrefixR = "R room"
-disableDefaultPublish = "Do not publish by default"
+qRoomAutoPublishHint = "Q rooms are public automatically—no need to publish to the list. Use an R room if you want a private room."
 port = "port"
 roomInfo = """
 creator: {0}
