@@ -2830,9 +2830,11 @@ private fun RoomChatMessageTextField(
 private fun RoomChatMessageView(modifier: Modifier = Modifier) {
     var value by remember(chatMessages) { mutableStateOf(TextFieldValue(chatMessages)) }
     LaunchedEffect(chatMessages) {
+        // 新消息 prepend 在文本开头，光标（决定滚动位置）须放在起点，
+        // 否则每条新消息都会把列表滚动到最旧的消息处。
         value = TextFieldValue(
             annotatedString = chatMessages,
-            selection = TextRange(chatMessages.length),
+            selection = TextRange.Zero,
         )
     }
     TextField(
