@@ -88,4 +88,16 @@ class BundleParseTest {
             }
         }
     }
+
+    @Test
+    fun protectedModHintKeysExistInAllBundles() {
+        bundleNames.forEach { name ->
+            val table = Toml.parseToTomlTable(File(bundleDir, name).readText())
+            val mod = table["mod"] as? TomlTable
+            assertNotNull(mod, "[mod] table missing in $name")
+            listOf("protectedLoadHint", "protectedLoadHintMany", "starting").forEach { key ->
+                assertTrue(mod.containsKey(key), "mod.$key missing in $name")
+            }
+        }
+    }
 }

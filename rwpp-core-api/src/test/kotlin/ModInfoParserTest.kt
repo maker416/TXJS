@@ -167,4 +167,25 @@ class ModInfoParserTest {
         assertTrue(rwmod.delete())
         root.deleteRecursively()
     }
+
+    @Test
+    fun parseFromRwmodReadsModInfoDisguisedAsDirectory() {
+        val root = createTempDirectory().toFile()
+        val rwmod = File(root, "protected.rwmod")
+        ZipOutputStream(rwmod.outputStream()).use { zip ->
+            zip.putNextEntry(ZipEntry("mod-info.txt/"))
+            zip.write("[mod]\ntitle: 重生四号\nminVersion:1.15\n".toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
+            zip.putNextEntry(ZipEntry("units/tank.ini/"))
+            zip.write("[core]\nname: tank\n".toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
+        }
+
+        val meta = ModInfoParser.parseFromRwmod(rwmod)
+        assertEquals("重生四号", meta.name)
+        assertEquals("1.15", meta.minVersion)
+        assertFalse(meta.titleMissing)
+        assertTrue(rwmod.delete())
+        root.deleteRecursively()
+    }
 }

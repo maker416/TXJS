@@ -58,18 +58,6 @@ roomInfo = """
 版本: {4}
 模组: {5}
 """
-admitting = """
-为了使RWPP能变得更好，我们希望您在开房时向进入的玩家发送一条消息用以推广RWPP
-您是否同意？(该对话框第一次显示后将不再显示，稍后可在 设置 - 显示欢迎消息 中更改)
-"""
-welcomeMessage = """
-这是一个使用[RWPP]所创建的房间
-[RWPP]是在github上开源的多平台RW启动器, 支持多种拓展功能
-QQ交流群: 927597495
-开源地址请访问 https://github.com/Minxyzgo/RWPP
-当前版本: {0} (core {1})
-Copyright 2023-2025 RWPP contributors
-"""
 serverQuestion = "服务器提问"
 passwordRequired = "需要密码"
 passwordRequiredMessage = "此服务器需要密码才能加入"
@@ -235,6 +223,9 @@ missingTitle = "模组文件“{0}”的 mod-info.txt 缺少 [mod] 段 title，�
 loadingUnits = "正在加载单位"
 loadingMods = "正在加载模组"
 loadingStage = "正在加载 {0}"
+protectedLoadHint = "「{0}」经过混淆加固，加载会比普通模组慢，请耐心等待。"
+protectedLoadHintMany = "以下模组经过混淆加固，加载会比普通模组慢，请耐心等待：{0}"
+starting = "正在启动…"
 downloadingMod = "正在下载房主模组"
 downloadingModDetail = "{0} / {1}"
 downloadingModComplete = "下载完成，正在应用…"
@@ -388,7 +379,6 @@ buildings = "建筑物"
 showAttackRange = "显示攻击范围"
 showBuildingAttackRange = "显示建筑攻击范围"
 showUnitAttackRange = "显示单位攻击范围"
-showWelcomeMessage = "显示欢迎消息"
 attackRangeNever = "从不"
 attackRangeLand = "地面"
 attackRangeAir = "空中"

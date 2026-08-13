@@ -850,7 +850,11 @@ fun App(
                     }
                 }
 
-                LoadingView(reloadingModViewVisible, onLoaded = {}) { null }
+                LoadingView(
+                    reloadingModViewVisible,
+                    onLoaded = {},
+                    showProtectedModHint = true,
+                ) { null }
 
                 // 主动取消下载：取消正在进行的加入前带外同步。此时尚未建立游戏连接，无需断连；
                 // 同步协程取消后会自行复位 UI.receivingMod* 状态并中止加入流程。

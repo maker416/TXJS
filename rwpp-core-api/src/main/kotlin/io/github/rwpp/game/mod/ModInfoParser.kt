@@ -9,6 +9,7 @@ package io.github.rwpp.game.mod
 
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 
 /**
@@ -16,6 +17,7 @@ import java.util.zip.ZipFile
  * UTF-8、`=` / `:` 分隔、`"""` 多行字符串、BOM 剥离。
  *
  * 仅提取 `[mod]` 段的 title / description / minVersion，不加载单位定义。
+ * 查找条目时忽略尾 `/`（加固包会把 `mod-info.txt` 伪装成目录），与原版引擎一致。
  */
 object ModInfoParser {
     data class Metadata(
@@ -41,16 +43,36 @@ object ModInfoParser {
 
         return runCatching {
             ZipFile(file).use { zip ->
-                val entry = zip.entries().asSequence().firstOrNull { zipEntry ->
-                    !zipEntry.isDirectory &&
-                        zipEntry.name.replace('\\', '/').lowercase().endsWith("mod-info.txt")
-                } ?: return@use fallback
-
+                val entry = findModInfoEntry(zip) ?: return@use fallback
                 zip.getInputStream(entry).bufferedReader(StandardCharsets.UTF_8).use { reader ->
                     parseIni(reader.readText(), file.nameWithoutExtension)
                 }
             }
         }.getOrDefault(fallback)
+    }
+
+    /**
+     * 定位 zip 内的 `mod-info.txt`。
+     *
+     * 原版引擎按路径取流，**不**用 [java.util.zip.ZipEntry.isDirectory] 过滤。
+     * rwTool 等加固器会给非音频条目加尾 `/`（如 `mod-info.txt/`），Java 会把它标成目录；
+     * 若此处跳过目录项，就会在未加载单位时误判缺少 title。
+     */
+    private fun findModInfoEntry(zip: ZipFile): ZipEntry? {
+        return zip.entries().asSequence()
+            .filter { isModInfoZipPath(it.name) }
+            .minWithOrNull(
+                compareBy<ZipEntry> { normalizeZipEntryPath(it.name).length }
+                    .thenBy { if (it.isDirectory) 1 else 0 }
+            )
+    }
+
+    private fun normalizeZipEntryPath(name: String): String =
+        name.replace('\\', '/').trimEnd('/').lowercase()
+
+    private fun isModInfoZipPath(name: String): Boolean {
+        val normalized = normalizeZipEntryPath(name)
+        return normalized == "mod-info.txt" || normalized.endsWith("/mod-info.txt")
     }
 
     /**

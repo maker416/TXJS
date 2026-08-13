@@ -7,32 +7,70 @@
 
 package io.github.rwpp.widget
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.core.LoadingContext
+import io.github.rwpp.game.mod.Mod
+import io.github.rwpp.game.mod.ProtectedRwmodDetector
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.internalModDir
+import io.github.rwpp.modDir
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 var loadingMessage by mutableStateOf("")
 
-private data class StructuredLoadingMessage(
+/** 本次重载将要加载的加固模组显示名；空列表表示无需提示。 */
+var loadingProtectedModNames by mutableStateOf<List<String>>(emptyList())
+
+fun refreshProtectedModLoadHint(
+    engineMods: List<Mod>,
+    enabledByFileName: Map<String, Boolean>?,
+) {
+    loadingProtectedModNames = ProtectedRwmodDetector.displayNamesOfEnabled(
+        engineMods,
+        enabledByFileName,
+        listOf(File(modDir), File(internalModDir)),
+    )
+}
+
+/** 启动阶段尚无引擎模组列表时，按磁盘上的 `.rwmod` 扫描加固包。 */
+fun refreshProtectedModLoadHintFromDisk() {
+    loadingProtectedModNames = ProtectedRwmodDetector.displayNamesOfEnabled(
+        emptyList(),
+        null,
+        listOf(File(modDir), File(internalModDir)),
+    )
+}
+
+fun clearProtectedModLoadHint() {
+    loadingProtectedModNames = emptyList()
+}
+
+internal data class StructuredLoadingMessage(
     val stage: String,
     val count: String,
     val detail: String?
@@ -44,6 +82,7 @@ fun LoadingView(
     onLoaded: () -> Unit,
     enableAnimation: Boolean = true,
     cancellable: Boolean = false,
+    showProtectedModHint: Boolean = false,
     loadContent: suspend LoadingContext.() -> Boolean?
 ) {
     // 必须持有可取消的 Job：关闭对话框时立刻 cancel，避免退出动画期间后台仍跑完
@@ -146,6 +185,10 @@ fun LoadingView(
                         )
                     }
 
+                    if (showProtectedModHint && !cancel) {
+                        ProtectedModLoadNotice(loadingText = text)
+                    }
+
                     if (enableAnimation && !cancel) {
                         LinearProgressIndicator(
                             modifier = Modifier
@@ -162,7 +205,7 @@ fun LoadingView(
 }
 
 @Composable
-private fun StructuredLoadingContent(
+internal fun StructuredLoadingContent(
     message: StructuredLoadingMessage,
     modifier: Modifier = Modifier
 ) {
@@ -221,7 +264,7 @@ private fun StructuredLoadingContent(
     }
 }
 
-private fun String.toStructuredLoadingMessage(): StructuredLoadingMessage? {
+internal fun String.toStructuredLoadingMessage(): StructuredLoadingMessage? {
     val text = trim()
     if (!text.startsWith("Loading ", ignoreCase = true)) return null
 
@@ -244,6 +287,78 @@ private fun String.toStructuredLoadingMessage(): StructuredLoadingMessage? {
         .takeIf { it.isNotBlank() }
 
     return StructuredLoadingMessage(stage, count, detail)
+}
+
+@Composable
+internal fun ProtectedModLoadNotice(
+    loadingText: String,
+    darkSplash: Boolean = false,
+) {
+    val names = loadingProtectedModNames
+    if (names.isEmpty()) return
+
+    val current = names.firstOrNull { it.matchesProtectedModName(loadingText) }
+    val message = if (current != null || names.size == 1) {
+        readI18n("mod.protectedLoadHint", I18nType.RWPP, current ?: names.first())
+    } else {
+        readI18n("mod.protectedLoadHintMany", I18nType.RWPP, names.joinToString(", "))
+    }
+
+    val containerColor = if (darkSplash) {
+        Color(0xCC3D3428)
+    } else {
+        MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.72f)
+    }
+    val borderColor = if (darkSplash) {
+        Color(0xB3E6A85C)
+    } else {
+        MaterialTheme.colorScheme.tertiary.copy(alpha = 0.42f)
+    }
+    val contentColor = if (darkSplash) {
+        Color(0xFFFFF1DC)
+    } else {
+        MaterialTheme.colorScheme.onTertiaryContainer
+    }
+    val iconColor = if (darkSplash) {
+        Color(0xFFE6A85C)
+    } else {
+        MaterialTheme.colorScheme.tertiary
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = containerColor,
+        border = BorderStroke(1.dp, borderColor)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                Icons.Default.Info,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp).padding(top = 1.dp),
+                tint = iconColor
+            )
+            Text(
+                message,
+                color = contentColor,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                textAlign = TextAlign.Start,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+private fun String.matchesProtectedModName(loadingText: String): Boolean {
+    if (isBlank() || loadingText.isBlank()) return false
+    if (loadingText.contains(this, ignoreCase = true)) return true
+    val head = substringBefore('|').trim()
+    return head.length >= 2 && loadingText.contains(head, ignoreCase = true)
 }
 
 private fun StructuredLoadingMessage.stageLabel(): String {

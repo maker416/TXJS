@@ -21,6 +21,8 @@ import io.github.rwpp.io.calculateSize
 import io.github.rwpp.internalModDir
 import io.github.rwpp.logger
 import io.github.rwpp.io.zipFolderToByte
+import io.github.rwpp.widget.clearProtectedModLoadHint
+import io.github.rwpp.widget.refreshProtectedModLoadHint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.koin.core.annotation.Single
@@ -48,6 +50,7 @@ class ModManagerImpl : ModManager {
         try {
             logger.info("[MODSYNC] modReload start, broadcasting ReloadModEvent (forceImmediate=$forceImmediate)")
             ReloadModEvent().broadcastIn()
+            refreshProtectedModLoadHint(getAllMods(), enabledByFileName)
             if (forceImmediate) {
                 // mod 同步专用：加入者仍在加载阶段、游戏主循环 i.b() 尚未启动，
                 // game.post 投递的 action 永远不会被消费 -> 直接在当前线程同步执行重载。
@@ -109,6 +112,7 @@ class ModManagerImpl : ModManager {
         } finally {
             logger.info("[MODSYNC] modReload broadcasting ReloadModFinishedEvent (finally)")
             ReloadModFinishedEvent().broadcastIn()
+            clearProtectedModLoadHint()
             isReloadingMods.set(false)
         }
     }

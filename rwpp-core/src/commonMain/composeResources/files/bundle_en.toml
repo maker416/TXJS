@@ -57,18 +57,6 @@ players: {2}/{3}
 version: {4}
    mods: {5}
 """
-admitting = """
-In order to make RWPP even better, we want you to send a message to joining players to promote RWPP when you are a host
-Do you agree? (The dialog will no longer be displayed, and can be changed later in Settings - Show Welcome Message)
-"""
-welcomeMessage = """
-This room was created with [RWPP]
-[RWPP] is an open-source multi-platform Rusted Warfare launcher on GitHub with many extensions
-QQ group: 927597495
-Source: https://github.com/Minxyzgo/RWPP
-Current version: {0} (core {1})
-Copyright 2023-2025 RWPP contributors
-"""
 serverQuestion = "Server Question"
 passwordRequired = "Password Required"
 passwordRequiredMessage = "This server requires a password to join"
@@ -234,6 +222,9 @@ missingTitle = "The mod-info.txt of \"{0}\" is missing the [mod] title; the mod 
 loadingUnits = "Loading units"
 loadingMods = "Loading mods"
 loadingStage = "Loading {0}"
+protectedLoadHint = "\"{0}\" is obfuscation-packed, so it loads slower than a normal mod. Please wait."
+protectedLoadHintMany = "These mods are obfuscation-packed and load slower than normal mods. Please wait: {0}"
+starting = "Starting…"
 downloadingMod = "Downloading host mods"
 downloadingModDetail = "{0} / {1}"
 downloadingModComplete = "Download complete, applying…"
@@ -387,7 +378,6 @@ buildings = "Buildings"
 showAttackRange = "Show Attack Range"
 showBuildingAttackRange = "Show Building Attack Range"
 showUnitAttackRange = "Show Unit Attack Range"
-showWelcomeMessage = "Show Welcome Message"
 attackRangeNever = "Never"
 attackRangeLand = "Land"
 attackRangeAir = "Air"
