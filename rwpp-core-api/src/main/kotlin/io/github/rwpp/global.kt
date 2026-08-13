@@ -11,7 +11,6 @@ import io.github.rwpp.command.CommandHandler
 import io.github.rwpp.command.CommandHandler.Command
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.Player
-import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.rwpp_core_api.BuildConfig
 import org.koin.core.Koin
 import org.slf4j.Logger
@@ -48,9 +47,6 @@ var koinInit = false
  * global koin module.
  */
 lateinit var appKoin: Koin
-
-/** 开房欢迎语，随界面语言切换（{0}=projectVersion, {1}=coreVersion）。 */
-fun welcomeMessage(): String = readI18n("multiplayer.welcomeMessage", io.github.rwpp.i18n.I18nType.RWPP, projectVersion, coreVersion)
 
 const val packageName = "io.github.rwpp"
 

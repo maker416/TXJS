@@ -304,7 +304,6 @@ fun MultiplayerView(
     var creatorNameFilter by remember { mutableStateOf(instance.creatorNameFilter) }
     var playerLimitRange by remember { mutableStateOf(instance.playerLimitRangeFrom..instance.playerLimitRangeTo) }
     var joinServerAddress by rememberSaveable { mutableStateOf(instance.joinServerAddress) }
-    val showWelcomeMessage by remember { mutableStateOf(settings.showWelcomeMessage) }
     var roomLabelFilterSelection by remember {
         mutableStateOf(instance.roomLabelFilterSelection.toSet())
     }
@@ -321,7 +320,6 @@ fun MultiplayerView(
 
     var selectedRoomDescription by remember { mutableStateOf<RoomDescription?>(null) }
     var showJoinRequestDialog by remember { mutableStateOf(false) }
-    var showWelcomeMessageAdmittingDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     remember(blacklists.size) {
@@ -342,12 +340,6 @@ fun MultiplayerView(
         onDispose {
             game.setUserName(userName)
         }
-    }
-
-    WelcomeMessageAdmittingDialog(
-        showWelcomeMessageAdmittingDialog
-    ) {
-        showWelcomeMessageAdmittingDialog = false
     }
 
     JoinServerRequestDialog(showJoinRequestDialog, { showJoinRequestDialog = false },
@@ -2109,69 +2101,6 @@ private fun AnimatedBlacklistInfo(
                     modifier = Modifier
                         .align(Alignment.BottomEnd),
                 ) { Text("Apply", style = MaterialTheme.typography.bodyLarge) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun WelcomeMessageAdmittingDialog(
-    visible: Boolean,
-    onDismissRequest: () -> Unit,
-) {
-    val settings = koinInject<Settings>()
-
-    AnimatedAlertDialog(
-        visible, onDismissRequest = onDismissRequest, enableDismiss = false
-    ) { dismiss ->
-        BorderCard(
-            modifier = Modifier
-             //   .fillMaxSize(GeneralProportion())
-                .width(IntrinsicSize.Max)
-                .padding(5.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(Icons.Default.Info, null, modifier = Modifier.size(32.dp).padding(5.dp))
-                Text(
-                    "Admitting",
-                    modifier = Modifier.padding(5.dp),
-                    style = MaterialTheme.typography.headlineLarge,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-            LargeDividingLine { 0.dp }
-            Column(
-                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    readI18n("multiplayer.admitting").trimIndent(),
-                    modifier = Modifier.padding(5.dp),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.secondary
-                )
-
-                Spacer(modifier = Modifier.weight(1f))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    RWTextButton("Yes", modifier = Modifier.padding(5.dp), leadingIcon = {
-                        Icon(Icons.Default.Done, null, modifier = Modifier.size(30.dp))
-                    }) {
-                        settings.showWelcomeMessage = true
-                        dismiss()
-                    }
-
-                    RWTextButton("No", modifier = Modifier.padding(5.dp), leadingIcon = {
-                        Icon(Icons.Default.Close, null, modifier = Modifier.size(30.dp))
-                    }) {
-                        settings.showWelcomeMessage = false
-                        dismiss()
-                    }
-                }
             }
         }
     }

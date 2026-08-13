@@ -256,7 +256,6 @@ object NetInject {
         c.A?.let {
             if (!cachePlayerSet.contains(it)) {
                 PlayerJoinEvent(it as Player).broadcastIn()
-                appKoin.get<Game>().gameRoom.sendMessageToPlayer(it as Player, "RWPP", welcomeMessage())
                 cachePlayerSet.add(it)
             }
         }

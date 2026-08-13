@@ -14,7 +14,7 @@ import org.koin.core.annotation.Single
 @Single
 @Serializable
 data class Settings(
-    var showWelcomeMessage: Boolean? = null,
+    var showWelcomeMessage: Boolean? = null, // @Deprecated: 欢迎消息功能已移除，保留仅用于旧配置兼容
     var ignoreVersion: String? = null,
     var autoCheckUpdate: Boolean = true,
     var enhancedReinforceTroops: Boolean = false,

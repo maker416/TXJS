@@ -398,11 +398,6 @@ fun SettingsView(
 
                                     "developer" -> SettingsGroup("developer") {
                                         SettingsSwitchComp("showFps")
-                                        SettingsSwitchComp(
-                                            "showWelcomeMessage",
-                                            readI18n("settings.showWelcomeMessage"),
-                                            defaultValue = settings.showWelcomeMessage ?: false
-                                        ) { settings.showWelcomeMessage = it }
                                     }
 
                                     "networking" -> SettingsGroup("networking") {

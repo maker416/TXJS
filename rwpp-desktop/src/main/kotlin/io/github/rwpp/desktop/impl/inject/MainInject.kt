@@ -9,14 +9,9 @@
 
 package io.github.rwpp.desktop.impl.inject
 
-import com.corrodinggames.rts.gameFramework.j.c
 import com.corrodinggames.rts.gameFramework.l
 import com.corrodinggames.rts.java.Main
-import io.github.rwpp.appKoin
-import io.github.rwpp.config.Settings
 import io.github.rwpp.desktop.GameEngine
-import io.github.rwpp.desktop.impl.RwOutputStream
-import io.github.rwpp.desktop.main
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.RefreshUIEvent
 import io.github.rwpp.event.events.StartGameEvent
@@ -24,27 +19,12 @@ import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
 import io.github.rwpp.utils.Reflect
-import io.github.rwpp.welcomeMessage
 
 @InjectClass(Main::class)
 object MainInject {
     @Inject("c", InjectMode.Override)
     fun onRefreshUI() {
         RefreshUIEvent().broadcastIn()
-    }
-
-    @Inject("c", InjectMode.Override)
-    fun onPlayerJoin(
-        client: c, m1: String?, m2: String?
-    ) {
-        if(appKoin.get<Settings>().showWelcomeMessage != true) return
-        val rwOutputStream = RwOutputStream()
-        rwOutputStream.c(welcomeMessage())
-        rwOutputStream.c(3)
-        rwOutputStream.b("RWPP")
-        rwOutputStream.a(null as c?)
-        rwOutputStream.a(-1)
-        GameEngine.B().bX.a(client, rwOutputStream.b(141))
     }
 
     @Inject("b", InjectMode.Override)
