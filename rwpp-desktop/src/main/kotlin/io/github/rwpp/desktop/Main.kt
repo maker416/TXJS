@@ -62,7 +62,6 @@ import io.github.rwpp.event.onDispose
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.mod.NetworkModCache
 import io.github.rwpp.game.sendChatMessageOrCommand
-import io.github.rwpp.game.units.comp.CompModule
 import io.github.rwpp.generatedLibDir
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.inject.GameLibraries
@@ -118,8 +117,6 @@ var native: Boolean = false
 var isSendingTeamChat by mutableStateOf(false)
 lateinit var mainJFrame: JFrame
 lateinit var gameCanvas: Canvas
-//lateinit var inGameComposePanel: ComposePanel
-var offscreenComposeRenderer: OffscreenComposeRenderer? = null
 lateinit var displaySize: Dimension
 lateinit var sendMessageDialog: Dialog
 lateinit var displaySwitcher: DisplaySwitcher
@@ -173,7 +170,7 @@ fun main(array: Array<String>) {
     koinInit = true
     appKoin = startKoin {
         logger(org.koin.core.logger.PrintLogger(org.koin.core.logger.Level.ERROR))
-        modules(ConfigModule().module, CoreImplModule().module, DesktopModule().module, CompModule().module)
+            modules(ConfigModule().module, CoreImplModule().module, DesktopModule().module)
     }.koin
 
     appKoin.get<ConfigIO>().readAllConfig()
@@ -526,7 +523,6 @@ fun swingApplication() = SwingUtilities.invokeLater {
                 logicalHeight
             )
 
-            offscreenComposeRenderer?.updateWindowSize(window.contentPane.width, window.contentPane.height)
             resetSendDialogLocation()
         }
 

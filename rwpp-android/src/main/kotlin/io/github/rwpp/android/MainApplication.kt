@@ -23,7 +23,6 @@ import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.CoreImplModule
 import io.github.rwpp.config.ConfigModule
 import io.github.rwpp.game.audio.GameSoundPool
-import io.github.rwpp.game.units.comp.CompModule
 import io.github.rwpp.generatedLibDir
 import io.github.rwpp.inject.runtime.Builder
 import io.github.rwpp.koinInit
@@ -43,7 +42,7 @@ class MainApplication : Application() {
         super.onCreate()
         koinApplication = startKoin {
             androidLogger()
-            modules(ConfigModule().module, CoreImplModule().module, AndroidModule().module, CompModule().module)
+            modules(ConfigModule().module, CoreImplModule().module, AndroidModule().module)
         }
 
         koinInit = true

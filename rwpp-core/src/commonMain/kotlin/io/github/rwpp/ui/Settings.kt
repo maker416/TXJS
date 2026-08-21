@@ -48,7 +48,6 @@ import io.github.rwpp.widget.v2.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
-import kotlin.math.roundToInt
 
 @Suppress("UnusedMaterial3ScaffoldPaddingParameter")
 @Composable
@@ -168,14 +167,6 @@ fun SettingsView(
                                                     settings.isFullscreen = it
                                                 }
                                             )
-
-                                            SettingsSwitchComp(
-                                                readI18n("settings.enableOffscreenPanel"),
-                                                defaultValue = settings.enableOffscreenPanel,
-                                                customConfigSettingAction = {
-                                                    settings.enableOffscreenPanel = it
-                                                }
-                                            )
                                         }
                                     }
 
@@ -214,24 +205,6 @@ fun SettingsView(
                                             }
                                             SettingsSwitchComp("showUnitGroups", "unitGroupInterface")
 
-                                            var xOffset by remember { mutableStateOf(settings.displayUnitGroupXOffset) }
-                                            SettingsTextField(
-                                                readI18n("settings.displayUnitGroupXOffset"),
-                                                xOffset.toString(),
-                                                typeInOnlyInteger = true,
-                                                typeInNumberOnly = true,
-                                                onValueChange = {
-                                                    xOffset = it.toIntOrNull() ?: 0
-                                                    settings.displayUnitGroupXOffset = it.toIntOrNull() ?: 0
-                                                },
-                                            )
-
-                                            SettingsSlider(
-                                                readI18n("settings.maxDisplayUnitGroupCount"),
-                                                settings.maxDisplayUnitGroupCount / 10f,
-                                                { settings.maxDisplayUnitGroupCount = (it * 10).roundToInt() },
-                                                valueFormat = { "${(it * 10).roundToInt()}" },
-                                            )
                                             if (appContext.isDesktop()) {
                                                 val backendKeys = remember { listOf("Default", "Software", "OpenGL") }
                                                 val backendLabels = remember {
@@ -253,21 +226,6 @@ fun SettingsView(
                                                     settings.renderingBackend = backendKeys[index]
                                                     selectedIndex = index
                                                 }
-                                            }
-
-                                            SettingsSwitchComp(
-                                                "",
-                                                readI18n("settings.displayTimeInGame"),
-                                                settings.displayTimeInGame
-                                            ) {
-                                                settings.displayTimeInGame = it
-                                            }
-                                            SettingsSwitchComp(
-                                                "",
-                                                readI18n("settings.showUnitTargetLine"),
-                                                settings.showUnitTargetLine
-                                            ) {
-                                                settings.showUnitTargetLine = it
                                             }
 
                                             val effectKeys = remember { listOf("Zero", "Keep", "Unlimited") }
@@ -302,25 +260,9 @@ fun SettingsView(
                                                 ) {
                                                     settings.enableVolumeKeyMapping = it
                                                 }
-
-                                                SettingsSwitchComp(
-                                                    "",
-                                                    readI18n("settings.enableLargerKeys"),
-                                                    settings.enableLargerKeys
-                                                ) {
-                                                    settings.enableLargerKeys = it
-                                                }
                                             }
 
                                             if (appContext.isDesktop()) {
-                                                SettingsSwitchComp(
-                                                    "",
-                                                    readI18n("settings.improvedHealthBar"),
-                                                    settings.improvedHealthBar
-                                                ) {
-                                                    settings.improvedHealthBar = it
-                                                }
-
                                                 SettingsSwitchComp(
                                                     "",
                                                     readI18n("settings.mouseMoveView"),
@@ -368,23 +310,6 @@ fun SettingsView(
                                                     "teamUnitCapHostedGame",
                                                     teamUnitCapHostedGame ?: 100
                                                 )
-                                            }
-                                            SettingsSwitchComp(
-                                                "",
-                                                readI18n("settings.showExtraButton"),
-                                                settings.showExtraButton
-                                            ) {
-                                                settings.showExtraButton = it
-                                            }
-                                        }
-
-                                        SettingsGroup("", readI18n("settings.inGameOffscreenPanel")) {
-                                            SettingsSwitchComp(
-                                                "",
-                                                readI18n("settings.enableQuickSelectMenu"),
-                                                settings.enableQuickSelectMenu
-                                            ) {
-                                                settings.enableQuickSelectMenu = it
                                             }
                                         }
                                     }

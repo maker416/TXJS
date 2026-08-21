@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -82,11 +81,7 @@ import io.github.rwpp.coreVersion
 import io.github.rwpp.event.EventPriority
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.events.DisconnectEvent
-import io.github.rwpp.game.Game
 import io.github.rwpp.game.Player
-import io.github.rwpp.game.units.GameUnit
-import io.github.rwpp.game.units.MovementType
-import io.github.rwpp.game.world.World
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.net.LatestVersionProfile
@@ -706,120 +701,6 @@ open class UIProvider {
                     fontWeight = FontWeight.Bold
                 )
             }
-        }
-    }
-
-    @Composable
-    open fun InGameComposeContent() {
-        val settings = koinInject<Settings>()
-        if (settings.enableQuickSelectMenu) {
-            TinyQuickSelectMenu()
-        }
-    }
-    @Composable
-    fun TinyQuickSelectMenu() {
-        BoxWithConstraints(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.BottomCenter
-        ) {
-            val scaleFactor = when {
-                maxHeight > 1200.dp -> 2.5f
-                maxHeight > 600.dp -> 1.5f
-                else -> 1.0f
-            }
-
-            Column(
-                modifier = Modifier
-                    .padding(8.dp * scaleFactor)
-                    .offset(x = if (scaleFactor == 1.0f) (-40).dp else 0.dp)
-                    .scale(scaleFactor)
-                    .width(IntrinsicSize.Min)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0x99000000))
-                    .padding(4.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "快速选择",
-                    color = Color.LightGray,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 4.dp)
-                )
-
-                val game = koinInject<Game>()
-                val world = game.world
-                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    MiniSelectButton("全", Color(0xFF9C27B0)) {
-                        selectUnitByMovementType(
-                            world,
-                            game,
-                            null
-                        )
-                    }
-                    MiniSelectButton("建", Color(0xFF795548)) {
-                        selectUnitByMovementType(
-                            world,
-                            game,
-                            setOf(MovementType.NONE)
-                        )
-                    }
-                    MiniSelectButton("海", Color(0xFF1E88E5)) {
-                        selectUnitByMovementType(world, game,
-                            setOf(
-                                MovementType.WATER,
-                                MovementType.OVER_CLIFF_WATER,
-                                MovementType.HOVER
-                            )
-                        )
-                    }
-                    MiniSelectButton("空", Color(0xFF4FC3F7)) {
-                        selectUnitByMovementType(world, game, setOf(MovementType.AIR))
-                    }
-                    MiniSelectButton("陆", Color(0xFF43A047)) {
-                        selectUnitByMovementType(world, game,
-                            setOf(
-                                MovementType.LAND,
-                                MovementType.HOVER,
-                                MovementType.OVER_CLIFF,
-                                MovementType.OVER_CLIFF_WATER
-                            )
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    private fun selectUnitByMovementType(world: World, game: Game, typeSet: Set<MovementType>?) {
-        world.clearSelectedUnits()
-        world.getAllObject().forEach {
-            if (it is GameUnit &&
-                !it.isDead &&
-                !it.type.isBuilder &&
-                (typeSet?.contains(it.type.movementType) ?:
-                (it.type.movementType != MovementType.NONE)) &&
-                it.player == game.gameRoom.localPlayer
-            ) world.selectUnit(it)
-        }
-    }
-
-    @Composable
-    fun MiniSelectButton(label: String, color: Color, onClick: () -> Unit) {
-        Box(
-            modifier = Modifier
-                .size(32.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(color.copy(alpha = 0.7f))
-                .clickable { onClick() },
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = label,
-                color = Color.White,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold
-            )
         }
     }
 

@@ -8,7 +8,6 @@
 package io.github.rwpp.game.units
 
 import io.github.rwpp.game.Player
-import io.github.rwpp.game.units.comp.UnitComp
 
 interface GameUnit : GameObject {
     val player: Player
@@ -18,6 +17,4 @@ interface GameUnit : GameObject {
     val maxHealth: Float // showHpChanges
     val maxAttackRange: Float
     val target: GameUnit?
-
-    val comp: List<UnitComp>
 }

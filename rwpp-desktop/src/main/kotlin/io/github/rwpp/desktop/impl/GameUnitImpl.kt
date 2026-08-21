@@ -8,27 +8,14 @@
 package io.github.rwpp.desktop.impl
 
 import com.corrodinggames.rts.game.units.am
-import io.github.rwpp.appKoin
 import io.github.rwpp.game.Player
-import io.github.rwpp.game.units.comp.EntityRangeUnitComp
 import io.github.rwpp.game.units.GameUnit
 import io.github.rwpp.game.units.UnitType
-import io.github.rwpp.game.units.comp.UnitComp
-import io.github.rwpp.inject.NewField
 import io.github.rwpp.inject.SetInterfaceOn
 
 @SetInterfaceOn([am::class])
 interface GameUnitImpl : GameUnit {
     val self: am
-
-    @NewField
-    var _comp: List<UnitComp>?
-
-    override val comp: List<UnitComp>
-        get(){
-            _comp = _comp ?: appKoin.getAll<UnitComp>()
-            return _comp!!
-        }
 
     override val player: Player
         get() = self.bX as Player

@@ -82,9 +82,17 @@ data class Settings(
         // 每次加载都让 Settings.forceEnglish 与 language（含 auto）解析结果对齐
         LanguageHelper.applyToSettings(this)
 
-        // 增强出兵与攻击范围显示功能已下线：每次加载强制关闭，任何旧配置值都无法再开启
+        // 局内 UI 干涉（攻击范围/目标线/改进血条/离屏面板/快捷选择等）已下线：
+        // 每次加载强制关闭，任何旧配置值都无法再开启
         enhancedReinforceTroops = false
         showBuildingAttackRange = false
         showAttackRangeUnit = "Never"
+        showUnitTargetLine = false
+        improvedHealthBar = false
+        enableOffscreenPanel = false
+        enableQuickSelectMenu = false
+        displayTimeInGame = false
+        showExtraButton = false
+        enableLargerKeys = false
     }
 }

@@ -9,8 +9,6 @@ package io.github.rwpp.desktop.impl
 
 import android.content.ServerContext
 import android.graphics.Point
-import androidx.compose.ui.graphics.Canvas
-import androidx.compose.ui.graphics.nativeCanvas
 import com.corrodinggames.librocket.scripts.ScriptContext
 import com.corrodinggames.librocket.scripts.ScriptEngine
 import com.corrodinggames.rts.gameFramework.ac
@@ -28,7 +26,6 @@ import io.github.rwpp.core.LoadingContext
 import io.github.rwpp.desktop.AbstractGame
 import io.github.rwpp.desktop.AbstractGameRoom
 import io.github.rwpp.desktop.GameEngine
-import io.github.rwpp.desktop.OffscreenComposeRenderer
 import io.github.rwpp.desktop.displaySize
 import io.github.rwpp.desktop.gameCanvas
 import io.github.rwpp.desktop.gameOver
@@ -38,7 +35,6 @@ import io.github.rwpp.desktop.GameStartMode
 import io.github.rwpp.desktop.displaySwitcher
 import io.github.rwpp.desktop.gameSessionManager
 import io.github.rwpp.desktop.native
-import io.github.rwpp.desktop.offscreenComposeRenderer
 import io.github.rwpp.desktop.singlePlayer
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.events.StartGameEvent
@@ -52,23 +48,16 @@ import io.github.rwpp.game.map.MissionType
 import io.github.rwpp.game.map.Replay
 import io.github.rwpp.game.ui.GUI
 import io.github.rwpp.game.world.World
-import io.github.rwpp.graphics.GL20
-import io.github.rwpp.graphics.GLConstants
 import io.github.rwpp.logger
 import io.github.rwpp.ui.UI
 import io.github.rwpp.utils.Reflect
 import io.github.rwpp.widget.loadingMessage
 import kotlinx.coroutines.channels.Channel
 import org.koin.core.annotation.Single
-import org.lwjgl.BufferUtils
 import org.lwjgl.input.Cursor
 import org.lwjgl.opengl.Display
-import org.lwjgl.opengl.GL11
-import org.lwjgl.opengl.GL12
 import org.newdawn.slick.Image
 import org.newdawn.slick.opengl.ImageData
-import java.awt.image.BufferedImage
-import java.awt.image.DataBufferInt
 import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
@@ -513,15 +502,8 @@ class GameImpl : AbstractGame() {
 
     class RWPPContainer : b(game, displaySize.width, displaySize.height, false) {
         private val channel = Channel<() -> Unit>(Channel.UNLIMITED)
-        private var uiTextureID: Int = -1
-        private var lastUpdateNs = 0L
-        private val targetFrameDurationNs = 1_000_000_000L / 30 // 33,333,333
         private var frameNumber = 0L
         private var lastFrameLogTime = 0L
-
-        private val intBuffer = BufferUtils.createIntBuffer(width * height)
-
-        private val settings by lazy { appKoin.get<Settings>() }
 
         /**
          * try to post an action to the game thread (running in Opengl context)
@@ -572,113 +554,7 @@ class GameImpl : AbstractGame() {
             val f = channel.tryReceive()
             f.getOrNull()?.invoke()
 
-            GL20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f) // 清屏颜色（按需设置）
-            // 清空颜色+深度缓冲区（只在帧开头执行，保留这一步，否则深度缓冲区有残留）
-            GL20.glClear(GLConstants.GL_COLOR_BUFFER_BIT or GLConstants.GL_DEPTH_BUFFER_BIT)
-
             super.updateAndRender(p0)
-
-            if (settings.enableOffscreenPanel) {
-                if (uiTextureID == -1) {
-                    uiTextureID = GL11.glGenTextures()
-                    setupTexture(uiTextureID, displaySize.width, displaySize.height)
-                }
-                val nowNs = System.nanoTime()
-
-                if (nowNs - lastUpdateNs >= targetFrameDurationNs) {
-                    if (offscreenComposeRenderer!!.shouldUpdate()) {
-                        val image = offscreenComposeRenderer!!.render()
-                        updateOpenGLTexture(uiTextureID, image)
-
-                        if (lastUpdateNs == 0L) {
-                            lastUpdateNs = nowNs
-                        } else {
-                            lastUpdateNs += targetFrameDurationNs
-                        }
-
-                        if (nowNs - lastUpdateNs > targetFrameDurationNs) {
-                            lastUpdateNs = nowNs
-                        }
-                    }
-                }
-
-                renderFullscreenQuad(uiTextureID, displaySize.width, displaySize.height)
-            }
-        }
-
-        override fun initSystem() {
-            super.initSystem()
-
-            offscreenComposeRenderer = OffscreenComposeRenderer(displaySize.width, displaySize.height, input).apply {
-                setContent {
-                    UI.UiProvider.InGameComposeContent()
-                }
-            }
-            input.addListener(offscreenComposeRenderer)
-        }
-
-        private fun setupTexture(id: Int, w: Int, h: Int) {
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, id)
-            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR)
-            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR)
-            GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA, w, h, 0, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, null as java.nio.ByteBuffer?)
-        }
-
-        // 辅助：高效上传像素（使用 glTexSubImage2D）
-        private fun updateOpenGLTexture(id: Int, img: BufferedImage) {
-            val pixels = (img.raster.dataBuffer as DataBufferInt).data
-            intBuffer.clear()
-            intBuffer.put(pixels)
-            intBuffer.flip()
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, id)
-            // 注意：BufferedImage 是 ARGB，OpenGL 通常需要配合 GL_BGRA 和特定的 REV 类型
-            GL11.glTexSubImage2D(
-                GL11.GL_TEXTURE_2D, 0, 0, 0, img.width, img.height,
-                GL12.GL_BGRA, GL12.GL_UNSIGNED_INT_8_8_8_8_REV, intBuffer
-            )
-        }
-
-        private fun renderFullscreenQuad(textureID: Int, w: Int, h: Int) {
-            // 1. 保存当前所有状态，防止破坏游戏原本的渲染
-            GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS)
-
-            // 2. 基础开关
-            GL11.glEnable(GL11.GL_TEXTURE_2D)
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureID)
-            GL11.glDisable(GL11.GL_DEPTH_TEST) // 确保 UI 在最前面
-            GL11.glDisable(GL11.GL_LIGHTING)   // 禁用光照，否则 UI 会变黑
-
-            // 3. 混合模式 (针对预乘 Alpha，防止透明部分变黑)
-            GL11.glEnable(GL11.GL_BLEND)
-            GL11.glBlendFunc(GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA)
-
-            // 4. 重置颜色（关键！如果之前 glColor 是 0，纹理就是透明的）
-            GL11.glColor4f(1f, 1f, 1f, 1f)
-
-            // 5. 设置正交投影矩阵（2D 坐标系）
-            GL11.glMatrixMode(GL11.GL_PROJECTION)
-            GL11.glPushMatrix()
-            GL11.glLoadIdentity()
-            GL11.glOrtho(0.0, w.toDouble(), h.toDouble(), 0.0, -1.0, 1.0)
-
-            GL11.glMatrixMode(GL11.GL_MODELVIEW)
-            GL11.glPushMatrix()
-            GL11.glLoadIdentity()
-
-            // 6. 绘制全屏矩形
-            GL11.glBegin(GL11.GL_QUADS)
-            GL11.glTexCoord2f(0f, 0f); GL11.glVertex2f(0f, 0f)
-            GL11.glTexCoord2f(1f, 0f); GL11.glVertex2f(w.toFloat(), 0f)
-            GL11.glTexCoord2f(1f, 1f); GL11.glVertex2f(w.toFloat(), h.toFloat())
-            GL11.glTexCoord2f(0f, 1f); GL11.glVertex2f(0f, h.toFloat())
-            GL11.glEnd()
-
-            // 7. 恢复矩阵和状态
-            GL11.glPopMatrix()
-            GL11.glMatrixMode(GL11.GL_PROJECTION)
-            GL11.glPopMatrix()
-            GL11.glMatrixMode(GL11.GL_MODELVIEW)
-            GL11.glPopAttrib()
         }
     }
 }

@@ -9,11 +9,7 @@ package io.github.rwpp.android.impl
 
 import android.os.Bundle
 import android.os.SystemClock
-import android.view.Gravity
 import android.view.KeyEvent
-import android.view.ViewGroup
-import android.widget.FrameLayout
-import androidx.compose.ui.platform.ComposeView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -28,7 +24,6 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.corrodinggames.rts.appFramework.InGameActivity
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
-import io.github.rwpp.ui.UI
 
 class CustomInGameActivity : InGameActivity(), LifecycleOwner, SavedStateRegistryOwner, ViewModelStoreOwner {
     private val lifecycleRegistry: LifecycleRegistry = LifecycleRegistry(this)
@@ -48,28 +43,11 @@ class CustomInGameActivity : InGameActivity(), LifecycleOwner, SavedStateRegistr
         super.onCreate(savedInstanceState)
         instance = this
 
-        val fullScreenParams = FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
-        ).apply {
-            gravity = Gravity.FILL
-        }
-
-        // 攻击范围显示功能已下线（Settings.migrate 强制关闭且禁止再开启），
-        // 不再挂载 OffscreenSurfaceView：其忙等渲染线程会在 surface 销毁时
-        // （如对局中打开设置页）抛出未捕获异常导致闪退，或无超时 join 拖死 UI 线程
-        val composeView = ComposeView(this)
-            .apply {
-                setViewTreeLifecycleOwner(this@CustomInGameActivity)
-                setViewTreeSavedStateRegistryOwner(this@CustomInGameActivity)
-                setViewTreeViewModelStoreOwner(this@CustomInGameActivity)
-
-                setContent {
-                    UI.UiProvider.InGameComposeContent()
-                }
-            }
-
-        addContentView(composeView, fullScreenParams)
+        // 对局画面交给原版 InGameActivity，不再叠加 Compose / Surface 覆盖层。
+        // LifecycleOwner 仍保留，供局内脚本弹窗（showWidgetInGame）挂 ComposeView。
+        window.decorView.setViewTreeLifecycleOwner(this)
+        window.decorView.setViewTreeSavedStateRegistryOwner(this)
+        window.decorView.setViewTreeViewModelStoreOwner(this)
     }
 
     private var isShiftPressed = false
