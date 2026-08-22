@@ -128,6 +128,15 @@ val modDir by lazy {
 }
 
 /**
+ * 原版回放目录 `replays/`（引擎写出 `.replay` 的位置）。
+ *
+ * 启动器列表不再走 `/SD/rustedWarfare/replays/` 虚拟路径，直接扫此目录。
+ */
+val replayDir by lazy {
+    appKoin.get<AppContext>().externalStoragePath("replays/")
+}
+
+/**
  * 应用私有模组目录：用于存放网络同步过来的房主模组。
  *
  * Android 上位于 getExternalFilesDir/units/，非 root 设备上文件管理器无法访问，

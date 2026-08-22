@@ -90,6 +90,69 @@ class BundleParseTest {
     }
 
     @Test
+    fun replayKeysExistInAllBundles() {
+        bundleNames.forEach { name ->
+            val table = Toml.parseToTomlTable(File(bundleDir, name).readText())
+            val replays = table["replays"] as? TomlTable
+            assertNotNull(replays, "[replays] table missing in $name")
+            listOf(
+                "title",
+                "filter",
+                "empty",
+                "emptyFiltered",
+                "search",
+                "recordingOff",
+                "loadFailed",
+                "count",
+                "players",
+                "play",
+                "sort",
+                "group",
+                "mapFilter",
+                "playerFilter",
+                "versionFilter",
+                "sortTimeNewest",
+                "sortTimeOldest",
+                "sortMapAsc",
+                "sortMapDesc",
+                "sortPlayersDesc",
+                "sortPlayersAsc",
+                "sortSizeDesc",
+                "sortSizeAsc",
+                "groupNone",
+                "groupMap",
+                "groupPlayers",
+                "groupDate",
+                "groupVersion",
+                "dateAll",
+                "dateToday",
+                "dateWeek",
+                "dateMonth",
+                "mapAll",
+                "playersAll",
+                "versionAll",
+                "playersUnknown",
+                "dateUnknown",
+                "versionUnknown",
+                "resetFilters",
+                "collapseGroup",
+                "expandGroup",
+                "import",
+                "importPreparing",
+                "importing",
+                "importSuccess",
+                "importInvalid",
+                "importFailed",
+                "importExistsTitle",
+                "importExistsMessage",
+                "importOverwrite",
+            ).forEach { key ->
+                assertTrue(replays.containsKey(key), "replays.$key missing in $name")
+            }
+        }
+    }
+
+    @Test
     fun protectedModHintKeysExistInAllBundles() {
         bundleNames.forEach { name ->
             val table = Toml.parseToTomlTable(File(bundleDir, name).readText())

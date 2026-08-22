@@ -17,6 +17,8 @@ import androidx.appcompat.app.AppCompatActivity
 import io.github.rwpp.app.PermissionHelper
 import io.github.rwpp.appKoin
 import io.github.rwpp.extensionPath
+import io.github.rwpp.game.map.replayImportTargetName
+import io.github.rwpp.replayDir
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.ui.ModsMapsTab
@@ -40,6 +42,7 @@ class ExternalHelperActivity : AppCompatActivity() {
 
             if (dataString != null) {
                 val fileName = getFileName(intent.data!!)!!
+                var destFileName = fileName
 
                 val path =
                     if (dataString.endsWith(".rwres") || dataString.endsWith(".rwext") || dataString.endsWith(".jar")) {
@@ -65,13 +68,19 @@ class ExternalHelperActivity : AppCompatActivity() {
                             )
                         }
                         "/storage/emulated/0/rustedWarfare/saves/"
-                    } else if (dataString.endsWith(".reply")) {
+                    } else if (fileName.endsWith(".replay", ignoreCase = true) ||
+                        fileName.endsWith(".reply", ignoreCase = true) ||
+                        dataString.endsWith(".replay", ignoreCase = true) ||
+                        dataString.endsWith(".reply", ignoreCase = true)
+                    ) {
                         endsAction = {
+                            UI.showReplayView = true
                             UI.showWarning(
-                                readI18n("android.importReply", I18nType.RWPP, fileName)
+                                readI18n("android.importReplay", I18nType.RWPP, replayImportTargetName(fileName))
                             )
                         }
-                        "/storage/emulated/0/rustedWarfare/replays/"
+                        destFileName = replayImportTargetName(fileName)
+                        replayDir
                     } else if (dataString.endsWith(".tmx")) {
                         endsAction = {
                             UI.pendingModsMapsTab = ModsMapsTab.Maps
@@ -91,7 +100,7 @@ class ExternalHelperActivity : AppCompatActivity() {
                 if (path != null) {
                     appKoin.get<PermissionHelper>().requestManageFilePermission {
                         contentResolver.openInputStream(intent.data!!).use {
-                            val file = File(path, fileName)
+                            val file = File(path, destFileName)
                             if (!file.exists()) {
                                 file.parentFile?.mkdirs()
                                 file.createNewFile()

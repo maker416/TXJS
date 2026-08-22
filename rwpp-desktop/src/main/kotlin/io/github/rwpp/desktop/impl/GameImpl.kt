@@ -46,8 +46,10 @@ import io.github.rwpp.game.map.MapType
 import io.github.rwpp.game.map.Mission
 import io.github.rwpp.game.map.MissionType
 import io.github.rwpp.game.map.Replay
+import io.github.rwpp.game.map.scanReplayFiles
 import io.github.rwpp.game.ui.GUI
 import io.github.rwpp.game.world.World
+import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.logger
 import io.github.rwpp.ui.UI
 import io.github.rwpp.utils.Reflect
@@ -294,7 +296,12 @@ class GameImpl : AbstractGame() {
                     is GameStartMode.Replay -> {
                         gameOver = false
                         container.post {
-                            ScriptEngine.getInstance().root.loadReplay(mode.replay.name)
+                            runCatching {
+                                ScriptEngine.getInstance().root.loadReplay(mode.replay.name)
+                            }.onFailure { e ->
+                                logger.error("Failed to load replay {}", mode.replay.name, e)
+                                UI.showWarning(readI18n("replays.loadFailed"))
+                            }
                         }
                     }
                     is GameStartMode.Continue -> {
@@ -437,19 +444,16 @@ class GameImpl : AbstractGame() {
 
 
     override fun getAllReplays(): List<Replay> {
-        return Reflect.call<com.corrodinggames.rts.appFramework.q, Array<String>>(
-            null, "l", emptyList(), emptyList()
-        )!!.mapIndexed { i, str ->
-            object : Replay {
-                override val id: Int = i
-                override val name: String = str
-                private val _displayName = ScriptEngine.getInstance().root.convertMapName(name)
-                override fun displayName(): String = _displayName
-            }
-        }
+        return runCatching {
+            scanReplayFiles().mapIndexed { i, file -> file.toReplay(i) }
+        }.onFailure { e ->
+            logger.warn("Failed to list replays", e)
+        }.getOrDefault(emptyList())
     }
 
     override fun watchReplay(replay: Replay) {
+        // 回放加载在 startGame 内部的 container.post 中异步执行，
+        // 失败提示由那里的 runCatching 负责；此处同步调用基本不会抛异常，无需再包一层。
         gameSessionManager.startGame(GameStartMode.Replay(replay))
     }
 

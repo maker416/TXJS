@@ -13,4 +13,10 @@ interface Replay {
     val name: String
 
     fun displayName(): String
+
+    /** 文件最后修改时间，用于列表按新到旧排序；无法取得时为 0。 */
+    val lastModifiedMillis: Long get() = 0L
+
+    /** 回放文件字节数；无法取得时为 0。 */
+    val fileSizeBytes: Long get() = 0L
 }

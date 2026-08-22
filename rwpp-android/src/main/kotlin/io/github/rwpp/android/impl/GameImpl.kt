@@ -12,7 +12,6 @@ import android.content.Intent
 import com.corrodinggames.rts.appFramework.LevelGroupSelectActivity
 import com.corrodinggames.rts.appFramework.LevelSelectActivity
 import com.corrodinggames.rts.appFramework.LoadLevelActivity
-import com.corrodinggames.rts.appFramework.ReplaySelectActivity
 import com.corrodinggames.rts.gameFramework.j.ae
 import com.corrodinggames.rts.gameFramework.k
 import io.github.rwpp.android.*
@@ -28,8 +27,10 @@ import io.github.rwpp.game.map.*
 import io.github.rwpp.game.ui.GUI
 import io.github.rwpp.game.units.UnitType
 import io.github.rwpp.game.world.World
+import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.logger
 import io.github.rwpp.net.sanitizeJoinRelayUuid
+import io.github.rwpp.ui.UI
 import kotlinx.coroutines.*
 import org.koin.core.annotation.Single
 import org.koin.core.component.get
@@ -306,30 +307,25 @@ class GameImpl : Game, CoroutineScope {
     }
 
     override fun getAllReplays(): List<Replay> {
-        val eStr = com.corrodinggames.rts.gameFramework.e.a.e("/SD/rustedWarfare/replays/")
-        logger.info("replay eStr: $eStr")
-        logger.info("b: ${com.corrodinggames.rts.gameFramework.e.a.e()}")
-        logger.info("replay b: ${com.corrodinggames.rts.gameFramework.e.a.c(eStr)}")
-        logger.info("saflink: ${com.corrodinggames.rts.gameFramework.utility.ah.a(eStr)}")
-        return ReplaySelectActivity.getGameSaves()?.mapIndexed { i, str ->
-            object : Replay {
-                override val id: Int = i
-                override val name: String = str
-
-                private val _displayName = LoadLevelActivity.convertDataFileNameForDisplay(com.corrodinggames.rts.gameFramework.e.a.q(name))
-
-                override fun displayName(): String {
-                    return _displayName
-                }
-            }
-        } ?: listOf()
+        return runCatching {
+            scanReplayFiles().mapIndexed { i, file -> file.toReplay(i) }
+        }.onFailure { e ->
+            logger.warn("Failed to list replays", e)
+        }.getOrDefault(emptyList())
     }
 
     override fun watchReplay(replay: Replay) {
-        if (GameEngine.t().bY.b(replay.name)) {
+        val loaded = runCatching {
+            GameEngine.t().bY.b(replay.name)
+        }.onFailure { e ->
+            logger.error("Failed to load replay {}", replay.name, e)
+        }.getOrDefault(false)
+        if (loaded) {
             gameLauncher.launch(
                 Intent(get(), CustomInGameActivity::class.java)
             )
+        } else {
+            UI.showWarning(readI18n("replays.loadFailed"))
         }
     }
 
