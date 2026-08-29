@@ -376,6 +376,12 @@ fun swingApplication() = SwingUtilities.invokeLater {
         window = window
     )
 
+    // showGame()/showMenu() 中的 validate 会触发 CardLayout 重置 canvas 尺寸，
+    // 切换完成后兜底再同步一次（canvas 自身的 componentResized 通常已纠正，此处为保险）
+    displaySwitcher.onAfterSwitch += {
+        SwingUtilities.invokeLater { syncGameCanvasSizeToNative() }
+    }
+
     window.isVisible = true
     panel.requestFocus()
 
@@ -511,23 +517,22 @@ fun swingApplication() = SwingUtilities.invokeLater {
 
     window.addComponentListener(object : ComponentAdapter() {
         override fun componentResized(e: ComponentEvent) {
-            val scale = getDPIScale()
-
-            // 计算逻辑像素尺寸（抵消 HiDPI 缩放）
-            val logicalWidth = (window.contentPane.width * scale).toInt()
-            val logicalHeight = (window.contentPane.height * scale).toInt()
-
-            // 设置 Canvas 物理像素尺寸
-            canvas.setSize(
-                logicalWidth,
-                logicalHeight
-            )
-
+            syncGameCanvasSizeToNative()
             resetSendDialogLocation()
         }
 
         override fun componentMoved(e: ComponentEvent) {
+            // 跨显示器移动后 DPI 缩放可能变化，重新同步（尺寸未变时为空操作）
+            syncGameCanvasSizeToNative()
             resetSendDialogLocation()
+        }
+    })
+
+    // CardLayout 每次 validate 都会把 canvas 重置回容器逻辑尺寸，
+    // 在 canvas 自身的 componentResized 上重新施加物理尺寸补偿，实现自我纠正
+    canvas.addComponentListener(object : ComponentAdapter() {
+        override fun componentResized(e: ComponentEvent) {
+            syncGameCanvasSizeToNative()
         }
     })
 
@@ -609,12 +614,39 @@ private fun resetSendDialogLocation() {
 }
 
 fun getDPIScale(): Double {
-    // 获取原生系统缩放比例（需考虑多显示器场景）
-    val env = GraphicsEnvironment.getLocalGraphicsEnvironment()
-    val device = env.defaultScreenDevice
-    val config = device.defaultConfiguration
+    // 优先取主窗口实际所在显示器的配置（多显示器缩放比例可能不同），
+    // 窗口未初始化时回退到默认显示设备
+    val config = if (::mainJFrame.isInitialized) mainJFrame.graphicsConfiguration else null
+        ?: GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice.defaultConfiguration
 
-    // 获取系统推荐缩放倍数（Windows 的 % 缩放比例）
-    val transform = config.defaultTransform
-    return transform.scaleX // 通常 X/Y 缩放一致
+    // 获取系统缩放倍数（Windows 的 % 缩放比例），通常 X/Y 缩放一致
+    return config.defaultTransform.scaleX
+}
+
+/**
+ * 将游戏 Canvas 的组件尺寸同步为物理像素尺寸（容器逻辑尺寸 × DPI 缩放）。
+ *
+ * LWJGL2 在 Display.setParent 模式下直接以 canvas 组件尺寸（AWT 逻辑像素）创建/缩放
+ * 原生渲染子窗口。HiDPI（系统缩放 >100%）下逻辑像素小于物理像素，会导致全屏画面缩在
+ * 屏幕左上角、其余区域黑屏，因此这里把 canvas 尺寸放大到物理像素进行抵消。
+ *
+ * 注意：CardLayout 每次 validate 都会把 canvas 重置回容器逻辑尺寸
+ * （见 DisplaySwitcher.refreshWindow），所以本函数同时挂在 window 与 canvas 自身的
+ * componentResized/componentMoved 上，被布局重置后能立即自我纠正。
+ */
+fun syncGameCanvasSizeToNative() {
+    if (!::gameCanvas.isInitialized || !::mainJFrame.isInitialized) return
+
+    // CardLayout 会把 canvas 布局为父容器大小，以父容器逻辑尺寸为基准
+    val base = gameCanvas.parent?.size ?: mainJFrame.contentPane.size
+    if (base.width <= 0 || base.height <= 0) return
+
+    val scale = getDPIScale()
+    val targetWidth = (base.width * scale).toInt()
+    val targetHeight = (base.height * scale).toInt()
+
+    // 仅尺寸不符时才设置：setSize 尺寸不变时不触发事件，避免 componentResized 死循环
+    if (gameCanvas.width != targetWidth || gameCanvas.height != targetHeight) {
+        gameCanvas.setSize(targetWidth, targetHeight)
+    }
 }

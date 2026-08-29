@@ -326,4 +326,4 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 - **KSP 增量编译**：根目录 `gradle.properties` 中显式设置了 `ksp.incremental=false`，因为注入元数据变更通常需要全量重新生成。
 - **JitPack 构建**：通过检测 `JITPACK` 环境变量排除 app 模块，仅发布 library（`rwpp-core-api`、`rwpp-core`）。
-- **HiDPI**：桌面端 `Main.kt` 中通过 `GraphicsEnvironment` 获取系统 DPI 缩放比例，计算逻辑像素尺寸后设置 Canvas 物理尺寸。
+- **HiDPI**：LWJGL2 在 `Display.setParent` 模式下直接以 Canvas 组件尺寸（AWT 逻辑像素）创建原生渲染子窗口，系统缩放 >100% 时会导致画面缩在屏幕左上角。桌面端 `Main.kt` 通过 `syncGameCanvasSizeToNative()` 将 Canvas 尺寸保持为物理像素（容器逻辑尺寸 × 缩放比例）来抵消；缩放比例优先取主窗口实际所在显示器的 `GraphicsConfiguration`（`getDPIScale()`）。由于 CardLayout 每次 `validate` 会把 Canvas 重置回逻辑尺寸，该同步同时挂在 Canvas 自身的 `componentResized`、window 的 `componentResized`/`componentMoved` 与 `DisplaySwitcher.onAfterSwitch` 上，被布局重置后自动纠正。
