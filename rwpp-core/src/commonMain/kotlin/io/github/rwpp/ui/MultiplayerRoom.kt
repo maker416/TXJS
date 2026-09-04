@@ -1114,16 +1114,19 @@ private fun PlayerOverrideDialog(
     player: Player,
 ) {
     val game = koinInject<Game>()
-    val items = remember {
-        buildList {
-            add(-1 to "Default")
-            addAll(game.getStartingUnitOptions())
-        }
-    }
 
     AnimatedAlertDialog(
         visible, onDismissRequest = { onDismissRequest(); update() }
     ) { dismiss ->
+
+        // 模组初始单位预设在模组加载/重载后才注册到引擎，
+        // 必须在弹窗打开时实时拉取（remember 无 key 会在进房时固化成旧列表）
+        val items = remember(player) {
+            buildList {
+                add(-1 to "Default")
+                addAll(game.getStartingUnitOptions())
+            }
+        }
 
         var playerSpawnPoint by remember(player) { mutableStateOf<Int?>(player.spawnPoint + 1) }
         var playerTeam by remember(player) { mutableStateOf<Int?>(-1) }
@@ -2691,7 +2694,8 @@ private fun RoomPlayerTableRow(
     compact: Boolean = false,
     rowShape: Shape = CircleShape,
 ) {
-    val options = remember { game.getStartingUnitOptions() }
+    // 跟随房间刷新重建，避免模组预设变化后玩家初始单位后缀显示 Unknown
+    val options = remember(update) { game.getStartingUnitOptions() }
     val rowPadding = if (compact) 2.dp else 5.dp
     Box(modifier) {
         KickPlayerContextMenuAreaMultiplatform(player) {
