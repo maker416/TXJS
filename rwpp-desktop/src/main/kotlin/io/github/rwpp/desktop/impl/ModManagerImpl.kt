@@ -123,16 +123,29 @@ class ModManagerImpl : ModManager {
      * 默认应在游戏主线程执行；forceImmediate 时为绕过主循环在调用线程直接执行。
      */
     private fun runReloadCore(enabledByFileName: Map<String, Boolean>?) {
-        val B = GameEngine.B()
-        B.bZ.e()
-        B.bQ.save()
+        val runtime = Runtime.getRuntime()
+        logger.info(
+            "[MODSYNC] reload heap before: used=${(runtime.totalMemory() - runtime.freeMemory()) / 1048576}MB" +
+                " max=${runtime.maxMemory() / 1048576}MB"
+        )
+        System.gc()
         try {
-            B.br = true
-            B.e()
-            reloadUnitsWithSelection(enabledByFileName)
-            B.x()
-        } finally {
-            B.br = false
+            val B = GameEngine.B()
+            B.bZ.e()
+            B.bQ.save()
+            try {
+                B.br = true
+                B.e()
+                reloadUnitsWithSelection(enabledByFileName)
+                B.x()
+            } finally {
+                B.br = false
+            }
+        } catch (e: OutOfMemoryError) {
+            // 堆已耗尽：置全局标志，本进程内不再允许模组重载（否则反复重载必然崩溃）。
+            // 吞掉 OOM 避免游戏线程未捕获崩溃；模组页会检测标志并引导用户重启应用。
+            io.github.rwpp.ui.UI.modReloadMemoryExhausted = true
+            logger.error("[MODSYNC] runReloadCore aborted by OutOfMemoryError", e)
         }
     }
 
@@ -176,6 +189,14 @@ class ModManagerImpl : ModManager {
         withContext(Dispatchers.IO) {
             latch.await()
         }
+    }
+
+    override suspend fun modPersistStates() {
+        // 桌面端堆充足，不会走"重启式加载"；实现仅为接口对齐：
+        // 与该文件 modSaveChange 前半段一致，只落盘开关，不重建单位表。
+        val b = GameEngine.B()
+        b.bZ.e()
+        b.bQ.save()
     }
 
     override suspend fun modSaveChange(enabledByFileName: Map<String, Boolean>?) {

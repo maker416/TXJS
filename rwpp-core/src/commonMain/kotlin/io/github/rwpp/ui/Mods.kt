@@ -40,15 +40,21 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.appKoin
+import io.github.rwpp.AppContext
+import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.Settings
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.external.ExternalHandler
 import io.github.rwpp.external.FileChooseProgress
 import io.github.rwpp.game.mod.Mod
+import io.github.rwpp.game.mod.ModHeavinessScanner
 import io.github.rwpp.game.mod.ModInfoParser
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.game.mod.ModSourceType
+import io.github.rwpp.game.mod.PENDING_MOD_STATES_GROUP
+import io.github.rwpp.game.mod.PENDING_MOD_STATES_KEY
+import io.github.rwpp.game.mod.encodeEnabledStates
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.io.copyToWithProgress
@@ -219,6 +225,10 @@ private data class FailedModLoadInfo(
 
 private fun collectFailedMods(mods: List<Mod>): List<FailedModLoadInfo> {
     return mods.mapNotNull { mod ->
+        // 元数据校验错误（mod-info.txt 缺 title）不属于"加载失败"：禁用模组本就不会被
+        // 引擎解析，缺 title 也不影响启用模组的单位加载。该类提示保留在模组卡片上展示，
+        // 不进此列表——否则禁用模组会被误报为"仍保持启用但单位未成功加载"。
+        if (mod is TitleErrorMod || mod is UnloadedMod) return@mapNotNull null
         val error = mod.errorMessage ?: return@mapNotNull null
         FailedModLoadInfo(name = mod.name.ifBlank { File(mod.path).name }, errorMessage = error)
     }
@@ -236,6 +246,7 @@ fun ModsView(
 ) {
     val modManager = koinInject<ModManager>()
     val settings = koinInject<Settings>()
+    val appContext = koinInject<AppContext>()
 
     var deletedMod by remember { mutableStateOf(false) }
     val initialEngineMods = remember { modManager.getAllMods().withTitleErrors() }
@@ -262,6 +273,9 @@ fun ModsView(
     var importProgress by remember { mutableStateOf<ModImportProgress?>(null) }
     var pendingDeleteMod by remember { mutableStateOf<Mod?>(null) }
     var failedModsAfterReload by remember { mutableStateOf<List<FailedModLoadInfo>?>(null) }
+    var showMemoryExhaustedDialog by remember { mutableStateOf(false) }
+    // 非 null 时展示"特殊加载"对话框；空列表表示仅由堆水位触发（无具体模组名单）
+    var specialLoadMods by remember { mutableStateOf<List<String>?>(null) }
 
     ModImportProgressDialog(importProgress)
 
@@ -315,11 +329,42 @@ fun ModsView(
         return collectFailedMods(engineMods)
     }
 
-    fun reload() {
+    /**
+     * 评估本次重载是否应改用"重启式特殊加载"。
+     * 返回 null 表示可安全地在进程内重载；否则返回触发原因——
+     * 非空列表为评分超阈值的重型模组名，空列表表示仅由堆水位触发。
+     * 仅 Android 启用该拦截（桌面端堆充足）。
+     */
+    suspend fun assessSpecialLoad(): List<String>? {
+        if (!appContext.isAndroid()) return null
+        // 先在调用线程快照，避免在 IO 线程读 SnapshotStateList
+        val enabledSnapshot = mods.filter { it.isEnabled }
+            .map { Triple(it.path, it.name, File(it.path).name) }
+        return withContext(Dispatchers.IO) {
+            val heavy = enabledSnapshot.mapNotNull { (path, name, fileName) ->
+                val heaviness = ModHeavinessScanner.scan(File(path))
+                if (ModHeavinessScanner.isHeavy(heaviness)) name.ifBlank { fileName } else null
+            }
+            if (heavy.isNotEmpty()) return@withContext heavy
+
+            val runtime = Runtime.getRuntime()
+            val usedRatio =
+                (runtime.totalMemory() - runtime.freeMemory()).toDouble() / runtime.maxMemory()
+            if (usedRatio >= 0.85) emptyList() else null
+        }
+    }
+
+    /** 进程内重载原流程（被 [reload] 与"仍尝试重载"共用）。 */
+    fun doReloadInProcess() {
         scope.launch {
             try {
                 val failed = reloadMods()
-                if (failed.isNotEmpty()) {
+                // 引擎会把 OOM 包装进单位错误消息；一旦出现说明堆已耗尽，
+                // 禁止再次重载并引导重启（通用失败列表让位于内存不足对话框）。
+                if (failed.any { it.errorMessage.contains("OutOfMemoryError") }) {
+                    UI.modReloadMemoryExhausted = true
+                    showMemoryExhaustedDialog = true
+                } else if (failed.isNotEmpty()) {
                     failedModsAfterReload = failed
                 }
             } catch (e: CancellationException) {
@@ -330,16 +375,63 @@ fun ModsView(
         }
     }
 
+    /**
+     * 特殊加载：开关落盘 + 写入跨重启的一次性选择，然后重启进程由冷启动完成单位重建。
+     * 平台不支持重启时回退为进程内重载。
+     */
+    fun performSpecialLoad() {
+        specialLoadMods = null
+        scope.launch {
+            runCatching { modManager.modPersistStates() }
+                .onFailure { UI.showWarning(it.message ?: "Unknown error") }
+            val states = mods.associate { File(it.path).name.lowercase() to it.isEnabled }
+            runCatching {
+                appKoin.get<ConfigIO>().saveSingleConfig(
+                    PENDING_MOD_STATES_GROUP, PENDING_MOD_STATES_KEY, encodeEnabledStates(states)
+                )
+            }
+            if (!appContext.restart()) {
+                doReloadInProcess()
+            }
+        }
+    }
+
+    fun reload() {
+        // 堆已耗尽：本进程内再次重载必然撞墙（崩溃），拦截并引导重启。
+        if (UI.modReloadMemoryExhausted) {
+            showMemoryExhaustedDialog = true
+            return
+        }
+        scope.launch {
+            val special = assessSpecialLoad()
+            if (special != null) {
+                specialLoadMods = special
+            } else {
+                doReloadInProcess()
+            }
+        }
+    }
+
     fun exit() {
         if (isClosingAfterDelete) return
 
-        if (!deletedMod) {
+        // 堆已耗尽时跳过删除后的重载：文件已删，下次启动引擎会干净重建，直接退出即可。
+        if (!deletedMod || UI.modReloadMemoryExhausted) {
             onExit()
             return
         }
 
         isClosingAfterDelete = true
         scope.launch {
+            // 删除后的重建同样要全量解析所有启用模组；检测到重型模组/堆紧张时
+            // 跳过进程内重建，落盘开关后留给下次冷启动，避免临走撞 OOM。
+            if (assessSpecialLoad() != null) {
+                runCatching { modManager.modPersistStates() }
+                UI.showWarning(readI18n("mod.rebuildDeferredToRestart"))
+                isClosingAfterDelete = false
+                onExit()
+                return@launch
+            }
             try {
                 reloadMods()
             } catch (e: CancellationException) {
@@ -1087,6 +1179,126 @@ fun ModsView(
         }
     }
 
+    /** 堆耗尽后的拦截对话框：禁止再次重载，引导用户完全退出并重启应用。 */
+    @Composable
+    fun MemoryExhaustedDialog() {
+        AnimatedAlertDialog(
+            visible = showMemoryExhaustedDialog,
+            onDismissRequest = { showMemoryExhaustedDialog = false },
+            enableDismiss = true
+        ) { dismiss ->
+            BorderCard(
+                modifier = Modifier.fillMaxWidth(0.86f).widthIn(max = 420.dp).wrapContentHeight()
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Text(
+                            readI18n("mod.memoryExhaustedTitle"),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 1
+                        )
+                    }
+
+                    Text(
+                        readI18n("mod.memoryExhaustedMessage"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        // OOM 前 runReloadCore 已先落盘开关，重启是安全且最快的恢复方式
+                        if (appContext.isAndroid()) {
+                            RWTextButton(readI18n("mod.memoryExhaustedRestart")) {
+                                showMemoryExhaustedDialog = false
+                                appContext.restart()
+                            }
+                        }
+                        RWTextButton(readI18n("common.ok"), onClick = dismiss)
+                    }
+                }
+            }
+        }
+    }
+
+    /** 重型模组"特殊加载"确认对话框：说明将通过重启应用完成加载，并给出强行重载的兜底。 */
+    @Composable
+    fun SpecialLoadDialog() {
+        val heavyMods = specialLoadMods
+        AnimatedAlertDialog(
+            visible = heavyMods != null,
+            onDismissRequest = { specialLoadMods = null },
+            enableDismiss = true
+        ) { dismiss ->
+            val names = heavyMods ?: return@AnimatedAlertDialog
+            BorderCard(
+                modifier = Modifier.fillMaxWidth(0.86f).widthIn(max = 460.dp).wrapContentHeight()
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Text(
+                            readI18n("mod.specialLoadTitle"),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1
+                        )
+                    }
+
+                    Text(
+                        if (names.isEmpty()) {
+                            readI18n("mod.specialLoadMessageHeap")
+                        } else {
+                            readI18n("mod.specialLoadMessage", I18nType.RWPP, names.joinToString("、"))
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End)
+                    ) {
+                        RWTextButton(readI18n("mod.cancel"), onClick = dismiss)
+                        RWTextButton(readI18n("mod.specialLoadForce")) {
+                            specialLoadMods = null
+                            doReloadInProcess()
+                        }
+                        RWTextButton(readI18n("mod.specialLoadRestart")) {
+                            performSpecialLoad()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     @Composable
     fun DeleteModConfirmDialog() {
         AnimatedAlertDialog(
@@ -1303,4 +1515,6 @@ fun ModsView(
 
     DeleteModConfirmDialog()
     FailedModsReloadDialog()
+    MemoryExhaustedDialog()
+    SpecialLoadDialog()
 }

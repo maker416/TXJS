@@ -13,6 +13,7 @@ import io.github.rwpp.AppContext
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.graphics.GL
 import io.github.rwpp.impl.BaseAppContextImpl
+import io.github.rwpp.android.scheduleAppRestart
 import okhttp3.OkHttpClient
 import org.koin.core.annotation.Single
 import org.koin.core.component.get
@@ -66,5 +67,19 @@ class AppContextImpl : BaseAppContextImpl() {
         }
         exitActions.forEach { it.invoke() }
         exitProcess(0)
+    }
+
+    override fun restart(): Boolean {
+        // 与 exit() 等价的收尾，随后以全新进程拉起 LoadingScreen（函数内 exit(0)，不会返回）。
+        markExitOverlayVisible()
+        get<ConfigIO>().saveAllConfig()
+        runCatching { GameEngine.t() }.getOrNull()?.bN?.apply {
+            numLoadsSinceRunningGameOrNormalExit = 0
+            numIncompleteLoadAttempts = 0
+            save()
+        }
+        exitActions.forEach { runCatching { it.invoke() } }
+        scheduleAppRestart(get<Context>().applicationContext)
+        return true
     }
 }

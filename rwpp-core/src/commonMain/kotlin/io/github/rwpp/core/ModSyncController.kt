@@ -514,11 +514,21 @@ object ModSyncController {
         loadingContext: LoadingContext,
     ): Boolean {
         withContext(Dispatchers.Main.immediate) { UI.showNetworkDialog = false }
-        descriptors.forEach { descriptor -> cache.find(descriptor)?.let { cache.activate(descriptor) } }
+        val activated = descriptors.mapNotNull { descriptor ->
+            cache.find(descriptor)?.let { cache.activate(descriptor) }
+        }
         val exactNames = descriptors.map { it.name }.toSet()
-        manager.getAllMods().forEach { mod -> mod.isEnabled = mod.name in exactNames }
+        val allMods = manager.getAllMods()
+        allMods.forEach { mod -> mod.isEnabled = mod.name in exactNames }
+        // 完整状态表随重载传入：磁盘上未登记的游离文件（陈旧 .network.rwmod、导入后从未
+        // 重载的模组）扫描后按 ModReloadSelection 语义默认禁用，保证引擎启用集合与房主
+        // 清单严格一致；本次新激活的同步文件尚未登记进引擎，必须显式标记启用。
+        val enabledByFileName = allMods.associate { mod ->
+            java.io.File(mod.path).name.lowercase() to (mod.name in exactNames)
+        }.toMutableMap()
+        activated.forEach { entry -> enabledByFileName[entry.payloadFile.name.lowercase()] = true }
         logger.info("[MODSYNC] calling modReload(forceImmediate=true) ...")
-        manager.modReload(forceImmediate = true)
+        manager.modReload(forceImmediate = true, enabledByFileName = enabledByFileName)
         val matched = findLocalMatchKeys(manager.getAllMods(), descriptors, cache)
         if (!descriptors.all { it.cacheKey() in matched }) {
             fail(loadingContext, readI18n("mod.downloadFailed"), readI18n("mod.downloadFailedMissing"))

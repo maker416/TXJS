@@ -130,6 +130,12 @@ object UI : Initialization, IUserInterface {
     var showSinglePlayerView by mutableStateOf(false)
     var showSurvivalView by mutableStateOf(false)
 
+    /**
+     * 模组重载期间堆耗尽（OutOfMemory）标志。置位后本进程内不再允许模组重载——
+     * 堆已被部分解析结果占满，反复重载只会崩溃，需重启应用。进程重启自然清除。
+     */
+    var modReloadMemoryExhausted by mutableStateOf(false)
+
     var roomSelectedPlayer by mutableStateOf<Player?>(null)
         internal set
     var receivingNetworkDialogTitle by mutableStateOf("")

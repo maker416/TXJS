@@ -203,6 +203,42 @@ Android 在 `i.a.j()`、Desktop 在 `i.a.k()` 返回后注入，将状态写入�
 | `ModsView.mods` 初始化 | `getAllMods() + scanUnloadedMods()` 合并 |
 | `ModsView.reloadMods()` | 传入 `knownStates`，成功后更新已加载集合 |
 
+## 7. 重载失败分类与 OOM 防线
+
+### 7.1 失败列表只收引擎真实加载错误
+
+`ModsView.reloadMods()` 重载完成后用 `collectFailedMods()` 收集失败项并弹"加载失败"对话框。
+收集时会排除 `TitleErrorMod` / `UnloadedMod` 的**元数据校验错误**（mod-info.txt 缺 title）：
+
+- 禁用模组本就不会被引擎解析，缺 title 只是磁盘文件的元数据问题，与"加载"无关；
+- 启用模组缺 title 时单位仍会被引擎正常加载（引擎仅用 title 做显示名）；
+- 若把它们混入"加载失败"列表，对话框文案"它们仍保持启用，但单位未成功加载"对禁用模组
+  完全失实，会误导用户以为"禁用模组也被加载了"。
+
+元数据错误继续保留在模组卡片上展示（`ModCard` 的错误行），不进对话框。
+
+### 7.2 OOM 防线（`UI.modReloadMemoryExhausted`）
+
+重载是全量重建单位注册表：解析期间旧表保持引用直到最后才替换（双倍瞬时峰值），且引擎把
+每个单位的 OOM 包装成 RuntimeException 记入模组错误后继续——一次 OOM 后堆已被部分解析
+结果占满，同一进程内反复重载必然在未被包装的路径抛出 OOM 而崩溃。
+
+因此引入全局防线：
+
+- 平台 `runReloadCore()` 外层 `try/catch (OutOfMemoryError)`：置位
+  `UI.modReloadMemoryExhausted` 并吞掉异常（不再让游戏线程因未捕获 OOM 崩溃）；
+  重载前记录堆占用日志并 `System.gc()`。
+- `ModsView`：重载返回的失败列表中任一错误消息含 `OutOfMemoryError` 时同样置位；
+  标志置位后"重载"与删除后的退出重载被拦截，改弹"内存不足，请完全退出并重启应用"
+  对话框。标志不自动复位，进程重启自然清除（有意保守）。
+
+### 7.3 同步重载必须传完整 `enabledByFileName`
+
+`ModSyncController.finalizeModSync` 构造"全部引擎模组（按房间清单匹配）+ 本次新激活的
+同步缓存文件（显式启用）"的完整状态表传给 `modReload`。传 null 时磁盘上未登记的游离
+文件（陈旧 `.network.rwmod`、导入后从未重载的模组）会被引擎默认启用，破坏与房主清单的
+严格一致。
+
 ## 8. 模组元数据轻量读取
 
 引擎在创建模组对象时调用 `i.b.j()`，该方法调用 `m()` 从 `.rwmod`（ZIP）中读取 `mod-info.txt`，仅解析元数据（名称、描述、版本），**不加载单位定义**。

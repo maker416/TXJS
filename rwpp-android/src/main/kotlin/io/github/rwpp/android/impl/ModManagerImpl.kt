@@ -122,17 +122,30 @@ class ModManagerImpl : ModManager {
      * 默认应在游戏主线程执行；forceImmediate 时为绕过主循环在调用线程直接执行。
      */
     private fun runReloadCore(enabledByFileName: Map<String, Boolean>?) {
-        val t = GameEngine.t()
-        t.bW.d()
-        t.bN.save()
-        t.bo = true
+        val runtime = Runtime.getRuntime()
+        logger.info(
+            "[MODSYNC] reload heap before: used=${(runtime.totalMemory() - runtime.freeMemory()) / 1048576}MB" +
+                " max=${runtime.maxMemory() / 1048576}MB"
+        )
+        System.gc()
         try {
-            t.f()
-            reloadUnitsWithSelection(enabledByFileName)
-        } finally {
-            t.bo = false
+            val t = GameEngine.t()
+            t.bW.d()
+            t.bN.save()
+            t.bo = true
+            try {
+                t.f()
+                reloadUnitsWithSelection(enabledByFileName)
+            } finally {
+                t.bo = false
+            }
+            t.q()
+        } catch (e: OutOfMemoryError) {
+            // 堆已耗尽：置全局标志，本进程内不再允许模组重载（否则反复重载必然崩溃）。
+            // 吞掉 OOM 避免游戏线程未捕获崩溃；模组页会检测标志并引导用户重启应用。
+            io.github.rwpp.ui.UI.modReloadMemoryExhausted = true
+            logger.error("[MODSYNC] runReloadCore aborted by OutOfMemoryError", e)
         }
-        t.q()
     }
 
     /**
@@ -179,6 +192,33 @@ class ModManagerImpl : ModManager {
     private suspend fun awaitGamePost(latch: CountDownLatch) {
         withContext(Dispatchers.IO) {
             latch.await()
+        }
+    }
+
+    override suspend fun modPersistStates() {
+        val started = AtomicBoolean(false)
+        val doneLatch = CountDownLatch(1)
+        game.post {
+            if (!started.compareAndSet(false, true)) return@post
+            runCatching {
+                val t = GameEngine.t()
+                t.bW.d()
+                t.bN.save()
+            }
+            doneLatch.countDown()
+        }
+        // 主循环可能已死（见 modReload 的注释）：等 5s 未消费就直接在当前线程落盘。
+        // 仅写配置不涉及 GL/单位表，线程风险可接受。
+        val consumed = withContext(Dispatchers.IO) {
+            doneLatch.await(GAME_POST_START_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        }
+        if (!consumed && started.compareAndSet(false, true)) {
+            logger.warn("[MODSYNC] modPersistStates: game loop dead, saving states inline")
+            runCatching {
+                val t = GameEngine.t()
+                t.bW.d()
+                t.bN.save()
+            }
         }
     }
 
