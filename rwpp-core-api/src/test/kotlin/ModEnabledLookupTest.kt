@@ -6,8 +6,6 @@
  */
 
 import io.github.rwpp.game.mod.ModReloadSelection
-import io.github.rwpp.game.mod.decodeEnabledStates
-import io.github.rwpp.game.mod.encodeEnabledStates
 import io.github.rwpp.game.mod.resolveModEnabledByFileName
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -78,41 +76,5 @@ class ModEnabledLookupTest {
         }
 
         assertNull(ModReloadSelection.resolve(listOf("/units/demo.rwmod")))
-    }
-
-    @Test
-    fun enabledStatesEncodeDecodeRoundTrip() {
-        val states = mapOf(
-            "安绒宁静.rwmod" to true,
-            "SuperWeaponPack.rwmod" to false,
-            "a b c.rwmod" to true,
-        )
-        val decoded = decodeEnabledStates(encodeEnabledStates(states))
-        assertEquals(
-            mapOf(
-                "安绒宁静.rwmod" to true,
-                "superweaponpack.rwmod" to false,
-                "a b c.rwmod" to true,
-            ),
-            decoded,
-        )
-    }
-
-    @Test
-    fun enabledStatesDecodeToleratesGarbage() {
-        assertEquals(emptyMap(), decodeEnabledStates(null))
-        assertEquals(emptyMap(), decodeEnabledStates(""))
-        assertEquals(emptyMap(), decodeEnabledStates("   "))
-        // 畸形条目被丢弃，合法条目保留
-        assertEquals(
-            mapOf("ok.rwmod" to true),
-            decodeEnabledStates("badentry;=;x=2;;ok.rwmod=1"),
-        )
-    }
-
-    @Test
-    fun enabledStatesEncodeDropsSeparatorInFileName() {
-        assertEquals("", encodeEnabledStates(mapOf("a;b.rwmod" to true)))
-        assertEquals("", encodeEnabledStates(mapOf("a=b.rwmod" to true)))
     }
 }

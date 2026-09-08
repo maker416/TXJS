@@ -35,15 +35,6 @@ interface AppContext : KoinComponent {
 
     fun exit()
 
-    /**
-     * 彻底重启应用进程（用于"重启式特殊加载"：开关已落盘，冷启动完成单位重建）。
-     *
-     * 实现方需先完成与 [exit] 等价的配置收尾，再以全新进程拉起入口。
-     * 返回 false 表示该平台不支持（桌面端），调用方应回退原有流程；
-     * 返回 true 时进程即将结束，调用方不应再假设任何后续代码会执行。
-     */
-    fun restart(): Boolean
-
     /** Emits `true` once [exit] has been called; drives the full-screen "exiting" overlay. */
     val exitOverlayVisible: StateFlow<Boolean>
 }

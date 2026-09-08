@@ -51,14 +51,6 @@ interface ModManager : KoinComponent {
      */
     suspend fun modSaveChange(enabledByFileName: Map<String, Boolean>? = null)
 
-    /**
-     * 仅持久化当前启用开关（引擎模组状态 + modSettings），**不重建单位注册表**。
-     *
-     * 供"重启式特殊加载"在杀进程前调用：开关落盘后由冷启动完成单位解析，
-     * 避免在堆已紧张的进程内做全量重建。
-     */
-    suspend fun modPersistStates()
-
     fun getModByName(name: String): Mod?
 
     fun getAllMods(): List<Mod>

@@ -33,7 +33,4 @@ abstract class BaseAppContextImpl : AppContext {
         appKoin.declare(UI, secondaryTypes = listOf(IUserInterface::class))
         getKoin().getAll<Initialization>().forEach(Initialization::init)
     }
-
-    /** 桌面端堆充足，不提供重启式加载；平台实现可覆写。 */
-    override fun restart(): Boolean = false
 }

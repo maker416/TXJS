@@ -56,35 +56,3 @@ object ModReloadSelection {
         return resolveModEnabledByFileName(pathCandidates, selection)
     }
 }
-
-/** 跨进程保存"重启式特殊加载"期望启用状态的 ConfigIO group/key。 */
-const val PENDING_MOD_STATES_GROUP = "rwpp_mods"
-const val PENDING_MOD_STATES_KEY = "pendingEnabledStates"
-
-/**
- * 把启用状态 map 编码为 `名字1=1;名字2=0` 单行字符串（文件名统一小写）。
- *
- * 文件名含 `;`/`=` 的条目会被丢弃（实际模组文件名几乎不会出现）；
- * 空 map 编码为 ""（写入 ConfigIO 后即等效清除，读取时空白串返回 null）。
- */
-fun encodeEnabledStates(states: Map<String, Boolean>): String =
-    states.entries
-        .filter { (name, _) -> !name.contains(';') && !name.contains('=') }
-        .joinToString(";") { (name, enabled) -> "${name.lowercase(Locale.ROOT)}=${if (enabled) "1" else "0"}" }
-
-/** [encodeEnabledStates] 的逆操作；任何条目畸形即丢弃该条目，整体失败返回空 map。 */
-fun decodeEnabledStates(raw: String?): Map<String, Boolean> {
-    if (raw.isNullOrBlank()) return emptyMap()
-    return raw.split(';')
-        .mapNotNull { entry ->
-            val sep = entry.lastIndexOf('=')
-            if (sep <= 0 || sep == entry.length - 1) return@mapNotNull null
-            val enabled = when (entry.substring(sep + 1)) {
-                "1" -> true
-                "0" -> false
-                else -> return@mapNotNull null
-            }
-            entry.substring(0, sep) to enabled
-        }
-        .toMap()
-}

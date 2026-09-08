@@ -195,33 +195,6 @@ class ModManagerImpl : ModManager {
         }
     }
 
-    override suspend fun modPersistStates() {
-        val started = AtomicBoolean(false)
-        val doneLatch = CountDownLatch(1)
-        game.post {
-            if (!started.compareAndSet(false, true)) return@post
-            runCatching {
-                val t = GameEngine.t()
-                t.bW.d()
-                t.bN.save()
-            }
-            doneLatch.countDown()
-        }
-        // 主循环可能已死（见 modReload 的注释）：等 5s 未消费就直接在当前线程落盘。
-        // 仅写配置不涉及 GL/单位表，线程风险可接受。
-        val consumed = withContext(Dispatchers.IO) {
-            doneLatch.await(GAME_POST_START_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-        }
-        if (!consumed && started.compareAndSet(false, true)) {
-            logger.warn("[MODSYNC] modPersistStates: game loop dead, saving states inline")
-            runCatching {
-                val t = GameEngine.t()
-                t.bW.d()
-                t.bN.save()
-            }
-        }
-    }
-
     override suspend fun modSaveChange(enabledByFileName: Map<String, Boolean>?) {
         val latch = CountDownLatch(1)
         game.post {

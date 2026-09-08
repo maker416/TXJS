@@ -191,14 +191,6 @@ class ModManagerImpl : ModManager {
         }
     }
 
-    override suspend fun modPersistStates() {
-        // 桌面端堆充足，不会走"重启式加载"；实现仅为接口对齐：
-        // 与该文件 modSaveChange 前半段一致，只落盘开关，不重建单位表。
-        val b = GameEngine.B()
-        b.bZ.e()
-        b.bQ.save()
-    }
-
     override suspend fun modSaveChange(enabledByFileName: Map<String, Boolean>?) {
         val b = GameEngine.B()
         b.bZ.e()

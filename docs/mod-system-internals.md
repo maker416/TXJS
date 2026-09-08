@@ -223,14 +223,17 @@ Android 在 `i.a.j()`、Desktop 在 `i.a.k()` 返回后注入，将状态写入�
 每个单位的 OOM 包装成 RuntimeException 记入模组错误后继续——一次 OOM 后堆已被部分解析
 结果占满，同一进程内反复重载必然在未被包装的路径抛出 OOM 而崩溃。
 
-因此引入全局防线：
+因此引入全局防线（只保证不闪退 + 指名元凶，不做任何重启引导）：
 
 - 平台 `runReloadCore()` 外层 `try/catch (OutOfMemoryError)`：置位
   `UI.modReloadMemoryExhausted` 并吞掉异常（不再让游戏线程因未捕获 OOM 崩溃）；
   重载前记录堆占用日志并 `System.gc()`。
 - `ModsView`：重载返回的失败列表中任一错误消息含 `OutOfMemoryError` 时同样置位；
-  标志置位后"重载"与删除后的退出重载被拦截，改弹"内存不足，请完全退出并重启应用"
-  对话框。标志不自动复位，进程重启自然清除（有意保守）。
+  这些错误消息的归属模组即 OOM 元凶（首个撞 OOM 的是肇事者，其余多为连带失败），
+  对话框直接列出名单（`mod.memoryExhaustedMessage`）；罕见的未包装外层 OOM 无名单，
+  退化为 `mod.memoryExhaustedMessageUnknown` 通用文案。
+- 标志置位后"重载"与删除后的退出重载被拦截，重弹元凶对话框。标志不自动复位，
+  进程重启自然清除（有意保守）。
 
 ### 7.3 同步重载必须传完整 `enabledByFileName`
 
