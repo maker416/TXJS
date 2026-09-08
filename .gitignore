@@ -9,6 +9,7 @@ CLAUDE.md
 # IDE / editor
 /.idea
 .agents/
+.claude/
 .vscode/
 
 # CodeGraph local daemon state
