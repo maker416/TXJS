@@ -1436,7 +1436,7 @@ private fun MultiplayerOption(
             .fillMaxHeight(0.88f),
     ) {
         Text(
-            readI18n("multiplayer.room.option"),
+            readI18n(if (room.isHost) "multiplayer.room.option" else "multiplayer.room.viewOption"),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = 20.dp, top = 16.dp, end = 20.dp, bottom = 4.dp),
@@ -1456,10 +1456,15 @@ private fun MultiplayerOption(
                     horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    MultiplayerOption(readI18n("multiplayer.room.noNukes"), noNukes) { noNukes = it }
+                    MultiplayerOption(
+                        readI18n("multiplayer.room.noNukes"),
+                        noNukes,
+                        room.isHost,
+                    ) { noNukes = it }
                     MultiplayerOption(
                         readI18n("multiplayer.room.sharedControl"),
                         sharedControl,
+                        room.isHost,
                     ) { sharedControl = it }
                     MultiplayerOption(
                         readI18n("multiplayer.room.allowSpectators"),
@@ -1478,6 +1483,7 @@ private fun MultiplayerOption(
                 RoomOptionFieldRow {
                     LargeDropdownMenu(
                         modifier = Modifier.weight(1f),
+                        enabled = room.isHost,
                         label = readI18n("common.difficulty"),
                         items = Difficulty.entries,
                         selectedIndex = selectedDifficulty,
@@ -1487,6 +1493,7 @@ private fun MultiplayerOption(
 
                     LargeDropdownMenu(
                         modifier = Modifier.weight(1f),
+                        enabled = room.isHost,
                         label = readI18n("common.fog"),
                         items = FogMode.entries,
                         selectedIndex = selectedFog,
@@ -1500,6 +1507,7 @@ private fun MultiplayerOption(
                 RoomOptionFieldRow {
                     LargeDropdownMenu(
                         modifier = Modifier.weight(1f),
+                        enabled = room.isHost,
                         label = readI18n("multiplayer.room.startingUnit"),
                         items = startingOptionList,
                         selectedIndex = selectedStartingUnit,
@@ -1511,6 +1519,7 @@ private fun MultiplayerOption(
 
                     LargeDropdownMenu(
                         modifier = Modifier.weight(1f),
+                        enabled = room.isHost,
                         label = readI18n("multiplayer.room.startingCredits"),
                         items = startingCreditLabels,
                         selectedIndex = startingCredits,
@@ -1541,6 +1550,7 @@ private fun MultiplayerOption(
                         incomeMultiplierText,
                         lengthLimitCount = 5,
                         typeInNumberOnly = true,
+                        enabled = room.isHost,
                         modifier = Modifier.weight(1f),
                         trailingIcon = {
                             val icon =
@@ -1548,7 +1558,7 @@ private fun MultiplayerOption(
                             Icon(
                                 icon,
                                 "",
-                                modifier = Modifier.clickable(!incomeExpanded) { incomeExpanded = !incomeExpanded },
+                                modifier = Modifier.clickable(!incomeExpanded && room.isHost) { incomeExpanded = !incomeExpanded },
                             )
                         },
                         appendedContent = {
@@ -1574,40 +1584,45 @@ private fun MultiplayerOption(
                 RoomOptionFieldRow {
                     var unitCapExpanded by remember { mutableStateOf(false) }
                     LaunchedEffect(teamUnitCapHostedGame) {
-                        val count = teamUnitCapHostedGame ?: 100
-                        configIO.setGameConfig("teamUnitCapHostedGame", count)
-                        game.setTeamUnitCapHostGame(count)
+                        // 单位上限是房主本地配置，加入者只读查看时不落盘、不下发
+                        if (room.isHost) {
+                            val count = teamUnitCapHostedGame ?: 100
+                            configIO.setGameConfig("teamUnitCapHostedGame", count)
+                            game.setTeamUnitCapHostGame(count)
+                        }
                     }
-                    RWSingleOutlinedTextField(
-                        readI18n("multiplayer.room.teamUnitCapHostedGame"),
-                        teamUnitCapHostedGame?.toString() ?: "",
-                        lengthLimitCount = 6,
-                        typeInNumberOnly = true,
-                        enabled = room.isHost,
-                        modifier = Modifier.weight(1f),
-                        typeInOnlyInteger = true,
-                        trailingIcon = {
-                            val icon =
-                                if (unitCapExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown
-                            Icon(
-                                icon,
-                                "",
-                                modifier = Modifier.clickable(!unitCapExpanded && room.isHost) {
-                                    unitCapExpanded = !unitCapExpanded
-                                },
-                            )
-                        },
-                        appendedContent = {
-                            BasicDropdownMenu(
-                                unitCapExpanded,
-                                listOf(100, 250, 500, 1000, 2000, 5000, 10000),
-                                onItemSelected = { _, v -> teamUnitCapHostedGame = v },
-                            ) {
-                                unitCapExpanded = false
-                            }
-                        },
-                    ) {
-                        teamUnitCapHostedGame = it.toIntOrNull()
+                    if (room.isHost) {
+                        RWSingleOutlinedTextField(
+                            readI18n("multiplayer.room.teamUnitCapHostedGame"),
+                            teamUnitCapHostedGame?.toString() ?: "",
+                            lengthLimitCount = 6,
+                            typeInNumberOnly = true,
+                            enabled = room.isHost,
+                            modifier = Modifier.weight(1f),
+                            typeInOnlyInteger = true,
+                            trailingIcon = {
+                                val icon =
+                                    if (unitCapExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown
+                                Icon(
+                                    icon,
+                                    "",
+                                    modifier = Modifier.clickable(!unitCapExpanded && room.isHost) {
+                                        unitCapExpanded = !unitCapExpanded
+                                    },
+                                )
+                            },
+                            appendedContent = {
+                                BasicDropdownMenu(
+                                    unitCapExpanded,
+                                    listOf(100, 250, 500, 1000, 2000, 5000, 10000),
+                                    onItemSelected = { _, v -> teamUnitCapHostedGame = v },
+                                ) {
+                                    unitCapExpanded = false
+                                }
+                            },
+                        ) {
+                            teamUnitCapHostedGame = it.toIntOrNull()
+                        }
                     }
 
                     var speedExpanded by remember { mutableStateOf(false) }
@@ -1706,24 +1721,30 @@ private fun MultiplayerOption(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.Center,
         ) {
-            RWTextButton(readI18n("multiplayer.room.apply")) {
-                room.applyRoomConfig(
-                    maxPlayerCount,
-                    sharedControl,
-                    startingCredits,
-                    startingUnits,
-                    fogMode,
-                    aiDifficulty,
-                    realIncomeMultiplier,
-                    noNukes,
-                    allowSpectators,
-                    teamLock,
-                    teamMode,
-                )
+            if (room.isHost) {
+                RWTextButton(readI18n("multiplayer.room.apply")) {
+                    room.applyRoomConfig(
+                        maxPlayerCount,
+                        sharedControl,
+                        startingCredits,
+                        startingUnits,
+                        fogMode,
+                        aiDifficulty,
+                        realIncomeMultiplier,
+                        noNukes,
+                        allowSpectators,
+                        teamLock,
+                        teamMode,
+                    )
 
-                room.gameSpeed = gameSpeed
+                    room.gameSpeed = gameSpeed
 
-                dismiss()
+                    dismiss()
+                }
+            } else {
+                RWTextButton(readI18n("common.close")) {
+                    dismiss()
+                }
             }
         }
     }
@@ -2339,6 +2360,15 @@ private fun CompactMapSettingsPanel(
                     )
                 }
             }
+        } else {
+            // 加入者入口：只读查看房间设置
+            CompactRoomTextButton(
+                readI18n("multiplayer.room.viewOption") + if (isDesktop) "(O)" else "",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = CompactHostButtonMinHeight),
+                onClick = onOption,
+            )
         }
     }
 }
@@ -2528,6 +2558,20 @@ private fun DesktopMapSettingsCard(
                         onClick = onPublish,
                     )
                 }
+            }
+        } else {
+            // 加入者入口：只读查看房间设置
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                RWTextButton(
+                    readI18n("multiplayer.room.viewOption") + if (isDesktop) "(O)" else "",
+                    modifier = Modifier.padding(5.dp),
+                    onClick = onOption,
+                )
             }
         }
     }

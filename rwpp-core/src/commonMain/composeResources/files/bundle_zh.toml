@@ -120,6 +120,7 @@ labelClearSelection = "清除标签筛选"
 [multiplayer.room]
 selectMap = "选择地图"
 option = "选项"
+viewOption = "查看设置"
 start = "开始"
 changeSite = "更换位置"
 addAI = "添加AI"

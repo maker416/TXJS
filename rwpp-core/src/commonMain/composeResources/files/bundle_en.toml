@@ -119,6 +119,7 @@ labelClearSelection = "Clear label filter"
 [multiplayer.room]
 selectMap = "Select Map"
 option = "Option"
+viewOption = "View Settings"
 start = "Start"
 changeSite = "Change Site"
 addAI = "Add AI"
