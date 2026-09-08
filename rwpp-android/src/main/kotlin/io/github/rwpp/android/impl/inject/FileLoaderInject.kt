@@ -43,6 +43,14 @@ object FileLoaderInject {
         // internalStoragePath("") → /Android/data/<pkg>/files/
         val external = PathWrappedFileLoader(ctx.externalStoragePath(""), "external")
         val internal = PathWrappedFileLoader(ctx.internalStoragePath(""), "internal")
+        // 与原版 e.a.a(int) 工厂的收尾行为对齐：secondary 后端禁用 assets 回退
+        // （e.c.d，反编译日志串 "fileExists: false with disableAssets"）。
+        // 缺了这一步时，列举 builtin_mods 这类相对路径会让两个后端都回退命中
+        // assets/builtin_mods，合并列举不去重，同一内置模组（如 Mega Builders）
+        // 会以 [EXTERNAL-PATH]/ 与 [INTERNAL-PATH]/ 两个不同 tag 各注册一次，
+        // 在模组管理器中显示为两个。该标志只影响 assets 回退，不影响 secondary
+        // 根目录下真实文件（网络同步模组）的列举与读写。
+        internal.d = true
         return CombinedFileLoader(external, EXTERNAL_TAG, internal, INTERNAL_TAG)
     }
 }
