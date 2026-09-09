@@ -213,6 +213,22 @@ class ModSyncClient(
         }
 
     /**
+     * 加入者以 peer 身份拉取同房间其他加入者的进度列表。对应 `GET /rooms/{key}/peers`，
+     * 带 `X-Peer-Secret` 头（区别于房主版的 `X-Secret`）。
+     *
+     * 响应 JSON 结构与房主版相同（`{"peers": [...]}`），仅字段为子集（不含 ip），
+     * 复用 [SyncPeerListResponse] 解析，缺失字段走可空/默认值。
+     * 房间不存在或 secret 错误时抛 [ModSyncException]。
+     */
+    suspend fun listPeersAsPeer(key: String, peerSecret: String): List<SyncPeerProgress> =
+        withFailover("$API_PREFIX/rooms/${enc(key)}/peers", {
+            header(PEER_SECRET_HEADER, peerSecret)
+            get()
+        }) { response ->
+            json.decodeFromString<SyncPeerListResponse>(response.body?.string().orEmpty()).peers
+        }
+
+    /**
      * 使用 charset 名称重载编码路径/查询参数。
      * 勿用 `URLEncoder.encode(String, Charset)`：该重载在 Android API 33 之前不存在，
      * 运行期会抛 [NoSuchMethodError]（本项目 minSdk=26）。

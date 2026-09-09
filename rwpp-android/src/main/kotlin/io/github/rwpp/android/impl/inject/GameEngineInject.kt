@@ -10,6 +10,7 @@ package io.github.rwpp.android.impl.inject
 import android.util.Log
 import io.github.rwpp.android.impl.GameEngine
 import io.github.rwpp.android.isReturnToBattleRoom
+import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
@@ -20,6 +21,8 @@ import io.github.rwpp.ui.UI
 object GameEngineInject {
     @Inject("g", InjectMode.Override)
     fun onSendWarning(message: String) {
+        // 同步进房窗口内被踢（房主 1s 轮询尚未看到自己的 Presence）：静默重试，不弹窗
+        if (message.startsWith("Kicked") && ModSyncController.onKickedDuringSyncEntry(message)) return
         if (message.startsWith("Kicked") || message.startsWith("Missing")) UI.showWarning(message, true)
     }
 

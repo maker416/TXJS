@@ -383,7 +383,8 @@ fun MultiplayerView(
                     }
                 }
             } else {
-                // 加入者：建立游戏连接之前先走带外模组同步（同步服无记录则直接放行，按原版加入）
+                // 加入者：连接前只跑带外同步轻量段（查清单/登记 Presence 供房主握手放行）；
+                // 下载与重载在进房成功后由 ModSyncController 在房间内后台完成，期间可正常聊天
                 if (!ModSyncController.preJoinSync(selectedRoomDescription, serverAddress, this)) {
                     return@LoadingView false
                 }
@@ -403,6 +404,8 @@ fun MultiplayerView(
             if(result.isSuccess) {
                 onExit()
                 onOpenRoomView()
+                // 进房成功：joining Presence 转为 synced 并保活，驱动行内徽章（无同步记录时为空操作）
+                ModSyncController.onJoinedRoom()
                 JoinGameEvent(serverAddress).broadcastIn()
                 true
             } else {

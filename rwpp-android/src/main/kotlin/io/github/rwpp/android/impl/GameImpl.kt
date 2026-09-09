@@ -297,6 +297,9 @@ class GameImpl : Game, CoroutineScope {
         return com.corrodinggames.rts.game.units.cj.ae as ArrayList<UnitType>
     }
 
+    /** 原版引擎 `getAllUnitsChecksum`（混淆名 `k.r`），返回当前全部启用单位的校验和。 */
+    override fun getUnitsChecksum(): Int = GameEngine.t().r()
+
     override fun onBanUnits(units: List<UnitType>) {
         bannedUnitList = units.map { it.name }
         if(units.isNotEmpty()) gameRoom.sendSystemMessage("Host has banned these units (房间已经ban以下单位): ${

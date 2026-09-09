@@ -190,6 +190,23 @@ object Builder {
             }
             InjectApi.redirectClassName(classMap)
 
+            // RedirectMethod 必须先于 Inject 应用：InsertBefore 会把原方法体复制为
+            // __original__<method> 并把原方法改写为跳板；若先做 Inject，redirect 在
+            // 跳板里找不到目标调用（目标调用已搬进 __original__ 副本），会静默失效。
+            root.redirectMethodInfos.forEach { info ->
+                InjectApi.redirect(
+                    info.className,
+                    info.hasReceiver,
+                    info.method,
+                    info.methodDesc,
+                    info.targetClassName,
+                    info.targetMethod,
+                    info.targetMethodDesc,
+                    info.path,
+                    info.pathType
+                )
+            }
+
             root.injectInfos.forEach { info ->
                 InjectApi.injectMethod(
                     info.className,
@@ -210,20 +227,6 @@ object Builder {
                     info.newFields,
                     info.accessors,
                     info.hasSelfField,
-                )
-            }
-
-            root.redirectMethodInfos.forEach { info ->
-                InjectApi.redirect(
-                    info.className,
-                    info.hasReceiver,
-                    info.method,
-                    info.methodDesc,
-                    info.targetClassName,
-                    info.targetMethod,
-                    info.targetMethodDesc,
-                    info.path,
-                    info.pathType
                 )
             }
         }

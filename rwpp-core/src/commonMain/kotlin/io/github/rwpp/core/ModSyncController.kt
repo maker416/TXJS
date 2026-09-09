@@ -16,6 +16,7 @@ import io.github.rwpp.config.MultiplayerPreferences
 import io.github.rwpp.event.EventPriority
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.events.DisconnectEvent
+import io.github.rwpp.event.events.StartGameEvent
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.mod.Mod
 import io.github.rwpp.game.mod.ModManager
@@ -30,6 +31,7 @@ import io.github.rwpp.net.Net
 import io.github.rwpp.net.RoomDescription
 import io.github.rwpp.net.sync.CODE_PREFIX
 import io.github.rwpp.net.sync.ModSyncClient
+import io.github.rwpp.net.sync.RoomManifestResponse
 import io.github.rwpp.net.sync.RoomRegisterRequest
 import io.github.rwpp.net.sync.SID_PREFIX
 import io.github.rwpp.net.sync.SyncPeerPhase
@@ -60,14 +62,15 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * 模组同步控制器（带外同步方案）。
+ * 模组同步控制器（带外同步方案，v2：进房后同步）。
  *
  * 游戏联机通讯保持原版；模组同步完全由启动器在公网同步服务器（relaymod）上带外完成：
- * - 房主侧：进房拿到短码后注册同步房间、上传缺失的 mod blob、心跳续期，离房时注销；
- *   并轮询加入者 Presence 进度供房间页展示。
- * - 加入者侧：在 [io.github.rwpp.game.Game.directJoinServer] 之前执行 [preJoinSync]，
- *   从同步服务器拉取清单并下载缺失 mod，本地启用并重载后再建立游戏连接；
- *   同步期间向同步服上报进度，供房主可见。
+ * - 房主侧：进房拿到短码后注册同步房间（含单位校验和）、上传缺失的 mod blob、心跳续期，
+ *   离房时注销；并轮询加入者 Presence 进度供房间页展示与握手放行判定（[shouldAllowMismatch]）。
+ * - 加入者侧：进房前 [preJoinSync] 只做轻量段——查清单、本地已完全一致则按原版加入，
+ *   否则上报 joining Presence 供房主握手放行；进房成功后由 [onJoinedRoom] 启动
+ *   [runPostJoinSync]，在房间内后台等待/下载/重载/校验，全程可正常聊天，
+ *   进度显示在玩家列表该玩家名字旁（[roomPeerBadges]）。
  */
 object ModSyncController {
     private val scope = CoroutineScope(SupervisorJob())
@@ -83,8 +86,48 @@ object ModSyncController {
     var hostPeerSnapshots by mutableStateOf<List<SyncPeerSnapshot>>(emptyList())
         private set
 
-    /** 是否有活跃的待进房同步者（开局门控用）。 */
-    val hasActiveSyncPeers: Boolean get() = hostPeerSnapshots.isNotEmpty()
+    /** 房客视角的行内徽章快照（peer 脱敏轮询结果），按显示名索引。 */
+    private var peerViewSnapshots by mutableStateOf<Map<String, SyncPeerSnapshot>>(emptyMap())
+
+    /**
+     * 房间页玩家名字旁的同步徽章数据源，按显示名索引。
+     * 房主取 peers 轮询快照（含 ip）；同步中的房客取 peer 视角脱敏轮询结果。
+     */
+    val roomPeerBadges: Map<String, SyncPeerSnapshot>
+        get() = if (hostKey != null) {
+            hostPeerSnapshots.associateBy { it.displayName }
+        } else {
+            peerViewSnapshots
+        }
+
+    // ---------------- 握手放行（v2 进房后同步） ----------------
+
+    /** 注册握手暂存：包 110（REGISTER_CONNECTION）入口由注入层解析写入，仅房主侧有意义。 */
+    class PendingRegistration(
+        val name: String,
+        val ip: String?,
+        val clientChecksum: Int,
+    )
+
+    /**
+     * 当前正在处理的注册请求。ad.c / ae.a 均为 synchronized，注册包在单网络线程内串行处理，
+     * 且单位校验和读取仅在包 110 分支内发生，因此该暂存无需加锁也不会被跨包串扰。
+     */
+    @Volatile
+    var pendingRegistration: PendingRegistration? = null
+
+    /**
+     * 握手放行判定（跑在持锁的网络线程上，必须纯内存、不阻塞）：
+     * 仅当房主同步会话活跃、peers 中存在同名且尚未 synced 的加入者、且 IP 不冲突时放行。
+     * IP 双匹配是防同名撞车的加固；relay 未记录 ip（旧服务端）或连接取不到 ip 时退化为仅名字匹配。
+     */
+    fun shouldAllowMismatch(name: String, ip: String?): Boolean {
+        if (hostKey == null) return false
+        val peer = hostPeerSnapshots.firstOrNull {
+            it.displayName == name.trim() && it.phase != SyncPeerPhase.SYNCED
+        } ?: return false
+        return peer.ip == null || ip == null || peer.ip == ip
+    }
 
     /** 等待房主 preparing 的轮询次数上限（每次 2s，共约 60s）。 */
     private const val PREPARING_POLL_MAX = 30
@@ -94,6 +137,12 @@ object ModSyncController {
     private const val PEER_REPORT_MIN_INTERVAL_MS = 500L
     /** applying / joining 阶段 Presence 心跳间隔（须明显短于 relaymod PeerTTL=45s）。 */
     private const val PEER_PHASE_HEARTBEAT_MS = 5_000L
+    /** 上报 joining Presence 后等待房主轮询看到自己的时间（房主侧 1s 轮询）。 */
+    private const val JOIN_SETTLE_MS = 1_500L
+    /** 同步进房被踢的静默重试次数上限。 */
+    private const val SYNC_ENTRY_MAX_RETRY = 2
+    /** 进房成功后被踢重试窗口的宽限期（覆盖注册后异步到达的 kick 包）。 */
+    private const val ENTRY_GRACE_MS = 4_000L
 
     private var hostJob: Job? = null
     private var heartbeatJob: Job? = null
@@ -102,9 +151,20 @@ object ModSyncController {
     private var hostSecret: String? = null
 
     private var preJoinJob: Job? = null
-    /** 同步成功后、进房完成前保留的 Presence reporter；由 [finishJoinerPresence] 清理。 */
-    private var pendingJoinReporter: PeerProgressReporter? = null
-    private val pendingJoinMutex = Mutex()
+    private var postJoinJob: Job? = null
+    /** [preJoinSync] 轻量段暂存、[onJoinedRoom] 启动进房后同步时消费的上下文。 */
+    private var pendingPostJoin: PostJoinContext? = null
+    /** 同步进房窗口（含被踢静默重试宽限期）是否活跃；平台层被踢告警据此判定是否抑制。 */
+    @Volatile
+    var syncEntryActive = false
+        private set
+    private var syncEntryRetriesLeft = 0
+    private var syncEntryAddress: String? = null
+    private var syncEntryRelayUuid: String? = null
+    /** 进房成功后继续保留的 Presence reporter（synced 心跳）；开局或断线时由 [clearRoomPresence] 清理。 */
+    private var roomPresenceReporter: PeerProgressReporter? = null
+    private val roomPresenceMutex = Mutex()
+    private var peerViewPollJob: Job? = null
     private var eventsBound = false
 
     sealed interface HostSyncState {
@@ -119,6 +179,11 @@ object ModSyncController {
         eventsBound = true
         GlobalEventChannel.filter(DisconnectEvent::class).subscribeAlways(priority = EventPriority.MONITOR) {
             stopHostSession()
+            clearRoomPresence()
+        }
+        GlobalEventChannel.filter(StartGameEvent::class).subscribeAlways(priority = EventPriority.MONITOR) {
+            // 开局后行内徽章失去意义；未广播该事件的端由 DisconnectEvent / relay TTL 兜底
+            clearRoomPresence()
         }
     }
 
@@ -182,6 +247,8 @@ object ModSyncController {
                     key = key,
                     secret = secret,
                     gameVersion = gameVersion.toString(),
+                    // 房主当前单位校验和：加入者重载后据此自查是否与房主一致（v2 进房后同步）
+                    hostUnitsChecksum = appKoin.get<Game>().getUnitsChecksum().toLong(),
                     mods = descriptors.map { it.toSync() },
                 )
             )
@@ -296,26 +363,157 @@ object ModSyncController {
     // ---------------- 加入者侧 ----------------
 
     /**
-     * 在建立游戏连接前执行带外模组同步。
+     * 加入者进房前的轻量段：查同步清单；本地模组已与清单完全一致则按原版加入；
+     * 否则上报 joining Presence（供房主握手放行识别），等待房主轮询窗口后放行连接。
+     * 真正的等待/下载/重载在进房后由 [runPostJoinSync] 完成，期间房间内可正常聊天。
      *
-     * @return true 表示可以继续加入（无需同步或同步成功）；false 表示中止加入。
+     * @return true 表示可以继续加入（无需同步或已登记放行）；false 表示中止加入。
      */
     suspend fun preJoinSync(desc: RoomDescription?, address: String, loadingContext: LoadingContext): Boolean {
         val keys = if (desc != null) forRoomDescription(desc) else forAddress(address)
         if (keys.isEmpty()) return true
         preJoinJob = currentCoroutineContext().job
-        var reporter: PeerProgressReporter? = null
-        var retainPresence = false
         try {
             val client = newClient()
             val found = fetchFirstAvailable(client, keys) ?: return true
             val usedKey = found.second
-            var response = found.first
-            reporter = PeerProgressReporter(client, usedKey, resolveDisplayName())
+            val response = found.first
+            if (!response.isReady && !response.isPreparing) return true
+            val descriptors = response.mods.map { it.toNetwork() }
+            if (descriptors.isEmpty()) return true
 
-            // 房主仍在准备（注册后尚未 ready）：轮询等待，并上报 waiting_host
+            // 本地启用集合已与清单完全一致：原版握手校验和本就能通过，无需带外同步与放行
+            val cache = appKoin.get<NetworkModCache>()
+            val manager = appKoin.get<ModManager>()
+            if (isEngineAlreadyExact(manager.getAllMods(), descriptors, cache)) {
+                logger.info("[MODSYNC] local mods already exact match, plain join")
+                return true
+            }
+
+            // 上报 joining Presence 并起心跳保活；房主 1s 轮询看到后才会在握手时放行。
+            // 留出轮询窗口再连接；若仍在窗口内被踢，由 onKickedDuringSyncEntry 静默重试
+            val reporter = PeerProgressReporter(client, usedKey, resolveDisplayName())
+            val joiningRequest = SyncPeerUpsertRequest(
+                displayName = reporter.displayName,
+                phase = SyncPeerPhase.JOINING,
+                modCount = descriptors.size,
+            )
+            reporter.report(joiningRequest, force = true)
+            reporter.startPhaseHeartbeat(joiningRequest)
+            pendingPostJoin = PostJoinContext(reporter, usedKey, response)
+            syncEntryActive = true
+            syncEntryRetriesLeft = SYNC_ENTRY_MAX_RETRY
+            syncEntryAddress = address
+            syncEntryRelayUuid = desc?.joinRelayUuid()
+            loadingContext.message(readI18n("modSync.phaseJoining", I18nType.RWPP))
+            delay(JOIN_SETTLE_MS)
+            return true
+        } catch (e: CancellationException) {
+            logger.info("[MODSYNC] pre-join sync cancelled by user")
+            return false
+        } catch (e: Exception) {
+            logger.error("[MODSYNC] pre-join sync failed: ${e.stackTraceToString()}")
+            fail(loadingContext, readI18n("modSync.syncFailed"), readI18n("modSync.syncFailedDetail", I18nType.RWPP, e.message.orEmpty()))
+            return false
+        } finally {
+            preJoinJob = null
+        }
+    }
+
+    /** 进房后同步上下文：[preJoinSync] 轻量段暂存，[onJoinedRoom] 启动 [runPostJoinSync] 时消费。 */
+    private class PostJoinContext(
+        val reporter: PeerProgressReporter,
+        val roomKey: String,
+        val manifest: RoomManifestResponse,
+    )
+
+    /**
+     * 加入者进房流程结束（失败/取消）后清理 Presence 与同步进房状态。
+     * 幂等；可在 LoadingView onLoaded 与 loadContent finally 中重复调用；进房成功后为空操作。
+     */
+    fun finishJoinerPresence() {
+        scope.launch(Dispatchers.IO) {
+            val ctx = pendingPostJoin
+            pendingPostJoin = null
+            syncEntryActive = false
+            ctx?.reporter?.clear()
+        }
+    }
+
+    /**
+     * 加入者成功进房后调用：启动进房后同步（[runPostJoinSync]），Presence 心跳保留，
+     * 供房主/房客在玩家列表行内展示同步徽章；开局或断线时由 [clearRoomPresence] 清理。
+     * 无待同步上下文（无需同步的原版加入）时为空操作。
+     */
+    fun onJoinedRoom() {
+        val ctx = pendingPostJoin
+        pendingPostJoin = null
+        if (ctx == null) return
+        scope.launch(Dispatchers.IO) {
+            roomPresenceMutex.withLock { roomPresenceReporter = ctx.reporter }
+            startPeerViewPolling(ctx.reporter)
+        }
+        // 被踢静默重试窗口：进房成功后再留一段宽限期（校验和踢人在注册后 ~1s 内异步到达）
+        scope.launch { delay(ENTRY_GRACE_MS); syncEntryActive = false }
+        postJoinJob = scope.launch(Dispatchers.IO) { runPostJoinSync(ctx) }
+    }
+
+    /** 清理进房后保留的 Presence、同步任务与 peer 视角轮询（开局/断线/失败触发；幂等）。 */
+    fun clearRoomPresence() {
+        peerViewPollJob?.cancel()
+        peerViewPollJob = null
+        postJoinJob?.cancel()
+        postJoinJob = null
+        scope.launch(Dispatchers.IO) {
+            val reporter = roomPresenceMutex.withLock {
+                val current = roomPresenceReporter
+                roomPresenceReporter = null
+                current
+            }
+            reporter?.clear()
+            withContext(Dispatchers.Main.immediate) {
+                peerViewSnapshots = emptyMap()
+                inRoomSyncPhase = null
+            }
+            resetReceivingState()
+        }
+    }
+
+    /** 房客视角：进房后用自己的 peer secret 轮询本房 peers 的脱敏进度，驱动行内徽章。 */
+    private fun startPeerViewPolling(reporter: PeerProgressReporter) {
+        peerViewPollJob?.cancel()
+        peerViewPollJob = scope.launch(Dispatchers.IO) {
+            while (isActive) {
+                val secret = reporter.currentPeerSecret()
+                if (secret != null) {
+                    runCatching {
+                        val peers = newClient().listPeersAsPeer(reporter.roomKey, secret)
+                        withContext(Dispatchers.Main.immediate) {
+                            peerViewSnapshots = peers.map { it.toSnapshot() }.associateBy { it.displayName }
+                        }
+                    }.onFailure { logger.warn("[MODSYNC] listPeersAsPeer failed: ${it.message}") }
+                }
+                delay(PEER_POLL_MS)
+            }
+        }
+    }
+
+    /**
+     * 进房后同步主流程：等房主 ready → diff → 下载缺失 → 启用 + modReload（连接保持）→
+     * 校验（本地集合 + 单位校验和 vs 房主）→ synced 心跳保留。
+     * 任何失败都提示并自动退房（模组不一致留在房内没有意义），清理由 DisconnectEvent 完成。
+     */
+    private suspend fun runPostJoinSync(ctx: PostJoinContext) {
+        val reporter = ctx.reporter
+        try {
+            val client = newClient()
+            var response = ctx.manifest
+
+            // 房主仍在准备：房间内等待（可正常聊天），上报 waiting_host；
+            // 轮询中 404 说明房主已注销/离房，不得当作「无需同步」继续
             var polls = 0
             while (response.isPreparing) {
+                setInRoomPhase(SyncPeerPhase.WAITING_HOST)
                 reporter.report(
                     SyncPeerUpsertRequest(
                         displayName = reporter.displayName,
@@ -324,40 +522,33 @@ object ModSyncController {
                     force = true,
                 )
                 if (polls >= PREPARING_POLL_MAX) {
-                    fail(loadingContext, readI18n("modSync.hostPreparingTimeout"), null)
-                    return false
+                    failInRoom(readI18n("modSync.hostPreparingTimeout"), null)
+                    return
                 }
                 polls++
-                loadingContext.message(readI18n("modSync.hostPreparing", I18nType.RWPP, (polls * PREPARING_POLL_MS / 1000).toString()))
                 delay(PREPARING_POLL_MS)
-                // 轮询中 404：此前已存在 preparing 记录，说明房主已注销/离房，不得当作「无需同步」继续加入
-                val polled = client.fetchManifest(usedKey)
+                val polled = client.fetchManifest(ctx.roomKey)
                 if (polled == null) {
-                    fail(loadingContext, readI18n("modSync.hostPreparingGone"), null)
-                    return false
+                    failInRoom(readI18n("modSync.hostPreparingGone"), null)
+                    return
                 }
                 response = polled
             }
-            if (!response.isReady) return true
+            if (!response.isReady) {
+                failInRoom(readI18n("modSync.syncFailed"), null)
+                return
+            }
 
             val descriptors = response.mods.map { it.toNetwork() }
-            if (descriptors.isEmpty()) return true
             val cache = appKoin.get<NetworkModCache>()
             val manager = appKoin.get<ModManager>()
             val allMods = manager.getAllMods()
             val localMatches = findLocalMatchKeys(allMods, descriptors, cache)
             val missing = descriptors.filter { it.cacheKey() !in localMatches }
-            logger.info("[MODSYNC] manifest ready: required=${descriptors.size}, missing=${missing.size}")
-
-            // 本地已齐且引擎当前启用集合与清单完全一致：跳过下载与 modReload，直接进房
-            if (missing.isEmpty() && isEngineAlreadyExact(allMods, descriptors, cache)) {
-                logger.info("[MODSYNC] local mods already exact match, skip download/reload")
-                retainJoiningPresence(reporter, modIndex = descriptors.size, modCount = descriptors.size)
-                retainPresence = true
-                return true
-            }
+            logger.info("[MODSYNC] in-room sync: required=${descriptors.size}, missing=${missing.size}")
 
             if (missing.isNotEmpty()) {
+                setInRoomPhase(SyncPeerPhase.DOWNLOADING)
                 setDownloadingTitle(missing)
                 missing.forEachIndexed { index, descriptor ->
                     reporter.report(
@@ -388,12 +579,11 @@ object ModSyncController {
                         )
                     }
                     if (!descriptor.matches(bytes)) {
-                        fail(
-                            loadingContext,
+                        failInRoom(
                             readI18n("mod.integrityFailed"),
                             readI18n("mod.integrityFailedDetail", I18nType.RWPP, descriptor.name),
                         )
-                        return false
+                        return
                     }
                     cache.storeVerified(descriptor, bytes)
                     cache.activate(descriptor)
@@ -401,92 +591,122 @@ object ModSyncController {
                 }
             }
 
-            val applyModIndex = missing.size.coerceAtLeast(0)
+            // 启用 + 重载（菜单态主循环本来就是死的，内联执行；原版 60s 无活动仅标 AFK 不踢）
             val applyModCount = missing.size.coerceAtLeast(descriptors.size)
-            reporter.report(
-                SyncPeerUpsertRequest(
-                    displayName = reporter.displayName,
-                    phase = SyncPeerPhase.APPLYING,
-                    currentModName = "",
-                    modIndex = applyModIndex,
-                    modCount = applyModCount,
-                ),
-                force = true,
+            setInRoomPhase(SyncPeerPhase.APPLYING)
+            val applyingRequest = SyncPeerUpsertRequest(
+                displayName = reporter.displayName,
+                phase = SyncPeerPhase.APPLYING,
+                currentModName = "",
+                modIndex = missing.size,
+                modCount = applyModCount,
             )
-            reporter.startPhaseHeartbeat(
-                SyncPeerUpsertRequest(
-                    displayName = reporter.displayName,
-                    phase = SyncPeerPhase.APPLYING,
-                    modIndex = applyModIndex,
-                    modCount = applyModCount,
-                ),
-            )
-            if (!finalizeModSync(descriptors, cache, manager, loadingContext)) {
-                return false
+            reporter.report(applyingRequest, force = true)
+            reporter.startPhaseHeartbeat(applyingRequest)
+            if (!finalizeModSync(descriptors, cache, manager)) return
+
+            // 双校验之二：单位校验和与房主一致（房主注册清单时写入；旧 relay 无此字段则跳过）
+            val expectedChecksum = response.hostUnitsChecksum
+            if (expectedChecksum != null) {
+                val local = appKoin.get<Game>().getUnitsChecksum().toLong()
+                if (local != expectedChecksum) {
+                    failInRoom(
+                        readI18n("modSync.checksumMismatch"),
+                        readI18n(
+                            "modSync.checksumMismatchDetail",
+                            I18nType.RWPP,
+                            local.toString(),
+                            expectedChecksum.toString(),
+                        ),
+                    )
+                    return
+                }
             }
 
-            // 应用成功：切到 joining 并保留 Presence，直到进房流程结束再清理
-            retainJoiningPresence(reporter, modIndex = applyModIndex, modCount = applyModCount)
-            retainPresence = true
-            return true
-        } catch (e: CancellationException) {
-            logger.info("[MODSYNC] pre-join sync cancelled by user")
-            return false
-        } catch (e: Exception) {
-            logger.error("[MODSYNC] pre-join sync failed: ${e.stackTraceToString()}")
-            fail(loadingContext, readI18n("modSync.syncFailed"), readI18n("modSync.syncFailedDetail", I18nType.RWPP, e.message.orEmpty()))
-            return false
-        } finally {
-            if (!retainPresence) {
-                reporter?.clear()
-            }
-            preJoinJob = null
+            // 同步完成：synced 心跳保留至开局/断线，玩家行内徽章显示 ✓
+            val syncedRequest = SyncPeerUpsertRequest(
+                displayName = reporter.displayName,
+                phase = SyncPeerPhase.SYNCED,
+                modIndex = descriptors.size,
+                modCount = descriptors.size,
+            )
+            reporter.report(syncedRequest, force = true)
+            reporter.startPhaseHeartbeat(syncedRequest)
+            withContext(Dispatchers.Main.immediate) { inRoomSyncPhase = SyncPeerPhase.SYNCED }
             resetReceivingState()
+            logger.info("[MODSYNC] in-room sync completed")
+        } catch (e: CancellationException) {
+            // clearRoomPresence / cancelInRoomSync 触发，清理由调用方负责
+            throw e
+        } catch (e: Exception) {
+            logger.error("[MODSYNC] in-room sync failed: ${e.stackTraceToString()}")
+            failInRoom(readI18n("modSync.syncFailed"), readI18n("modSync.syncFailedDetail", I18nType.RWPP, e.message.orEmpty()))
+        }
+    }
+
+    /** 进房后同步失败：提示并自动退房（模组不一致留在房内无意义）；清理由 DisconnectEvent → [clearRoomPresence] 完成。 */
+    private suspend fun failInRoom(message: String, detail: String?) {
+        withContext(Dispatchers.Main.immediate) {
+            inRoomSyncPhase = null
+            UI.showWarning(detail ?: message, true)
+        }
+        resetReceivingState()
+        runCatching { appKoin.get<Game>().gameRoom.disconnect(message) }
+    }
+
+    /** 房间内取消进行中的模组同步（RoomSelfSyncBar 取消按钮）：取消任务、提示并退房。 */
+    fun cancelInRoomSync() {
+        if (postJoinJob?.isActive != true) return
+        postJoinJob?.cancel()
+        scope.launch(Dispatchers.Main.immediate) {
+            inRoomSyncPhase = null
+            UI.showWarning(readI18n("modSync.syncCancelled"), true)
+        }
+        scope.launch(Dispatchers.IO) {
+            resetReceivingState()
+            runCatching { appKoin.get<Game>().gameRoom.disconnect("mod sync cancelled") }
         }
     }
 
     /**
-     * 加入者进房流程结束（成功或失败/取消）后清理 Presence。
-     * 幂等；可在 LoadingView onLoaded 与 loadContent finally 中重复调用。
+     * 平台层被踢告警回调：同步进房窗口内（握手放行依赖房主 1s 轮询看到自己，存在窗口期）
+     * 被踢时静默重连重试；窗口外或重试耗尽返回 false，走正常踢人提示与清理。
      */
-    fun finishJoinerPresence() {
+    fun onKickedDuringSyncEntry(kickMessage: String): Boolean {
+        // 只抑制校验和踢人（握手放行窗口期）；密码/满员/封禁等其他原因立即走正常提示
+        if (!kickMessage.contains("core units are different", ignoreCase = true)) return false
+        if (!syncEntryActive) return false
+        val address = syncEntryAddress
+        if (address == null || syncEntryRetriesLeft <= 0) {
+            // 重试耗尽：按同步失败清理（Presence/任务），让用户看到原版踢人提示
+            syncEntryActive = false
+            clearRoomPresence()
+            return false
+        }
+        syncEntryRetriesLeft--
+        val relayUuid = syncEntryRelayUuid
+        logger.warn("[MODSYNC] kicked during sync entry, retry in 1s ($syncEntryRetriesLeft left)")
         scope.launch(Dispatchers.IO) {
-            val reporter = pendingJoinMutex.withLock {
-                val current = pendingJoinReporter
-                pendingJoinReporter = null
-                current
-            } ?: return@launch
-            reporter.clear()
+            delay(1_000L)
+            runCatching {
+                val game = appKoin.get<Game>()
+                game.cancelJoinServer()
+                val result = game.directJoinServer(address, relayUuid, LoadingContext {})
+                if (result.isSuccess) {
+                    logger.info("[MODSYNC] sync entry retry connected")
+                } else {
+                    logger.warn("[MODSYNC] sync entry retry failed: ${result.exceptionOrNull()?.message}")
+                }
+            }
         }
-    }
-
-    /** 上报 joining 并挂到 [pendingJoinReporter]，供进房结束后清理。 */
-    private suspend fun retainJoiningPresence(
-        reporter: PeerProgressReporter,
-        modIndex: Int,
-        modCount: Int,
-    ) {
-        val request = SyncPeerUpsertRequest(
-            displayName = reporter.displayName,
-            phase = SyncPeerPhase.JOINING,
-            modIndex = modIndex,
-            modCount = modCount,
-        )
-        reporter.report(request, force = true)
-        reporter.startPhaseHeartbeat(request)
-        val previous = pendingJoinMutex.withLock {
-            val old = pendingJoinReporter
-            pendingJoinReporter = reporter
-            old
-        }
-        previous?.clear()
+        return true
     }
 
     /** 依次尝试候选 key；全部 404 返回 null；服务器不可达抛异常。 */
     private suspend fun fetchFirstAvailable(
         client: ModSyncClient,
         keys: List<String>,
-    ): Pair<io.github.rwpp.net.sync.RoomManifestResponse, String>? {
+    ): Pair<RoomManifestResponse, String>? {
         var lastError: Exception? = null
         for (key in keys) {
             try {
@@ -502,7 +722,7 @@ object ModSyncController {
         return null
     }
 
-    /** 取消正在进行的加入前同步（下载卡片取消按钮调用）。 */
+    /** 取消正在进行的加入前同步轻量段（LoadingView 取消按钮调用）；进房后的取消走 [cancelInRoomSync]。 */
     fun cancelPreJoin() {
         preJoinJob?.cancel()
     }
@@ -511,7 +731,6 @@ object ModSyncController {
         descriptors: List<NetworkModDescriptor>,
         cache: NetworkModCache,
         manager: ModManager,
-        loadingContext: LoadingContext,
     ): Boolean {
         withContext(Dispatchers.Main.immediate) { UI.showNetworkDialog = false }
         val activated = descriptors.mapNotNull { descriptor ->
@@ -531,10 +750,10 @@ object ModSyncController {
         manager.modReload(forceImmediate = true, enabledByFileName = enabledByFileName)
         val matched = findLocalMatchKeys(manager.getAllMods(), descriptors, cache)
         if (!descriptors.all { it.cacheKey() in matched }) {
-            fail(loadingContext, readI18n("mod.downloadFailed"), readI18n("mod.downloadFailedMissing"))
+            failInRoom(readI18n("mod.downloadFailed"), readI18n("mod.downloadFailedMissing"))
             return false
         }
-        logger.info("[MODSYNC] SUCCESS: mods synced, proceeding to join")
+        logger.info("[MODSYNC] SUCCESS: mods synced")
         return true
     }
 
@@ -606,6 +825,14 @@ object ModSyncController {
     }
 
     // ---------------- UI 状态 ----------------
+
+    /** 加入者进房后同步的当前阶段（驱动房间页 RoomSelfSyncBar；null 表示无进行中同步）。 */
+    var inRoomSyncPhase by mutableStateOf<String?>(null)
+        private set
+
+    private suspend fun setInRoomPhase(phase: String) {
+        withContext(Dispatchers.Main.immediate) { inRoomSyncPhase = phase }
+    }
 
     private fun setHostState(state: HostSyncState) {
         scope.launch(Dispatchers.Main.immediate) { hostSyncState = state }
@@ -685,7 +912,8 @@ object ModSyncController {
      */
     private class PeerProgressReporter(
         private val client: ModSyncClient,
-        private val roomKey: String,
+        /** 房间 key（peer 视角轮询 listPeersAsPeer 用）。 */
+        val roomKey: String,
         val displayName: String,
     ) {
         private val peerId: String = "p" + UUID.randomUUID().toString().replace("-", "")
@@ -694,6 +922,9 @@ object ModSyncController {
         private val lastReportAt = AtomicLong(0L)
         private val heartbeatRequest = AtomicReference<SyncPeerUpsertRequest?>(null)
         private var heartbeatJob: Job? = null
+
+        /** 当前持有的一次性 peer secret；首次 PUT 返回前为 null。 */
+        fun currentPeerSecret(): String? = peerSecret.get()
 
         fun report(request: SyncPeerUpsertRequest, force: Boolean = false) {
             val now = System.currentTimeMillis()

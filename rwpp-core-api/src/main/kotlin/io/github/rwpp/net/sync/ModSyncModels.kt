@@ -44,6 +44,8 @@ data class RoomRegisterRequest(
     val secret: String,
     @SerialName("game_version") val gameVersion: String,
     val mods: List<SyncModDescriptor>,
+    /** 房主当前全部启用单位的校验和（原版 getAllUnitsChecksum），供加入方比对模组一致性。 */
+    @SerialName("host_units_checksum") val hostUnitsChecksum: Long? = null,
 )
 
 /**
@@ -56,6 +58,8 @@ data class RoomManifestResponse(
     val status: String,
     @SerialName("game_version") val gameVersion: String = "",
     val mods: List<SyncModDescriptor>,
+    /** 房主全部启用单位的校验和（注册时上报，可空表示旧版房主未上报）。 */
+    @SerialName("host_units_checksum") val hostUnitsChecksum: Long? = null,
 ) {
     /** 房主已完成全部模组上传，可直接开始 diff/下载。 */
     val isReady: Boolean get() = status == SyncStatus.READY
@@ -101,6 +105,8 @@ object SyncPeerPhase {
     const val APPLYING = "applying"
     /** 模组已应用完毕，正在建立游戏连接、尚未出现在房间列表。 */
     const val JOINING = "joining"
+    /** 已进入房间，与房主模组集合一致（终态，房主据此放行）。 */
+    const val SYNCED = "synced"
 }
 
 /**
@@ -135,6 +141,8 @@ data class SyncPeerProgress(
     @SerialName("mod_count") val modCount: Int = 0,
     @SerialName("updated_at") val updatedAt: String = "",
     @SerialName("peer_secret") val peerSecret: String = "",
+    /** 加入者 IP，仅房主版 peers 列表返回；peer 版响应中缺省为 null。 */
+    val ip: String? = null,
 )
 
 /** `GET /rooms/{key}/peers` 响应体。 */
@@ -156,6 +164,8 @@ data class SyncPeerSnapshot(
     val currentTotal: Long,
     val modIndex: Int,
     val modCount: Int,
+    /** 加入者 IP（仅房主可见）。 */
+    val ip: String? = null,
 )
 
 fun SyncPeerProgress.toSnapshot(): SyncPeerSnapshot = SyncPeerSnapshot(
@@ -167,4 +177,5 @@ fun SyncPeerProgress.toSnapshot(): SyncPeerSnapshot = SyncPeerSnapshot(
     currentTotal = currentTotal,
     modIndex = modIndex,
     modCount = modCount,
+    ip = ip,
 )

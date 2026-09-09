@@ -177,6 +177,8 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     var optionVisible by remember { mutableStateOf(false) }
     var banUnitVisible by remember { mutableStateOf(false) }
     var showForceStartConfirm by remember { mutableStateOf(false) }
+    var showUnsyncedInRoomBlock by remember { mutableStateOf(false) }
+    var unsyncedInRoomNames by remember { mutableStateOf(listOf<String>()) }
     var publishState by remember { mutableStateOf<PublishToListUiState>(PublishToListUiState.Hidden) }
     var pendingPublishRoomType by remember { mutableStateOf<String?>(null) }
     var pendingPublishRoomName by remember { mutableStateOf<String?>(null) }
@@ -577,9 +579,13 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
         }
 
         val startGame: () -> Unit = {
-            val syncingPeers = ModSyncController.hostPeerSnapshots
             val unpreparedPlayers = game.gameRoom.getPlayers().filter { !it.data.ready }
+            val syncingPeers = ModSyncController.hostPeerSnapshots.filter { it.phase != SyncPeerPhase.SYNCED }
+            val connectedNames = game.gameRoom.getPlayers().map { it.name }.toSet()
+            // 已在房内但仍在下载/重载的玩家：现在开局必不同步（开局时服务端推送单位表，缺单位即断连），硬阻断
+            unsyncedInRoomNames = syncingPeers.filter { it.displayName in connectedNames }.map { it.displayName }
             when {
+                unsyncedInRoomNames.isNotEmpty() -> showUnsyncedInRoomBlock = true
                 syncingPeers.isNotEmpty() -> showForceStartConfirm = true
                 unpreparedPlayers.isNotEmpty() -> {
                     UI.showWarning(
@@ -687,6 +693,10 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                     )
                     RoomPendingSyncPanel(
                         isHost = isHost,
+                        compact = true,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                    )
+                    RoomSelfSyncBar(
                         compact = true,
                         modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                     )
@@ -846,6 +856,10 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                     )
                     RoomPendingSyncPanel(
                         isHost = isHost,
+                        compact = false,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+                    )
+                    RoomSelfSyncBar(
                         compact = false,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
                     )
@@ -1023,7 +1037,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 
     ContentView()
 
-    val forceStartPeers = ModSyncController.hostPeerSnapshots
+    val forceStartPeers = ModSyncController.hostPeerSnapshots.filter { it.phase != SyncPeerPhase.SYNCED }
     AnimatedAlertDialog(
         visible = showForceStartConfirm,
         onDismissRequest = { showForceStartConfirm = false },
@@ -1069,6 +1083,62 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                     }
                     RWTextButton(readI18n("multiplayer.room.forceStartConfirm")) {
                         dismiss()
+                        if (room.isHostServer) room.sendQuickGameCommand("-start")
+                        else room.startGame()
+                    }
+                }
+            }
+        }
+    }
+
+    // 房内仍有玩家同步模组时的硬阻断：开局必导致他们不同步断连，只允许踢出后开局或取消等待
+    AnimatedAlertDialog(
+        visible = showUnsyncedInRoomBlock,
+        onDismissRequest = { showUnsyncedInRoomBlock = false },
+    ) { dismiss ->
+        BorderCard(
+            modifier = Modifier
+                .fillMaxWidth(LargeProportion())
+                .widthIn(max = 480.dp)
+                .padding(10.dp),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    readI18n("multiplayer.room.unsyncedInRoomTitle"),
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    textAlign = TextAlign.Center,
+                )
+                Text(
+                    readI18n(
+                        "multiplayer.room.unsyncedInRoomMessage",
+                        I18nType.RWPP,
+                        unsyncedInRoomNames.joinToString(", "),
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                ) {
+                    RWTextButton(readI18n("common.cancel")) {
+                        dismiss()
+                    }
+                    RWTextButton(readI18n("multiplayer.room.kickAndStart")) {
+                        dismiss()
+                        val names = unsyncedInRoomNames.toSet()
+                        game.gameRoom.getPlayers()
+                            .filter { it.name in names }
+                            .forEach { room.kickPlayer(it) }
+                        // 清掉残留 Presence，避免被踢者的同步记录继续触发门控
+                        ModSyncController.clearHostPeers()
                         if (room.isHostServer) room.sendQuickGameCommand("-start")
                         else room.startGame()
                     }
@@ -2770,7 +2840,11 @@ private fun RoomPlayerTableRow(
                     drawStroke = false,
                     modifier = Modifier.fillMaxHeight(),
                 ) {
-                    if (!player.data.ready) {
+                    // 模组同步行内徽章（数据源 ModSyncController.roomPeerBadges）优先于遗留 ready 转圈
+                    val syncPeer = ModSyncController.roomPeerBadges[player.name]
+                    if (syncPeer != null) {
+                        RoomPlayerSyncBadge(peer = syncPeer, compact = compact)
+                    } else if (!player.data.ready) {
                         // Box 纵向 fillMaxHeight + 居中，修复原实现里小圆圈在格内偏上、视觉中心偏离的问题
                         Box(
                             modifier = Modifier.fillMaxHeight().padding(end = 4.dp),
@@ -3054,6 +3128,77 @@ private fun ModSyncHostStatusBar(
     }
 }
 
+/**
+ * 加入者视角的进房后同步状态条：等待房主/下载/重载/已同步各阶段一行展示，
+ * 下载中带确定进度条与当前 mod 名；未同步完成前可点「取消同步」中止并退出房间。
+ * 由 [ModSyncController.inRoomSyncPhase] 与 [UI.receivingModName] 等状态驱动。
+ */
+@Composable
+private fun RoomSelfSyncBar(compact: Boolean, modifier: Modifier = Modifier) {
+    val phase = ModSyncController.inRoomSyncPhase ?: return
+    val isSynced = phase == SyncPeerPhase.SYNCED
+    val isDownloading = phase == SyncPeerPhase.DOWNLOADING
+    val phaseLabel = when (phase) {
+        SyncPeerPhase.WAITING_HOST -> readI18n("modSync.phaseWaitingHost", I18nType.RWPP)
+        SyncPeerPhase.DOWNLOADING -> readI18n("modSync.phaseDownloading", I18nType.RWPP)
+        SyncPeerPhase.APPLYING -> readI18n("modSync.phaseApplying", I18nType.RWPP)
+        SyncPeerPhase.SYNCED -> readI18n("modSync.phaseSynced", I18nType.RWPP)
+        else -> readI18n("modSync.phaseJoining", I18nType.RWPP)
+    }
+
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (isSynced) {
+            Text(
+                "✓",
+                style = MaterialTheme.typography.labelMedium,
+                color = Color(0xFF4CAF50),
+            )
+        } else {
+            CircularProgressIndicator(
+                modifier = Modifier.size(12.dp),
+                strokeWidth = 1.5.dp,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        val detailText = if (isDownloading && UI.receivingModName.isNotBlank()) {
+            "$phaseLabel: ${UI.receivingModName} " +
+                "(${fmtMB(UI.receivingModReceivedBytes)}/${fmtMB(UI.receivingModTotalBytes)}MB)"
+        } else {
+            phaseLabel
+        }
+        Text(
+            detailText,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (isSynced) Color(0xFF4CAF50) else MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (isDownloading) {
+            LinearProgressIndicator(
+                progress = { UI.receivingModProgress },
+                modifier = Modifier
+                    .width(if (compact) 64.dp else 96.dp)
+                    .height(4.dp),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceContainer,
+            )
+        }
+        if (!isSynced) {
+            RWTextButton(
+                readI18n("modSync.cancelSync"),
+                modifier = Modifier.defaultMinSize(minHeight = 28.dp),
+            ) {
+                ModSyncController.cancelInRoomSync()
+            }
+        }
+    }
+}
+
 /** 字节数格式化为一位小数 MB（如 1.2）。commonMain 无 String.format，故手写截断到一位小数。 */
 private fun fmtMB(bytes: Long): String {
     val tenths = (bytes / 1048576.0 * 10).toLong()
@@ -3061,7 +3206,7 @@ private fun fmtMB(bytes: Long): String {
 }
 
 /**
- * 房主视角：尚未进房、正在带外同步模组的加入者列表。
+ * 房主视角：尚未完成带外同步的加入者列表（已 synced 的由玩家行内徽章展示，不在此重复）。
  * 视觉复刻旧 [RoomModSyncStrip]（下载图标 + 流光进度条 + 百分比 + 模组计数徽章）。
  */
 @Composable
@@ -3076,7 +3221,7 @@ private fun RoomPendingSyncPanel(
     ) {
         return
     }
-    val peers = ModSyncController.hostPeerSnapshots
+    val peers = ModSyncController.hostPeerSnapshots.filter { it.phase != SyncPeerPhase.SYNCED }
     if (peers.isEmpty()) return
 
     Column(
@@ -3242,6 +3387,56 @@ private fun RoomPendingSyncStrip(peer: SyncPeerSnapshot, compact: Boolean) {
                     fontFeatureSettings = "tnum",
                 ),
                 maxLines = 1,
+            )
+        }
+    }
+}
+
+/**
+ * 玩家名字旁的模组同步徽章（数据源 [ModSyncController.roomPeerBadges]，房主与同步中的房客均可见）：
+ * 下载中显示确定进度圈 + 当前 mod 百分比（口径同 [RoomPendingSyncStrip]），
+ * 已同步显示 ✓，其余阶段（等待房主/应用中/进房中）显示小转圈。
+ */
+@Composable
+private fun RoomPlayerSyncBadge(peer: SyncPeerSnapshot, compact: Boolean) {
+    val size = if (compact) 12.dp else 16.dp
+    val stroke = if (compact) 1.5.dp else 2.dp
+    Box(
+        modifier = Modifier.fillMaxHeight().padding(end = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        when (peer.phase) {
+            SyncPeerPhase.DOWNLOADING -> {
+                val progress = if (peer.currentTotal > 0) {
+                    (peer.currentBytes.toFloat() / peer.currentTotal).coerceIn(0f, 1f)
+                } else 0f
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(
+                        progress = { progress },
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(size),
+                        strokeWidth = stroke,
+                    )
+                    Text(
+                        " ${(progress * 100).roundToInt()}%",
+                        style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                    )
+                }
+            }
+
+            SyncPeerPhase.SYNCED -> Text(
+                "✓",
+                style = MaterialTheme.typography.labelMedium,
+                color = Color(0xFF4CAF50),
+                maxLines = 1,
+            )
+
+            else -> CircularProgressIndicator(
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(size),
+                strokeWidth = stroke,
             )
         }
     }

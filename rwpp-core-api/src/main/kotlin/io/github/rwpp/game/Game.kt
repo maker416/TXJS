@@ -130,6 +130,12 @@ interface Game : KoinComponent {
     fun getAllUnitTypes(): List<UnitType>
 
     /**
+     * 返回当前全部启用单位的校验和（即原版引擎的 getAllUnitsChecksum）。
+     * 联机握手时服务器用它比对双方模组一致性；模组同步用它与房主清单比对。
+     */
+    fun getUnitsChecksum(): Int
+
+    /**
      * Ban given unit, and all actions about the unit will not executed.
      */
     fun onBanUnits(units: List<UnitType>)

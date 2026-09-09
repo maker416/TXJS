@@ -11,6 +11,7 @@ import com.corrodinggames.rts.game.n
 import com.corrodinggames.rts.gameFramework.e
 import com.corrodinggames.rts.gameFramework.j.*
 import io.github.rwpp.*
+import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.desktop.GameEngine
 import io.github.rwpp.desktop.impl.PlayerImpl
 import io.github.rwpp.event.broadcastIn
@@ -21,6 +22,7 @@ import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
 import io.github.rwpp.inject.InterruptResult
+import io.github.rwpp.inject.RedirectMethod
 import io.github.rwpp.net.Client
 import io.github.rwpp.net.InternalPacketType
 import io.github.rwpp.net.Net
@@ -68,6 +70,14 @@ object NetworkInject {
                 InterruptResult.Unit
             }
 
+            InternalPacketType.REGISTER_PLAYER.type -> {
+                // 注册握手入口（服务器侧）：暂存玩家名/单位校验和/连接 IP，
+                // 供 redirectUnitsChecksum 判定是否放行校验和不匹配、正在带外同步的加入者。
+                // 不拦截原方法；解析失败静默回落原版行为（校验和不匹配照踢）。
+                ModSyncController.pendingRegistration = parseRegistration(auVar)
+                Unit
+            }
+
             else -> {
                 net.listeners[type]?.forEach { listener ->
                     val result = listener.invoke(
@@ -84,6 +94,54 @@ object NetworkInject {
                 Unit
             }
         }
+    }
+
+    /**
+     * 解析 REGISTER_CONNECTION(110) 注册包，读取顺序严格对齐引擎 ad.c(au) case 110
+     * （见 build/tmp-decompile/work/ad_code.txt:6396-6473）：
+     * 前缀 l() → 格式版本 f() → 协议版本 f() → 游戏版本 f() → 玩家名 l() → 密码 j()
+     * → [格式≥1] UUID l() → [格式≥2] 重连 token l() → [格式≥3] 单位校验和 f()。
+     */
+    private fun parseRegistration(auVar: au): ModSyncController.PendingRegistration? {
+        return runCatching {
+            with(GameEngine.B().bX) {
+                val reader = k(auVar)
+                reader.l()
+                val format = reader.f()
+                reader.f()
+                reader.f()
+                val name = reader.l()
+                reader.j()
+                if (format >= 1) reader.l()
+                if (format >= 2) reader.l()
+                val checksum = if (format >= 3) reader.f() else -1
+                ModSyncController.PendingRegistration(name, auVar.a.f(), checksum)
+            }
+        }.getOrElse {
+            logger.warn("[MODSYNC] parse REGISTER_CONNECTION failed: ${it.message}")
+            null
+        }
+    }
+
+    /**
+     * 握手单位校验和放行（模组同步 v2「进房后同步」的核心）。
+     * 仅重定向 ad.c(au) 方法体内的 l.z() 调用（校验和比较与踢人日志两处）：
+     * 存在已暂存的注册且回调放行时返回客户端校验和使 != 不成立（跳过踢人）；
+     * 否则返回引擎真实校验和，保持原版踢人行为，对原版客户端零影响。
+     */
+    @RedirectMethod(
+        method = "c",
+        methodDesc = "(Lcom/corrodinggames/rts/gameFramework/j/au;)V",
+        targetClassName = "com.corrodinggames.rts.gameFramework.l",
+        targetMethod = "z",
+    )
+    fun ad.redirectUnitsChecksum(): Int {
+        val pending = ModSyncController.pendingRegistration
+        if (pending != null && ModSyncController.shouldAllowMismatch(pending.name, pending.ip)) {
+            logger.info("[MODSYNC] allow checksum mismatch for syncing peer: ${pending.name}")
+            return pending.clientChecksum
+        }
+        return GameEngine.B().z()
     }
 
     @Inject("g", InjectMode.Override)

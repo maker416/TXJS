@@ -182,6 +182,9 @@ abstract class AbstractGame : Game {
         return (com.corrodinggames.rts.game.units.ar.ae as ArrayList<UnitType>)
     }
 
+    /** 原版引擎 `getAllUnitsChecksum`（混淆名 `l.z`），返回当前全部启用单位的校验和。 */
+    override fun getUnitsChecksum(): Int = GameEngine.B().z()
+
     override fun onBanUnits(units: List<UnitType>) {
         bannedUnitList = units.map(UnitType::name)
         if(units.isNotEmpty())

@@ -856,15 +856,21 @@ fun App(
                     showProtectedModHint = true,
                 ) { null }
 
-                // 主动取消下载：取消正在进行的加入前带外同步。此时尚未建立游戏连接，无需断连；
-                // 同步协程取消后会自行复位 UI.receivingMod* 状态并中止加入流程。
+                // 主动取消下载：进房前（尚未建立游戏连接）取消带外同步轻量段；
+                // 进房后同步中（房间内联进度条）取消并退出房间。
                 val onCancelDownload: () -> Unit = {
-                    ModSyncController.cancelPreJoin()
+                    if (ModSyncController.inRoomSyncPhase != null) {
+                        ModSyncController.cancelInRoomSync()
+                    } else {
+                        ModSyncController.cancelPreJoin()
+                    }
                     UI.showNetworkDialog = false
                 }
 
+                // 进房后同步期间由房间页内联 RoomSelfSyncBar 展示进度，不再弹阻塞卡片盖住聊天
+                val suppressNetworkDialog = showRoomView && ModSyncController.inRoomSyncPhase != null
                 AnimatedAlertDialog(
-                    UI.showNetworkDialog,
+                    UI.showNetworkDialog && !suppressNetworkDialog,
                     onCancelDownload, enableDismiss = false
                 ) { dismiss ->
                     NetworkModDownloadingCard(onCancelDownload)

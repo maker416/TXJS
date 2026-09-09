@@ -182,6 +182,9 @@ playersStillSyncing = "无法开始游戏。以下玩家仍在下载或应用模
 forceStartTitle = "仍有玩家正在同步"
 forceStartMessage = "以下玩家仍在下载或应用模组（尚未进房）：{0}\n可清除异常同步状态后重试，或确认后强制开始（未完成同步的玩家可能无法正常游戏）。"
 forceStartConfirm = "强制开始"
+unsyncedInRoomTitle = "有玩家仍在同步模组"
+unsyncedInRoomMessage = "以下玩家仍在下载或重载模组：{0}\n现在开局会导致他们因不同步而断连。请等待其完成，或将其踢出后开局。"
+kickAndStart = "踢出并开局"
 keepCurrentTeam = "保持当前"
 startingCreditsDefault = "默认 ($4000)"
 
@@ -278,6 +281,11 @@ phaseWaitingHost = "等待房主准备"
 phaseDownloading = "正在下载"
 phaseApplying = "正在应用模组"
 phaseJoining = "正在进入房间"
+phaseSynced = "已同步"
+cancelSync = "取消同步"
+syncCancelled = "模组同步已取消，已退出房间。"
+checksumMismatch = "模组与房主不一致（校验和不匹配）。"
+checksumMismatchDetail = "模组重载后单位校验和仍与房主不一致（本地 {0} / 房主 {1}），已自动退出房间。请检查模组后重试。"
 
 [browser]
 user = "用户"

@@ -23,6 +23,7 @@ import io.github.rwpp.android.impl.ClientImpl
 import io.github.rwpp.android.impl.GameEngine
 import io.github.rwpp.android.impl.PlayerImpl
 import io.github.rwpp.android.isReturnToBattleRoom
+import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.ChatMessageEvent
 import io.github.rwpp.event.events.PlayerJoinEvent
@@ -33,6 +34,7 @@ import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
 import io.github.rwpp.inject.InterruptResult
+import io.github.rwpp.inject.RedirectMethod
 import io.github.rwpp.net.Client
 import io.github.rwpp.net.InternalPacketType
 import io.github.rwpp.net.Net
@@ -233,6 +235,14 @@ object NetInject {
                 InterruptResult.Unit
             }
 
+            InternalPacketType.REGISTER_PLAYER.type -> {
+                // 注册握手入口（服务器侧）：暂存玩家名/单位校验和/连接 IP，
+                // 供 redirectUnitsChecksum 判定是否放行校验和不匹配、正在带外同步的加入者。
+                // 不拦截原方法；解析失败静默回落原版行为（校验和不匹配照踢）。
+                ModSyncController.pendingRegistration = parseRegistration(packet)
+                Unit
+            }
+
 
             else -> {
                 net.listeners[type]?.forEach { listener ->
@@ -249,6 +259,53 @@ object NetInject {
                 Unit
             }
         }
+    }
+
+    /**
+     * 解析 REGISTER_CONNECTION(110) 注册包，读取顺序严格对齐引擎 ae.a(bi) case 110
+     * （见 build/tmp-decompile/ae_android_full.txt:10155-10223）：
+     * 前缀 readUTF() → 格式版本 readInt() → 协议版本 readInt() → 游戏版本 readInt()
+     * → 玩家名 readUTF() → 密码 j.a() → [格式≥1] UUID readUTF() → [格式≥2] 重连 token readUTF()
+     * → [格式≥3] 单位校验和 readInt()（其后 [格式≥4]/[格式≥5] 还各有一个 readUTF()，与解析无关）。
+     */
+    private fun parseRegistration(packet: com.corrodinggames.rts.gameFramework.j.bi): ModSyncController.PendingRegistration? {
+        return runCatching {
+            val reader = com.corrodinggames.rts.gameFramework.j.j(packet)
+            reader.b.readUTF()
+            val format = reader.b.readInt()
+            reader.b.readInt()
+            reader.b.readInt()
+            val name = reader.b.readUTF()
+            reader.a()
+            if (format >= 1) reader.b.readUTF()
+            if (format >= 2) reader.b.readUTF()
+            val checksum = if (format >= 3) reader.b.readInt() else -1
+            ModSyncController.PendingRegistration(name, packet.a.f(), checksum)
+        }.getOrElse {
+            logger.warn("[MODSYNC] parse REGISTER_CONNECTION failed: ${it.message}")
+            null
+        }
+    }
+
+    /**
+     * 握手单位校验和放行（模组同步 v2「进房后同步」的核心）。
+     * 仅重定向 ae.a(bi) 方法体内的 k.r() 调用（校验和比较与踢人日志两处）：
+     * 存在已暂存的注册且回调放行时返回客户端校验和使 != 不成立（跳过踢人）；
+     * 否则返回引擎真实校验和，保持原版踢人行为，对原版客户端零影响。
+     */
+    @RedirectMethod(
+        method = "a",
+        methodDesc = "(Lcom/corrodinggames/rts/gameFramework/j/bi;)V",
+        targetClassName = "com.corrodinggames.rts.gameFramework.k",
+        targetMethod = "r",
+    )
+    fun ae.redirectUnitsChecksum(): Int {
+        val pending = ModSyncController.pendingRegistration
+        if (pending != null && ModSyncController.shouldAllowMismatch(pending.name, pending.ip)) {
+            logger.info("[MODSYNC] allow checksum mismatch for syncing peer: ${pending.name}")
+            return pending.clientChecksum
+        }
+        return GameEngine.t().r()
     }
 
     @Inject("d", InjectMode.InsertBefore)

@@ -23,6 +23,7 @@ import com.corrodinggames.rts.java.u
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
 import io.github.rwpp.core.LoadingContext
+import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.desktop.AbstractGame
 import io.github.rwpp.desktop.AbstractGameRoom
 import io.github.rwpp.desktop.GameEngine
@@ -114,6 +115,8 @@ class GameImpl : AbstractGame() {
 
                 override fun a(p0: String, p1: Int) {
                     if (p0.startsWith("kicked", ignoreCase = true)) {
+                        // 同步进房窗口内被踢（房主 1s 轮询尚未看到自己的 Presence）：静默重试，不弹窗不回退视图
+                        if (ModSyncController.onKickedDuringSyncEntry(p0)) return
                         UI.showWarning(p0, true)
                     } else {
                         i.a(p0, p1)

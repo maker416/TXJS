@@ -281,3 +281,26 @@ ModName1|/path/to/mod1.rwmod|enabled,ModName2|/path/to/mod2.rwmod|disabled
 - 字段：`[显示名, 引擎路径, enabled|disabled]`
 - `d()` 写入，`e()` 读取
 - `bN.save()` 持久化到磁盘
+
+## 10. 联机握手校验与 RWPP 握手放行（模组同步 v2）
+
+### 10.1 原版的两道模组关卡
+
+- **注册握手（包 110 REGISTER_CONNECTION，服务器侧）**：桌面 `ad.c(au)` / Android `ae.a(bi)` 的 case 110 依次检查名字长度 → 封禁 → 版本 → **单位校验和**（`l.z():I` / Android `k.r():I`，即 getAllUnitsChecksum；不匹配则 `"New Player kicked: Unit checksum mismatch"` + `sendKick(c, "Your core units are different to the server's core units. Game can not be synchronized")` + `c.a("kicked")`，见 `build/tmp-decompile/work/ad_code.txt:6622-6650`、`ae_android_full.txt:10396-10425`）→ 完整性应答 → 房间锁/已开局/密码。该校验和由当前启用模组集合决定，模组不一致的客户端**连房间都进不去**。
+- **开局推送**：SERVER_INFO(106) 时服务器把全量单位表推给客户端覆盖本地；客户端缺单位定义直接抛异常断连（"Server sync mismatch"）。
+- 校验和踢人之后仍有兜底价值：RWPP 放行只是跳过踢人，客户端必须在开局前完成下载+重载，否则开局推送阶段照样崩。
+
+### 10.2 RWPP 握手放行（`shouldAllowMismatch`）
+
+两段式注入，两端同构（混淆名：桌面 `ad.c(au)`/`l.z()`，Android `ae.a(bi)`/`k.r()`）：
+
+1. **暂存**：包处理 InsertBefore 注入（`NetworkInject.onReceivePacket` / `NetInject.onProcessPacket`）的 110 分支按注册包二进制布局解析出玩家名、客户端校验和，连同连接 `c.f()`（IP）写入 `ModSyncController.pendingRegistration`；解析失败静默回落原版行为。桌面读取顺序：前缀 `l()` → 格式 `f()` → 协议 `f()` → 游戏版本 `f()` → 玩家名 `l()` → 密码 `j()` → [格式≥1] UUID → [格式≥2] token → [格式≥3] 校验和 `f()`；Android 读取器为 `j`（`b.readUTF/readInt` + `j.a()` 密码）。
+2. **重定向**：`@RedirectMethod` 把 `ad.c(au)` 内的 `l.z()`（仅比较与日志两处）重定向到 `NetworkInject.redirectUnitsChecksum`（Android：`NetInject.redirectUnitsChecksum` 对 `k.r()`）。回调 `ModSyncController.shouldAllowMismatch(name, ip)` 命中（房主同步会话活跃 + peers 有同名未 synced 的加入者 + IP 不冲突）时返回暂存的客户端校验和使 `!=` 不成立；否则返回真实校验和，原版照踢。
+
+注意：`l.z()`/`k.r()` 在其他方法（如客户端组注册包的 `ad.h(c)`）中的调用不受影响——RedirectMethod 按方法作用域。
+
+### 10.3 注入框架的两个坑（已修复并有回归测试）
+
+- `Builder.applyConfig` 必须先应用 redirectMethodInfos 再应用 injectInfos：InsertBefore 会把原方法体复制为 `__original__<m>` 并把原方法改写为跳板，redirect 后做会在跳板里找不到目标调用、静默失效。
+- `InjectApi.redirect` 生成的 `__redirect__` 占位方法体必须带默认 return（javassist 对非 void 空方法体报 no return statement）；非 void 目标调用的 `m.replace` 必须经 `$_` 接返回值（否则报 the resulting value is not stored in `$_`）。
+- 回归测试：`rwpp-core-api` `InjectRedirectApplyTest`（用真实 game-lib.jar 验证 redirect + InsertBefore 叠加后的字节码形态）。

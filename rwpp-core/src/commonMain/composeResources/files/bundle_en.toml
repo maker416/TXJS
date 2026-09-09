@@ -181,6 +181,9 @@ playersStillSyncing = "Cannot start the game. These players are still downloadin
 forceStartTitle = "Players still syncing"
 forceStartMessage = "These players are still downloading or applying mods (not in the room yet): {0}\nYou can clear abnormal sync status and retry, or force start (players who have not finished syncing may not play correctly)."
 forceStartConfirm = "Force start"
+unsyncedInRoomTitle = "Players still syncing mods"
+unsyncedInRoomMessage = "These players are still downloading or applying mods: {0}\nStarting now will desync and disconnect them. Wait for them to finish, or kick them and start."
+kickAndStart = "Kick & Start"
 keepCurrentTeam = "Keep current"
 startingCreditsDefault = "Default ($4000)"
 
@@ -277,6 +280,11 @@ phaseWaitingHost = "Waiting for host"
 phaseDownloading = "Downloading"
 phaseApplying = "Applying mods"
 phaseJoining = "Joining room"
+phaseSynced = "Synced"
+cancelSync = "Cancel sync"
+syncCancelled = "Mod sync cancelled. You have left the room."
+checksumMismatch = "Mods do not match the host (checksum mismatch)."
+checksumMismatchDetail = "After reloading, the unit checksum still differs from the host (local {0} / host {1}). You have left the room. Please check your mods and retry."
 
 [browser]
 user = "User"

@@ -232,15 +232,17 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 ## 模组同步（带外方案）
 
-**游戏联机通讯完全保持原版**，模组同步是启动器自身的带外功能，不注入任何自定义联机包。
+**游戏联机通讯完全保持原版**，模组同步是启动器自身的带外功能，不注入任何自定义联机包。v2 起加入者**先进房再同步**：模组未下完也能立即进房聊天，进度显示在玩家列表该玩家名字旁（见下「握手放行」）。
 
-- **中转服务端**：独立 Go 服务 `relaymod`（源码在 `D:\workspace\RW\relaymod`，非本仓库模块），部署在公网 IPv4；仅标准库 `net/http`。房间同步记录（清单 + TTL + secret）与内容寻址 blob（按 SHA-256 去重存储）；另提供加入者进度 Presence（内存态，45s TTL，不落盘；新建 PUT 返回一次性 `peer_secret`，后续须 `X-Peer-Secret`；房主 `GET/DELETE .../peers` 须房间 `X-Secret`）。
+- **中转服务端**：独立 Go 服务 `relaymod`（源码在 `D:\workspace\RW\relaymod`，非本仓库模块），部署在公网 IPv4；仅标准库 `net/http`。房间同步记录（清单 + TTL + secret + `host_units_checksum`）与内容寻址 blob（按 SHA-256 去重存储）；另提供加入者进度 Presence（内存态，45s TTL，不落盘；新建 PUT 返回一次性 `peer_secret`，后续须 `X-Peer-Secret`；连接 IP 仅房主可见）。`GET .../peers` 双通道：房主 `X-Secret` 得全量（含 ip），加入者 `X-Peer-Secret` 得脱敏列表。
 - **客户端协议层**：`rwpp-core-api` 的 `net/sync/` —— `ModSyncModels.kt`（DTO，snake_case 与 Go 对齐）、`ModSyncKeys.kt`（房间 key 推导：`code:<短码>`、发布后绑定 `sid:<server_id>` 别名；直连 IP 房不提供同步）、`ModSyncClient.kt`（OkHttp，多 baseUrl failover；Presence 带 peer/room secret）。
 - **编排层**：`rwpp-core` 的 `core/ModSyncController.kt` ——
-  - 房主侧：开房勾选「传输模组」后进房拿到短码即注册（status=preparing）→ `files/check` 查缺 → 上传缺失 blob → ready → 60s 心跳续期 → 发布列表后绑定 sid 别名 → 离房（`DisconnectEvent`）注销；注册成功后每 1s 带 `X-Secret` 拉 peers；可 `clearHostPeers()`。
-  - 加入者侧：`Multiplayer.kt` 的 `LoadingView.loadContent` 中、`directJoinServer` **之前**执行 `preJoinSync`：查清单（404=无同步，按原版加入）→ preparing 轮询（≤60s，同时上报 `waiting_host`；轮询中 404=房主已注销则中止）→ diff 本地（三路匹配）→ 若引擎当前启用集合已与清单完全一致则跳过下载/`modReload` 直接 `joining`；否则下载缺失 → 启用所需 mod + `modReload(forceImmediate=true)`（`applying` + 5s 心跳）→ 切 `joining` 心跳并延后清理 → `directJoinServer` → `finishJoinerPresence()`；失败/取消用 NonCancellable DELETE（带 peer_secret）。
-- **房主进度 UI**：`MultiplayerRoom` 的 `RoomPendingSyncPanel`（流光进度条 / 百分比 / 模组计数；「清除同步状态」）；有活跃 peer 时开局二次确认强制开始。
+  - 房主侧：开房勾选「传输模组」后进房拿到短码即注册（status=preparing，含 `hostUnitsChecksum`）→ `files/check` 查缺 → 上传缺失 blob → ready → 60s 心跳续期 → 发布列表后绑定 sid 别名 → 离房（`DisconnectEvent`）注销；注册成功后每 1s 带 `X-Secret` 拉 peers；可 `clearHostPeers()`。
+  - 加入者侧：`Multiplayer.kt` 的 `LoadingView.loadContent` 中、`directJoinServer` 之前执行 `preJoinSync` **轻量段**：查清单（404=无同步，按原版加入）→ 本地启用集合已与清单完全一致（`isEngineAlreadyExact`）则按原版加入；否则上报 `joining` Presence + 心跳，等 ~1.5s（`JOIN_SETTLE_MS`，让房主 1s 轮询看到自己）后放行连接。进房成功后 `onJoinedRoom` 启动 `runPostJoinSync`：preparing 轮询（≤60s，上报 `waiting_host`；轮询中 404=房主已注销则失败退房）→ diff 本地（三路匹配）→ 下载缺失（`downloading`，房间内联进度条 `RoomSelfSyncBar`，不再弹阻塞卡片）→ 启用 + `modReload(forceImmediate=true)`（`applying`，连接保持）→ 双校验（本地集合命中 + `getUnitsChecksum()` vs 清单 `hostUnitsChecksum`）→ `synced` 心跳保留至开局/断线。失败/取消（`cancelInRoomSync`）提示并自动退房，NonCancellable DELETE（带 peer_secret）。进房窗口期内被踢由 `onKickedDuringSyncEntry` 静默重试（≤2 次，平台层被踢告警钩子抑制弹窗）。
+- **握手放行（房主侧注入，唯一反编译级改动）**：原版在注册握手（包 110 REGISTER_CONNECTION）比对单位校验和，不匹配即踢。注入层在包处理入口暂存注册包解析出的玩家名/校验和/连接 IP（`ModSyncController.pendingRegistration`），并用 `@RedirectMethod` 把校验和读取重定向到 `shouldAllowMismatch` 回调——房主同步会话活跃且 peers 里有同名未 synced 的加入者（IP 不冲突）时返回暂存的客户端校验和使比对通过，否则返回真实校验和、原版照踢。桌面：`NetworkInject.redirectUnitsChecksum`（`ad.c(au)` 内 `l.z()`）；Android：`NetInject.redirectUnitsChecksum`（`ae.a(bi)` 内 `k.r()`）。对原版/未同步客户端零影响（其名字永不在 relay peers 列表），线上协议零改动。
+- **进度 UI**：玩家列表名字旁的行内徽章 `RoomPlayerSyncBadge`（下载百分比/阶段转圈/已同步 ✓，数据源 `ModSyncController.roomPeerBadges`——房主取 peers 轮询快照，同步中房客用 `X-Peer-Secret` 轮询脱敏列表）；房主另有 `RoomPendingSyncPanel`（仅显示未 synced 者）与 `ModSyncHostStatusBar`；加入者自身进度为 `RoomSelfSyncBar`。开局门控：房内有未 synced 玩家 → 硬阻断（可「踢出并开局」）；房外同步中 peer → 二次确认强制开始。
 - **服务器地址配置**：`MultiplayerPreferences.modSyncApiUrls`（`;` 分隔多镜像，常量 `DEFAULT_MOD_SYNC_API_URLS`）。
+- **注入机制注意**：`Builder.applyConfig` 必须先应用 redirectMethodInfos 再应用 injectInfos（InsertBefore 会把方法体搬入 `__original__<m>` 跳板，redirect 后做会在跳板里找不到目标调用而静默失效）；`InjectApi.redirect` 生成的 `__redirect__` 占位方法体必须带默认 return（javassist 对非 void 空方法体报 no return statement），非 void 目标调用的替换必须经 `$_` 接返回值。回归测试：`rwpp-core-api` 的 `InjectRedirectApplyTest`（用真实 game-lib.jar 走 redirect + InsertBefore 叠加验证字节码形态）。
 - **已移除的旧方案**（勿恢复）：自定义联机包 500-511（`ModPacket`）、`HostModTransferScheduler`、`HostManifestCache`、`UnitEngineInject` 校验拦截、PREREGISTER_INFO(161) 中的 `RoomOption` TOML 与 `GameRoom.isRWPPRoom/option`、协议版本检查。
 
 ## 测试策略

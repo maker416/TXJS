@@ -194,5 +194,72 @@ class ModSyncModelsTest {
         assertEquals("downloading", SyncPeerPhase.DOWNLOADING)
         assertEquals("applying", SyncPeerPhase.APPLYING)
         assertEquals("joining", SyncPeerPhase.JOINING)
+        assertEquals("synced", SyncPeerPhase.SYNCED)
+    }
+
+    @Test
+    fun hostUnitsChecksumSnakeCaseRoundTrip() {
+        // RoomRegisterRequest：字段名锚定 + 可空缺省 + 往返
+        val req = RoomRegisterRequest(
+            key = "code:Q77182",
+            secret = "s3cret",
+            gameVersion = "1.15",
+            mods = listOf(descriptor),
+            hostUnitsChecksum = 123456789L,
+        )
+        val encoded = json.encodeToString(req)
+        assertTrue(
+            encoded.contains("\"host_units_checksum\":123456789"),
+            "JSON 字段必须为 snake_case 的 host_units_checksum：$encoded"
+        )
+        assertEquals(req, json.decodeFromString<RoomRegisterRequest>(encoded))
+
+        // 缺省 null 时缺省字段可解码
+        val legacyRegister = """{"key":"code:Q77182","secret":"s","game_version":"1.15","mods":[]}"""
+        assertEquals(null, json.decodeFromString<RoomRegisterRequest>(legacyRegister).hostUnitsChecksum)
+
+        // RoomManifestResponse：wire 格式解码 + 编码字段名 + 往返
+        val wire = """
+            {
+              "status": "ready",
+              "game_version": "1.15",
+              "host_units_checksum": -987654321,
+              "mods": [{"name": "test mod", "size": 42, "sha256": "${"a".repeat(64)}"}]
+            }
+        """.trimIndent()
+        val resp = json.decodeFromString<RoomManifestResponse>(wire)
+        assertEquals(-987654321L, resp.hostUnitsChecksum)
+        val encodedManifest = json.encodeToString(resp)
+        assertTrue(encodedManifest.contains("\"host_units_checksum\""), encodedManifest)
+        assertEquals(resp, json.decodeFromString<RoomManifestResponse>(encodedManifest))
+
+        // 旧版房主未上报时缺省为 null
+        val legacyManifest = """{"status": "preparing", "mods": []}"""
+        assertEquals(null, json.decodeFromString<RoomManifestResponse>(legacyManifest).hostUnitsChecksum)
+    }
+
+    @Test
+    fun syncPeerProgressIpSerialization() {
+        // 房主版响应带 ip；peer 版响应无 ip 字段时解码为 null
+        val hostWire = """
+            {
+              "peer_id": "peer-abc",
+              "display_name": "萌新",
+              "phase": "synced",
+              "updated_at": "2026-09-08T03:00:00Z",
+              "ip": "203.0.113.7"
+            }
+        """.trimIndent()
+        val hostPeer = json.decodeFromString<SyncPeerProgress>(hostWire)
+        assertEquals("203.0.113.7", hostPeer.ip)
+        assertTrue(json.encodeToString(hostPeer).contains("\"ip\":\"203.0.113.7\""))
+        assertEquals(hostPeer, json.decodeFromString(json.encodeToString(hostPeer)))
+
+        val peerWire = """{"peer_id": "peer-x", "phase": "joining"}"""
+        assertEquals(null, json.decodeFromString<SyncPeerProgress>(peerWire).ip)
+
+        // toSnapshot 透传 ip
+        assertEquals("203.0.113.7", hostPeer.toSnapshot().ip)
+        assertEquals(null, json.decodeFromString<SyncPeerProgress>(peerWire).toSnapshot().ip)
     }
 }

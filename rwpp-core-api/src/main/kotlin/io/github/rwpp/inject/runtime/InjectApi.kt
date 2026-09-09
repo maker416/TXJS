@@ -314,12 +314,23 @@ object InjectApi {
         val newMethodName = "__redirect__${methodName}__$targetMethodName"
 
         if (pathType == PathType.Path) {
+            // 占位方法体仅用于通过编译，真正的字节码在下面用 Bytecode 覆盖；
+            // 非 void 返回类型必须带默认 return，否则 javassist 报 no return statement
+            val placeholderBody = when (targetMethodReturnType) {
+                CtClass.voidType -> "{ }"
+                CtClass.booleanType -> "{ return false; }"
+                CtClass.byteType, CtClass.charType, CtClass.shortType, CtClass.intType -> "{ return 0; }"
+                CtClass.longType -> "{ return 0L; }"
+                CtClass.floatType -> "{ return 0f; }"
+                CtClass.doubleType -> "{ return 0.0; }"
+                else -> "{ return null; }"
+            }
             val newMethod = CtNewMethod.make(
                 targetMethodReturnType,
                 newMethodName,
                 targetMethodArgs,
                 arrayOf(),
-                "{ }",
+                placeholderBody,
                 clazz
             )
 
@@ -380,7 +391,12 @@ object InjectApi {
                     && m.className == targetClassName) {
                     Builder.logger?.warn("redirect $className.$methodName")
                     if (pathType == PathType.Path) {
-                        m.replace("{  $newMethodName($$); }")
+                        // 非 void 目标调用的替换必须经 $_ 接住返回值，否则 javassist 报错
+                        if (targetMethodReturnType == CtClass.voidType) {
+                            m.replace("{  $newMethodName($$); }")
+                        } else {
+                            m.replace("{  \$_ = $newMethodName($$); }")
+                        }
                     } else {
                         val javaCode = injectFunctionPath.let {
                             if (Modifier.isStatic(method.modifiers))
