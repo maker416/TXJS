@@ -308,6 +308,19 @@ object NetInject {
         return GameEngine.t().r()
     }
 
+    /**
+     * 兜底：即使缺单位检查仍抛了 `bw`，也不执行 `ae.b("Missing unit:...")` 自断。
+     * 进房后同步期间连接必须活着，否则聊天变成 `not networked` 本地回显。
+     */
+    @Inject("b", InjectMode.InsertBefore, "(Ljava/lang/String;)V")
+    fun ae.deferMissingUnitDisconnect(reason: String): Any {
+        if (reason.startsWith("Missing unit:") && ModSyncController.shouldDeferMissingUnitsCheck()) {
+            logger.info("[MODSYNC] keep connection despite engine missing-unit disconnect")
+            return InterruptResult.Unit
+        }
+        return Unit
+    }
+
     @Inject("d", InjectMode.InsertBefore)
     fun onSendServerInfo(c: com.corrodinggames.rts.gameFramework.j.c) {
         c.A?.let {

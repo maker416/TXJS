@@ -13,9 +13,11 @@ import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.ReloadModEvent
 import io.github.rwpp.event.events.ReloadModFinishedEvent
 import io.github.rwpp.game.Game
+import io.github.rwpp.game.mod.KeepConnectedReload
 import io.github.rwpp.game.mod.Mod
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.game.mod.ModReloadSelection
+import io.github.rwpp.game.mod.ReloadAbortToVanilla
 import io.github.rwpp.game.mod.deleteModFileSafely
 import io.github.rwpp.io.calculateSize
 import io.github.rwpp.internalModDir
@@ -114,6 +116,144 @@ class ModManagerImpl : ModManager {
             ReloadModFinishedEvent().broadcastIn()
             clearProtectedModLoadHint()
             isReloadingMods.set(false)
+        }
+    }
+
+    /**
+     * 进房后模组同步专用：当前线程重建单位表，主循环只泵网络（见 [KeepConnectedReload]）。
+     * 不把 `bW.a()` 投进 `i.a(float,int)`，否则主循环被占满网络保活停摆。
+     */
+    override suspend fun modReloadKeepConnected(enabledByFileName: Map<String, Boolean>?) {
+        if (!isReloadingMods.compareAndSet(false, true)) {
+            logger.info("[MODSYNC] modReloadKeepConnected skipped: already reloading")
+            return
+        }
+        try {
+            logger.info("[MODSYNC] modReloadKeepConnected start, broadcasting ReloadModEvent")
+            ReloadModEvent().broadcastIn()
+            refreshProtectedModLoadHint(getAllMods(), enabledByFileName)
+            KeepConnectedReload.begin()
+            val watchdog = startNetWatchdog()
+            try {
+                var aborted = false
+                try {
+                    runKeepConnectedReloadCore(enabledByFileName)
+                } catch (e: ReloadAbortToVanilla) {
+                    logger.info("[MODSYNC] custom mod load aborted by cancel")
+                    aborted = true
+                }
+                runVanillaFallbackIfRequested(aborted)
+                if (!io.github.rwpp.ui.UI.modReloadMemoryExhausted) {
+                    game.refreshHandshakeChecksumCache()
+                }
+            } finally {
+                finishKeepConnectedReload()
+                watchdog.interrupt()
+                watchdog.join(2_000L)
+            }
+            logger.info("[MODSYNC] modReloadKeepConnected main work finished")
+        } finally {
+            ReloadModFinishedEvent().broadcastIn()
+            clearProtectedModLoadHint()
+            isReloadingMods.set(false)
+        }
+    }
+
+    override suspend fun modReloadKeepConnectedVanillaOnly() {
+        if (isReloadingMods.get() && KeepConnectedReload.active) {
+            logger.info("[MODSYNC] vanilla-only fallback delegated to in-flight keep-connected reload")
+            return
+        }
+        if (!isReloadingMods.compareAndSet(false, true)) {
+            logger.info("[MODSYNC] modReloadKeepConnectedVanillaOnly skipped: already reloading")
+            return
+        }
+        try {
+            KeepConnectedReload.begin()
+            val watchdog = startNetWatchdog()
+            try {
+                KeepConnectedReload.disarmAbortInject()
+                runVanillaFallbackIfRequested(aborted = true)
+                if (!io.github.rwpp.ui.UI.modReloadMemoryExhausted) {
+                    game.refreshHandshakeChecksumCache()
+                }
+            } finally {
+                finishKeepConnectedReload()
+                watchdog.interrupt()
+                watchdog.join(2_000L)
+            }
+        } finally {
+            clearProtectedModLoadHint()
+            isReloadingMods.set(false)
+        }
+    }
+
+    private fun allModsDisabledByFileName(): Map<String, Boolean> =
+        getAllMods().associate { File(it.path).name.lowercase() to false }
+
+    private fun runVanillaFallbackIfRequested(aborted: Boolean) {
+        if (!aborted && !KeepConnectedReload.abortToVanilla) return
+        KeepConnectedReload.disarmAbortInject()
+        if (io.github.rwpp.ui.UI.modReloadMemoryExhausted) {
+            logger.warn("[MODSYNC] skip vanilla fallback: memory exhausted")
+            return
+        }
+        logger.info("[MODSYNC] abort-to-vanilla: disabling all mods and reloading vanilla units")
+        getAllMods().forEach { it.isEnabled = false }
+        runKeepConnectedReloadCore(allModsDisabledByFileName())
+        KeepConnectedReload.markVanillaFallbackDone()
+    }
+
+    private suspend fun finishKeepConnectedReload() {
+        try {
+            if (KeepConnectedReload.shouldRefreshMenuAfterAbort) {
+                logger.info("[MODSYNC] refresh menu after abort-to-vanilla, before releasing keep-connected gate")
+                game.refreshMenuAfterDisconnect()
+            }
+        } catch (e: Throwable) {
+            logger.warn("[MODSYNC] refresh menu after abort failed: ${e.message}")
+        }
+        KeepConnectedReload.end()
+    }
+
+    private fun startNetWatchdog(): Thread {
+        val thread = Thread({
+            while (KeepConnectedReload.active && !Thread.currentThread().isInterrupted) {
+                try {
+                    if (KeepConnectedReload.isWatchdogDue()) {
+                        val net = GameEngine.t().bU
+                        net.l()
+                        net.a(KeepConnectedReload.WATCHDOG_DELTA)
+                        KeepConnectedReload.markGameTick()
+                    }
+                    Thread.sleep(KeepConnectedReload.WATCHDOG_SLEEP_MS)
+                } catch (_: InterruptedException) {
+                    break
+                } catch (e: Throwable) {
+                    logger.warn("[MODSYNC] net watchdog pump failed: ${e.message}")
+                }
+            }
+        }, "rwpp-modsync-net-watchdog")
+        thread.isDaemon = true
+        thread.start()
+        return thread
+    }
+
+    /**
+     * 保连接重载内核：保存并重建单位注册表，但不停止引擎线程、不重建菜单场景——
+     * 不调用 t.f()/t.q()，也不置 k.bo（网络 tick 读到 bo=true 会立即 queDisconnect；
+     * t.f() 停主循环会导致保活泵 ae.l() 停摆连接超时；t.q() 会清空玩家数组摧毁房间状态）。
+     */
+    private fun runKeepConnectedReloadCore(enabledByFileName: Map<String, Boolean>?) {
+        try {
+            val t = GameEngine.t()
+            t.bW.d()
+            t.bN.save()
+            reloadUnitsWithSelection(enabledByFileName)
+        } catch (e: OutOfMemoryError) {
+            // 与 runReloadCore 同一防线：吞掉 OOM 并置全局标志，保住进程与连接。
+            io.github.rwpp.ui.UI.modReloadMemoryExhausted = true
+            logger.error("[MODSYNC] modReloadKeepConnected aborted by OutOfMemoryError", e)
         }
     }
 

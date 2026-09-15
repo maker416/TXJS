@@ -23,6 +23,7 @@ import okio.BufferedSink
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
 
 private const val API_PREFIX = "/api/v1"
 private const val SECRET_HEADER = "X-Secret"
@@ -63,6 +64,20 @@ class ModSyncClient(
     private val json = Json {
         // 容忍服务端后续新增字段，避免老客户端解析失败
         ignoreUnknownKeys = true
+    }
+
+    /**
+     * blob 下载专用客户端。
+     * [readTimeout] 是**块与块之间**的空闲超时：15s 会把 TTFB/短暂卡顿误判失败；
+     * 10 分钟又会让中途断流的进度条假死很久。60s 空闲即重试，整次调用最多 15 分钟。
+     */
+    private val blobClient: OkHttpClient by lazy {
+        client.newBuilder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
+            .callTimeout(15, TimeUnit.MINUTES)
+            .build()
     }
 
     /**
@@ -242,36 +257,112 @@ class ModSyncClient(
      * 流式读入内存并按缓冲区回调进度；完成后校验字节数与 [expectedSize] 一致，
      * 不一致抛 [ModSyncException]（不做 failover）。**SHA-256 校验由调用方对返回字节复核。**
      *
+     * 中途超时/断流会带着已收字节用 HTTP Range 续传（relaymod `ServeContent` 支持 206），
+     * 避免大文件卡在 20% 后从头再下。进度回调约 200ms 一次，减轻 UI 线程压力。
+     *
      * @param onProgress 按缓冲区回调下载进度（0..1）；[expectedSize] <= 0 时不回调进度。
      */
     suspend fun downloadFile(
         sha256: String,
         expectedSize: Long,
         onProgress: (Float) -> Unit = {},
-    ): ByteArray = withFailover("$API_PREFIX/files/$sha256", { get() }) { response ->
-        val body = response.body ?: throw ModSyncException("同步服务器返回了空的下载内容", response.code)
+    ): ByteArray {
         val output = ByteArrayOutputStream(
-            if (expectedSize in 1..Int.MAX_VALUE) expectedSize.toInt() else BUFFER_SIZE
+            if (expectedSize in 1..Int.MAX_VALUE) expectedSize.toInt() else BLOB_BUFFER_SIZE
         )
-        body.byteStream().use { input ->
-            val buffer = ByteArray(BUFFER_SIZE)
-            var downloaded = 0L
-            while (true) {
-                val read = input.read(buffer)
-                if (read == -1) break
-                output.write(buffer, 0, read)
-                downloaded += read
-                if (expectedSize > 0) onProgress(downloaded.toFloat() / expectedSize)
-            }
+        var downloaded = 0L
+        var lastError: IOException? = null
+        var lastProgressAt = 0L
+        var lastLogAt = 0L
+        fun emitProgress(force: Boolean = false) {
+            if (expectedSize <= 0) return
+            val now = System.currentTimeMillis()
+            if (!force && now - lastProgressAt < PROGRESS_THROTTLE_MS) return
+            lastProgressAt = now
+            onProgress((downloaded.toFloat() / expectedSize).coerceIn(0f, 1f))
         }
-        output.toByteArray().also { result ->
-            if (result.size.toLong() != expectedSize) {
-                throw ModSyncException(
-                    "下载字节数 ${result.size} 与清单声明的 $expectedSize 不一致（sha256=$sha256）",
-                    null
+        val waitCtx = currentCoroutineContext()
+        for (attempt in 0 until BLOB_DOWNLOAD_ATTEMPTS) {
+            waitCtx.ensureActive()
+            try {
+                executeBlob(
+                    "$API_PREFIX/files/$sha256",
+                    {
+                        get()
+                        if (downloaded in 1 until expectedSize) {
+                            header("Range", "bytes=$downloaded-")
+                        }
+                    },
+                ) { response ->
+                    when (response.code) {
+                        200 -> {
+                            if (downloaded > 0) {
+                                logger.info("[MODSYNC] blob server ignored Range, restarting $sha256")
+                            }
+                            output.reset()
+                            downloaded = 0L
+                        }
+                        206 -> { /* 续传，追加 */ }
+                        else -> if (!response.isSuccessful) {
+                            throw response.toModSyncException()
+                        }
+                    }
+                    val body = response.body ?: throw ModSyncException("同步服务器返回了空的下载内容", response.code)
+                    val buffer = ByteArray(BLOB_BUFFER_SIZE)
+                    body.byteStream().use { input ->
+                        while (true) {
+                            waitCtx.ensureActive()
+                            val read = input.read(buffer)
+                            if (read == -1) break
+                            output.write(buffer, 0, read)
+                            downloaded += read
+                            emitProgress()
+                            val now = System.currentTimeMillis()
+                            if (now - lastLogAt >= DOWNLOAD_LOG_MS) {
+                                lastLogAt = now
+                                logger.info(
+                                    "[MODSYNC] downloading $sha256 $downloaded/$expectedSize " +
+                                        "(attempt ${attempt + 1}/$BLOB_DOWNLOAD_ATTEMPTS)"
+                                )
+                            }
+                        }
+                    }
+                }
+                val result = output.toByteArray()
+                if (result.size.toLong() != expectedSize) {
+                    throw ModSyncException(
+                        "下载字节数 ${result.size} 与清单声明的 $expectedSize 不一致（sha256=$sha256）",
+                        null
+                    )
+                }
+                emitProgress(force = true)
+                return result
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ModSyncException) {
+                if (e.statusCode == 416) {
+                    logger.warn("[MODSYNC] Range 416, restarting $sha256 from 0")
+                    output.reset()
+                    downloaded = 0L
+                    lastError = e
+                    continue
+                }
+                if (e.statusCode != null && e.statusCode in 400..499) throw e
+                lastError = e
+                logger.warn(
+                    "[MODSYNC] download attempt ${attempt + 1}/$BLOB_DOWNLOAD_ATTEMPTS failed " +
+                        "at $downloaded/$expectedSize: ${e.message}"
+                )
+            } catch (e: IOException) {
+                waitCtx.ensureActive()
+                lastError = e
+                logger.warn(
+                    "[MODSYNC] download attempt ${attempt + 1}/$BLOB_DOWNLOAD_ATTEMPTS failed " +
+                        "at $downloaded/$expectedSize: ${e.message}"
                 )
             }
         }
+        throw lastError ?: ModSyncException("下载模组失败（sha256=$sha256）", null)
     }
 
     private fun progressRequestBody(bytes: ByteArray, onProgress: (Float) -> Unit): RequestBody =
@@ -297,12 +388,62 @@ class ModSyncClient(
         }
 
     /**
+     * blob 下载专用 failover：连不上 / 5xx 换下一个地址。
+     * 已经开始读 body 后断流不再换镜像（已收字节留给外层 Range 续传），避免下一台 404 把整次下载判死。
+     */
+    private suspend fun executeBlob(
+        path: String,
+        customize: Request.Builder.() -> Unit,
+        onResponse: (Response) -> Unit,
+    ) {
+        withContext(Dispatchers.IO) {
+            var lastError: IOException? = null
+            var startedBody = false
+            for (base in baseUrls) {
+                coroutineContext.ensureActive()
+                val request = Request.Builder()
+                    .url(base + path)
+                    .apply(customize)
+                    .build()
+                try {
+                    blobClient.executeCancellable(request).use { response ->
+                        when {
+                            response.isSuccessful -> {
+                                startedBody = true
+                                onResponse(response)
+                                return@withContext
+                            }
+                            response.code in 500..599 -> {
+                                logger.warn("同步服务器 $base 返回 HTTP ${response.code}，尝试下一个地址")
+                                lastError = response.toModSyncException()
+                            }
+                            else -> throw response.toModSyncException()
+                        }
+                    }
+                } catch (e: ModSyncException) {
+                    throw e
+                } catch (e: IOException) {
+                    coroutineContext.ensureActive()
+                    lastError = e
+                    if (startedBody) {
+                        logger.warn("[MODSYNC] blob stream interrupted on $base: ${e.message}")
+                        throw e
+                    }
+                    logger.warn("连接同步服务器 $base 失败：${e.message}，尝试下一个地址")
+                }
+            }
+            throw lastError ?: ModSyncException("没有可用的同步服务器地址", null)
+        }
+    }
+
+    /**
      * 多 baseUrl 按序 failover：任一地址 2xx 即返回；5xx/网络错误记录后尝试下一个；
      * 4xx（含 404/409）立即抛 [ModSyncException]；全部失败则抛出最后记录的错误。
      */
     private suspend fun <T> withFailover(
         path: String,
         customize: Request.Builder.() -> Unit,
+        http: OkHttpClient = client,
         onSuccess: (Response) -> T,
     ): T = withContext(Dispatchers.IO) {
         var lastError: IOException? = null
@@ -313,7 +454,7 @@ class ModSyncClient(
                 .apply(customize)
                 .build()
             try {
-                client.executeCancellable(request).use { response ->
+                http.executeCancellable(request).use { response ->
                     when {
                         response.isSuccessful -> return@withContext onSuccess(response)
                         response.code in 500..599 -> {
@@ -346,6 +487,10 @@ class ModSyncClient(
 
     private companion object {
         val EMPTY_BODY: RequestBody = ByteArray(0).toRequestBody(null, 0, 0)
+        const val BLOB_DOWNLOAD_ATTEMPTS = 3
+        const val BLOB_BUFFER_SIZE = 256 * 1024
+        const val PROGRESS_THROTTLE_MS = 200L
+        const val DOWNLOAD_LOG_MS = 5_000L
     }
 }
 

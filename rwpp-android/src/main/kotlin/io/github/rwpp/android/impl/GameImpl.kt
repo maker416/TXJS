@@ -31,6 +31,7 @@ import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.logger
 import io.github.rwpp.net.sanitizeJoinRelayUuid
 import io.github.rwpp.ui.UI
+import io.github.rwpp.utils.Reflect
 import kotlinx.coroutines.*
 import org.koin.core.annotation.Single
 import org.koin.core.component.get
@@ -38,6 +39,8 @@ import java.io.IOException
 import java.io.InputStream
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 @Single
 class GameImpl : Game, CoroutineScope {
@@ -297,8 +300,39 @@ class GameImpl : Game, CoroutineScope {
         return com.corrodinggames.rts.game.units.cj.ae as ArrayList<UnitType>
     }
 
-    /** 原版引擎 `getAllUnitsChecksum`（混淆名 `k.r`），返回当前全部启用单位的校验和。 */
-    override fun getUnitsChecksum(): Int = GameEngine.t().r()
+    /**
+     * 实时重算的全部启用单位校验和（`ce.bt()`）。
+     * 不用 `k.r()`：那是引擎 init 时缓存的字段，模组重载后不会刷新，同步校验需要真实状态。
+     */
+    override fun getUnitsChecksum(): Int = com.corrodinggames.rts.game.units.ce.bt()
+
+    override fun refreshHandshakeChecksumCache() {
+        val checksum = com.corrodinggames.rts.game.units.ce.bt()
+        try {
+            // i.r() 读的 init 缓存字段 `c`；重载后必须写回，否则包 110 仍发旧值。
+            Reflect.set(GameEngine.t(), "c", checksum)
+            logger.info("[MODSYNC] handshake checksum cache refreshed to $checksum")
+        } catch (e: Throwable) {
+            logger.warn("[MODSYNC] failed to write handshake checksum cache: ${e.message}")
+        }
+    }
+
+    override suspend fun refreshMenuAfterDisconnect() {
+        suspendCancellableCoroutine { cont ->
+            val posted = uiHandler.post {
+                try {
+                    MainActivity.runActivityResume(forceWhileReloading = true)
+                    if (cont.isActive) cont.resume(Unit)
+                } catch (e: Throwable) {
+                    if (cont.isActive) cont.resumeWithException(e)
+                }
+            }
+            if (!posted && cont.isActive) {
+                logger.warn("[MODSYNC] refreshMenuAfterDisconnect: uiHandler.post failed")
+                cont.resume(Unit)
+            }
+        }
+    }
 
     override fun onBanUnits(units: List<UnitType>) {
         bannedUnitList = units.map { it.name }

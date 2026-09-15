@@ -18,6 +18,7 @@ import io.github.rwpp.game.base.Difficulty
 import io.github.rwpp.game.map.MissionType
 import io.github.rwpp.game.units.UnitType
 import io.github.rwpp.logger
+import io.github.rwpp.utils.Reflect
 import io.github.rwpp.core.LoadingContext
 import io.github.rwpp.event.events.HostSinglePlayerGameEvent
 import io.github.rwpp.event.events.PlayerJoinEvent
@@ -182,8 +183,26 @@ abstract class AbstractGame : Game {
         return (com.corrodinggames.rts.game.units.ar.ae as ArrayList<UnitType>)
     }
 
-    /** 原版引擎 `getAllUnitsChecksum`（混淆名 `l.z`），返回当前全部启用单位的校验和。 */
-    override fun getUnitsChecksum(): Int = GameEngine.B().z()
+    /**
+     * 实时重算的全部启用单位校验和（`am.bM()`）。
+     * 不用 `l.z()`：那是引擎 init 时缓存的字段，模组重载后不会刷新，同步校验需要真实状态。
+     */
+    override fun getUnitsChecksum(): Int = com.corrodinggames.rts.game.units.am.bM()
+
+    override fun refreshHandshakeChecksumCache() {
+        val checksum = com.corrodinggames.rts.game.units.am.bM()
+        try {
+            // i.z() 读的 init 缓存字段 `d`；重载后必须写回，否则包 110 仍发旧值。
+            Reflect.set(GameEngine.B(), "d", checksum)
+            logger.info("[MODSYNC] handshake checksum cache refreshed to $checksum")
+        } catch (e: Throwable) {
+            logger.warn("[MODSYNC] failed to write handshake checksum cache: ${e.message}")
+        }
+    }
+
+    override suspend fun refreshMenuAfterDisconnect() {
+        // 桌面退房不走 Android activityResume/`i.q()`，无对等的 UI 线程单位表遍历。
+    }
 
     override fun onBanUnits(units: List<UnitType>) {
         bannedUnitList = units.map(UnitType::name)

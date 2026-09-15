@@ -153,7 +153,8 @@ data class SyncPeerListResponse(
 
 /**
  * 房主 UI 使用的加入者同步进度快照（对齐旧 HostTransferSnapshot 口径）。
- * [currentBytes]/[currentTotal] 均为**当前模组**进度。
+ * 下载阶段 [currentBytes]/[currentTotal] 为当前模组字节进度；
+ * 应用阶段 [currentBytes] 为已加载单位数（无总数，[currentTotal] 为 0），[currentModName] 为当前单位名。
  */
 data class SyncPeerSnapshot(
     val peerId: String,

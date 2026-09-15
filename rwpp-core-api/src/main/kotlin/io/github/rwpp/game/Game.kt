@@ -130,10 +130,25 @@ interface Game : KoinComponent {
     fun getAllUnitTypes(): List<UnitType>
 
     /**
-     * 返回当前全部启用单位的校验和（即原版引擎的 getAllUnitsChecksum）。
+     * 返回当前全部启用单位的校验和（单位注册表实时重算）。
+     * 注意：引擎握手读的是 init 时缓存的字段（Android `k.r()` / 桌面 `l.z()`），模组重载不会刷新它；
+     * 模组同步需要反映重载后的真实状态，因此这里直接实时重算（Android `ce.bt()` / 桌面 `am.bM()`）。
      * 联机握手时服务器用它比对双方模组一致性；模组同步用它与房主清单比对。
      */
     fun getUnitsChecksum(): Int
+
+    /**
+     * 将引擎握手用的 init 缓存字段写为当前单位表的实时校验和。
+     * 保连接重载后必须调用，否则后续 REGISTER_CONNECTION 仍会发出重载前的旧值。
+     */
+    fun refreshHandshakeChecksumCache()
+
+    /**
+     * 应用阶段取消回落后重建菜单（Android `activityResume`/`i.q()`）。
+     * 必须在 [io.github.rwpp.game.mod.KeepConnectedReload] 仍置位时调用，
+     * 主循环只泵网络，才不会和单位表迭代撞车。桌面端无需对等操作。
+     */
+    suspend fun refreshMenuAfterDisconnect()
 
     /**
      * Ban given unit, and all actions about the unit will not executed.

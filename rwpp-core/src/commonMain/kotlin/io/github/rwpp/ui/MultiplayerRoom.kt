@@ -50,9 +50,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
@@ -327,7 +324,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 
 
 // （旧协议内同步的残留占位已随重构移除）
-    val players = remember(update) { room.getPlayers().sortedBy { it.team } }
+    val players = remember(update) { room.getPlayers().forRoomPlayerList() }
     var selectedPlayer by remember { mutableStateOf(players.firstOrNull() ?: ConnectingPlayer) }
     var playerOverrideVisible by remember { mutableStateOf(false) }
 
@@ -689,10 +686,6 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 
                     ModSyncHostStatusBar(
                         isHost = isHost,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-                    )
-                    RoomPendingSyncPanel(
-                        isHost = isHost,
                         compact = true,
                         modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                     )
@@ -852,12 +845,8 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                 Column {
                     ModSyncHostStatusBar(
                         isHost = isHost,
-                        modifier = Modifier.padding(horizontal = 10.dp),
-                    )
-                    RoomPendingSyncPanel(
-                        isHost = isHost,
                         compact = false,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+                        modifier = Modifier.padding(horizontal = 10.dp),
                     )
                     RoomSelfSyncBar(
                         compact = false,
@@ -926,7 +915,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                         ) {
                                             items(
                                                 count = players.size,
-                                                key = { players[it].connectHexId },
+                                                key = { roomPlayerListKey(players[it], it) },
                                             ) { index ->
                                                 RoomPlayerTableRow(
                                                     player = players[index],
@@ -2204,6 +2193,17 @@ private fun PublishToListDialog(
 }
 
 
+/**
+ * 引擎玩家数组里 [Player.connectHexId]（Android `p.S` / 桌面 `n.O`）并不保证唯一：
+ * 缺省值、握手占位与正式槽位可能共用同一把 SHA-256。LazyColumn 只用它当 key，
+ * 第二人进房刷新列表就会 `Key was already used` 把房主和加入者一起崩掉。
+ */
+private fun List<Player>.forRoomPlayerList(): List<Player> =
+    distinctBy { System.identityHashCode(it) }.sortedBy { it.team }
+
+private fun roomPlayerListKey(player: Player, index: Int): String =
+    "${player.spawnPoint}\u0000${player.name}\u0000${player.connectHexId}\u0000$index"
+
 private val RoomPlayerNameWeight = 0.6f
 
 private val RoomPlayerSpawnWeight = 0.1f
@@ -2289,7 +2289,7 @@ private fun CompactPlayerPanel(
             ) {
                 items(
                     count = players.size,
-                    key = { players[it].connectHexId },
+                    key = { roomPlayerListKey(players[it], it) },
                 ) { index ->
                     val player = players[index]
                     RoomPlayerTableRow(
@@ -2829,35 +2829,17 @@ private fun RoomPlayerTableRow(
                 val baseName = player.name + if (player.startingUnit != -1) {
                     " - ${options.firstOrNull { it.first == player.startingUnit }?.second ?: "Unknown"}"
                 } else ""
-                TableCell(
-                    baseName,
-                    color = if (player.color != -1) {
+                RoomPlayerNameCell(
+                    name = baseName,
+                    nameColor = if (player.color != -1) {
                         Player.getTeamColor(player.color)
                     } else {
                         MaterialTheme.colorScheme.onSurface
                     },
-                    weight = RoomPlayerNameWeight,
-                    drawStroke = false,
-                    modifier = Modifier.fillMaxHeight(),
-                ) {
-                    // 模组同步行内徽章（数据源 ModSyncController.roomPeerBadges）优先于遗留 ready 转圈
-                    val syncPeer = ModSyncController.roomPeerBadges[player.name]
-                    if (syncPeer != null) {
-                        RoomPlayerSyncBadge(peer = syncPeer, compact = compact)
-                    } else if (!player.data.ready) {
-                        // Box 纵向 fillMaxHeight + 居中，修复原实现里小圆圈在格内偏上、视觉中心偏离的问题
-                        Box(
-                            modifier = Modifier.fillMaxHeight().padding(end = 4.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            CircularProgressIndicator(
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(if (compact) 12.dp else 16.dp),
-                                strokeWidth = if (compact) 1.5.dp else 2.dp,
-                            )
-                        }
-                    }
-                }
+                    syncPeer = ModSyncController.roomPeerBadges[player.name],
+                    showReadySpinner = !player.data.ready,
+                    compact = compact,
+                )
                 TableCell(
                     if (player.isSpectator) "S" else (player.spawnPoint + 1).toString(),
                     RoomPlayerSpawnWeight,
@@ -3078,11 +3060,13 @@ private fun PublishedRoomExpiryBar(
 @Composable
 private fun ModSyncHostStatusBar(
     isHost: Boolean,
+    compact: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     if (!isHost) return
     val state = ModSyncController.hostSyncState
     if (state is ModSyncController.HostSyncState.Off) return
+    val hasUnsyncedPeers = ModSyncController.hostPeerSnapshots.any { it.phase != SyncPeerPhase.SYNCED }
 
     val (text, color) = when (state) {
         is ModSyncController.HostSyncState.Preparing -> readI18n(
@@ -3124,24 +3108,36 @@ private fun ModSyncHostStatusBar(
             color = color,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
         )
+        if (hasUnsyncedPeers) {
+            RWTextButton(
+                readI18n("modSync.clearPeers"),
+                modifier = Modifier.defaultMinSize(minHeight = if (compact) 28.dp else 32.dp),
+            ) {
+                ModSyncController.clearHostPeers()
+            }
+        }
     }
 }
 
 /**
  * 加入者视角的进房后同步状态条：等待房主/下载/重载/已同步各阶段一行展示，
- * 下载中带确定进度条与当前 mod 名；未同步完成前可点「取消同步」中止并退出房间。
- * 由 [ModSyncController.inRoomSyncPhase] 与 [UI.receivingModName] 等状态驱动。
+ * 下载中带确定进度条与当前 mod 名；应用中显示引擎已加载单位数（与重载弹窗同口径）；
+ * 未同步完成前可点「取消同步」中止并退出房间。
+ * 由 [ModSyncController.inRoomSyncPhase]、[loadingMessage] 与 [UI.receivingModName] 等状态驱动。
  */
 @Composable
 private fun RoomSelfSyncBar(compact: Boolean, modifier: Modifier = Modifier) {
     val phase = ModSyncController.inRoomSyncPhase ?: return
     val isSynced = phase == SyncPeerPhase.SYNCED
     val isDownloading = phase == SyncPeerPhase.DOWNLOADING
+    val isApplying = phase == SyncPeerPhase.APPLYING
+    val applyProgress = if (isApplying) parseEngineLoadProgress(loadingMessage) else null
     val phaseLabel = when (phase) {
         SyncPeerPhase.WAITING_HOST -> readI18n("modSync.phaseWaitingHost", I18nType.RWPP)
         SyncPeerPhase.DOWNLOADING -> readI18n("modSync.phaseDownloading", I18nType.RWPP)
-        SyncPeerPhase.APPLYING -> readI18n("modSync.phaseApplying", I18nType.RWPP)
+        SyncPeerPhase.APPLYING -> applyingPhaseLabel(applyProgress?.detail)
         SyncPeerPhase.SYNCED -> readI18n("modSync.phaseSynced", I18nType.RWPP)
         else -> readI18n("modSync.phaseJoining", I18nType.RWPP)
     }
@@ -3164,9 +3160,11 @@ private fun RoomSelfSyncBar(compact: Boolean, modifier: Modifier = Modifier) {
                 color = MaterialTheme.colorScheme.primary,
             )
         }
+        val speedBps = UI.receivingModSpeedBps
+        val speedText = if (isDownloading && speedBps > 0L) " ${fmtSpeed(speedBps)}" else ""
         val detailText = if (isDownloading && UI.receivingModName.isNotBlank()) {
             "$phaseLabel: ${UI.receivingModName} " +
-                "(${fmtMB(UI.receivingModReceivedBytes)}/${fmtMB(UI.receivingModTotalBytes)}MB)"
+                "(${fmtMB(UI.receivingModReceivedBytes)}/${fmtMB(UI.receivingModTotalBytes)}MB)$speedText"
         } else {
             phaseLabel
         }
@@ -3178,6 +3176,9 @@ private fun RoomSelfSyncBar(compact: Boolean, modifier: Modifier = Modifier) {
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        if (isApplying && applyProgress != null) {
+            ApplyingUnitCountBadge(count = applyProgress.count, compact = compact)
+        }
         if (isDownloading) {
             LinearProgressIndicator(
                 progress = { UI.receivingModProgress },
@@ -3205,97 +3206,87 @@ private fun fmtMB(bytes: Long): String {
     return "${tenths / 10}.${tenths % 10}"
 }
 
+/** 下载速率：≥1MB/s 用 MB/s，否则 KB/s。 */
+private fun fmtSpeed(bytesPerSec: Long): String {
+    return if (bytesPerSec >= 1048576L) {
+        val tenths = (bytesPerSec / 1048576.0 * 10).toLong()
+        "${tenths / 10}.${tenths % 10}MB/s"
+    } else {
+        val tenths = (bytesPerSec / 1024.0 * 10).toLong()
+        "${tenths / 10}.${tenths % 10}KB/s"
+    }
+}
+
 /**
- * 房主视角：尚未完成带外同步的加入者列表（已 synced 的由玩家行内徽章展示，不在此重复）。
- * 视觉复刻旧 [RoomModSyncStrip]（下载图标 + 流光进度条 + 百分比 + 模组计数徽章）。
+ * 玩家行名称格：同步中在名字下方展开阶段/进度（原顶部待同步面板的信息收到行内）。
  */
 @Composable
-private fun RoomPendingSyncPanel(
-    isHost: Boolean,
+private fun RowScope.RoomPlayerNameCell(
+    name: String,
+    nameColor: Color,
+    syncPeer: SyncPeerSnapshot?,
+    showReadySpinner: Boolean,
     compact: Boolean,
-    modifier: Modifier = Modifier,
 ) {
-    if (!isHost) return
-    if (ModSyncController.hostSyncState is ModSyncController.HostSyncState.Off &&
-        !ModSyncController.hostSyncRequested
-    ) {
-        return
+    val settings = koinInject<Settings>()
+    val nameStyle = if (settings.boldText) {
+        MaterialTheme.typography.bodyLarge
+    } else {
+        MaterialTheme.typography.bodyMedium
     }
-    val peers = ModSyncController.hostPeerSnapshots.filter { it.phase != SyncPeerPhase.SYNCED }
-    if (peers.isEmpty()) return
-
+    val syncing = syncPeer != null && syncPeer.phase != SyncPeerPhase.SYNCED
     Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp),
+        modifier = Modifier
+            .weight(RoomPlayerNameWeight)
+            .fillMaxHeight()
+            .padding(horizontal = if (compact) 4.dp else 6.dp, vertical = 2.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = if (syncing) Alignment.Start else Alignment.CenterHorizontally,
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = if (syncing) Arrangement.Start else Arrangement.Center,
         ) {
+            when {
+                syncPeer?.phase == SyncPeerPhase.SYNCED -> {
+                    Text(
+                        "✓",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color(0xFF4CAF50),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                }
+                syncing || showReadySpinner -> {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(if (compact) 10.dp else 12.dp),
+                        strokeWidth = if (compact) 1.5.dp else 2.dp,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                }
+            }
             Text(
-                readI18n("modSync.pendingPeersTitle", I18nType.RWPP, peers.size.toString()),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
+                name,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
+                color = nameColor,
+                style = nameStyle,
+                modifier = Modifier.weight(1f, fill = false),
             )
-            RWTextButton(
-                readI18n("modSync.clearPeers"),
-                modifier = Modifier.defaultMinSize(minHeight = 28.dp),
-            ) {
-                ModSyncController.clearHostPeers()
-            }
         }
-        peers.forEach { peer ->
-            RoomPendingSyncPeerRow(peer = peer, compact = compact)
+        if (syncing && syncPeer != null) {
+            RoomPlayerSyncStatus(peer = syncPeer, compact = compact)
         }
-    }
-}
-
-@Composable
-private fun RoomPendingSyncPeerRow(
-    peer: SyncPeerSnapshot,
-    compact: Boolean,
-) {
-    val borderPulse by rememberInfiniteTransition(label = "pending sync border").animateFloat(
-        initialValue = 0.45f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(900, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "pending sync border alpha",
-    )
-    val rowShape = RoundedCornerShape(if (compact) 6.dp else 8.dp)
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(
-                BorderStroke(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = borderPulse)),
-                rowShape,
-            )
-            .padding(if (compact) 4.dp else 6.dp),
-    ) {
-        Text(
-            peer.displayName,
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = if (compact) 8.dp else 12.dp),
-        )
-        RoomPendingSyncStrip(peer = peer, compact = compact)
     }
 }
 
 /**
- * 待进房同步者进度条（复刻旧房主玩家行内 strip）。
- * [SyncPeerPhase.WAITING_HOST] / [SyncPeerPhase.APPLYING] / [SyncPeerPhase.JOINING] 使用不确定进度条。
+ * 玩家行内同步详情：下载显示百分比与模组计数；应用显示单位名与已加载单位数。
  */
 @Composable
-private fun RoomPendingSyncStrip(peer: SyncPeerSnapshot, compact: Boolean) {
+private fun RoomPlayerSyncStatus(peer: SyncPeerSnapshot, compact: Boolean) {
+    val applyingUnits = peer.phase == SyncPeerPhase.APPLYING && peer.currentBytes > 0
     val indeterminate = peer.phase == SyncPeerPhase.WAITING_HOST ||
         peer.phase == SyncPeerPhase.APPLYING ||
         peer.phase == SyncPeerPhase.JOINING
@@ -3305,12 +3296,14 @@ private fun RoomPendingSyncStrip(peer: SyncPeerSnapshot, compact: Boolean) {
     val animatedProgress by animateFloatAsState(
         targetValue = progress,
         animationSpec = tween(220),
-        label = "pending sync progress",
+        label = "player sync progress",
     )
     val percent = (progress * 100).roundToInt()
     val statusLabel = when (peer.phase) {
         SyncPeerPhase.WAITING_HOST -> readI18n("modSync.phaseWaitingHost", I18nType.RWPP)
-        SyncPeerPhase.APPLYING -> readI18n("modSync.phaseApplying", I18nType.RWPP)
+        SyncPeerPhase.APPLYING -> applyingPhaseLabel(
+            peer.currentModName.takeIf { applyingUnits && !compact },
+        )
         SyncPeerPhase.JOINING -> readI18n("modSync.phaseJoining", I18nType.RWPP)
         else -> peer.currentModName.ifBlank { readI18n("modSync.phaseDownloading", I18nType.RWPP) }
     }
@@ -3318,21 +3311,10 @@ private fun RoomPendingSyncStrip(peer: SyncPeerSnapshot, compact: Boolean) {
     val modIndexDisplay = (peer.modIndex + 1).coerceIn(1, modCount)
 
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(
-                start = if (compact) 8.dp else 12.dp,
-                end = if (compact) 8.dp else 12.dp,
-                bottom = if (compact) 4.dp else 6.dp,
-                top = 2.dp,
-            ),
+        modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp),
     ) {
-        ModSyncDownloadGlyph(
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(if (compact) 9.dp else 11.dp),
-        )
         Text(
             statusLabel,
             style = MaterialTheme.typography.labelSmall,
@@ -3352,17 +3334,20 @@ private fun RoomPendingSyncStrip(peer: SyncPeerSnapshot, compact: Boolean) {
         if (indeterminate) {
             LinearProgressIndicator(
                 modifier = Modifier
-                    .weight(if (compact) 0.9f else 1.2f)
-                    .height(if (compact) 4.dp else 5.dp),
+                    .weight(0.9f)
+                    .height(if (compact) 3.dp else 4.dp),
                 color = MaterialTheme.colorScheme.primary,
                 trackColor = MaterialTheme.colorScheme.surfaceContainer,
             )
+            if (applyingUnits) {
+                ApplyingUnitCountBadge(count = peer.currentBytes.toInt(), compact = compact)
+            }
         } else {
             ModSyncProgressBar(
                 progress = animatedProgress,
                 modifier = Modifier
-                    .weight(if (compact) 0.9f else 1.2f)
-                    .height(if (compact) 4.dp else 5.dp),
+                    .weight(0.9f)
+                    .height(if (compact) 3.dp else 4.dp),
             )
             Text(
                 "$percent%",
@@ -3373,7 +3358,6 @@ private fun RoomPendingSyncStrip(peer: SyncPeerSnapshot, compact: Boolean) {
                 color = MaterialTheme.colorScheme.primary,
                 textAlign = TextAlign.End,
                 maxLines = 1,
-                modifier = Modifier.widthIn(min = if (compact) 26.dp else 32.dp),
             )
             Text(
                 "$modIndexDisplay/$modCount",
@@ -3387,56 +3371,6 @@ private fun RoomPendingSyncStrip(peer: SyncPeerSnapshot, compact: Boolean) {
                     fontFeatureSettings = "tnum",
                 ),
                 maxLines = 1,
-            )
-        }
-    }
-}
-
-/**
- * 玩家名字旁的模组同步徽章（数据源 [ModSyncController.roomPeerBadges]，房主与同步中的房客均可见）：
- * 下载中显示确定进度圈 + 当前 mod 百分比（口径同 [RoomPendingSyncStrip]），
- * 已同步显示 ✓，其余阶段（等待房主/应用中/进房中）显示小转圈。
- */
-@Composable
-private fun RoomPlayerSyncBadge(peer: SyncPeerSnapshot, compact: Boolean) {
-    val size = if (compact) 12.dp else 16.dp
-    val stroke = if (compact) 1.5.dp else 2.dp
-    Box(
-        modifier = Modifier.fillMaxHeight().padding(end = 4.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        when (peer.phase) {
-            SyncPeerPhase.DOWNLOADING -> {
-                val progress = if (peer.currentTotal > 0) {
-                    (peer.currentBytes.toFloat() / peer.currentTotal).coerceIn(0f, 1f)
-                } else 0f
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(
-                        progress = { progress },
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(size),
-                        strokeWidth = stroke,
-                    )
-                    Text(
-                        " ${(progress * 100).roundToInt()}%",
-                        style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                    )
-                }
-            }
-
-            SyncPeerPhase.SYNCED -> Text(
-                "✓",
-                style = MaterialTheme.typography.labelMedium,
-                color = Color(0xFF4CAF50),
-                maxLines = 1,
-            )
-
-            else -> CircularProgressIndicator(
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(size),
-                strokeWidth = stroke,
             )
         }
     }
@@ -3496,37 +3430,28 @@ private fun ModSyncProgressBar(progress: Float, modifier: Modifier = Modifier) {
     }
 }
 
-/** 手绘下载图标（箭杆 + 两翼 + 托盘线）。 */
+/** 应用阶段文案：有当前单位名时附在「正在应用模组」后，计数走 [ApplyingUnitCountBadge]。 */
 @Composable
-private fun ModSyncDownloadGlyph(tint: Color, modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        val strokeWidth = minOf(w, h) * 0.16f
-        val cx = w / 2f
-        drawLine(
-            color = tint,
-            start = Offset(cx, h * 0.06f),
-            end = Offset(cx, h * 0.52f),
-            strokeWidth = strokeWidth,
-            cap = StrokeCap.Round,
-        )
-        val head = Path().apply {
-            moveTo(cx - w * 0.26f, h * 0.38f)
-            lineTo(cx, h * 0.64f)
-            lineTo(cx + w * 0.26f, h * 0.38f)
-        }
-        drawPath(
-            head,
-            tint,
-            style = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round),
-        )
-        drawLine(
-            color = tint,
-            start = Offset(w * 0.10f, h * 0.88f),
-            end = Offset(w * 0.90f, h * 0.88f),
-            strokeWidth = strokeWidth,
-            cap = StrokeCap.Round,
-        )
-    }
+private fun applyingPhaseLabel(unitName: String?): String {
+    val base = readI18n("modSync.phaseApplying", I18nType.RWPP)
+    val name = unitName?.takeIf { it.isNotBlank() } ?: return base
+    return "$base · $name"
 }
+
+@Composable
+private fun ApplyingUnitCountBadge(count: Int, compact: Boolean) {
+    Text(
+        count.toString(),
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f))
+            .padding(horizontal = if (compact) 4.dp else 6.dp, vertical = 2.dp),
+        color = MaterialTheme.colorScheme.onPrimaryContainer,
+        style = MaterialTheme.typography.labelSmall.copy(
+            fontWeight = FontWeight.Bold,
+            fontFeatureSettings = "tnum",
+        ),
+        maxLines = 1,
+    )
+}
+

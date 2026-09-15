@@ -144,6 +144,19 @@ object NetworkInject {
         return GameEngine.B().z()
     }
 
+    /**
+     * 兜底：即使缺单位检查仍抛了 `bw`，也不执行 `ad.b("Missing unit:...")` 自断。
+     * 进房后同步期间连接必须活着，否则聊天变成 `not networked` 本地回显。
+     */
+    @Inject("b", InjectMode.InsertBefore, "(Ljava/lang/String;)V")
+    fun ad.deferMissingUnitDisconnect(reason: String): Any {
+        if (reason.startsWith("Missing unit:") && ModSyncController.shouldDeferMissingUnitsCheck()) {
+            logger.info("[MODSYNC] keep connection despite engine missing-unit disconnect")
+            return InterruptResult.Unit
+        }
+        return Unit
+    }
+
     @Inject("g", InjectMode.Override)
     fun onPlayerJoin(c: c) {
         val asVar = `as`()

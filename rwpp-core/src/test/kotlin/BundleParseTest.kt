@@ -53,6 +53,11 @@ class BundleParseTest {
                 "phaseDownloading",
                 "phaseApplying",
                 "phaseJoining",
+                "phaseSynced",
+                "cancellingTitle",
+                "cancellingDetail",
+                "reconnecting",
+                "reconnectFailed",
             ).forEach { key ->
                 assertTrue(modSync.containsKey(key), "modSync.$key missing in $name")
             }

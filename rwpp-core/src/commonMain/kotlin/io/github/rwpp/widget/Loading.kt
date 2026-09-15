@@ -70,6 +70,33 @@ fun clearProtectedModLoadHint() {
     loadingProtectedModNames = emptyList()
 }
 
+/** 引擎加载进度（`Loading units - 123 (name)`），供重载弹窗与房内「正在应用模组」条共用。 */
+data class EngineLoadProgress(
+    val stage: String,
+    val count: Int,
+    val detail: String?,
+)
+
+fun parseEngineLoadProgress(text: String): EngineLoadProgress? {
+    val structured = text.toStructuredLoadingMessage() ?: return null
+    val count = structured.count.toIntOrNull() ?: return null
+    return EngineLoadProgress(structured.stage, count, structured.detail)
+}
+
+/** 把引擎对话框的 title/message 拼成 [parseEngineLoadProgress] 能识别的单行。 */
+fun composeEngineLoadingMessage(title: String, detail: String): String {
+    val head = title.trim()
+    val tail = detail.trim()
+    if (tail.isBlank()) return head
+    if (head.isBlank()) return tail
+    if (parseEngineLoadProgress(tail) != null) return tail
+    if (parseEngineLoadProgress(head) != null) return head
+    if (head.startsWith("Loading ", ignoreCase = true) && tail.firstOrNull()?.isDigit() == true) {
+        return "$head - $tail"
+    }
+    return tail
+}
+
 internal data class StructuredLoadingMessage(
     val stage: String,
     val count: String,

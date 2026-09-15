@@ -54,6 +54,7 @@ import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.logger
 import io.github.rwpp.ui.UI
 import io.github.rwpp.utils.Reflect
+import io.github.rwpp.widget.composeEngineLoadingMessage
 import io.github.rwpp.widget.loadingMessage
 import kotlinx.coroutines.channels.Channel
 import org.koin.core.annotation.Single
@@ -117,6 +118,7 @@ class GameImpl : AbstractGame() {
                     if (p0.startsWith("kicked", ignoreCase = true)) {
                         // 同步进房窗口内被踢（房主 1s 轮询尚未看到自己的 Presence）：静默重试，不弹窗不回退视图
                         if (ModSyncController.onKickedDuringSyncEntry(p0)) return
+                        if (ModSyncController.shouldSuppressEngineKickUi()) return
                         UI.showWarning(p0, true)
                     } else {
                         i.a(p0, p1)
@@ -126,6 +128,11 @@ class GameImpl : AbstractGame() {
                 override fun a(p0: String, p1: String) {
                     if (p0.startsWith("Briefing", ignoreCase = true) || p0.startsWith("Players", ignoreCase = true)) {
                         i.a(p0, p1)
+                    } else if (ModSyncController.shouldSuppressEngineKickUi()) {
+                        // bW.a() 期间的 Loading units/mods 对话框不当成踢人。
+                        // 引擎可能拆成 title="Loading units" + message="123 (name)"，拼回弹窗同款格式。
+                        loadingMessage = composeEngineLoadingMessage(p0, p1)
+                    }
                     } else {
                         UI.showWarning("$p0: $p1", true)
                     }

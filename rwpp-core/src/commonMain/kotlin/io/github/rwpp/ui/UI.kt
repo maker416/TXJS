@@ -153,6 +153,8 @@ object UI : Initialization, IUserInterface {
     var receivingModTotalCount by mutableStateOf(0)
     /** 已下载完成的 mod 数（含当前正在下载的那个，从 1 开始）。 */
     var receivingModDoneCount by mutableStateOf(0)
+    /** 当前模组下载瞬时速率（字节/秒），供房间内进度条展示；0 表示尚未采样。 */
+    var receivingModSpeedBps by mutableStateOf(0L)
     /** 主界面公告/更新入口共享的最新版本信息。 */
     var latestVersionProfile by mutableStateOf<LatestVersionProfile?>(null)
     var UiProvider: UIProvider = UIProvider()

@@ -85,14 +85,26 @@ private val ModListScrollbarThickness = 4.dp
 private val ModListScrollbarPadding = 3.dp
 private val ModListScrollbarReservedWidth = 18.dp
 
+/** 启用且单位加载成功：卡片绿框。 */
+private val ModCardOkBorder = Color(0xFF62E35F)
+/** 缺 title、已回退文件名：卡片黄框，不弹错误窗。 */
+private val ModCardWarnBorder = Color(0xFFF5C542)
+
+private enum class ModCardStatus {
+    Neutral,
+    LoadedOk,
+    TitleWarn,
+    LoadFailed,
+}
+
 private class UnloadedMod(private val file: File) : Mod {
     private val metadata = ModInfoParser.parseFromRwmod(file)
+    val titleMissing: Boolean get() = metadata.titleMissing
     override val id: Int = -(file.absolutePath.hashCode() and 0x7FFFFFFF) - 1
     override val name: String get() = metadata.name
     override val description: String get() = metadata.description
     override val minVersion: String get() = metadata.minVersion
-    override val errorMessage: String?
-        get() = if (metadata.titleMissing) missingTitleError(file.name) else null
+    override val errorMessage: String? = null
     override var isEnabled: Boolean = false
     override val path: String = file.absolutePath
     override fun getRamUsed(): String = "0"
@@ -100,24 +112,40 @@ private class UnloadedMod(private val file: File) : Mod {
     override fun getBytes(): ByteArray = file.readBytes()
 }
 
-private fun missingTitleError(fileName: String): String =
+private fun missingTitleHint(fileName: String): String =
     readI18n("mod.missingTitle", I18nType.RWPP, fileName)
 
-/** 包装 [Mod]，把 title 缺失错误透传到 [Mod.errorMessage]，其余行为完全委托。 */
-private class TitleErrorMod(delegate: Mod, private val error: String) : Mod by delegate {
-    override val errorMessage: String get() = error
-}
+/** 缺 `[mod] title` 的标记包装：不覆盖引擎 [Mod.errorMessage]，单位仍可加载。 */
+private class TitleErrorMod(delegate: Mod) : Mod by delegate
 
 /**
- * 校验所有模组的 mod-info.txt `[mod]` title：缺失时包装为错误模组，
- * 列表中显示错误标识，重载后也会进入失败列表（拿不到模组名是大问题，必须显式报错）。
+ * 校验所有模组的 mod-info.txt `[mod]` title：缺失时包成 [TitleErrorMod]，
+ * 卡片发黄提示；真正的引擎加载失败仍走 [Mod.errorMessage]。
  */
 private fun List<Mod>.withTitleErrors(): List<Mod> = map { mod ->
-    // 引擎加载错误与 UnloadedMod 自带的 title 检查已覆盖的情况不重复解析
     if (mod.errorMessage != null) return@map mod
     val file = File(mod.path)
     val meta = ModInfoParser.parseFromModFile(file) ?: return@map mod
-    if (meta.titleMissing) TitleErrorMod(mod, missingTitleError(file.name)) else mod
+    if (meta.titleMissing) TitleErrorMod(mod) else mod
+}
+
+private fun Mod.hasTitleWarning(): Boolean =
+    this is TitleErrorMod || (this is UnloadedMod && titleMissing)
+
+private fun resolveModCardStatus(mod: Mod, loadedEnabledFileNames: Set<String>): ModCardStatus {
+    if (!mod.errorMessage.isNullOrBlank()) return ModCardStatus.LoadFailed
+    if (mod.hasTitleWarning()) return ModCardStatus.TitleWarn
+    val fileName = File(mod.path).name.lowercase()
+    if (mod.isEnabled && fileName in loadedEnabledFileNames) return ModCardStatus.LoadedOk
+    return ModCardStatus.Neutral
+}
+
+@Composable
+private fun modCardStatusColor(status: ModCardStatus): Color = when (status) {
+    ModCardStatus.LoadedOk -> ModCardOkBorder
+    ModCardStatus.TitleWarn -> ModCardWarnBorder
+    ModCardStatus.LoadFailed -> MaterialTheme.colorScheme.error
+    ModCardStatus.Neutral -> MaterialTheme.colorScheme.surfaceContainer
 }
 
 private fun scanUnloadedMods(existing: List<Mod>): List<Mod> {
@@ -219,10 +247,8 @@ private data class FailedModLoadInfo(
 
 private fun collectFailedMods(mods: List<Mod>): List<FailedModLoadInfo> {
     return mods.mapNotNull { mod ->
-        // 元数据校验错误（mod-info.txt 缺 title）不属于"加载失败"：禁用模组本就不会被
-        // 引擎解析，缺 title 也不影响启用模组的单位加载。该类提示保留在模组卡片上展示，
-        // 不进此列表——否则禁用模组会被误报为"仍保持启用但单位未成功加载"。
-        if (mod is TitleErrorMod || mod is UnloadedMod) return@mapNotNull null
+        // 缺 title 只是显示名回退，单位仍会加载，不进失败弹窗。
+        if (mod is TitleErrorMod || mod is UnloadedMod || !mod.isEnabled) return@mapNotNull null
         val error = mod.errorMessage ?: return@mapNotNull null
         FailedModLoadInfo(name = mod.name.ifBlank { File(mod.path).name }, errorMessage = error)
     }
@@ -645,10 +671,16 @@ fun ModsView(
     }
 
     @Composable
-    fun ModCard(mod: Mod, dense: Boolean = false) {
+    fun ModCard(mod: Mod, dense: Boolean = false, status: ModCardStatus = ModCardStatus.Neutral) {
         val isEnabled = mod.isEnabled
         val statusText = readI18n("mod.${if (isEnabled) "enabled" else "disabled"}")
         val statusColor = if (isEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+        val healthColor = modCardStatusColor(status)
+        val thumbBorderColor = if (status == ModCardStatus.Neutral) {
+            statusColor.copy(alpha = .75f)
+        } else {
+            healthColor.copy(alpha = .9f)
+        }
         val sourceTypeText = when (mod.sourceType) {
             ModSourceType.RwMod -> readI18n("mod.sourceTypeRwMod")
             ModSourceType.Folder -> readI18n("mod.sourceTypeFolder")
@@ -656,7 +688,8 @@ fun ModsView(
             ModSourceType.Unknown -> readI18n("mod.sourceTypeUnknown")
         }
         val ramUsed = remember(updated, enabledChanged, mod.id) { mod.getRamUsed() }
-        val errorMessage = remember(updated, enabledChanged, mod.id) { mod.errorMessage }
+        val loadError = remember(updated, enabledChanged, mod.id) { mod.errorMessage }
+        val titleWarning = remember(updated, enabledChanged, mod.id) { mod.hasTitleWarning() }
         val description = remember(updated, mod.id) { mod.description.trim() }
         val clipboardManager = LocalClipboardManager.current
         var showErrorDialog by remember(mod.id) { mutableStateOf(false) }
@@ -697,7 +730,7 @@ fun ModsView(
                 modifier = Modifier.size(thumbSize),
                 shape = RoundedCornerShape(8.dp),
                 color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(2.dp, statusColor.copy(alpha = .75f))
+                border = BorderStroke(2.dp, thumbBorderColor)
             ) {
                 Image(
                     painterResource(Res.drawable.error_missingmap),
@@ -753,7 +786,30 @@ fun ModsView(
                     overflow = TextOverflow.Ellipsis
                 )
 
-                if (errorMessage != null) {
+                if (titleWarning && loadError == null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = ModCardWarnBorder,
+                            modifier = Modifier.size(14.dp).padding(top = 2.dp),
+                        )
+                        Text(
+                            missingTitleHint(File(mod.path).name),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ModCardWarnBorder,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+
+                if (loadError != null) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -772,7 +828,7 @@ fun ModsView(
                             modifier = Modifier.size(14.dp).padding(top = 2.dp),
                         )
                         Text(
-                            errorMessage,
+                            loadError,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                             maxLines = 2,
@@ -834,7 +890,7 @@ fun ModsView(
             }
         }
 
-        if (errorMessage != null) {
+        if (loadError != null) {
             AnimatedAlertDialog(
                 visible = showErrorDialog,
                 onDismissRequest = { showErrorDialog = false },
@@ -888,7 +944,7 @@ fun ModsView(
                         ) {
                             SelectionContainer {
                                 Text(
-                                    text = errorMessage,
+                                    text = loadError,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier
@@ -907,7 +963,7 @@ fun ModsView(
                             RWTextButton(
                                 if (errorCopied) readI18n("mod.errorCopied") else readI18n("mod.errorCopy"),
                             ) {
-                                clipboardManager.setText(AnnotatedString(errorMessage))
+                                clipboardManager.setText(AnnotatedString(loadError))
                                 errorCopied = true
                             }
                             RWTextButton(readI18n("common.close")) { dismiss() }
@@ -943,11 +999,21 @@ fun ModsView(
             key = { data[it].id }
         ) { index ->
             val mod = data[index]
+            val cardStatus = remember(
+                updated,
+                enabledChanged,
+                loadedEnabledFileNames,
+                mod.id,
+                mod.isEnabled,
+            ) {
+                resolveModCardStatus(mod, loadedEnabledFileNames)
+            }
             BorderCard(
                 backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(
                     if (mod.isEnabled) .72f else .5f
                 ),
                 shape = RoundedCornerShape(8.dp),
+                border = BorderStroke(2.dp, modCardStatusColor(cardStatus)),
                 modifier = Modifier.then(
                     if (settings.enableAnimations)
                         Modifier.animateItem()
@@ -957,7 +1023,7 @@ fun ModsView(
                     .wrapContentHeight()
                     .padding(horizontal = 4.dp, vertical = if (dense) 3.dp else 5.dp)
             ) {
-                ModCard(mod, dense = dense)
+                ModCard(mod, dense = dense, status = cardStatus)
             }
         }
     }

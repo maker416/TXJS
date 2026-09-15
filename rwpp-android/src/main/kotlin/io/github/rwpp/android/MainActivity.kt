@@ -46,6 +46,8 @@ import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.QuitGameEvent
 import io.github.rwpp.event.events.ReturnMainMenuEvent
 import io.github.rwpp.external.FileChooseProgress
+import io.github.rwpp.game.mod.KeepConnectedReload
+import io.github.rwpp.logger
 import io.github.rwpp.ui.UI
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -203,15 +205,27 @@ class MainActivity : ComponentActivity() {
         var gameView: com.corrodinggames.rts.appFramework.ab? = null
 
         fun activityResume() {
-            uiHandler.post {
-                GameEngine.t()?.let {
-                    gameView = d.a(appKoin.get(), gameView)
-                    it.a(appKoin.get(), gameView, true)
-                }
+            uiHandler.post { runActivityResume(forceWhileReloading = false) }
+        }
 
-                d.a(appKoin.get(), true)
-                com.corrodinggames.rts.gameFramework.h.a.c()
+        /**
+         * @param forceWhileReloading 取消回落专用：闸门仍开着、主循环只泵网络时才能安全跑 `i.q()`。
+         * 普通退房/onResume 在保连接重载期间必须跳过，否则会和单位表重建撞车。
+         */
+        fun runActivityResume(forceWhileReloading: Boolean = false) {
+            if (!forceWhileReloading &&
+                (KeepConnectedReload.active || KeepConnectedReload.shouldRefreshMenuAfterAbort)
+            ) {
+                logger.info("[MODSYNC] skip activityResume while keep-connected reload/abort refresh is pending")
+                return
             }
+            GameEngine.t()?.let {
+                gameView = d.a(appKoin.get(), gameView)
+                it.a(appKoin.get(), gameView, true)
+            }
+
+            d.a(appKoin.get(), true)
+            com.corrodinggames.rts.gameFramework.h.a.c()
         }
     }
 }

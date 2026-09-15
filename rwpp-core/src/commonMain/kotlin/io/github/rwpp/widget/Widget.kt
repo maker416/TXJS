@@ -56,13 +56,14 @@ fun BorderCard(
     onClick: (() -> Unit)? = null,
     backgroundColor: Color = MaterialTheme.colorScheme.background.copy(UI.backgroundTransparency),
     shape: Shape = RoundedCornerShape(20.dp),
+    border: BorderStroke = BorderStroke(2.dp, MaterialTheme.colorScheme.surfaceContainer),
     content: @Composable ColumnScope.() -> Unit
 ) {
     if (onClick != null) {
         Card(
             onClick = onClick,
             shape = shape,
-            border = BorderStroke(2.dp, MaterialTheme.colorScheme.surfaceContainer),
+            border = border,
             colors = CardDefaults.cardColors(containerColor = backgroundColor),
             modifier = modifier,
             content = content
@@ -70,7 +71,7 @@ fun BorderCard(
     } else {
         Card(
             shape = shape,
-            border = BorderStroke(2.dp, MaterialTheme.colorScheme.surfaceContainer),
+            border = border,
             colors = CardDefaults.cardColors(containerColor = backgroundColor),
             modifier = modifier,
             content = content

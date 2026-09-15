@@ -54,6 +54,7 @@ import io.github.rwpp.coil.ImageableKeyer
 import io.github.rwpp.config.CoreData
 import io.github.rwpp.config.Settings
 import io.github.rwpp.core.ModSyncController
+import io.github.rwpp.net.sync.SyncPeerPhase
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.broadcast
 import io.github.rwpp.event.events.KeyboardEvent
@@ -374,6 +375,11 @@ fun App(
                 ) {
                     MultiplayerRoomView(isSinglePlayerGame) {
                         if (roomExitInProgress) return@MultiplayerRoomView
+                        val syncPhase = ModSyncController.inRoomSyncPhase
+                        if (syncPhase != null && syncPhase != SyncPeerPhase.SYNCED) {
+                            ModSyncController.cancelInRoomSync()
+                            return@MultiplayerRoomView
+                        }
 
                         val returnToMultiplayerView = !isSinglePlayerGame
                         roomExitInProgress = true
@@ -406,7 +412,7 @@ fun App(
                 LaunchedEffect(UI.warning) {
                     if (UI.warning != null) {
                         warningDialogVisible = true
-                        if (UI.warning?.isKicked == true) {
+                        if (UI.warning?.isKicked == true && !ModSyncController.isInRoomSyncInProgress()) {
                             showRoomView = false
                             showMultiplayerView = true
                         }
@@ -751,7 +757,7 @@ fun App(
                     onDismissRequest = {
                         questionDialogVisible = false
                         UI.question?.callback?.invoke(null)
-                        if(showRoomView) {
+                        if (showRoomView && !ModSyncController.isInRoomSyncInProgress()) {
                             showRoomView = false
                             showMultiplayerView = true
                         }
@@ -834,6 +840,11 @@ fun App(
                     }
                 }
 
+                // 进房后同步尚未完成：进度只在房间页 RoomSelfSyncBar；进房下载不再置
+                // showNetworkDialog。此条件仍挡住残留 true，避免回列表后漏出下载卡片。
+                val inRoomSyncPhase = ModSyncController.inRoomSyncPhase
+                val inRoomSyncActive = inRoomSyncPhase != null && inRoomSyncPhase != SyncPeerPhase.SYNCED
+
                 var reloadingModViewVisible by remember { mutableStateOf(false) }
                 GlobalEventChannel.filter(ReloadModEvent::class).onDispose {
                     subscribeAlways(Dispatchers.Main.immediate) {
@@ -851,10 +862,19 @@ fun App(
                 }
 
                 LoadingView(
-                    reloadingModViewVisible,
+                    reloadingModViewVisible && !inRoomSyncActive && !ModSyncController.cancellingReload,
                     onLoaded = {},
                     showProtectedModHint = true,
                 ) { null }
+
+                LoadingView(
+                    ModSyncController.cancellingReload,
+                    onLoaded = {},
+                    cancellable = false,
+                ) {
+                    message(readI18n("modSync.cancellingDetail", I18nType.RWPP))
+                    null
+                }
 
                 // 主动取消下载：进房前（尚未建立游戏连接）取消带外同步轻量段；
                 // 进房后同步中（房间内联进度条）取消并退出房间。
@@ -867,10 +887,8 @@ fun App(
                     UI.showNetworkDialog = false
                 }
 
-                // 进房后同步期间由房间页内联 RoomSelfSyncBar 展示进度，不再弹阻塞卡片盖住聊天
-                val suppressNetworkDialog = showRoomView && ModSyncController.inRoomSyncPhase != null
                 AnimatedAlertDialog(
-                    UI.showNetworkDialog && !suppressNetworkDialog,
+                    UI.showNetworkDialog && !inRoomSyncActive,
                     onCancelDownload, enableDismiss = false
                 ) { dismiss ->
                     NetworkModDownloadingCard(onCancelDownload)

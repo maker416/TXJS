@@ -23,6 +23,10 @@ object GameEngineInject {
     fun onSendWarning(message: String) {
         // 同步进房窗口内被踢（房主 1s 轮询尚未看到自己的 Presence）：静默重试，不弹窗
         if (message.startsWith("Kicked") && ModSyncController.onKickedDuringSyncEntry(message)) return
+        // 房内同步 / 保连接重载期间：Missing 与连接抖动的 Kicked 不当成踢人回列表
+        if (ModSyncController.shouldSuppressEngineKickUi() &&
+            (message.startsWith("Kicked") || message.startsWith("Missing"))
+        ) return
         if (message.startsWith("Kicked") || message.startsWith("Missing")) UI.showWarning(message, true)
     }
 

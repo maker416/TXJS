@@ -19,6 +19,7 @@ import com.corrodinggames.rts.gameFramework.j.c
 import com.corrodinggames.rts.gameFramework.k
 import io.github.rwpp.android.*
 import io.github.rwpp.core.Logic
+import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.DisconnectEvent
@@ -28,6 +29,7 @@ import io.github.rwpp.event.events.StartGameEvent
 import io.github.rwpp.game.ConnectingPlayer
 import io.github.rwpp.game.GameRoom
 import io.github.rwpp.game.Player
+import io.github.rwpp.game.mod.KeepConnectedReload
 import io.github.rwpp.game.map.*
 import io.github.rwpp.game.team.TeamMode
 import io.github.rwpp.game.units.UnitType
@@ -555,7 +557,13 @@ class GameRoomImpl(private val game: GameImpl) : GameRoom {
         cachePlayerSet.clear()
         lastMapPath = null
 
-        MainActivity.activityResume()
+        // 保连接重载 / 取消回落期间禁止立刻 i.q()：单位表还在工作线程上改。
+        if (!KeepConnectedReload.active &&
+            !KeepConnectedReload.shouldRefreshMenuAfterAbort &&
+            !ModSyncController.cancellingReload
+        ) {
+            MainActivity.activityResume()
+        }
 
         DisconnectEvent(reason).broadcastIn()
     }

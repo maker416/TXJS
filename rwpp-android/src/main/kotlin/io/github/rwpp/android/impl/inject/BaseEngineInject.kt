@@ -13,9 +13,12 @@ import io.github.rwpp.android.impl.GameEngine
 import io.github.rwpp.android.mainThreadChannel
 import io.github.rwpp.appKoin
 import io.github.rwpp.game.Game
+import io.github.rwpp.game.mod.KeepConnectedReload
 import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
+import io.github.rwpp.inject.InterruptResult
+import io.github.rwpp.logger
 
 @InjectClass(com.corrodinggames.rts.game.i::class)
 object BaseEngineInject {
@@ -31,5 +34,24 @@ object BaseEngineInject {
             GameEngine.t().bU.M = 1f
             (GameEngine.t() as i).G = 1f
         }
+    }
+
+    /**
+     * 主循环 `a(float,int)`：保连接重载期间只泵网络并跳过原方法体（单位 tick），
+     * 避免与工作线程上的 `bW.a()` 抢单位表。
+     */
+    @Inject("a", InjectMode.InsertBefore, "(FI)V")
+    fun onMainLoop(deltaTime: Float, unused: Int): Any {
+        if (!KeepConnectedReload.active) return Unit
+        KeepConnectedReload.markGameTick()
+        mainThreadChannel.tryReceive().getOrNull()?.invoke()
+        try {
+            val net = GameEngine.t().bU
+            net.l()
+            net.a(deltaTime)
+        } catch (e: Throwable) {
+            logger.warn("[MODSYNC] net-only pump failed: ${e.message}")
+        }
+        return InterruptResult.Unit
     }
 }

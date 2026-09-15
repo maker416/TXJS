@@ -354,9 +354,8 @@ fun MultiplayerView(
     LoadingView(
         isConnecting,
         onLoaded = {
-            // 取消 Loading：掐断带外同步 + 清 Presence + 取消游戏侧加入，避免关闭后仍进房
-            ModSyncController.cancelPreJoin()
-            ModSyncController.finishJoinerPresence()
+            // 取消 Loading：掐断带外同步（含已排定的被踢重试）+ 清 Presence + 取消游戏侧加入，避免关闭后仍进房
+            ModSyncController.cancelJoinEntry()
             game.cancelJoinServer()
             pendingHostSession = false
             pendingHostEnableMods = false
@@ -413,7 +412,8 @@ fun MultiplayerView(
                 false
             }
         } finally {
-            // 进房成功或失败后清理 joining Presence（与 onLoaded 幂等）
+            // 进房尝试结束收尾：成功时为空操作；失败且被踢重试已排定时保留 Presence 供重试；
+            // 其余情况清理 joining Presence 与放行窗口（与 onLoaded 幂等）
             ModSyncController.finishJoinerPresence()
         }
     }

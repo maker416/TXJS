@@ -32,6 +32,21 @@ interface ModManager : KoinComponent {
         enabledByFileName: Map<String, Boolean>? = null,
     )
 
+    /**
+     * 进房后模组同步专用的「保连接」重载：保存并按指定状态重建单位注册表，
+     * 但不停止引擎线程、不清理场景——即不调用引擎的 f()/q()（桌面端 e()/x()）。
+     * 解析在当前协程线程执行，**禁止**把 `bW.a()` 投进游戏主循环 `i.b`/`a(float,int)`：
+     * 主循环被占满则网络保活停摆。置位 [KeepConnectedReload] 期间主循环只泵网络并跳过单位 tick，
+     * 主循环卡住时由看门狗补泵。与 [modSaveChange] 一样在单位解析前应用 [enabledByFileName]。
+     */
+    suspend fun modReloadKeepConnected(enabledByFileName: Map<String, Boolean>? = null)
+
+    /**
+     * 取消同步回落：全关模组并只加载原版单位。不广播 [ReloadModEvent]，
+     * 进度由「正在取消」框呈现。若保连接重载仍在进行，由该次重载内部回落，此处直接返回。
+     */
+    suspend fun modReloadKeepConnectedVanillaOnly()
+
     suspend fun modUpdate()
 
     /**

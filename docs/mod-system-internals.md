@@ -284,11 +284,13 @@ ModName1|/path/to/mod1.rwmod|enabled,ModName2|/path/to/mod2.rwmod|disabled
 
 ## 10. 联机握手校验与 RWPP 握手放行（模组同步 v2）
 
-### 10.1 原版的两道模组关卡
+### 10.1 原版的三道模组关卡
 
 - **注册握手（包 110 REGISTER_CONNECTION，服务器侧）**：桌面 `ad.c(au)` / Android `ae.a(bi)` 的 case 110 依次检查名字长度 → 封禁 → 版本 → **单位校验和**（`l.z():I` / Android `k.r():I`，即 getAllUnitsChecksum；不匹配则 `"New Player kicked: Unit checksum mismatch"` + `sendKick(c, "Your core units are different to the server's core units. Game can not be synchronized")` + `c.a("kicked")`，见 `build/tmp-decompile/work/ad_code.txt:6622-6650`、`ae_android_full.txt:10396-10425`）→ 完整性应答 → 房间锁/已开局/密码。该校验和由当前启用模组集合决定，模组不一致的客户端**连房间都进不去**。
-- **开局推送**：SERVER_INFO(106) 时服务器把全量单位表推给客户端覆盖本地；客户端缺单位定义直接抛异常断连（"Server sync mismatch"）。
+- **缺单位自断（客户端，注册后立刻）**：主机把要求的单位表塞进注册/房间信息；客户端 `l.a(j)` 读完整段后对缺失项调用 `l.a(ab, HashMap)` 抛 `custom.bw`，`ae.a(bi)`/`ad.c(au)` 捕获后 `b("Missing unit:"+msg)` 自断并 `closeBattleroom`。握手放行只绕过校验和，**不**过这一关——下载未完成时聊天必然 `not networked`。RWPP 在 `shouldDeferMissingUnitsCheck()` 为真时跳过该抛出并兜底拦截 `Missing unit:` 自断，连接保持到带外同步完成。
+- **开局推送**：SERVER_INFO(106) 时服务器把全量单位表推给客户端覆盖本地；客户端缺单位定义直接抛异常断连（"Server sync mismatch"）。同步完成前开局门控应挡住；完成后单位表已齐，这一关按原版走。
 - 校验和踢人之后仍有兜底价值：RWPP 放行只是跳过踢人，客户端必须在开局前完成下载+重载，否则开局推送阶段照样崩。
+- **校验和是 init 缓存值**：`l.z()`/`k.r()` 返回的字段只在引擎完整 init 时由 `ce.bt()`（桌面 `am.bM()`）实时计算并缓存，模组重载（`bW.a(false,false)`）**不会刷新**（`ce.bt()` 全库仅引擎 init 一处调用）。因此模组同步的注册/校验（`Game.getUnitsChecksum()`）改用实时重算；保连接重载成功后还须 `Game.refreshHandshakeChecksumCache()` 把 Android 字段 `c` / 桌面字段 `d` 写成新值，否则包 110 **发送端**仍读旧缓存。`redirectUnitsChecksum` 的回退分支仍返回该字段（写入后即新值，与原版握手行为一致）。
 
 ### 10.2 RWPP 握手放行（`shouldAllowMismatch`）
 
@@ -299,8 +301,33 @@ ModName1|/path/to/mod1.rwmod|enabled,ModName2|/path/to/mod2.rwmod|disabled
 
 注意：`l.z()`/`k.r()` 在其他方法（如客户端组注册包的 `ad.h(c)`）中的调用不受影响——RedirectMethod 按方法作用域。
 
+加入者侧另有缺单位自断推迟：`CustomUnitInject` 注入 `l.a(ab, HashMap)`，`NetInject`/`NetworkInject` 注入 `ae.b`/`ad.b(String)`。见 10.1。
+
 ### 10.3 注入框架的两个坑（已修复并有回归测试）
 
 - `Builder.applyConfig` 必须先应用 redirectMethodInfos 再应用 injectInfos：InsertBefore 会把原方法体复制为 `__original__<m>` 并把原方法改写为跳板，redirect 后做会在跳板里找不到目标调用、静默失效。
 - `InjectApi.redirect` 生成的 `__redirect__` 占位方法体必须带默认 return（javassist 对非 void 空方法体报 no return statement）；非 void 目标调用的 `m.replace` 必须经 `$_` 接返回值（否则报 the resulting value is not stored in `$_`）。
 - 回归测试：`rwpp-core-api` `InjectRedirectApplyTest`（用真实 game-lib.jar 验证 redirect + InsertBefore 叠加后的字节码形态）。
+
+## 11. 连接态重载红线与保连接重载（`modReloadKeepConnected`）
+
+进房后同步的「应用」阶段需要在**保持联机连接**的前提下重载模组。已连接在房时禁止走 `modReload`/`runReloadCore`（Android `t.f()`/`t.q()`、桌面 `B.e()`/`B.x()`）：
+
+- **`t.f()` 停游戏主循环** → 网络保活泵停摆：网络引擎的 `l()`（超时检测）与 `a(float)`（网络 tick）由主循环每帧驱动（Android `i.a(float,int)` 内 `bU.l()`/`bU.a(float)`，桌面 `i.b(float,int)` 内 `bX.a(float)`），主循环一停，对端计时器超时断开连接（`ae.C=false`）。此后 `ae.k(msg)` 发送聊天退化为 `a(null, -1, null, msg)` 本地回显——消息只有文本没有名字，且根本不出网。
+- **`k.bo=true`（重载标志）被网络 tick 读到会直接 `b("queDisconnect")` 断连**（`ae.a(float)` 内）。
+- **`t.q()` 重建菜单态**：清空并重建玩家数组（`p.b(10,true)` + 新 Player 对象 + 重设本地玩家）、加载菜单背景图——房间状态被直接摧毁。
+- **禁止把 `bW.a()` 投进主循环**：Android `Game.post` 在 `i.b(float)` InsertBefore **同步 invoke**。重模组单位解析可达数十秒，整段主循环（含网络泵）被堵住，效果与停主循环相同。Mods 页 / 开房 Loading 的 `modReload`/`runReloadCore` 仍可走 `game.post`；房内同步不得。
+
+保连接重载只做「`bW.d()` 保存 → `bN.save()` → `ModReloadSelection` → `bW.a(false,false)` 重建单位注册表 → 再保存」（先例：`modSaveChange` 本就不拆引擎），在**当前协程线程**执行解析（不再 `game.post`）。置位 `KeepConnectedReload` 期间：
+
+- Android `BaseEngineInject.onMainLoop`（`a(float,int)`）、桌面 `GameInject.onMainLoop`（`b(float,int)`）只泵网络并 `InterruptResult` 跳过原方法体（避免单位 tick 与注册表重建打架）。
+- 看门狗线程 `rwpp-modsync-net-watchdog`：若超过约 50ms 主循环未 `markGameTick`（GameView 暂停等），补调同一对网络方法；与主循环用 `lastGameTickAt` 互斥，避免双泵。
+- 结束后写回握手校验和缓存。
+- apply 后读 `gameRoom.isConnecting`：须**连续稳定约 1s** 才算活着（`directJoinServer` 在 relay TCP 成功即返回，随后 `PACKET_RECONNECT_TO` 还会再断一次）；仍连接则 upsert `phase=synced`；已死则保持 `applying` Presence（握手放行要求 `phase != synced`）并用本轮加入地址重连（再等稳定），失败 `failInRoom`，禁止僵尸房。
+- 仍吞 `OutOfMemoryError` 并置 `UI.modReloadMemoryExhausted`。
+
+房内同步时 App 层按 `inRoomSyncActive` 抑制重载弹窗与下载卡片，进度由房间页 `RoomSelfSyncBar` 行内呈现。进房下载路径不得置 `UI.showNetworkDialog`；取消/失败须先自增 `receivingEpoch` 再清 phase，否则迟到进度回调会在回多人列表后把「正在下载房主模组」卡片漏出来。blob 走独立 `blobClient`（空闲 60s / 整次 15 分钟），断流用 HTTP Range 续传。
+
+应用阶段点取消：先退房回多人列表，再弹 `cancellingReload`「正在取消」框。`ag.e()`/`ag.h()` 一开始就清空 `l.c`/`l.d`，不能半截停；注入在按目录加载入口对自定义模组抛 `ReloadAbortToVanilla`，然后全禁用并再跑一次原版-only 保连接重载。Android 退房不得立刻 `activityResume`/`i.q()`（会扫单位表 → CME）；须等回落结束、闸门仍开时由 `refreshMenuAfterDisconnect` 再跑，然后才 `KeepConnectedReload.end()`。`clearRoomPresence` 在回落期间不得取消该 job。
+
+**relaymod 必须部署 `PeerPhaseSynced`**：客户端终态上报 `phase=synced`；旧服务端 `ValidPeerPhase` 不含该枚举会 400，心跳失败约 45s 后 `peer_secret` 失效。未升级的服务端上客户端会回退 `applying` 保 TTL，但房主开局门控会把该玩家视为未完成。
