@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -44,6 +47,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -63,6 +68,7 @@ import io.github.rwpp.widget.BorderCard
 import io.github.rwpp.widget.ExitButton
 import io.github.rwpp.widget.GeneralProportion
 import io.github.rwpp.widget.LargeDividingLine
+import io.github.rwpp.widget.LargeProportion
 import io.github.rwpp.widget.RWSingleOutlinedTextField
 import io.github.rwpp.widget.RWTextButton
 import io.github.rwpp.widget.WindowManager
@@ -190,9 +196,7 @@ fun AccountView(onExit: () -> Unit) {
         enableDismiss = !loggingOut,
     ) { dismiss ->
         BorderCard(
-            modifier = Modifier
-                .fillMaxWidth(GeneralProportion())
-                .widthIn(min = 280.dp, max = 420.dp),
+            modifier = accountDialogCardModifier(),
             backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
         ) {
             Column(
@@ -259,9 +263,7 @@ fun AccountView(onExit: () -> Unit) {
         onDismissRequest = { showApplyNameConfirm = false },
     ) { dismiss ->
         BorderCard(
-            modifier = Modifier
-                .fillMaxWidth(GeneralProportion())
-                .widthIn(min = 280.dp, max = 420.dp),
+            modifier = accountDialogCardModifier(),
             backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
         ) {
             Column(
@@ -350,7 +352,11 @@ private fun AccountLoggedOutState(
             modifier = Modifier.widthIn(max = 420.dp),
         )
         Spacer(Modifier.height(4.dp))
-        val buttonMod = if (isSmall) Modifier.fillMaxWidth() else Modifier
+        val buttonMod = if (isSmall) {
+            Modifier.fillMaxWidth().widthIn(max = 420.dp)
+        } else {
+            Modifier
+        }
         RWTextButton(
             label = readI18n("account.login", I18nType.RWPP),
             modifier = buttonMod,
@@ -466,7 +472,7 @@ private fun AccountLoggedInState(
         ) {
             RWTextButton(
                 label = readI18n("account.refresh", I18nType.RWPP),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().widthIn(max = 420.dp),
                 onClick = onRefresh,
             )
             if (loggingOut) {
@@ -475,7 +481,7 @@ private fun AccountLoggedInState(
                     color = MaterialTheme.colorScheme.primary,
                 )
             } else {
-                TextButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = onLogout, modifier = Modifier.fillMaxWidth().widthIn(max = 420.dp)) {
                     Text(
                         readI18n("account.logout", I18nType.RWPP),
                         color = MaterialTheme.colorScheme.error,
@@ -604,6 +610,7 @@ fun AccountLoginDialog(
     onSwitchToRegister: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val isSmall = LocalWindowManager.current == WindowManager.Small
     var password by remember(visible) { mutableStateOf("") }
     var error by remember(visible) { mutableStateOf("") }
     var submitting by remember(visible) { mutableStateOf(false) }
@@ -613,7 +620,7 @@ fun AccountLoginDialog(
         onDismissRequest = { if (!submitting) onDismiss() },
         enableDismiss = !submitting,
     ) { dismiss ->
-        AccountAuthCard(scrollable = false) {
+        AccountAuthCard(scrollable = isSmall) {
             Text(
                 readI18n("account.loginTitle", I18nType.RWPP),
                 style = MaterialTheme.typography.headlineSmall,
@@ -792,14 +799,27 @@ fun AccountRegisterDialog(
 }
 
 @Composable
+private fun accountDialogCardModifier(): Modifier {
+    val isSmall = LocalWindowManager.current == WindowManager.Small
+    val maxHeight = with(LocalDensity.current) {
+        LocalWindowInfo.current.containerSize.height.toDp() * 0.9f
+    }
+    return Modifier
+        .fillMaxWidth(if (isSmall) LargeProportion() else GeneralProportion())
+        .widthIn(min = if (isSmall) 0.dp else 280.dp, max = 420.dp)
+        .heightIn(max = maxHeight)
+        .imePadding()
+        .navigationBarsPadding()
+}
+
+@Composable
 private fun AccountAuthCard(
     scrollable: Boolean,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val isSmall = LocalWindowManager.current == WindowManager.Small
     BorderCard(
-        modifier = Modifier
-            .fillMaxWidth(GeneralProportion())
-            .widthIn(min = 280.dp, max = 420.dp),
+        modifier = accountDialogCardModifier(),
         backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
     ) {
         val scrollModifier = if (scrollable) {
@@ -812,8 +832,11 @@ private fun AccountAuthCard(
                 .fillMaxWidth()
                 .then(scrollModifier)
                 .autoClearFocus()
-                .padding(horizontal = 18.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(
+                    horizontal = if (isSmall) 14.dp else 18.dp,
+                    vertical = if (isSmall) 12.dp else 16.dp,
+                ),
+            verticalArrangement = Arrangement.spacedBy(if (isSmall) 10.dp else 12.dp),
             content = content,
         )
     }
@@ -827,28 +850,47 @@ private fun AccountAuthActions(
     onCancel: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.End,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    val isSmall = LocalWindowManager.current == WindowManager.Small
+    val cancelButton = @Composable {
         TextButton(enabled = !submitting, onClick = onCancel) {
             Text(
                 readI18n("common.cancel", I18nType.RWPP),
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
             )
         }
+    }
+    val confirmContent = @Composable {
         if (submitting) {
             CircularProgressIndicator(
-                modifier = Modifier.padding(start = 8.dp).size(40.dp),
+                modifier = Modifier.size(if (isSmall) 32.dp else 40.dp),
                 color = MaterialTheme.colorScheme.primary,
             )
         } else {
             RWTextButton(
                 label = confirmLabel,
+                modifier = if (isSmall) Modifier.fillMaxWidth() else Modifier,
                 leadingIcon = confirmIcon,
                 onClick = onConfirm,
             )
+        }
+    }
+    if (isSmall) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            confirmContent()
+            cancelButton()
+        }
+    } else {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            cancelButton()
+            confirmContent()
         }
     }
 }
