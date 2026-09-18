@@ -1,0 +1,223 @@
+/*
+ * Copyright 2023-2025 RWPP contributors
+ * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
+ * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
+ * https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
+ */
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toAwtImage
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.isRoot
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.runDesktopComposeUiTest
+import androidx.compose.ui.unit.dp
+import io.github.rwpp.AppContext
+import io.github.rwpp.LocalWindowManager
+import io.github.rwpp.appKoin
+import io.github.rwpp.config.ConfigIO
+import io.github.rwpp.config.Settings
+import io.github.rwpp.game.Game
+import io.github.rwpp.i18n.i18nTable
+import io.github.rwpp.koinInit
+import io.github.rwpp.net.Net
+import io.github.rwpp.ui.AccountFriendsSection
+import io.github.rwpp.ui.AccountView
+import io.github.rwpp.ui.FakeAccountSession
+import io.github.rwpp.ui.FakeFriendsSession
+import io.github.rwpp.ui.FriendChatView
+import io.github.rwpp.widget.RWPPTheme
+import io.github.rwpp.widget.WindowManager
+import net.peanuuutz.tomlkt.Toml
+import org.koin.compose.KoinContext
+import org.koin.core.context.startKoin
+import org.koin.core.context.stopKoin
+import org.koin.dsl.module
+import java.awt.image.BufferedImage
+import java.io.File
+import java.lang.reflect.Proxy
+import javax.imageio.ImageIO
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+
+/**
+ * 把好友/聊天 Compose 画在 360×720 的 Skia 表面上，作为 Android 小屏证据。
+ * 不是桌面大窗截图，也不是模拟器（本云主机嵌套 KVM 无法启动 AVD）。
+ */
+@OptIn(ExperimentalTestApi::class)
+class FriendsUiScreenshotTest {
+
+    @BeforeTest
+    fun setup() {
+        runCatching { stopKoin() }
+        val koin = startKoin {
+            modules(
+                module {
+                    single { Settings(autoCheckUpdate = false, enableAnimations = false, language = "zh") }
+                    single<ConfigIO> { stub(ConfigIO::class.java) }
+                    single<Game> { stub(Game::class.java) }
+                    single<Net> { stub(Net::class.java) }
+                    single<AppContext> { stub(AppContext::class.java) }
+                },
+            )
+        }.koin
+        appKoin = koin
+        koinInit = true
+        val bundle = File("src/commonMain/composeResources/files/bundle_zh.toml")
+        i18nTable = Toml.parseToTomlTable(bundle.readText().replace("\r", "\n"))
+        FakeFriendsSession.resetToPresets()
+        FakeAccountSession.applyLoggedIn("修玉")
+    }
+
+    @AfterTest
+    fun tearDown() {
+        FakeFriendsSession.resetToPresets()
+        FakeAccountSession.applyLoggedOut()
+        runCatching { stopKoin() }
+        koinInit = false
+    }
+
+    @Test
+    fun captureFriendsHome() = runDesktopComposeUiTest(width = 360, height = 720) {
+        setContent {
+            ScreenshotTheme {
+                Surface(modifier = Modifier.fillMaxSize()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
+                            .padding(16.dp),
+                    ) {
+                        AccountFriendsSection(isSmall = true)
+                    }
+                }
+            }
+        }
+        waitForIdle()
+        save("friends_home_small.png")
+    }
+
+    @Test
+    fun captureAddFriendDialog() = runDesktopComposeUiTest(width = 360, height = 720) {
+        setContent {
+            ScreenshotTheme {
+                Surface(modifier = Modifier.fillMaxSize()) {
+                    AccountFriendsSection(isSmall = true, initiallyShowAdd = true)
+                }
+            }
+        }
+        waitForIdle()
+        save("add_friend_dialog_small.png")
+    }
+
+    @Test
+    fun captureFriendChat() = runDesktopComposeUiTest(width = 360, height = 720) {
+        FakeFriendsSession.openChat("钢铁指挥官")
+        setContent {
+            ScreenshotTheme {
+                FriendChatView(onExit = {})
+            }
+        }
+        waitForIdle()
+        save("friend_chat_small.png")
+    }
+
+    @Test
+    fun captureLoggedInAccountWithFriends() = runDesktopComposeUiTest(width = 360, height = 720) {
+        setContent {
+            ScreenshotTheme {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(53, 57, 53)),
+                ) {
+                    AccountView(onExit = {})
+                }
+            }
+        }
+        waitForIdle()
+        save("account_home_friends_small.png")
+    }
+
+    private fun androidx.compose.ui.test.ComposeUiTest.save(name: String) {
+        val rootCount = onAllNodes(isRoot()).fetchSemanticsNodes().size
+        val node = if (rootCount > 1) {
+            onAllNodes(isRoot())[rootCount - 1]
+        } else {
+            onRoot()
+        }
+        val image = node.captureToImage().toAwtImage()
+        val wrote = outputDirs().map { dir ->
+            check(dir.exists() || dir.mkdirs()) { "cannot create $dir" }
+            val file = File(dir, name)
+            check(ImageIO.write(image, "png", file)) { "ImageIO.write failed for $file" }
+            file
+        }
+        check(wrote.all { it.isFile && it.length() > 0L }) { "empty screenshot: $wrote" }
+    }
+
+    private fun outputDirs(): List<File> {
+        val dirs = mutableListOf(File("build/friends-ui-screenshots"))
+        val store = File("/cursor/stores/bc-e0fc145f-1942-44cd-b239-0a11e95bd9b4/media/friends-chat-ui")
+        if (store.parentFile?.exists() == true) dirs += store
+        val artifacts = File("/opt/cursor/artifacts")
+        if (artifacts.exists()) dirs += artifacts
+        return dirs
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun <T> stub(clazz: Class<T>): T {
+        return Proxy.newProxyInstance(clazz.classLoader, arrayOf(clazz)) { proxy, method, args ->
+            when (method.name) {
+                "equals" -> proxy === args?.getOrNull(0)
+                "hashCode" -> System.identityHashCode(proxy)
+                "toString" -> "friends-ui-stub:${clazz.simpleName}"
+                "getKoin" -> appKoin
+                "getLatestVersionProfile" -> null
+                "isAndroid" -> false
+                "isDesktop" -> true
+                "isGameCouldContinue" -> false
+                else -> when (method.returnType) {
+                    Void.TYPE, Void::class.java -> null
+                    java.lang.Boolean.TYPE -> false
+                    java.lang.Integer.TYPE -> 0
+                    java.lang.Long.TYPE -> 0L
+                    java.lang.Float.TYPE -> 0f
+                    java.lang.Double.TYPE -> 0.0
+                    java.util.List::class.java, MutableList::class.java -> emptyList<Any>()
+                    java.util.Map::class.java, MutableMap::class.java -> emptyMap<Any, Any>()
+                    String::class.java -> ""
+                    else -> null
+                }
+            }
+        } as T
+    }
+}
+
+@androidx.compose.runtime.Composable
+private fun ScreenshotTheme(content: @androidx.compose.runtime.Composable () -> Unit) {
+    KoinContext(appKoin) {
+        RWPPTheme(default = true) {
+            CompositionLocalProvider(LocalWindowManager provides WindowManager.Small) {
+                content()
+            }
+        }
+    }
+}
+
+// 让 ImageIO 在 headless 下仍能写出 PNG（部分 JDK 需要显式引用类型）。
+@Suppress("unused")
+private val pngSink: Class<BufferedImage> = BufferedImage::class.java

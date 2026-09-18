@@ -15,10 +15,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import io.github.rwpp.AppContext
@@ -27,10 +23,12 @@ import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.Settings
 import io.github.rwpp.game.Game
-import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.i18n.GameI18nResolver
+import io.github.rwpp.koinInit
 import io.github.rwpp.net.Net
-import io.github.rwpp.ui.AccountView
+import io.github.rwpp.ui.AccountUiHostContent
 import io.github.rwpp.ui.FakeAccountSession
+import io.github.rwpp.ui.FakeFriendsSession
 import io.github.rwpp.ui.UI
 import io.github.rwpp.widget.ConstraintWindowManager
 import io.github.rwpp.widget.RWPPTheme
@@ -40,10 +38,12 @@ import org.koin.dsl.module
 import java.lang.reflect.Proxy
 
 /**
- * Debug-only：在真机/模拟器上走假数据账号流程，不加载游戏引擎、不读原版 assets、
- * 不访问 Gitee / BBS / 自有 Auth API。
+ * Debug-only：在真机/模拟器上走假数据账号 + 好友/聊天流程，不加载游戏引擎、
+ * 不读原版 assets、不访问 Gitee / BBS / 自有 Auth API。
  *
  * 正式启动器仍从 [LoadingScreen] 进入。
+ *
+ * adb: am start -n io.github.rwjs/io.github.rwpp.android.AccountUiHostActivity
  */
 class AccountUiHostActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -51,6 +51,13 @@ class AccountUiHostActivity : ComponentActivity() {
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
 
         FakeAccountSession.applyLoggedOut()
+        FakeFriendsSession.resetToPresets()
+        UI.showAccountView = false
+        UI.showFriendChatView = false
+
+        if (koinInit) {
+            runCatching { appKoin.get<GameI18nResolver>().init() }
+        }
 
         val previewKoin = koinApplication {
             modules(
@@ -64,13 +71,9 @@ class AccountUiHostActivity : ComponentActivity() {
             )
         }.koin
 
-        // 触发 RWPP bundle 解析（走 Application 里已有的 resolver，不发网络）。
-        runCatching { readI18n("account.title") }
-
         setContent {
             KoinContext(previewKoin) {
                 RWPPTheme(default = true) {
-                    var showAccount by remember { mutableStateOf(false) }
                     BoxWithConstraints(
                         modifier = Modifier
                             .fillMaxSize()
@@ -79,20 +82,7 @@ class AccountUiHostActivity : ComponentActivity() {
                         CompositionLocalProvider(
                             LocalWindowManager provides ConstraintWindowManager(maxWidth, maxHeight),
                         ) {
-                            if (showAccount) {
-                                AccountView(onExit = { showAccount = false })
-                            } else {
-                                UI.UiProvider.MainMenu(
-                                    multiplayer = {},
-                                    singlePlayer = {},
-                                    settings = {},
-                                    mods = {},
-                                    extension = {},
-                                    resourceBrowser = {},
-                                    openSourceInfo = {},
-                                    account = { showAccount = true },
-                                )
-                            }
+                            AccountUiHostContent()
                         }
                     }
                 }
@@ -108,7 +98,7 @@ private fun <T> stub(clazz: Class<T>): T {
             "equals" -> proxy === args?.getOrNull(0)
             "hashCode" -> System.identityHashCode(proxy)
             "toString" -> "account-ui-stub:${clazz.simpleName}"
-            "getKoin" -> appKoin
+            "getKoin" -> if (koinInit) appKoin else null
             "getLatestVersionProfile" -> null
             "isAndroid" -> true
             "isDesktop" -> false

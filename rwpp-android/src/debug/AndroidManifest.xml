@@ -14,11 +14,16 @@
         -->
         <activity
                 android:name="io.github.rwpp.android.AccountUiHostActivity"
+                android:label="RWJS账号UI"
                 android:exported="true"
                 android:screenOrientation="unspecified"
                 android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden"
                 android:windowSoftInputMode="adjustResize|stateHidden"
                 android:theme="@style/app_theme">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
             <intent-filter>
                 <action android:name="io.github.rwpp.ACCOUNT_UI_HOST"/>
                 <category android:name="android.intent.category.DEFAULT"/>

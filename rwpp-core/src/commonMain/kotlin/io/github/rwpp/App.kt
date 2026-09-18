@@ -85,6 +85,7 @@ import io.github.rwpp.ui.UI.showReplayView
 import io.github.rwpp.ui.UI.showResourceBrowser
 import io.github.rwpp.ui.UI.showRoomView
 import io.github.rwpp.ui.UI.showAccountView
+import io.github.rwpp.ui.UI.showFriendChatView
 import io.github.rwpp.ui.UI.showSettingsView
 import io.github.rwpp.ui.UI.showSinglePlayerView
 import io.github.rwpp.ui.UI.showSurvivalView
@@ -162,7 +163,8 @@ fun App(
             || showOpenSourceInfoView
             || showSinglePlayerView
             || showSurvivalView
-            || showAccountView)
+            || showAccountView
+            || showFriendChatView)
 
     val game = koinInject<Game>()
 
@@ -307,11 +309,26 @@ fun App(
                 }
 
                 AnimatedVisibility(
-                    showAccountView,
+                    showAccountView && !showFriendChatView,
                     enter = if (enableAnimations) fadeIn() + slideInVertically() else EnterTransition.None,
                     exit = if (enableAnimations) fadeOut() + slideOutVertically() else ExitTransition.None,
                 ) {
-                    AccountView(onExit = { showAccountView = false })
+                    AccountView(onExit = {
+                        showFriendChatView = false
+                        FakeFriendsSession.closeChat()
+                        showAccountView = false
+                    })
+                }
+
+                AnimatedVisibility(
+                    showFriendChatView,
+                    enter = if (enableAnimations) fadeIn() + slideInVertically() else EnterTransition.None,
+                    exit = if (enableAnimations) fadeOut() + slideOutVertically() else ExitTransition.None,
+                ) {
+                    FriendChatView(onExit = {
+                        showFriendChatView = false
+                        FakeFriendsSession.closeChat()
+                    })
                 }
 
                 AnimatedVisibility(

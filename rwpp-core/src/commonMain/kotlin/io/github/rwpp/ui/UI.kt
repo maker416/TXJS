@@ -132,6 +132,8 @@ object UI : Initialization, IUserInterface {
     var showSinglePlayerView by mutableStateOf(false)
     var showSurvivalView by mutableStateOf(false)
     var showAccountView by mutableStateOf(false)
+    /** 一对一好友聊天全页。打开时保持 [showAccountView]，关闭后回到用户主页。 */
+    var showFriendChatView by mutableStateOf(false)
 
     /**
      * 模组重载期间堆耗尽（OutOfMemory）标志。置位后本进程内不再允许模组重载——

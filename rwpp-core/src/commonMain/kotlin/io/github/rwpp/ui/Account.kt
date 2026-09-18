@@ -542,6 +542,8 @@ private fun AccountLoggedInState(
             onClick = onApplyName,
         )
     }
+
+    AccountFriendsSection(isSmall = isSmall)
 }
 
 @Composable

@@ -198,4 +198,28 @@ class BundleParseTest {
             }
         }
     }
+
+    @Test
+    fun friendsKeysExistInAllBundles() {
+        bundleNames.forEach { name ->
+            val table = Toml.parseToTomlTable(File(bundleDir, name).readText())
+            val friends = table["friends"] as? TomlTable
+            assertNotNull(friends, "[friends] table missing in $name")
+            listOf(
+                "title",
+                "add",
+                "addTitle",
+                "addHint",
+                "alreadyAdded",
+                "cannotAddSelf",
+                "empty",
+                "noMessages",
+                "send",
+                "inputHint",
+                "chatTitle",
+            ).forEach { key ->
+                assertTrue(friends.containsKey(key), "friends.$key missing in $name")
+            }
+        }
+    }
 }
