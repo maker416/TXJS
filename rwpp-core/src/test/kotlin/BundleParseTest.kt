@@ -158,13 +158,43 @@ class BundleParseTest {
     }
 
     @Test
-    fun protectedModHintKeysExistInAllBundles() {
+    fun accountKeysExistInAllBundles() {
         bundleNames.forEach { name ->
             val table = Toml.parseToTomlTable(File(bundleDir, name).readText())
-            val mod = table["mod"] as? TomlTable
-            assertNotNull(mod, "[mod] table missing in $name")
-            listOf("protectedLoadHint", "protectedLoadHintMany", "starting").forEach { key ->
-                assertTrue(mod.containsKey(key), "mod.$key missing in $name")
+            val account = table["account"] as? TomlTable
+            assertNotNull(account, "[account] table missing in $name")
+            listOf(
+                "title",
+                "loginTitle",
+                "loginHint",
+                "registerTitle",
+                "registerHint",
+                "identifier",
+                "displayName",
+                "password",
+                "confirmPassword",
+                "passwordMismatch",
+                "identifierRequired",
+                "passwordRequired",
+                "switchToRegister",
+                "switchToLogin",
+                "notLoggedInTitle",
+                "notLoggedInBody",
+                "login",
+                "register",
+                "logout",
+                "logoutConfirmTitle",
+                "logoutConfirmBody",
+                "refresh",
+                "loggedIn",
+                "loading",
+                "profileFailed",
+                "applyNameToMultiplayer",
+                "applyNameConfirm",
+                "multiplayerNameHint",
+                "sessionExpired",
+            ).forEach { key ->
+                assertTrue(account.containsKey(key), "account.$key missing in $name")
             }
         }
     }

@@ -40,6 +40,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -64,6 +65,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -129,6 +131,7 @@ object UI : Initialization, IUserInterface {
     var showOpenSourceInfoView by mutableStateOf(false)
     var showSinglePlayerView by mutableStateOf(false)
     var showSurvivalView by mutableStateOf(false)
+    var showAccountView by mutableStateOf(false)
 
     /**
      * 模组重载期间堆耗尽（OutOfMemory）标志。置位后本进程内不再允许模组重载——
@@ -241,7 +244,8 @@ open class UIProvider {
         mods: () -> Unit,
         extension: () -> Unit,
         resourceBrowser: () -> Unit,
-        openSourceInfo: () -> Unit
+        openSourceInfo: () -> Unit,
+        account: () -> Unit,
     ) {
         val windowManager = LocalWindowManager.current
         val net = koinInject<Net>()
@@ -292,6 +296,15 @@ open class UIProvider {
                 WindowManager.Middle -> maxWidth * 0.75f
                 WindowManager.Large -> maxWidth * 0.65f
             }.coerceAtMost(520.dp)
+
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(top = 8.dp, start = 10.dp),
+                horizontalAlignment = Alignment.Start,
+            ) {
+                AccountMenuEntry(onClick = account)
+            }
 
             Column(
                 modifier = Modifier
@@ -438,6 +451,75 @@ open class UIProvider {
                     profile = latestProfile,
                     maxHeight = maxHeight,
                     onDismiss = { showAnnouncement = false },
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun AccountMenuEntry(onClick: () -> Unit) {
+        val windowManager = LocalWindowManager.current
+        val loggedIn = FakeAccountSession.loggedIn
+        val displayName = FakeAccountSession.displayName
+        val showLabel = windowManager != WindowManager.Small
+        val label = if (loggedIn) {
+            displayName.take(8)
+        } else {
+            readI18n("account.login", I18nType.RWPP)
+        }
+
+        Row(
+            modifier = Modifier
+                .height(44.dp)
+                .clickable(onClick = onClick)
+                .padding(end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(
+                modifier = Modifier.size(44.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (loggedIn) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(Color(151, 188, 98)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            displayName.firstOrNull()?.toString() ?: "?",
+                            color = Color(27, 18, 18),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .align(Alignment.TopEnd)
+                            .offset(x = (-6).dp, y = 8.dp)
+                            .clip(CircleShape)
+                            .background(Color(95, 190, 95)),
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.Person,
+                        contentDescription = readI18n("account.title", I18nType.RWPP),
+                        tint = Color.White,
+                        modifier = Modifier.size(28.dp),
+                    )
+                }
+            }
+            if (showLabel) {
+                Text(
+                    label,
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
