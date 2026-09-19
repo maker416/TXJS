@@ -46,6 +46,7 @@ import io.github.rwpp.rwpp_core.generated.resources.download
 import io.github.rwpp.rwpp_core.generated.resources.login
 import io.github.rwpp.rwpp_core.generated.resources.replay_30
 import io.github.rwpp.widget.*
+import io.github.rwpp.widget.v2.RWIconButton
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
 import java.io.File
@@ -143,6 +144,15 @@ fun ResourceBrowser(
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        RWIconButton(
+                            Icons.Default.Person,
+                            modifier = Modifier.padding(5.dp),
+                            size = 50.dp,
+                        ) {
+                            onExit()
+                            UI.showAccountView = true
+                        }
+
                         val list = remember {
                             listOf(readI18n(("common.mod")), readI18n("common.map"))
                         }

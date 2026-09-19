@@ -47,6 +47,12 @@ import java.util.*
 @InjectClass(ae::class)
 object NetInject {
 
+    /** 原版 `drawable/icon` 来自游戏 res，仓库默认不收录；缺失时回退启动器图标。 */
+    private fun multiplayerNotificationIcon(context: android.content.Context): Int {
+        val extracted = context.resources.getIdentifier("icon", "drawable", context.packageName)
+        return if (extracted != 0) extracted else R.drawable.ic_launcher_2
+    }
+
     @SuppressLint("WrongConstant")
     @Inject("X", InjectMode.Override)
     fun notify1() {
@@ -79,7 +85,7 @@ object NetInject {
                 val builder = Notification.Builder(t.al)
                 builder.setContentTitle("Rusted Warfare Multiplayer")
                 builder.setContentText("A multiplayer game is in progress")
-                builder.setSmallIcon(R.drawable.icon)
+                builder.setSmallIcon(multiplayerNotificationIcon(t.al))
                 builder.setContentIntent(activity)
                 builder.setOngoing(true)
                 Reflect.call<ae, Any>(null, "a", listOf(notificationManager::class), listOf(notificationManager))
@@ -137,7 +143,7 @@ object NetInject {
                     val builder: Notification.Builder = Notification.Builder(t.al)
                     builder.setContentTitle("Rusted Warfare Multiplayer")
                     builder.setContentText("$arg1: $arg2")
-                    builder.setSmallIcon(io.github.rwpp.R.drawable.icon)
+                    builder.setSmallIcon(multiplayerNotificationIcon(t.al))
                     builder.setContentIntent(activity)
                     builder.setOngoing(false)
                     builder.setAutoCancel(true)
