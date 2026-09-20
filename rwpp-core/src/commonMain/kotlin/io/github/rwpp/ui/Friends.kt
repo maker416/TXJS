@@ -7,7 +7,9 @@
 
 package io.github.rwpp.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,17 +22,18 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -63,17 +66,18 @@ import io.github.rwpp.net.account.FriendRequestDto
 import io.github.rwpp.net.account.FriendRequestStatus
 import io.github.rwpp.net.account.PublicUser
 import io.github.rwpp.platform.BackHandler
+import io.github.rwpp.rwpp_core.generated.resources.Res
+import io.github.rwpp.rwpp_core.generated.resources.group_30
 import io.github.rwpp.widget.AnimatedAlertDialog
-import io.github.rwpp.widget.BorderCard
 import io.github.rwpp.widget.ExitButton
-import io.github.rwpp.widget.LargeDividingLine
 import io.github.rwpp.widget.RWSingleOutlinedTextField
-import io.github.rwpp.widget.RWTextButton
 import io.github.rwpp.widget.WindowManager
 import io.github.rwpp.widget.autoClearFocus
 import io.github.rwpp.widget.v2.ExpandedCard
+import io.github.rwpp.widget.v2.RWIconButton
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.jetbrains.compose.resources.painterResource
 
 @Composable
 internal fun AccountFriendsSection(
@@ -86,38 +90,49 @@ internal fun AccountFriendsSection(
     var showAdd by remember { mutableStateOf(initiallyShowAdd) }
     val scope = rememberCoroutineScope()
 
-    LargeDividingLine { 16.dp }
+    Spacer(Modifier.height(22.dp))
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text(
-            readI18n("friends.title", I18nType.RWPP),
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            fontWeight = FontWeight.Bold,
-        )
-        if (!isSmall) {
-            RWTextButton(
-                label = readI18n("friends.add", I18nType.RWPP),
-                leadingIcon = {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(22.dp))
-                },
-                onClick = { showAdd = true },
+    AccountSectionHeader(
+        title = readI18n("friends.title", I18nType.RWPP),
+        icon = {
+            Icon(
+                painter = painterResource(Res.drawable.group_30),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp),
             )
-        }
-    }
+        },
+        trailing = if (!isSmall) {
+            {
+                AccountCompactButton(
+                    label = readI18n("friends.add", I18nType.RWPP),
+                    onClick = { showAdd = true },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.Add,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    },
+                )
+            }
+        } else null,
+    )
     if (isSmall) {
         Spacer(Modifier.height(8.dp))
-        RWTextButton(
+        AccountCompactButton(
             label = readI18n("friends.add", I18nType.RWPP),
-            modifier = Modifier.fillMaxWidth().widthIn(max = 420.dp),
-            leadingIcon = {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(22.dp))
-            },
             onClick = { showAdd = true },
+            modifier = Modifier.fillMaxWidth(),
+            leadingIcon = {
+                Icon(
+                    Icons.Default.Add,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp),
+                )
+            },
         )
     }
 
@@ -137,14 +152,16 @@ internal fun AccountFriendsSection(
             fontWeight = FontWeight.SemiBold,
         )
         Spacer(Modifier.height(8.dp))
-        incoming.forEach { req ->
-            FriendRequestRow(
-                request = req,
-                incoming = true,
-                onAccept = { scope.launch { runCatching { FriendsSession.accept(req.id) } } },
-                onReject = { scope.launch { runCatching { FriendsSession.reject(req.id) } } },
-                onCancel = {},
-            )
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            incoming.forEach { req ->
+                FriendRequestRow(
+                    request = req,
+                    incoming = true,
+                    onAccept = { scope.launch { runCatching { FriendsSession.accept(req.id) } } },
+                    onReject = { scope.launch { runCatching { FriendsSession.reject(req.id) } } },
+                    onCancel = {},
+                )
+            }
         }
     }
 
@@ -157,14 +174,16 @@ internal fun AccountFriendsSection(
             fontWeight = FontWeight.SemiBold,
         )
         Spacer(Modifier.height(8.dp))
-        outgoing.forEach { req ->
-            FriendRequestRow(
-                request = req,
-                incoming = false,
-                onAccept = {},
-                onReject = {},
-                onCancel = { scope.launch { runCatching { FriendsSession.cancel(req.id) } } },
-            )
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            outgoing.forEach { req ->
+                FriendRequestRow(
+                    request = req,
+                    incoming = false,
+                    onAccept = {},
+                    onReject = {},
+                    onCancel = { scope.launch { runCatching { FriendsSession.cancel(req.id) } } },
+                )
+            }
         }
     }
 
@@ -221,43 +240,58 @@ private fun FriendRequestRow(
     onCancel: () -> Unit,
 ) {
     val other = if (incoming) request.fromUser else request.toUser
-    BorderCard(
+    Surface(
         modifier = Modifier.fillMaxWidth(),
-        backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.8f)),
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(
+            AccountAvatarBox(
                 other.nickname.ifBlank { other.username },
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
+                size = 42.dp,
+                showOnlineDot = false,
             )
-            Text(
-                other.username,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (incoming) {
-                    RWTextButton(label = readI18n("friends.accept", I18nType.RWPP), onClick = onAccept)
-                    TextButton(onClick = onReject) {
-                        Text(
-                            readI18n("friends.reject", I18nType.RWPP),
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                } else {
-                    TextButton(onClick = onCancel) {
-                        Text(
-                            readI18n("friends.cancel", I18nType.RWPP),
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                        )
-                    }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    other.nickname.ifBlank { other.username },
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "@${other.username}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (incoming) {
+                AccountCompactButton(
+                    label = readI18n("friends.accept", I18nType.RWPP),
+                    onClick = onAccept,
+                )
+                Text(
+                    readI18n("friends.reject", I18nType.RWPP),
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.clickable(onClick = onReject).padding(4.dp),
+                )
+            } else {
+                TextButton(onClick = onCancel) {
+                    Text(
+                        readI18n("friends.cancel", I18nType.RWPP),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
             }
         }
@@ -273,10 +307,12 @@ private fun FriendRow(
     onDelete: () -> Unit,
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
-    BorderCard(
-        modifier = Modifier.fillMaxWidth(),
+    Surface(
         onClick = onClick,
-        backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.8f)),
     ) {
         Row(
             modifier = Modifier
@@ -285,19 +321,11 @@ private fun FriendRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primaryContainer),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    user.nickname.firstOrNull()?.toString() ?: "?",
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
+            AccountAvatarBox(
+                user.nickname.ifBlank { user.username },
+                size = 44.dp,
+                showOnlineDot = false,
+            )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     user.nickname.ifBlank { user.username },
@@ -317,13 +345,14 @@ private fun FriendRow(
             if (unread > 0) {
                 SurfaceBadge(unread)
             }
-            TextButton(onClick = { confirmDelete = true }) {
-                Text(
-                    readI18n("friends.delete", I18nType.RWPP),
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
+            Icon(
+                Icons.Default.Delete,
+                contentDescription = readI18n("friends.delete", I18nType.RWPP),
+                tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
+                modifier = Modifier
+                    .size(22.dp)
+                    .clickable { confirmDelete = true },
+            )
         }
     }
     if (confirmDelete) {
@@ -331,37 +360,37 @@ private fun FriendRow(
             visible = true,
             onDismissRequest = { confirmDelete = false },
         ) { dismiss ->
-            BorderCard(
-                modifier = accountDialogCardModifier(),
-                backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-            ) {
-                Column(
-                    modifier = Modifier.padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Text(
-                        readI18n("friends.deleteConfirmTitle", I18nType.RWPP),
-                        style = MaterialTheme.typography.headlineSmall,
-                    )
-                    Text(
-                        readI18n("friends.deleteConfirmBody", I18nType.RWPP),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = dismiss) {
-                            Text(readI18n("common.cancel", I18nType.RWPP))
-                        }
-                        TextButton(
-                            onClick = {
-                                onDelete()
-                                dismiss()
-                            },
-                        ) {
-                            Text(
-                                readI18n("friends.delete", I18nType.RWPP),
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        }
+            AccountAuthCard(scrollable = false) {
+                AccountDialogHeader(
+                    title = readI18n("friends.deleteConfirmTitle", I18nType.RWPP),
+                    subtitle = readI18n("friends.deleteConfirmBody", I18nType.RWPP),
+                    iconTint = MaterialTheme.colorScheme.error,
+                    icon = {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(24.dp),
+                        )
+                    },
+                )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = dismiss) {
+                        Text(
+                            readI18n("common.cancel", I18nType.RWPP),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        )
+                    }
+                    TextButton(
+                        onClick = {
+                            onDelete()
+                            dismiss()
+                        },
+                    ) {
+                        Text(
+                            readI18n("friends.delete", I18nType.RWPP),
+                            color = MaterialTheme.colorScheme.error,
+                        )
                     }
                 }
             }
@@ -373,14 +402,15 @@ private fun FriendRow(
 private fun SurfaceBadge(count: Int) {
     Box(
         modifier = Modifier
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.primaryContainer)
-            .padding(horizontal = 8.dp, vertical = 2.dp),
+            .clip(RoundedCornerShape(50))
+            .background(MaterialTheme.colorScheme.primary)
+            .padding(horizontal = 7.dp, vertical = 2.dp),
     ) {
         Text(
             if (count > 99) "99+" else count.toString(),
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            color = MaterialTheme.colorScheme.onPrimary,
+            fontWeight = FontWeight.Bold,
         )
     }
 }
@@ -402,118 +432,85 @@ private fun AddFriendDialog(
         onDismissRequest = { if (!submitting) onDismiss() },
         enableDismiss = !submitting,
     ) { dismiss ->
-        BorderCard(
-            modifier = accountDialogCardModifier(),
-            backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .then(if (isSmall) Modifier.verticalScroll(rememberScrollState()) else Modifier)
-                    .autoClearFocus()
-                    .padding(
-                        horizontal = if (isSmall) 14.dp else 18.dp,
-                        vertical = if (isSmall) 12.dp else 16.dp,
-                    ),
-                verticalArrangement = Arrangement.spacedBy(if (isSmall) 10.dp else 12.dp),
-            ) {
-                Text(
-                    readI18n("friends.addTitle", I18nType.RWPP),
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    readI18n("friends.addHint", I18nType.RWPP),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
-                )
-                RWSingleOutlinedTextField(
-                    label = readI18n("account.username", I18nType.RWPP),
-                    value = username,
-                    enabled = !submitting,
-                    modifier = Modifier.fillMaxWidth(),
-                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
-                    onValueChange = {
-                        username = it
-                        error = ""
-                        info = ""
-                    },
-                )
-                if (info.isNotBlank() && error.isBlank()) {
-                    Text(info, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
-                }
-                if (error.isNotBlank()) {
-                    Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-                }
-                val confirm: () -> Unit = {
-                    val name = AccountFieldRules.normalizeUsername(username)
-                    when {
-                        !AccountFieldRules.isValidUsername(name) ->
-                            error = readI18n("account.usernameInvalid", I18nType.RWPP)
-                        AccountSession.username.equals(name, ignoreCase = true) ->
-                            error = readI18n("friends.cannotAddSelf", I18nType.RWPP)
-                        else -> {
-                            submitting = true
-                            scope.launch {
-                                runCatching { FriendsSession.sendRequest(name) }
-                                    .onSuccess { req ->
-                                        info = if (req.status == FriendRequestStatus.ACCEPTED) {
-                                            readI18n("friends.requestAccepted", I18nType.RWPP)
-                                        } else {
-                                            readI18n("friends.requestSent", I18nType.RWPP)
-                                        }
-                                        error = ""
-                                        submitting = false
-                                        if (req.status == FriendRequestStatus.ACCEPTED) dismiss()
-                                    }.onFailure { e ->
-                                        error = (e as? AccountApiException)?.let { accountErrorText(it) }
-                                            ?: e.message.orEmpty()
-                                        submitting = false
-                                    }
-                            }
-                        }
-                    }
-                }
-                if (submitting) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(32.dp).align(Alignment.CenterHorizontally),
-                        color = MaterialTheme.colorScheme.primary,
+        AccountAuthCard(scrollable = isSmall) {
+            AccountDialogHeader(
+                title = readI18n("friends.addTitle", I18nType.RWPP),
+                subtitle = readI18n("friends.addHint", I18nType.RWPP),
+                icon = {
+                    Icon(
+                        painter = painterResource(Res.drawable.group_30),
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(26.dp),
                     )
-                } else if (isSmall) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        RWTextButton(
-                            label = readI18n("friends.add", I18nType.RWPP),
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = confirm,
-                        )
-                        TextButton(onClick = dismiss) {
-                            Text(
-                                readI18n("common.cancel", I18nType.RWPP),
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                            )
+                },
+            )
+            RWSingleOutlinedTextField(
+                label = readI18n("account.username", I18nType.RWPP),
+                value = username,
+                enabled = !submitting,
+                modifier = Modifier.fillMaxWidth(),
+                leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                onValueChange = {
+                    username = it
+                    error = ""
+                    info = ""
+                },
+            )
+            if (info.isNotBlank() && error.isBlank()) {
+                AccountMessageBanner(info)
+            }
+            if (error.isNotBlank()) {
+                AccountMessageBanner(error, isError = true)
+            }
+            val confirm: () -> Unit = {
+                val name = AccountFieldRules.normalizeUsername(username)
+                when {
+                    !AccountFieldRules.isValidUsername(name) ->
+                        error = readI18n("account.usernameInvalid", I18nType.RWPP)
+                    AccountSession.username.equals(name, ignoreCase = true) ->
+                        error = readI18n("friends.cannotAddSelf", I18nType.RWPP)
+                    else -> {
+                        submitting = true
+                        scope.launch {
+                            runCatching { FriendsSession.sendRequest(name) }
+                                .onSuccess { req ->
+                                    info = if (req.status == FriendRequestStatus.ACCEPTED) {
+                                        readI18n("friends.requestAccepted", I18nType.RWPP)
+                                    } else {
+                                        readI18n("friends.requestSent", I18nType.RWPP)
+                                    }
+                                    error = ""
+                                    submitting = false
+                                    if (req.status == FriendRequestStatus.ACCEPTED) dismiss()
+                                }.onFailure { e ->
+                                    error = (e as? AccountApiException)?.let { accountErrorText(it) }
+                                        ?: e.message.orEmpty()
+                                    submitting = false
+                                }
                         }
                     }
-                } else {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        TextButton(onClick = dismiss) {
-                            Text(
-                                readI18n("common.cancel", I18nType.RWPP),
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                            )
-                        }
-                        RWTextButton(
-                            label = readI18n("friends.add", I18nType.RWPP),
-                            onClick = confirm,
-                        )
-                    }
+                }
+            }
+            if (submitting) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(32.dp).align(Alignment.CenterHorizontally),
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            } else {
+                AccountPrimaryButton(
+                    label = readI18n("friends.add", I18nType.RWPP),
+                    onClick = confirm,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                TextButton(
+                    onClick = dismiss,
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                ) {
+                    Text(
+                        readI18n("common.cancel", I18nType.RWPP),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    )
                 }
             }
         }
@@ -531,7 +528,6 @@ fun FriendChatView(onExit: () -> Unit) {
 
     val peer = FriendsSession.activePeer
     val messages = FriendsSession.messages
-    val isSmall = LocalWindowManager.current == WindowManager.Small
     var draft by remember { mutableStateOf("") }
     val scroll = rememberScrollState()
     val scope = rememberCoroutineScope()
@@ -561,8 +557,13 @@ fun FriendChatView(onExit: () -> Unit) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Spacer(Modifier.height(36.dp))
+                    val peerName = peer?.nickname?.ifBlank { peer.username }
+                    if (peerName != null) {
+                        AccountAvatarBox(peerName, size = 52.dp, showOnlineDot = false)
+                        Spacer(Modifier.height(6.dp))
+                    }
                     Text(
-                        peer?.nickname?.ifBlank { peer.username } ?: readI18n("friends.chatTitle", I18nType.RWPP),
+                        peerName ?: readI18n("friends.chatTitle", I18nType.RWPP),
                         style = MaterialTheme.typography.headlineLarge,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold,
@@ -571,7 +572,7 @@ fun FriendChatView(onExit: () -> Unit) {
                     )
                     if (peer != null) {
                         Text(
-                            peer.username,
+                            "@${peer.username}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                         )
@@ -581,11 +582,10 @@ fun FriendChatView(onExit: () -> Unit) {
             }
 
             if (FriendsSession.chatError.isNotBlank()) {
-                Text(
+                AccountMessageBanner(
                     FriendsSession.chatError,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    isError = true,
+                    modifier = Modifier.padding(horizontal = 16.dp),
                 )
             }
 
@@ -622,46 +622,21 @@ fun FriendChatView(onExit: () -> Unit) {
                     }
                 }
             }
-            if (isSmall) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    RWSingleOutlinedTextField(
-                        label = readI18n("friends.inputHint", I18nType.RWPP),
-                        value = draft,
-                        modifier = Modifier.fillMaxWidth(),
-                        onValueChange = { if (it.codePointCount(0, it.length) <= 2000) draft = it },
-                    )
-                    RWTextButton(
-                        label = readI18n("friends.send", I18nType.RWPP),
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = send,
-                    )
-                }
-            } else {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    RWSingleOutlinedTextField(
-                        label = readI18n("friends.inputHint", I18nType.RWPP),
-                        value = draft,
-                        modifier = Modifier.weight(1f),
-                        onValueChange = { if (it.codePointCount(0, it.length) <= 2000) draft = it },
-                    )
-                    RWTextButton(
-                        label = readI18n("friends.send", I18nType.RWPP),
-                        onClick = send,
-                    )
-                }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                RWSingleOutlinedTextField(
+                    label = readI18n("friends.inputHint", I18nType.RWPP),
+                    value = draft,
+                    modifier = Modifier.weight(1f),
+                    onValueChange = { if (it.codePointCount(0, it.length) <= 2000) draft = it },
+                )
+                RWIconButton(Icons.Default.Send, size = 50.dp) { send() }
             }
         }
     }
@@ -679,10 +654,17 @@ private fun ChatBubble(message: ChatMessageDto, fromMe: Boolean) {
         ) {
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(
+                        RoundedCornerShape(
+                            topStart = 16.dp,
+                            topEnd = 16.dp,
+                            bottomStart = if (fromMe) 16.dp else 4.dp,
+                            bottomEnd = if (fromMe) 4.dp else 16.dp,
+                        )
+                    )
                     .background(
                         if (fromMe) {
-                            MaterialTheme.colorScheme.primaryContainer
+                            MaterialTheme.colorScheme.primary
                         } else {
                             MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.9f)
                         },
@@ -693,7 +675,7 @@ private fun ChatBubble(message: ChatMessageDto, fromMe: Boolean) {
                     message.body,
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (fromMe) {
-                        MaterialTheme.colorScheme.onPrimaryContainer
+                        MaterialTheme.colorScheme.onPrimary
                     } else {
                         MaterialTheme.colorScheme.onSurface
                     },
@@ -717,4 +699,3 @@ internal fun formatAccountTime(rfc3339: String): String {
     val time = rfc3339.substring(tIndex + 1, (tIndex + 6).coerceAtMost(rfc3339.length))
     return "$date $time"
 }
-

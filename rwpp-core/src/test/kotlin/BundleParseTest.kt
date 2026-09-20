@@ -197,9 +197,8 @@ class BundleParseTest {
                 "loggedIn",
                 "loading",
                 "profileFailed",
-                "applyNameToMultiplayer",
-                "applyNameConfirm",
-                "multiplayerNameHint",
+                "profileSection",
+                "multiplayerNameBound",
                 "sessionExpired",
             ).forEach { key ->
                 assertTrue(account.containsKey(key), "account.$key missing in $name")

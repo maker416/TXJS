@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.AppContext
+import io.github.rwpp.account.AccountSession
 import io.github.rwpp.config.*
 import io.github.rwpp.core.Logic
 import io.github.rwpp.core.ModSyncController
@@ -291,8 +292,23 @@ fun MultiplayerView(
     var throwable by remember { mutableStateOf<Throwable?>(null) }
 
     var userName by remember {
+        val accountName = if (AccountSession.loggedIn) AccountSession.displayName else null
         val lastName = configIO.getGameConfig<String?>("lastNetworkPlayerName")
-        mutableStateOf((lastName ?: "RWJS${(0..999).random()}").also { game.setUserName(it) })
+        mutableStateOf(
+            (accountName?.takeIf { it.isNotBlank() } ?: lastName ?: "RWJS${(0..999).random()}")
+                .also { game.setUserName(it) }
+        )
+    }
+
+    // 登录账号后，多人房间昵称固定绑定为账号昵称，并随登录态/昵称修改实时联动
+    val accountNameLocked = AccountSession.loggedIn
+    val accountDisplayName = AccountSession.displayName
+    LaunchedEffect(accountNameLocked, accountDisplayName) {
+        if (accountNameLocked && accountDisplayName.isNotBlank()) {
+            userName = accountDisplayName
+            game.setUserName(accountDisplayName)
+            configIO.setGameConfig("lastNetworkPlayerName", accountDisplayName)
+        }
     }
 
     val blacklists = remember { mutableStateListOf<Blacklist>().apply { addAll(blacklistsInstance.blacklists) } }
@@ -1856,7 +1872,10 @@ fun MultiplayerView(
                                         OutlinedTextField(
                                             label = {
                                                 Text(
-                                                    readI18n("multiplayer.userName"),
+                                                    readI18n(
+                                                        if (accountNameLocked) "multiplayer.userNameAccountBound"
+                                                        else "multiplayer.userName"
+                                                    ),
                                                     fontFamily = MaterialTheme.typography.headlineMedium.fontFamily
                                                 )
                                             },
@@ -1864,8 +1883,19 @@ fun MultiplayerView(
                                             colors = RWOutlinedTextColors,
                                             value = userName,
                                             enabled = true,
+                                            readOnly = accountNameLocked,
                                             singleLine = true,
                                             leadingIcon = { Icon(Icons.Default.Person, null, modifier = Modifier.size(30.dp)) },
+                                            trailingIcon = if (accountNameLocked) {
+                                                {
+                                                    Icon(
+                                                        Icons.Default.Lock,
+                                                        null,
+                                                        tint = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.size(22.dp)
+                                                    )
+                                                }
+                                            } else null,
                                             modifier = Modifier.width(200.dp).padding(10.dp),
                                             onValueChange =
                                             {
