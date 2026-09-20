@@ -309,6 +309,11 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 3. **不要用「编译通过」当作资源正确的证据**：Gradle `BUILD SUCCESSFUL` 只说明 Kotlin 代码合法，对 TOML 资源零校验。改了 `bundle_*.toml` 后，运行 `./gradlew :rwpp-core:testDebugUnitTest --tests BundleParseTest`（用与运行时相同的方式实解析两个 bundle）确认合法，再交付。
 4. `readI18n(path)` 在路径不存在时会抛 NPE（`table[next]!!`），不会静默回退；非法 bundle 更会导致全局解析失败。两种情况都可能在运行期才暴露。
 
+## 账号系统约定
+
+- **多人房间昵称绑定账号昵称**：登录 RWJS 统一账号后，多人页顶部用户名固定为账号显示名（`AccountSession.displayName`），输入框只读并显示锁图标。联动点有两处：`AccountSession.applySession()` 末尾的 `syncMultiplayerName()`（登录/注册/改昵称/刷新资料/恢复会话后写入 `lastNetworkPlayerName` 与 `game.setUserName`），以及 `Multiplayer.kt` 中 `LaunchedEffect(loggedIn, displayName)` 的实时同步。退出登录不回退已写入的名字，输入框恢复可编辑。
+- **账号 UI 组件**：用户页/好友/登录注册弹窗的现代化组件集中在 `rwpp-core` 的 `ui/AccountWidgets.kt`（头像、状态胶囊、信息行、操作项、主按钮、弹窗头部、提示条、`AccountAuthCard`），新增账号相关界面时优先复用。
+
 ## 安全与部署注意事项
 
 1. **AGPL-3.0**：fork 与再分发时必须保留许可与版权信息，并遵守 AGPL-3.0 的全部义务（包括网络交互版本的源代码提供义务）。

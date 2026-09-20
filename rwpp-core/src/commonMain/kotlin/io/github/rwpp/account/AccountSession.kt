@@ -14,6 +14,7 @@ import io.github.rwpp.config.AccountPreferences
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.resolveAccountApiUrl
 import io.github.rwpp.config.resolveAccountAppKey
+import io.github.rwpp.game.Game
 import io.github.rwpp.logger
 import io.github.rwpp.net.Net
 import io.github.rwpp.net.account.AccountApiClient
@@ -203,6 +204,15 @@ object AccountSession : KoinComponent {
                 savePrefs(prefs)
             }
         }
+        syncMultiplayerName()
+    }
+
+    /** 登录态下多人房间昵称固定绑定为账号昵称（登录 / 改昵称 / 恢复会话后即时生效）。 */
+    private fun syncMultiplayerName() {
+        val name = displayName
+        if (name.isBlank()) return
+        runCatching { get<ConfigIO>().setGameConfig("lastNetworkPlayerName", name) }
+        runCatching { get<Game>().setUserName(name) }
     }
 
     private fun clearSession(persist: Boolean) {
