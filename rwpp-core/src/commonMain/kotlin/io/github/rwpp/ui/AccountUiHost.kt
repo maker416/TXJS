@@ -8,9 +8,10 @@
 package io.github.rwpp.ui
 
 import androidx.compose.runtime.Composable
+import io.github.rwpp.account.FriendsSession
 
 /**
- * Debug 宿主与 Compose 预览共用的假数据账号/好友界面树。
+ * Debug 宿主与 Compose 预览共用的账号/好友界面树。
  *
  * 导航仍只用 [UI.showAccountView] / [UI.showFriendChatView]，
  * 不另起页面栈。调用方需自行提供 Koin、主题与 [io.github.rwpp.LocalWindowManager]。
@@ -21,13 +22,13 @@ fun AccountUiHostContent() {
         UI.showFriendChatView -> {
             FriendChatView(onExit = {
                 UI.showFriendChatView = false
-                FakeFriendsSession.closeChat()
+                FriendsSession.closeChat()
             })
         }
         UI.showAccountView -> {
             AccountView(onExit = {
                 UI.showFriendChatView = false
-                FakeFriendsSession.closeChat()
+                FriendsSession.closeChat()
                 UI.showAccountView = false
             })
         }

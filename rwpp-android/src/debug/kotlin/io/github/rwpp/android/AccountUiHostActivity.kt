@@ -19,27 +19,32 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import io.github.rwpp.AppContext
 import io.github.rwpp.LocalWindowManager
+import io.github.rwpp.account.AccountSession
+import io.github.rwpp.account.FriendsSession
 import io.github.rwpp.appKoin
+import io.github.rwpp.config.AccountPreferences
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.Settings
+import io.github.rwpp.config.resolveAccountApiUrl
+import io.github.rwpp.config.resolveAccountAppKey
 import io.github.rwpp.game.Game
 import io.github.rwpp.i18n.GameI18nResolver
 import io.github.rwpp.koinInit
 import io.github.rwpp.net.Net
+import io.github.rwpp.net.account.AccountApiClient
 import io.github.rwpp.ui.AccountUiHostContent
-import io.github.rwpp.ui.FakeAccountSession
-import io.github.rwpp.ui.FakeFriendsSession
 import io.github.rwpp.ui.UI
 import io.github.rwpp.widget.ConstraintWindowManager
 import io.github.rwpp.widget.RWPPTheme
+import okhttp3.OkHttpClient
 import org.koin.compose.KoinContext
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
 import java.lang.reflect.Proxy
+import java.util.concurrent.TimeUnit
 
 /**
- * Debug-only：在真机/模拟器上走假数据账号 + 好友/聊天流程，不加载游戏引擎、
- * 不读原版 assets、不访问 Gitee / BBS / 自有 Auth API。
+ * Debug-only：账号 / 好友 / 聊天走统一账号 API，不加载游戏引擎。
  *
  * 正式启动器仍从 [LoadingScreen] 进入。
  *
@@ -50,8 +55,8 @@ class AccountUiHostActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
 
-        FakeAccountSession.applyLoggedOut()
-        FakeFriendsSession.resetToPresets()
+        AccountSession.resetForTests()
+        FriendsSession.clear()
         UI.showAccountView = false
         UI.showFriendChatView = false
 
@@ -59,13 +64,29 @@ class AccountUiHostActivity : ComponentActivity() {
             runCatching { appKoin.get<GameI18nResolver>().init() }
         }
 
+        val http = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .build()
+        val accountPrefs = AccountPreferences()
+        // AccountSession 走全局 KoinComponent；独立宿主未 startKoin 时必须自带客户端。
+        AccountSession.bindClient(
+            AccountApiClient(
+                baseUrl = resolveAccountApiUrl(accountPrefs.apiUrl),
+                appKey = resolveAccountAppKey(accountPrefs.appKey),
+                http = http,
+            ),
+            http,
+        )
+
         val previewKoin = koinApplication {
             modules(
                 module {
                     single { Settings(autoCheckUpdate = false, enableAnimations = false, language = "zh") }
+                    single { accountPrefs }
                     single<ConfigIO> { stub(ConfigIO::class.java) }
                     single<Game> { stub(Game::class.java) }
-                    single<Net> { stub(Net::class.java) }
+                    single<Net> { stub(Net::class.java, http) }
                     single<AppContext> { stub(AppContext::class.java) }
                 },
             )
@@ -92,7 +113,7 @@ class AccountUiHostActivity : ComponentActivity() {
 }
 
 @Suppress("UNCHECKED_CAST")
-private fun <T> stub(clazz: Class<T>): T {
+private fun <T> stub(clazz: Class<T>, http: OkHttpClient? = null): T {
     return Proxy.newProxyInstance(clazz.classLoader, arrayOf(clazz)) { proxy, method, args ->
         when (method.name) {
             "equals" -> proxy === args?.getOrNull(0)
@@ -103,6 +124,7 @@ private fun <T> stub(clazz: Class<T>): T {
             "isAndroid" -> true
             "isDesktop" -> false
             "isGameCouldContinue" -> false
+            "getClient" -> http
             else -> when (method.returnType) {
                 Void.TYPE, Void::class.java -> null
                 java.lang.Boolean.TYPE -> false

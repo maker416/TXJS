@@ -26,17 +26,26 @@ import androidx.compose.ui.test.runDesktopComposeUiTest
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.AppContext
 import io.github.rwpp.LocalWindowManager
+import io.github.rwpp.account.AccountSession
+import io.github.rwpp.account.FriendsSession
 import io.github.rwpp.appKoin
+import io.github.rwpp.config.AccountPreferences
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.Settings
 import io.github.rwpp.game.Game
 import io.github.rwpp.i18n.i18nTable
 import io.github.rwpp.koinInit
 import io.github.rwpp.net.Net
+import io.github.rwpp.net.account.AccountUser
+import io.github.rwpp.net.account.ChatItem
+import io.github.rwpp.net.account.ChatMessageDto
+import io.github.rwpp.net.account.FriendItem
+import io.github.rwpp.net.account.FriendRequestDto
+import io.github.rwpp.net.account.PublicUser
 import io.github.rwpp.ui.AccountFriendsSection
+import io.github.rwpp.ui.AccountLoginDialog
+import io.github.rwpp.ui.AccountRegisterDialog
 import io.github.rwpp.ui.AccountView
-import io.github.rwpp.ui.FakeAccountSession
-import io.github.rwpp.ui.FakeFriendsSession
 import io.github.rwpp.ui.FriendChatView
 import io.github.rwpp.widget.RWPPTheme
 import io.github.rwpp.widget.WindowManager
@@ -55,7 +64,7 @@ import kotlin.test.Test
 
 /**
  * 把好友/聊天 Compose 画在 360×720 的 Skia 表面上，作为 Android 小屏证据。
- * 不是桌面大窗截图，也不是模拟器（本云主机嵌套 KVM 无法启动 AVD）。
+ * 预览数据只用于截图，不发 HTTP。
  */
 @OptIn(ExperimentalTestApi::class)
 class FriendsUiScreenshotTest {
@@ -67,6 +76,7 @@ class FriendsUiScreenshotTest {
             modules(
                 module {
                     single { Settings(autoCheckUpdate = false, enableAnimations = false, language = "zh") }
+                    single { AccountPreferences() }
                     single<ConfigIO> { stub(ConfigIO::class.java) }
                     single<Game> { stub(Game::class.java) }
                     single<Net> { stub(Net::class.java) }
@@ -78,14 +88,13 @@ class FriendsUiScreenshotTest {
         koinInit = true
         val bundle = File("src/commonMain/composeResources/files/bundle_zh.toml")
         i18nTable = Toml.parseToTomlTable(bundle.readText().replace("\r", "\n"))
-        FakeFriendsSession.resetToPresets()
-        FakeAccountSession.applyLoggedIn("修玉")
+        seedPreview()
     }
 
     @AfterTest
     fun tearDown() {
-        FakeFriendsSession.resetToPresets()
-        FakeAccountSession.applyLoggedOut()
+        FriendsSession.clear()
+        AccountSession.resetForTests()
         runCatching { stopKoin() }
         koinInit = false
     }
@@ -125,7 +134,6 @@ class FriendsUiScreenshotTest {
 
     @Test
     fun captureFriendChat() = runDesktopComposeUiTest(width = 360, height = 720) {
-        FakeFriendsSession.openChat("钢铁指挥官")
         setContent {
             ScreenshotTheme {
                 FriendChatView(onExit = {})
@@ -133,6 +141,74 @@ class FriendsUiScreenshotTest {
         }
         waitForIdle()
         save("friend_chat_small.png")
+    }
+
+    @Test
+    fun captureLoggedOutAccount() = runDesktopComposeUiTest(width = 360, height = 720) {
+        AccountSession.applyLoggedOutPreview()
+        FriendsSession.clear()
+        setContent {
+            ScreenshotTheme {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(53, 57, 53)),
+                ) {
+                    AccountView(onExit = {})
+                }
+            }
+        }
+        waitForIdle()
+        save("account_logged_out_small.png")
+    }
+
+    @Test
+    fun captureLoginDialog() = runDesktopComposeUiTest(width = 360, height = 720) {
+        AccountSession.applyLoggedOutPreview()
+        setContent {
+            ScreenshotTheme {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(53, 57, 53)),
+                ) {
+                    AccountLoginDialog(
+                        visible = true,
+                        username = "xiuyu",
+                        onUsernameChange = {},
+                        onDismiss = {},
+                        onSwitchToRegister = {},
+                        onForgot = {},
+                    )
+                }
+            }
+        }
+        waitForIdle()
+        save("account_login_dialog_small.png")
+    }
+
+    @Test
+    fun captureRegisterDialog() = runDesktopComposeUiTest(width = 360, height = 720) {
+        AccountSession.applyLoggedOutPreview()
+        setContent {
+            ScreenshotTheme {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(53, 57, 53)),
+                ) {
+                    AccountRegisterDialog(
+                        visible = true,
+                        username = "xiuyu",
+                        onUsernameChange = {},
+                        onDismiss = {},
+                        onSwitchToLogin = {},
+                    )
+                }
+            }
+        }
+        waitForIdle()
+        save("account_register_dialog_small.png")
     }
 
     @Test
@@ -150,6 +226,48 @@ class FriendsUiScreenshotTest {
         }
         waitForIdle()
         save("account_home_friends_small.png")
+    }
+
+    private fun seedPreview() {
+        val self = AccountUser(
+            id = 1,
+            username = "xiuyu",
+            email = "user@example.com",
+            nickname = "修玉",
+            createdAt = "2026-09-01T00:00:00+08:00",
+        )
+        val bob = PublicUser(2, "bob", "Bob")
+        val incomingFrom = PublicUser(3, "mapper", "地图作者")
+        AccountSession.applyPreview(self)
+        FriendsSession.applyPreview(
+            previewFriends = listOf(FriendItem(bob, "2026-09-14T23:01:00+08:00")),
+            previewIncoming = listOf(
+                FriendRequestDto(
+                    id = 11,
+                    fromUser = incomingFrom,
+                    toUser = PublicUser(1, "xiuyu", "修玉"),
+                    status = "pending",
+                    createdAt = "2026-09-14T23:00:00+08:00",
+                    updatedAt = "2026-09-14T23:00:00+08:00",
+                ),
+            ),
+            previewChats = listOf(
+                ChatItem(
+                    id = 5,
+                    peer = bob,
+                    lastMessage = ChatMessageDto(20, 5, 2, "今晚开把？", "2026-09-14T23:02:00+08:00"),
+                    unread = 1,
+                    updatedAt = "2026-09-14T23:02:00+08:00",
+                    createdAt = "2026-09-14T23:01:00+08:00",
+                ),
+            ),
+            previewMessages = listOf(
+                ChatMessageDto(19, 5, 1, "可以，我带海陆空。", "2026-09-14T23:01:30+08:00"),
+                ChatMessageDto(20, 5, 2, "今晚开把？", "2026-09-14T23:02:00+08:00"),
+            ),
+            peer = bob,
+            conversationId = 5,
+        )
     }
 
     private fun androidx.compose.ui.test.ComposeUiTest.save(name: String) {
@@ -218,6 +336,5 @@ private fun ScreenshotTheme(content: @androidx.compose.runtime.Composable () -> 
     }
 }
 
-// 让 ImageIO 在 headless 下仍能写出 PNG（部分 JDK 需要显式引用类型）。
 @Suppress("unused")
 private val pngSink: Class<BufferedImage> = BufferedImage::class.java
