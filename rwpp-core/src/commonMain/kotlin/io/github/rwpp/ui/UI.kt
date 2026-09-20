@@ -75,6 +75,7 @@ import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
 import io.github.rwpp.AppContext
 import io.github.rwpp.LocalWindowManager
+import io.github.rwpp.account.AccountSession
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.Settings
@@ -461,8 +462,8 @@ open class UIProvider {
     @Composable
     private fun AccountMenuEntry(onClick: () -> Unit) {
         val windowManager = LocalWindowManager.current
-        val loggedIn = FakeAccountSession.loggedIn
-        val displayName = FakeAccountSession.displayName
+        val loggedIn = AccountSession.loggedIn
+        val displayName = AccountSession.displayName
         val showLabel = windowManager != WindowManager.Small
         val label = if (loggedIn) {
             displayName.take(8)

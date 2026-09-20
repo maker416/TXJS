@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
@@ -39,7 +40,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -54,12 +57,19 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.LocalWindowManager
+import io.github.rwpp.account.AccountSession
+import io.github.rwpp.account.FriendsSession
+import io.github.rwpp.account.accountErrorText
+import io.github.rwpp.account.accountLoginUnauthorizedText
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.game.Game
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.net.account.AccountApiException
+import io.github.rwpp.net.account.AccountFieldRules
+import io.github.rwpp.net.account.RegisterRequest
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.login
@@ -79,12 +89,10 @@ import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
 
-private const val MOCK_LOADING_DELAY_MS = 450L
-private const val MOCK_LOGOUT_DELAY_MS = 280L
-
 private enum class AccountAuthKind {
     Login,
     Register,
+    Forgot,
 }
 
 @Composable
@@ -102,19 +110,38 @@ fun AccountView(onExit: () -> Unit) {
     val configIO = koinInject<ConfigIO>()
     val game = koinInject<Game>()
 
-    val loggedIn = FakeAccountSession.loggedIn
-    val identifier = FakeAccountSession.identifier
-    val displayName = FakeAccountSession.displayName
+    val loggedIn = AccountSession.loggedIn
+    val user = AccountSession.user
+    val displayName = AccountSession.displayName
+    val restoring = AccountSession.restoring
 
     var authKind by remember { mutableStateOf<AccountAuthKind?>(null) }
-    var draftIdentifier by remember { mutableStateOf(FakeAccountSession.lastIdentifier) }
+    var draftUsername by remember { mutableStateOf(AccountSession.lastUsername) }
     var refreshing by remember { mutableStateOf(false) }
     var loggingOut by remember { mutableStateOf(false) }
     var showLogoutConfirm by remember { mutableStateOf(false) }
     var showApplyNameConfirm by remember { mutableStateOf(false) }
     var showNameSection by remember { mutableStateOf(false) }
+    var showNicknameDialog by remember { mutableStateOf(false) }
+    var profileBanner by remember { mutableStateOf("") }
 
-    val showLoading = refreshing && loggedIn
+    LaunchedEffect(Unit) {
+        AccountSession.restoreIfNeeded()
+        if (AccountSession.loggedIn) {
+            runCatching { FriendsSession.refreshLists() }
+        }
+    }
+
+    LaunchedEffect(loggedIn) {
+        if (loggedIn && AccountSession.networkEnabled) {
+            while (true) {
+                delay(8_000)
+                runCatching { FriendsSession.refreshLists() }
+            }
+        }
+    }
+
+    val showLoading = (refreshing || restoring) && loggedIn
 
     ExpandedCard(
         modifier = Modifier.verticalScroll(rememberScrollState()).autoClearFocus()
@@ -138,32 +165,43 @@ fun AccountView(onExit: () -> Unit) {
 
                 when {
                     showLoading -> AccountLoadingState()
-                    loggedIn -> AccountLoggedInState(
+                    loggedIn && user != null -> AccountLoggedInState(
                         isSmall = isSmall,
-                        identifier = identifier,
+                        username = user.username,
+                        nickname = user.nickname,
+                        email = user.email,
                         displayName = displayName,
                         loggingOut = loggingOut,
                         showNameSection = showNameSection,
+                        banner = profileBanner.ifBlank { FriendsSession.listError },
                         onToggleNameSection = { showNameSection = !showNameSection },
                         onRefresh = {
                             if (refreshing || loggingOut) return@AccountLoggedInState
                             scope.launch {
                                 refreshing = true
-                                delay(MOCK_LOADING_DELAY_MS)
+                                profileBanner = ""
+                                runCatching {
+                                    AccountSession.refreshProfile()
+                                    FriendsSession.refreshLists()
+                                }.onFailure { e ->
+                                    profileBanner = (e as? AccountApiException)?.let { accountErrorText(it) }
+                                        ?: readI18n("account.profileFailed", I18nType.RWPP)
+                                }
                                 refreshing = false
                             }
                         },
+                        onChangeNickname = { showNicknameDialog = true },
                         onLogout = { showLogoutConfirm = true },
                         onApplyName = { showApplyNameConfirm = true },
                     )
                     else -> AccountLoggedOutState(
                         isSmall = isSmall,
                         onLogin = {
-                            draftIdentifier = FakeAccountSession.lastIdentifier
+                            draftUsername = AccountSession.lastUsername
                             authKind = AccountAuthKind.Login
                         },
                         onRegister = {
-                            draftIdentifier = FakeAccountSession.lastIdentifier
+                            draftUsername = AccountSession.lastUsername
                             authKind = AccountAuthKind.Register
                         },
                     )
@@ -176,18 +214,31 @@ fun AccountView(onExit: () -> Unit) {
 
     AccountLoginDialog(
         visible = authKind == AccountAuthKind.Login,
-        identifier = draftIdentifier,
-        onIdentifierChange = { draftIdentifier = it },
+        username = draftUsername,
+        onUsernameChange = { draftUsername = it },
         onDismiss = { if (authKind == AccountAuthKind.Login) authKind = null },
         onSwitchToRegister = { authKind = AccountAuthKind.Register },
+        onForgot = { authKind = AccountAuthKind.Forgot },
     )
 
     AccountRegisterDialog(
         visible = authKind == AccountAuthKind.Register,
-        identifier = draftIdentifier,
-        onIdentifierChange = { draftIdentifier = it },
+        username = draftUsername,
+        onUsernameChange = { draftUsername = it },
         onDismiss = { if (authKind == AccountAuthKind.Register) authKind = null },
         onSwitchToLogin = { authKind = AccountAuthKind.Login },
+    )
+
+    AccountForgotDialog(
+        visible = authKind == AccountAuthKind.Forgot,
+        onDismiss = { if (authKind == AccountAuthKind.Forgot) authKind = null },
+        onBackToLogin = { authKind = AccountAuthKind.Login },
+    )
+
+    ChangeNicknameDialog(
+        visible = showNicknameDialog,
+        current = user?.nickname.orEmpty(),
+        onDismiss = { showNicknameDialog = false },
     )
 
     AnimatedAlertDialog(
@@ -239,10 +290,10 @@ fun AccountView(onExit: () -> Unit) {
                             onClick = {
                                 scope.launch {
                                     loggingOut = true
-                                    delay(MOCK_LOGOUT_DELAY_MS)
-                                    FakeAccountSession.signOut()
+                                    AccountSession.logout()
                                     loggingOut = false
                                     showNameSection = false
+                                    profileBanner = ""
                                     dismiss()
                                 }
                             },
@@ -294,7 +345,7 @@ fun AccountView(onExit: () -> Unit) {
                     }
                     TextButton(
                         onClick = {
-                            val name = FakeAccountSession.displayName
+                            val name = AccountSession.displayName
                             configIO.setGameConfig("lastNetworkPlayerName", name)
                             runCatching { game.setUserName(name) }
                             dismiss()
@@ -408,12 +459,16 @@ private fun AccountLoadingState() {
 @Composable
 private fun AccountLoggedInState(
     isSmall: Boolean,
-    identifier: String,
+    username: String,
+    nickname: String,
+    email: String?,
     displayName: String,
     loggingOut: Boolean,
     showNameSection: Boolean,
+    banner: String,
     onToggleNameSection: () -> Unit,
     onRefresh: () -> Unit,
+    onChangeNickname: () -> Unit,
     onLogout: () -> Unit,
     onApplyName: () -> Unit,
 ) {
@@ -439,6 +494,15 @@ private fun AccountLoggedInState(
         }
     }
 
+    if (banner.isNotBlank()) {
+        Text(
+            banner,
+            color = MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        )
+    }
+
     LargeDividingLine { 16.dp }
 
     BorderCard(
@@ -451,13 +515,11 @@ private fun AccountLoggedInState(
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            AccountProfileRow(readI18n("account.username", I18nType.RWPP), username)
+            AccountProfileRow(readI18n("account.nickname", I18nType.RWPP), nickname)
             AccountProfileRow(
-                label = readI18n("account.identifier", I18nType.RWPP),
-                value = identifier,
-            )
-            AccountProfileRow(
-                label = readI18n("account.displayName", I18nType.RWPP),
-                value = displayName,
+                readI18n("account.email", I18nType.RWPP),
+                email?.ifBlank { null } ?: readI18n("account.emailUnbound", I18nType.RWPP),
             )
         }
     }
@@ -474,6 +536,11 @@ private fun AccountLoggedInState(
                 label = readI18n("account.refresh", I18nType.RWPP),
                 modifier = Modifier.fillMaxWidth().widthIn(max = 420.dp),
                 onClick = onRefresh,
+            )
+            RWTextButton(
+                label = readI18n("account.changeNickname", I18nType.RWPP),
+                modifier = Modifier.fillMaxWidth().widthIn(max = 420.dp),
+                onClick = onChangeNickname,
             )
             if (loggingOut) {
                 CircularProgressIndicator(
@@ -498,6 +565,10 @@ private fun AccountLoggedInState(
             RWTextButton(
                 label = readI18n("account.refresh", I18nType.RWPP),
                 onClick = onRefresh,
+            )
+            RWTextButton(
+                label = readI18n("account.changeNickname", I18nType.RWPP),
+                onClick = onChangeNickname,
             )
             if (loggingOut) {
                 CircularProgressIndicator(
@@ -606,10 +677,11 @@ private fun AccountProfileRow(label: String, value: String) {
 @Composable
 fun AccountLoginDialog(
     visible: Boolean,
-    identifier: String,
-    onIdentifierChange: (String) -> Unit,
+    username: String,
+    onUsernameChange: (String) -> Unit,
     onDismiss: () -> Unit,
     onSwitchToRegister: () -> Unit,
+    onForgot: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val isSmall = LocalWindowManager.current == WindowManager.Small
@@ -634,12 +706,12 @@ fun AccountLoginDialog(
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
             )
             RWSingleOutlinedTextField(
-                label = readI18n("account.identifier", I18nType.RWPP),
-                value = identifier,
+                label = readI18n("account.username", I18nType.RWPP),
+                value = username,
                 enabled = !submitting,
                 modifier = Modifier.fillMaxWidth(),
                 leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
-                onValueChange = onIdentifierChange,
+                onValueChange = onUsernameChange,
             )
             RWSingleOutlinedTextField(
                 label = readI18n("account.password", I18nType.RWPP),
@@ -651,11 +723,7 @@ fun AccountLoginDialog(
                 onValueChange = { password = it },
             )
             if (error.isNotBlank()) {
-                Text(
-                    error,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
             }
             AccountAuthActions(
                 submitting = submitting,
@@ -670,21 +738,40 @@ fun AccountLoginDialog(
                 onCancel = dismiss,
                 onConfirm = {
                     when {
-                        identifier.isBlank() -> error = readI18n("account.identifierRequired", I18nType.RWPP)
-                        password.isBlank() -> error = readI18n("account.passwordRequired", I18nType.RWPP)
+                        !AccountFieldRules.isValidUsername(username) ->
+                            error = readI18n("account.usernameInvalid", I18nType.RWPP)
+                        password.isBlank() ->
+                            error = readI18n("account.passwordRequired", I18nType.RWPP)
                         else -> {
                             error = ""
                             submitting = true
                             scope.launch {
-                                delay(MOCK_LOADING_DELAY_MS)
-                                FakeAccountSession.signIn(identifier)
-                                submitting = false
-                                dismiss()
+                                runCatching {
+                                    AccountSession.login(AccountFieldRules.normalizeUsername(username), password)
+                                    FriendsSession.refreshLists()
+                                }.onSuccess {
+                                    submitting = false
+                                    dismiss()
+                                }.onFailure { e ->
+                                    error = (e as? AccountApiException)?.let { accountLoginUnauthorizedText(it) }
+                                        ?: e.message.orEmpty()
+                                    submitting = false
+                                }
                             }
                         }
                     }
                 },
             )
+            TextButton(
+                enabled = !submitting,
+                onClick = onForgot,
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            ) {
+                Text(
+                    readI18n("account.forgotPassword", I18nType.RWPP),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                )
+            }
             TextButton(
                 enabled = !submitting,
                 onClick = onSwitchToRegister,
@@ -702,8 +789,8 @@ fun AccountLoginDialog(
 @Composable
 fun AccountRegisterDialog(
     visible: Boolean,
-    identifier: String,
-    onIdentifierChange: (String) -> Unit,
+    username: String,
+    onUsernameChange: (String) -> Unit,
     onDismiss: () -> Unit,
     onSwitchToLogin: () -> Unit,
 ) {
@@ -711,15 +798,28 @@ fun AccountRegisterDialog(
     val isSmall = LocalWindowManager.current == WindowManager.Small
     var password by remember(visible) { mutableStateOf("") }
     var confirmPassword by remember(visible) { mutableStateOf("") }
+    var nickname by remember(visible) { mutableStateOf("") }
+    var email by remember(visible) { mutableStateOf("") }
+    var code by remember(visible) { mutableStateOf("") }
     var error by remember(visible) { mutableStateOf("") }
+    var info by remember(visible) { mutableStateOf("") }
     var submitting by remember(visible) { mutableStateOf(false) }
+    var sendingCode by remember(visible) { mutableStateOf(false) }
+    var cooldown by remember(visible) { mutableIntStateOf(0) }
+
+    LaunchedEffect(cooldown) {
+        if (cooldown > 0) {
+            delay(1000)
+            cooldown -= 1
+        }
+    }
 
     AnimatedAlertDialog(
         visible = visible,
         onDismissRequest = { if (!submitting) onDismiss() },
         enableDismiss = !submitting,
     ) { dismiss ->
-        AccountAuthCard(scrollable = isSmall) {
+        AccountAuthCard(scrollable = true) {
             Text(
                 readI18n("account.registerTitle", I18nType.RWPP),
                 style = MaterialTheme.typography.headlineSmall,
@@ -731,13 +831,74 @@ fun AccountRegisterDialog(
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
             )
             RWSingleOutlinedTextField(
-                label = readI18n("account.identifier", I18nType.RWPP),
-                value = identifier,
+                label = readI18n("account.username", I18nType.RWPP),
+                value = username,
                 enabled = !submitting,
                 modifier = Modifier.fillMaxWidth(),
                 leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
-                onValueChange = onIdentifierChange,
+                onValueChange = onUsernameChange,
             )
+            RWSingleOutlinedTextField(
+                label = readI18n("account.nicknameOptional", I18nType.RWPP),
+                value = nickname,
+                enabled = !submitting,
+                modifier = Modifier.fillMaxWidth(),
+                onValueChange = { nickname = it },
+            )
+            RWSingleOutlinedTextField(
+                label = readI18n("account.email", I18nType.RWPP),
+                value = email,
+                enabled = !submitting,
+                modifier = Modifier.fillMaxWidth(),
+                leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+                onValueChange = { email = it },
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                RWSingleOutlinedTextField(
+                    label = readI18n("account.code", I18nType.RWPP),
+                    value = code,
+                    enabled = !submitting,
+                    modifier = Modifier.weight(1f),
+                    onValueChange = { if (it.length <= 6) code = it.filter { ch -> ch.isDigit() } },
+                )
+                TextButton(
+                    enabled = !submitting && !sendingCode && cooldown == 0,
+                    onClick = {
+                        when {
+                            !AccountFieldRules.isValidEmail(email) ->
+                                error = readI18n("account.emailInvalid", I18nType.RWPP)
+                            else -> {
+                                error = ""
+                                sendingCode = true
+                                scope.launch {
+                                    runCatching {
+                                        AccountSession.sendRegisterCode(AccountFieldRules.normalizeEmail(email))
+                                    }.onSuccess {
+                                        info = readI18n("account.codeSent", I18nType.RWPP)
+                                        cooldown = 60
+                                    }.onFailure { e ->
+                                        error = (e as? AccountApiException)?.let { accountErrorText(it) }
+                                            ?: e.message.orEmpty()
+                                    }
+                                    sendingCode = false
+                                }
+                            }
+                        }
+                    },
+                ) {
+                    Text(
+                        if (cooldown > 0) {
+                            readI18n("account.sendCodeWait", I18nType.RWPP, cooldown.toString())
+                        } else {
+                            readI18n("account.sendCode", I18nType.RWPP)
+                        },
+                    )
+                }
+            }
             RWSingleOutlinedTextField(
                 label = readI18n("account.password", I18nType.RWPP),
                 value = password,
@@ -756,32 +917,56 @@ fun AccountRegisterDialog(
                 visualTransformation = PasswordVisualTransformation(),
                 onValueChange = { confirmPassword = it },
             )
+            if (info.isNotBlank() && error.isBlank()) {
+                Text(info, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
+            }
             if (error.isNotBlank()) {
-                Text(
-                    error,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
             }
             AccountAuthActions(
                 submitting = submitting,
                 confirmLabel = readI18n("account.register", I18nType.RWPP),
                 onCancel = dismiss,
                 onConfirm = {
-                    when {
-                        identifier.isBlank() -> error = readI18n("account.identifierRequired", I18nType.RWPP)
-                        password.isBlank() -> error = readI18n("account.passwordRequired", I18nType.RWPP)
+                    val name = AccountFieldRules.normalizeUsername(username)
+                    val mail = AccountFieldRules.normalizeEmail(email)
+                    error = when {
+                        !AccountFieldRules.isValidUsername(name) ->
+                            readI18n("account.usernameInvalid", I18nType.RWPP)
+                        !AccountFieldRules.isValidPassword(password) ->
+                            readI18n("account.passwordInvalid", I18nType.RWPP)
                         password != confirmPassword ->
-                            error = readI18n("account.passwordMismatch", I18nType.RWPP)
-                        else -> {
-                            error = ""
-                            submitting = true
-                            scope.launch {
-                                delay(MOCK_LOADING_DELAY_MS)
-                                FakeAccountSession.signIn(identifier)
-                                submitting = false
-                                dismiss()
-                            }
+                            readI18n("account.passwordMismatch", I18nType.RWPP)
+                        !AccountFieldRules.isValidRegisterNickname(nickname) ->
+                            readI18n("account.nicknameInvalid", I18nType.RWPP)
+                        !AccountFieldRules.isValidEmail(mail) ->
+                            readI18n("account.emailInvalid", I18nType.RWPP)
+                        !AccountFieldRules.isValidCode(code) ->
+                            readI18n("account.codeInvalid", I18nType.RWPP)
+                        else -> ""
+                    }
+                    if (error.isNotBlank()) return@AccountAuthActions
+                    submitting = true
+                    scope.launch {
+                        runCatching {
+                            AccountSession.register(
+                                RegisterRequest(
+                                    username = name,
+                                    password = password,
+                                    nickname = nickname.trim().ifBlank { null },
+                                    email = mail,
+                                    code = code.trim(),
+                                ),
+                                password,
+                            )
+                            FriendsSession.refreshLists()
+                        }.onSuccess {
+                            submitting = false
+                            dismiss()
+                        }.onFailure { e ->
+                            error = (e as? AccountApiException)?.let { accountErrorText(it) }
+                                ?: e.message.orEmpty()
+                            submitting = false
                         }
                     }
                 },
@@ -801,7 +986,230 @@ fun AccountRegisterDialog(
 }
 
 @Composable
-private fun accountDialogCardModifier(): Modifier {
+private fun AccountForgotDialog(
+    visible: Boolean,
+    onDismiss: () -> Unit,
+    onBackToLogin: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var email by remember(visible) { mutableStateOf("") }
+    var code by remember(visible) { mutableStateOf("") }
+    var password by remember(visible) { mutableStateOf("") }
+    var confirm by remember(visible) { mutableStateOf("") }
+    var error by remember(visible) { mutableStateOf("") }
+    var info by remember(visible) { mutableStateOf("") }
+    var submitting by remember(visible) { mutableStateOf(false) }
+    var sendingCode by remember(visible) { mutableStateOf(false) }
+    var cooldown by remember(visible) { mutableIntStateOf(0) }
+
+    LaunchedEffect(cooldown) {
+        if (cooldown > 0) {
+            delay(1000)
+            cooldown -= 1
+        }
+    }
+
+    AnimatedAlertDialog(
+        visible = visible,
+        onDismissRequest = { if (!submitting) onDismiss() },
+        enableDismiss = !submitting,
+    ) { dismiss ->
+        AccountAuthCard(scrollable = true) {
+            Text(
+                readI18n("account.forgotTitle", I18nType.RWPP),
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                readI18n("account.forgotHint", I18nType.RWPP),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+            )
+            RWSingleOutlinedTextField(
+                label = readI18n("account.email", I18nType.RWPP),
+                value = email,
+                enabled = !submitting,
+                modifier = Modifier.fillMaxWidth(),
+                leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+                onValueChange = { email = it },
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                RWSingleOutlinedTextField(
+                    label = readI18n("account.code", I18nType.RWPP),
+                    value = code,
+                    enabled = !submitting,
+                    modifier = Modifier.weight(1f),
+                    onValueChange = { if (it.length <= 6) code = it.filter { ch -> ch.isDigit() } },
+                )
+                TextButton(
+                    enabled = !submitting && !sendingCode && cooldown == 0,
+                    onClick = {
+                        if (!AccountFieldRules.isValidEmail(email)) {
+                            error = readI18n("account.emailInvalid", I18nType.RWPP)
+                        } else {
+                            sendingCode = true
+                            scope.launch {
+                                runCatching {
+                                    AccountSession.sendResetCode(AccountFieldRules.normalizeEmail(email))
+                                }.onSuccess {
+                                    info = readI18n("account.codeSent", I18nType.RWPP)
+                                    error = ""
+                                    cooldown = 60
+                                }.onFailure { e ->
+                                    error = (e as? AccountApiException)?.let { accountErrorText(it) }
+                                        ?: e.message.orEmpty()
+                                }
+                                sendingCode = false
+                            }
+                        }
+                    },
+                ) {
+                    Text(
+                        if (cooldown > 0) {
+                            readI18n("account.sendCodeWait", I18nType.RWPP, cooldown.toString())
+                        } else {
+                            readI18n("account.sendCode", I18nType.RWPP)
+                        },
+                    )
+                }
+            }
+            RWSingleOutlinedTextField(
+                label = readI18n("account.newPassword", I18nType.RWPP),
+                value = password,
+                enabled = !submitting,
+                modifier = Modifier.fillMaxWidth(),
+                visualTransformation = PasswordVisualTransformation(),
+                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                onValueChange = { password = it },
+            )
+            RWSingleOutlinedTextField(
+                label = readI18n("account.confirmPassword", I18nType.RWPP),
+                value = confirm,
+                enabled = !submitting,
+                modifier = Modifier.fillMaxWidth(),
+                visualTransformation = PasswordVisualTransformation(),
+                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                onValueChange = { confirm = it },
+            )
+            if (info.isNotBlank() && error.isBlank()) {
+                Text(info, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
+            }
+            if (error.isNotBlank()) {
+                Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+            }
+            AccountAuthActions(
+                submitting = submitting,
+                confirmLabel = readI18n("account.resetPassword", I18nType.RWPP),
+                onCancel = dismiss,
+                onConfirm = {
+                    val mail = AccountFieldRules.normalizeEmail(email)
+                    error = when {
+                        !AccountFieldRules.isValidEmail(mail) ->
+                            readI18n("account.emailInvalid", I18nType.RWPP)
+                        !AccountFieldRules.isValidCode(code) ->
+                            readI18n("account.codeInvalid", I18nType.RWPP)
+                        !AccountFieldRules.isValidPassword(password) ->
+                            readI18n("account.passwordInvalid", I18nType.RWPP)
+                        password != confirm ->
+                            readI18n("account.passwordMismatch", I18nType.RWPP)
+                        else -> ""
+                    }
+                    if (error.isNotBlank()) return@AccountAuthActions
+                    submitting = true
+                    scope.launch {
+                        runCatching {
+                            AccountSession.resetPassword(mail, code.trim(), password)
+                        }.onSuccess {
+                            submitting = false
+                            dismiss()
+                            onBackToLogin()
+                        }.onFailure { e ->
+                            error = (e as? AccountApiException)?.let { accountErrorText(it) }
+                                ?: e.message.orEmpty()
+                            submitting = false
+                        }
+                    }
+                },
+            )
+            TextButton(
+                enabled = !submitting,
+                onClick = onBackToLogin,
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            ) {
+                Text(
+                    readI18n("account.switchToLogin", I18nType.RWPP),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChangeNicknameDialog(
+    visible: Boolean,
+    current: String,
+    onDismiss: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var nickname by remember(visible) { mutableStateOf(current) }
+    var error by remember(visible) { mutableStateOf("") }
+    var submitting by remember(visible) { mutableStateOf(false) }
+
+    AnimatedAlertDialog(
+        visible = visible,
+        onDismissRequest = { if (!submitting) onDismiss() },
+        enableDismiss = !submitting,
+    ) { dismiss ->
+        AccountAuthCard(scrollable = false) {
+            Text(
+                readI18n("account.changeNickname", I18nType.RWPP),
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            RWSingleOutlinedTextField(
+                label = readI18n("account.nickname", I18nType.RWPP),
+                value = nickname,
+                enabled = !submitting,
+                modifier = Modifier.fillMaxWidth(),
+                onValueChange = { nickname = it },
+            )
+            if (error.isNotBlank()) {
+                Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+            }
+            AccountAuthActions(
+                submitting = submitting,
+                confirmLabel = readI18n("common.ok", I18nType.RWPP),
+                onCancel = dismiss,
+                onConfirm = {
+                    if (!AccountFieldRules.isValidChangeNickname(nickname)) {
+                        error = readI18n("account.nicknameInvalid", I18nType.RWPP)
+                        return@AccountAuthActions
+                    }
+                    submitting = true
+                    scope.launch {
+                        runCatching { AccountSession.changeNickname(nickname.trim()) }
+                            .onSuccess {
+                                submitting = false
+                                dismiss()
+                            }.onFailure { e ->
+                                error = (e as? AccountApiException)?.let { accountErrorText(it) }
+                                    ?: e.message.orEmpty()
+                                submitting = false
+                            }
+                    }
+                },
+            )
+        }
+    }
+}
+
+@Composable
+internal fun accountDialogCardModifier(): Modifier {
     val isSmall = LocalWindowManager.current == WindowManager.Small
     val maxHeight = with(LocalDensity.current) {
         LocalWindowInfo.current.containerSize.height.toDp() * 0.9f

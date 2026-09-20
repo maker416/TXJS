@@ -53,6 +53,8 @@ import io.github.rwpp.coil.ImageableFetcherFactory
 import io.github.rwpp.coil.ImageableKeyer
 import io.github.rwpp.config.CoreData
 import io.github.rwpp.config.Settings
+import io.github.rwpp.account.AccountSession
+import io.github.rwpp.account.FriendsSession
 import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.net.sync.SyncPeerPhase
 import io.github.rwpp.event.GlobalEventChannel
@@ -121,6 +123,7 @@ fun App(
     var profile by remember { mutableStateOf<LatestVersionProfile?>(null) }
 
     LaunchedEffect(Unit) {
+        runCatching { AccountSession.restoreIfNeeded() }
         val now = System.currentTimeMillis()
         coreData.lastPlayTime = now
 
@@ -315,7 +318,7 @@ fun App(
                 ) {
                     AccountView(onExit = {
                         showFriendChatView = false
-                        FakeFriendsSession.closeChat()
+                        FriendsSession.closeChat()
                         showAccountView = false
                     })
                 }
@@ -327,7 +330,7 @@ fun App(
                 ) {
                     FriendChatView(onExit = {
                         showFriendChatView = false
-                        FakeFriendsSession.closeChat()
+                        FriendsSession.closeChat()
                     })
                 }
 

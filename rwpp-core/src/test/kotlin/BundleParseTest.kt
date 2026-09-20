@@ -170,6 +170,14 @@ class BundleParseTest {
                 "registerTitle",
                 "registerHint",
                 "identifier",
+                "username",
+                "nickname",
+                "nicknameOptional",
+                "changeNickname",
+                "email",
+                "code",
+                "sendCode",
+                "forgotPassword",
                 "displayName",
                 "password",
                 "confirmPassword",
@@ -196,6 +204,22 @@ class BundleParseTest {
             ).forEach { key ->
                 assertTrue(account.containsKey(key), "account.$key missing in $name")
             }
+            val accountError = table["accountError"] as? TomlTable
+            assertNotNull(accountError, "[accountError] table missing in $name")
+            listOf(
+                "unauthorized",
+                "badCredentials",
+                "rateLimited",
+                "usernameTaken",
+                "invalidCode",
+                "network",
+            ).forEach { key ->
+                assertTrue(accountError.containsKey(key), "accountError.$key missing in $name")
+            }
+            val settings = table["settings"] as? TomlTable
+            assertNotNull(settings, "[settings] table missing in $name")
+            assertTrue(settings.containsKey("accountApiUrl"), "settings.accountApiUrl missing in $name")
+            assertTrue(settings.containsKey("accountAppKey"), "settings.accountAppKey missing in $name")
         }
     }
 
@@ -217,6 +241,13 @@ class BundleParseTest {
                 "send",
                 "inputHint",
                 "chatTitle",
+                "incoming",
+                "outgoing",
+                "accept",
+                "reject",
+                "cancel",
+                "requestSent",
+                "delete",
             ).forEach { key ->
                 assertTrue(friends.containsKey(key), "friends.$key missing in $name")
             }

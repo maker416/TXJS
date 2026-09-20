@@ -43,6 +43,8 @@ dependencies {
     compileOnly("org.javassist:javassist:3.30.2-GA")
     ksp("io.insert-koin:koin-ksp-compiler:$koinAnnotationsVersion")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit:${findProperty("kotlin.version")}")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${findProperty("kotlin.coroutines.version")}")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     // InjectRedirectApplyTest 用真实 game-lib.jar 走 InjectApi 的 redirect/injectMethod 代码路径
     testImplementation("org.javassist:javassist:3.30.2-GA")
 }
