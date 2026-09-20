@@ -43,6 +43,8 @@ import io.github.rwpp.net.account.FriendItem
 import io.github.rwpp.net.account.FriendRequestDto
 import io.github.rwpp.net.account.PublicUser
 import io.github.rwpp.ui.AccountFriendsSection
+import io.github.rwpp.ui.AccountLoginDialog
+import io.github.rwpp.ui.AccountRegisterDialog
 import io.github.rwpp.ui.AccountView
 import io.github.rwpp.ui.FriendChatView
 import io.github.rwpp.widget.RWPPTheme
@@ -139,6 +141,74 @@ class FriendsUiScreenshotTest {
         }
         waitForIdle()
         save("friend_chat_small.png")
+    }
+
+    @Test
+    fun captureLoggedOutAccount() = runDesktopComposeUiTest(width = 360, height = 720) {
+        AccountSession.applyLoggedOutPreview()
+        FriendsSession.clear()
+        setContent {
+            ScreenshotTheme {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(53, 57, 53)),
+                ) {
+                    AccountView(onExit = {})
+                }
+            }
+        }
+        waitForIdle()
+        save("account_logged_out_small.png")
+    }
+
+    @Test
+    fun captureLoginDialog() = runDesktopComposeUiTest(width = 360, height = 720) {
+        AccountSession.applyLoggedOutPreview()
+        setContent {
+            ScreenshotTheme {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(53, 57, 53)),
+                ) {
+                    AccountLoginDialog(
+                        visible = true,
+                        username = "xiuyu",
+                        onUsernameChange = {},
+                        onDismiss = {},
+                        onSwitchToRegister = {},
+                        onForgot = {},
+                    )
+                }
+            }
+        }
+        waitForIdle()
+        save("account_login_dialog_small.png")
+    }
+
+    @Test
+    fun captureRegisterDialog() = runDesktopComposeUiTest(width = 360, height = 720) {
+        AccountSession.applyLoggedOutPreview()
+        setContent {
+            ScreenshotTheme {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(53, 57, 53)),
+                ) {
+                    AccountRegisterDialog(
+                        visible = true,
+                        username = "xiuyu",
+                        onUsernameChange = {},
+                        onDismiss = {},
+                        onSwitchToLogin = {},
+                    )
+                }
+            }
+        }
+        waitForIdle()
+        save("account_register_dialog_small.png")
     }
 
     @Test

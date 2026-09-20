@@ -25,10 +25,13 @@ import io.github.rwpp.appKoin
 import io.github.rwpp.config.AccountPreferences
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.Settings
+import io.github.rwpp.config.resolveAccountApiUrl
+import io.github.rwpp.config.resolveAccountAppKey
 import io.github.rwpp.game.Game
 import io.github.rwpp.i18n.GameI18nResolver
 import io.github.rwpp.koinInit
 import io.github.rwpp.net.Net
+import io.github.rwpp.net.account.AccountApiClient
 import io.github.rwpp.ui.AccountUiHostContent
 import io.github.rwpp.ui.UI
 import io.github.rwpp.widget.ConstraintWindowManager
@@ -66,6 +69,15 @@ class AccountUiHostActivity : ComponentActivity() {
             .readTimeout(15, TimeUnit.SECONDS)
             .build()
         val accountPrefs = AccountPreferences()
+        // AccountSession 走全局 KoinComponent；独立宿主未 startKoin 时必须自带客户端。
+        AccountSession.bindClient(
+            AccountApiClient(
+                baseUrl = resolveAccountApiUrl(accountPrefs.apiUrl),
+                appKey = resolveAccountAppKey(accountPrefs.appKey),
+                http = http,
+            ),
+            http,
+        )
 
         val previewKoin = koinApplication {
             modules(

@@ -66,6 +66,12 @@ object AccountSession : KoinComponent {
     @Volatile
     internal var httpOverride: OkHttpClient? = null
 
+    /** Debug / 截图宿主在未走全局 Koin 时注入客户端。 */
+    fun bindClient(client: AccountApiClient, http: OkHttpClient? = null) {
+        clientOverride = client
+        httpOverride = http
+    }
+
     fun client(): AccountApiClient {
         clientOverride?.let { return it }
         val prefs = prefsOrNull()
