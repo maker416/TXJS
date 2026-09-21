@@ -58,7 +58,7 @@ class AccountUiHostActivity : ComponentActivity() {
         AccountSession.resetForTests()
         FriendsSession.clear()
         UI.showAccountView = false
-        UI.showFriendChatView = false
+        UI.showFriendsView = false
 
         if (koinInit) {
             runCatching { appKoin.get<GameI18nResolver>().init() }

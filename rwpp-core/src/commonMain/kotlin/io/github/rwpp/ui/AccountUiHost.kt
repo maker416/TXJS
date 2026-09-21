@@ -13,22 +13,27 @@ import io.github.rwpp.account.FriendsSession
 /**
  * Debug 宿主与 Compose 预览共用的账号/好友界面树。
  *
- * 导航仍只用 [UI.showAccountView] / [UI.showFriendChatView]，
+ * 导航仍只用 [UI.showAccountView] / [UI.showFriendsView]，
  * 不另起页面栈。调用方需自行提供 Koin、主题与 [io.github.rwpp.LocalWindowManager]。
  */
 @Composable
 fun AccountUiHostContent() {
     when {
-        UI.showFriendChatView -> {
-            FriendChatView(onExit = {
-                UI.showFriendChatView = false
-                FriendsSession.closeChat()
-            })
+        UI.showFriendsView -> {
+            FriendsView(
+                onExit = {
+                    UI.showFriendsView = false
+                    FriendsSession.closeChat()
+                },
+                onGoLogin = {
+                    UI.showFriendsView = false
+                    FriendsSession.closeChat()
+                    UI.showAccountView = true
+                },
+            )
         }
         UI.showAccountView -> {
             AccountView(onExit = {
-                UI.showFriendChatView = false
-                FriendsSession.closeChat()
                 UI.showAccountView = false
             })
         }
@@ -42,6 +47,7 @@ fun AccountUiHostContent() {
                 resourceBrowser = {},
                 openSourceInfo = {},
                 account = { UI.showAccountView = true },
+                friends = { UI.showFriendsView = true },
             )
         }
     }

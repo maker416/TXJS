@@ -7,12 +7,7 @@
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
@@ -23,7 +18,6 @@ import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.runDesktopComposeUiTest
-import androidx.compose.ui.unit.dp
 import io.github.rwpp.AppContext
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
@@ -42,11 +36,11 @@ import io.github.rwpp.net.account.ChatMessageDto
 import io.github.rwpp.net.account.FriendItem
 import io.github.rwpp.net.account.FriendRequestDto
 import io.github.rwpp.net.account.PublicUser
-import io.github.rwpp.ui.AccountFriendsSection
 import io.github.rwpp.ui.AccountLoginDialog
 import io.github.rwpp.ui.AccountRegisterDialog
 import io.github.rwpp.ui.AccountView
-import io.github.rwpp.ui.FriendChatView
+import io.github.rwpp.ui.FriendsView
+import io.github.rwpp.ui.UI
 import io.github.rwpp.widget.RWPPTheme
 import io.github.rwpp.widget.WindowManager
 import net.peanuuutz.tomlkt.Toml
@@ -101,17 +95,11 @@ class FriendsUiScreenshotTest {
 
     @Test
     fun captureFriendsHome() = runDesktopComposeUiTest(width = 360, height = 720) {
+        FriendsSession.closeChat()
         setContent {
             ScreenshotTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .verticalScroll(rememberScrollState())
-                            .padding(16.dp),
-                    ) {
-                        AccountFriendsSection(isSmall = true)
-                    }
+                    FriendsView(onExit = {}, onGoLogin = {})
                 }
             }
         }
@@ -120,11 +108,39 @@ class FriendsUiScreenshotTest {
     }
 
     @Test
+    fun captureMainMenu() = runDesktopComposeUiTest(width = 800, height = 600) {
+        setContent {
+            ScreenshotTheme(windowManager = WindowManager.Middle) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(53, 57, 53)),
+                ) {
+                    UI.UiProvider.MainMenu(
+                        multiplayer = {},
+                        singlePlayer = {},
+                        settings = {},
+                        mods = {},
+                        extension = {},
+                        resourceBrowser = {},
+                        openSourceInfo = {},
+                        account = {},
+                        friends = {},
+                    )
+                }
+            }
+        }
+        waitForIdle()
+        save("main_menu.png")
+    }
+
+    @Test
     fun captureAddFriendDialog() = runDesktopComposeUiTest(width = 360, height = 720) {
+        FriendsSession.closeChat()
         setContent {
             ScreenshotTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    AccountFriendsSection(isSmall = true, initiallyShowAdd = true)
+                    FriendsView(onExit = {}, onGoLogin = {}, initiallyShowAdd = true)
                 }
             }
         }
@@ -136,11 +152,34 @@ class FriendsUiScreenshotTest {
     fun captureFriendChat() = runDesktopComposeUiTest(width = 360, height = 720) {
         setContent {
             ScreenshotTheme {
-                FriendChatView(onExit = {})
+                FriendsView(onExit = {}, onGoLogin = {})
             }
         }
         waitForIdle()
         save("friend_chat_small.png")
+    }
+
+    @Test
+    fun captureFriendsSplitHome() = runDesktopComposeUiTest(width = 800, height = 600) {
+        FriendsSession.closeChat()
+        setContent {
+            ScreenshotTheme(windowManager = WindowManager.Middle) {
+                FriendsView(onExit = {}, onGoLogin = {})
+            }
+        }
+        waitForIdle()
+        save("friends_split_home.png")
+    }
+
+    @Test
+    fun captureFriendsSplitChat() = runDesktopComposeUiTest(width = 800, height = 600) {
+        setContent {
+            ScreenshotTheme(windowManager = WindowManager.Middle) {
+                FriendsView(onExit = {}, onGoLogin = {})
+            }
+        }
+        waitForIdle()
+        save("friends_split_chat.png")
     }
 
     @Test
@@ -212,7 +251,7 @@ class FriendsUiScreenshotTest {
     }
 
     @Test
-    fun captureLoggedInAccountWithFriends() = runDesktopComposeUiTest(width = 360, height = 720) {
+    fun captureLoggedInAccount() = runDesktopComposeUiTest(width = 360, height = 720) {
         setContent {
             ScreenshotTheme {
                 Box(
@@ -225,7 +264,7 @@ class FriendsUiScreenshotTest {
             }
         }
         waitForIdle()
-        save("account_home_friends_small.png")
+        save("account_home_small.png")
     }
 
     private fun seedPreview() {
@@ -326,10 +365,13 @@ class FriendsUiScreenshotTest {
 }
 
 @androidx.compose.runtime.Composable
-private fun ScreenshotTheme(content: @androidx.compose.runtime.Composable () -> Unit) {
+private fun ScreenshotTheme(
+    windowManager: WindowManager = WindowManager.Small,
+    content: @androidx.compose.runtime.Composable () -> Unit,
+) {
     KoinContext(appKoin) {
         RWPPTheme(default = true) {
-            CompositionLocalProvider(LocalWindowManager provides WindowManager.Small) {
+            CompositionLocalProvider(LocalWindowManager provides windowManager) {
                 content()
             }
         }

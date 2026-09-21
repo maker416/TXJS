@@ -87,7 +87,7 @@ import io.github.rwpp.ui.UI.showReplayView
 import io.github.rwpp.ui.UI.showResourceBrowser
 import io.github.rwpp.ui.UI.showRoomView
 import io.github.rwpp.ui.UI.showAccountView
-import io.github.rwpp.ui.UI.showFriendChatView
+import io.github.rwpp.ui.UI.showFriendsView
 import io.github.rwpp.ui.UI.showSettingsView
 import io.github.rwpp.ui.UI.showSinglePlayerView
 import io.github.rwpp.ui.UI.showSurvivalView
@@ -167,7 +167,7 @@ fun App(
             || showSinglePlayerView
             || showSurvivalView
             || showAccountView
-            || showFriendChatView)
+            || showFriendsView)
 
     val game = koinInject<Game>()
 
@@ -247,6 +247,9 @@ fun App(
                             account = {
                                 showAccountView = true
                             },
+                            friends = {
+                                showFriendsView = true
+                            },
                         )
                     }
 
@@ -312,26 +315,31 @@ fun App(
                 }
 
                 AnimatedVisibility(
-                    showAccountView && !showFriendChatView,
+                    showAccountView,
                     enter = if (enableAnimations) fadeIn() + slideInVertically() else EnterTransition.None,
                     exit = if (enableAnimations) fadeOut() + slideOutVertically() else ExitTransition.None,
                 ) {
                     AccountView(onExit = {
-                        showFriendChatView = false
-                        FriendsSession.closeChat()
                         showAccountView = false
                     })
                 }
 
                 AnimatedVisibility(
-                    showFriendChatView,
+                    showFriendsView,
                     enter = if (enableAnimations) fadeIn() + slideInVertically() else EnterTransition.None,
                     exit = if (enableAnimations) fadeOut() + slideOutVertically() else ExitTransition.None,
                 ) {
-                    FriendChatView(onExit = {
-                        showFriendChatView = false
-                        FriendsSession.closeChat()
-                    })
+                    FriendsView(
+                        onExit = {
+                            showFriendsView = false
+                            FriendsSession.closeChat()
+                        },
+                        onGoLogin = {
+                            showFriendsView = false
+                            FriendsSession.closeChat()
+                            showAccountView = true
+                        },
+                    )
                 }
 
                 AnimatedVisibility(

@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -76,6 +77,7 @@ import com.mikepenz.markdown.m3.markdownTypography
 import io.github.rwpp.AppContext
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
+import io.github.rwpp.account.FriendsSession
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.Settings
@@ -91,6 +93,7 @@ import io.github.rwpp.net.LatestVersionProfile
 import io.github.rwpp.net.Net
 import io.github.rwpp.projectVersion
 import io.github.rwpp.rwpp_core.generated.resources.Res
+import io.github.rwpp.rwpp_core.generated.resources.group_30
 import io.github.rwpp.rwpp_core.generated.resources.title
 import io.github.rwpp.ui.UI.showQuestion
 import io.github.rwpp.ui.UI.showWarning
@@ -100,6 +103,7 @@ import io.github.rwpp.widget.AnimatedAlertDialog
 import io.github.rwpp.widget.BorderCard
 import io.github.rwpp.widget.WindowManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
@@ -133,8 +137,8 @@ object UI : Initialization, IUserInterface {
     var showSinglePlayerView by mutableStateOf(false)
     var showSurvivalView by mutableStateOf(false)
     var showAccountView by mutableStateOf(false)
-    /** 一对一好友聊天全页。打开时保持 [showAccountView]，关闭后回到用户主页。 */
-    var showFriendChatView by mutableStateOf(false)
+    /** 好友主页（微信式：左列表右聊天）。独立于用户主页的顶级页面。 */
+    var showFriendsView by mutableStateOf(false)
 
     /**
      * 模组重载期间堆耗尽（OutOfMemory）标志。置位后本进程内不再允许模组重载——
@@ -249,6 +253,7 @@ open class UIProvider {
         resourceBrowser: () -> Unit,
         openSourceInfo: () -> Unit,
         account: () -> Unit,
+        friends: () -> Unit,
     ) {
         val windowManager = LocalWindowManager.current
         val net = koinInject<Net>()
@@ -260,6 +265,16 @@ open class UIProvider {
                     net.getLatestVersionProfile()
                 }
                 UI.latestVersionProfile = profile
+            }
+        }
+
+        // 主菜单好友入口未读徽标数据轮询（未登录/预览模式静默跳过）
+        LaunchedEffect(Unit) {
+            while (true) {
+                if (AccountSession.loggedIn && AccountSession.networkEnabled) {
+                    runCatching { FriendsSession.refreshLists() }
+                }
+                delay(10_000)
             }
         }
 
@@ -290,9 +305,10 @@ open class UIProvider {
         ) {
             val titleAreaHeight = maxHeight * 0.32f
             val titleWidth = when (windowManager) {
-                WindowManager.Small -> maxWidth * 0.70f
-                WindowManager.Middle -> maxWidth * 0.60f
-                WindowManager.Large -> maxWidth * 0.52f
+                // 略收窄，给左上角主页/好友入口小框留出间距
+                WindowManager.Small -> maxWidth * 0.64f
+                WindowManager.Middle -> maxWidth * 0.55f
+                WindowManager.Large -> maxWidth * 0.48f
             }
             val contentMaxWidth = when (windowManager) {
                 WindowManager.Small -> maxWidth * 0.85f
@@ -305,8 +321,11 @@ open class UIProvider {
                     .align(Alignment.TopStart)
                     .padding(top = 8.dp, start = 10.dp),
                 horizontalAlignment = Alignment.Start,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 AccountMenuEntry(onClick = account)
+                val friendUnread = FriendsSession.chats.sumOf { it.unread } + FriendsSession.incoming.size
+                FriendsMenuEntry(unread = friendUnread, onClick = friends)
             }
 
             Column(
@@ -459,6 +478,30 @@ open class UIProvider {
         }
     }
 
+    /** 主菜单左上角入口共用的圆角小框：与主菜单按钮同款半透明黑底 + 白描边。 */
+    @Composable
+    private fun MenuEntryBox(
+        onClick: () -> Unit,
+        content: @Composable RowScope.() -> Unit,
+    ) {
+        Surface(
+            color = Color(0x5A1A1A1A),
+            contentColor = Color.White,
+            shape = RoundedCornerShape(18.dp),
+            border = BorderStroke(1.5.dp, Color.White.copy(alpha = 0.55f)),
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp,
+            onClick = onClick,
+        ) {
+            Row(
+                modifier = Modifier.padding(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                content = content,
+            )
+        }
+    }
+
     @Composable
     private fun AccountMenuEntry(onClick: () -> Unit) {
         val windowManager = LocalWindowManager.current
@@ -471,22 +514,15 @@ open class UIProvider {
             readI18n("account.login", I18nType.RWPP)
         }
 
-        Row(
-            modifier = Modifier
-                .height(44.dp)
-                .clickable(onClick = onClick)
-                .padding(end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+        MenuEntryBox(onClick = onClick) {
             Box(
-                modifier = Modifier.size(44.dp),
+                modifier = Modifier.size(64.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 if (loggedIn) {
                     Box(
                         modifier = Modifier
-                            .size(28.dp)
+                            .size(56.dp)
                             .clip(CircleShape)
                             .background(Color(151, 188, 98)),
                         contentAlignment = Alignment.Center,
@@ -494,15 +530,15 @@ open class UIProvider {
                         Text(
                             displayName.firstOrNull()?.toString() ?: "?",
                             color = Color(27, 18, 18),
-                            style = MaterialTheme.typography.labelLarge,
+                            style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
                         )
                     }
                     Box(
                         modifier = Modifier
-                            .size(8.dp)
+                            .size(16.dp)
                             .align(Alignment.TopEnd)
-                            .offset(x = (-6).dp, y = 8.dp)
+                            .offset(x = (-4).dp, y = 4.dp)
                             .clip(CircleShape)
                             .background(Color(95, 190, 95)),
                     )
@@ -511,7 +547,7 @@ open class UIProvider {
                         imageVector = Icons.Default.Person,
                         contentDescription = readI18n("account.title", I18nType.RWPP),
                         tint = Color.White,
-                        modifier = Modifier.size(28.dp),
+                        modifier = Modifier.size(56.dp),
                     )
                 }
             }
@@ -519,12 +555,88 @@ open class UIProvider {
                 Text(
                     label,
                     color = Color.White,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(end = 6.dp),
                 )
             }
+        }
+    }
+
+    /**
+     * 好友入口：位于主页入口正下方、左对齐，与主页入口同一视觉规格。
+     * 有未读消息/待处理申请时右上角显示红色脉冲徽标。
+     */
+    @Composable
+    private fun FriendsMenuEntry(unread: Int, onClick: () -> Unit) {
+        val windowManager = LocalWindowManager.current
+        val showLabel = windowManager != WindowManager.Small
+
+        val infiniteTransition = rememberInfiniteTransition(label = "friendsBadgePulse")
+        val badgeScale by infiniteTransition.animateFloat(
+            initialValue = 1f,
+            targetValue = if (unread > 0) 1.25f else 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(700),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "friendsBadgeScale",
+        )
+
+        MenuEntryBox(onClick = onClick) {
+            Box(
+                modifier = Modifier.size(64.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painter = painterResource(Res.drawable.group_30),
+                    contentDescription = readI18n("menu.friends", I18nType.RWPP),
+                    tint = Color.White,
+                    modifier = Modifier.size(56.dp),
+                )
+                if (unread > 0) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .offset(x = (-2).dp, y = 2.dp)
+                            .scale(badgeScale),
+                    ) {
+                        MenuBadge(unread)
+                    }
+                }
+            }
+            if (showLabel) {
+                Text(
+                    readI18n("menu.friends", I18nType.RWPP),
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(end = 6.dp),
+                )
+            }
+        }
+    }
+
+    /** 主菜单入口角标：红底白字计数（>99 折叠为 99+）。 */
+    @Composable
+    private fun MenuBadge(count: Int) {
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(Color(0xFFFF5252))
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                if (count > 99) "99+" else count.toString(),
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+            )
         }
     }
 

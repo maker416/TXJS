@@ -504,8 +504,6 @@ private fun AccountLoggedInState(
         text = readI18n("account.multiplayerNameBound", I18nType.RWPP),
         icon = Icons.Default.Info,
     )
-
-    AccountFriendsSection(isSmall = isSmall)
 }
 
 @Composable
