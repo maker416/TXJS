@@ -132,7 +132,6 @@ class GameImpl : AbstractGame() {
                         // bW.a() 期间的 Loading units/mods 对话框不当成踢人。
                         // 引擎可能拆成 title="Loading units" + message="123 (name)"，拼回弹窗同款格式。
                         loadingMessage = composeEngineLoadingMessage(p0, p1)
-                    }
                     } else {
                         UI.showWarning("$p0: $p1", true)
                     }
