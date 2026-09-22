@@ -141,6 +141,12 @@ object UI : Initialization, IUserInterface {
     var showFriendsView by mutableStateOf(false)
 
     /**
+     * 聊天输入框持有焦点时暂时退出全屏沉浸。
+     * 华为/鸿蒙平板隐藏系统栏后，输入法会弹出并立刻被系统收掉。
+     */
+    var imeImmersiveSuspended by mutableStateOf(false)
+
+    /**
      * 模组重载期间堆耗尽（OutOfMemory）标志。置位后本进程内不再允许模组重载——
      * 堆已被部分解析结果占满，反复重载只会崩溃。进程重启自然清除。
      */

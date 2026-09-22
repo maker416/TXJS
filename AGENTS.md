@@ -313,6 +313,7 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 - **多人房间昵称绑定账号昵称**：登录 RWJS 统一账号后，多人页顶部用户名固定为账号显示名（`AccountSession.displayName`），输入框只读并显示锁图标。联动点有两处：`AccountSession.applySession()` 末尾的 `syncMultiplayerName()`（登录/注册/改昵称/刷新资料/恢复会话后写入 `lastNetworkPlayerName` 与 `game.setUserName`），以及 `Multiplayer.kt` 中 `LaunchedEffect(loggedIn, displayName)` 的实时同步。退出登录不回退已写入的名字，输入框恢复可编辑。
 - **账号 UI 组件**：用户页/好友/登录注册弹窗的现代化组件集中在 `rwpp-core` 的 `ui/AccountWidgets.kt`（头像、状态胶囊、信息行、操作项、主按钮、弹窗头部、提示条、`AccountAuthCard`），新增账号相关界面时优先复用。
+- **好友聊天输入法（鸿蒙全屏，踩过坑）**：聊天栏不能把 `imePadding()` 和 `autoClearFocus()`（可聚焦的 `clickable`）套在输入框父级上。华为 MatePad / HarmonyOS 全屏隐藏系统栏时，输入法会弹出后立刻被收掉；`MainActivity` 通过 `applyImeImmersiveMode` 使用 `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE`，输入框获焦期间 `setImeImmersiveSuspended(true)` 暂时恢复系统栏。底部避让用 `chatInputBottomInset()`（IME 与导航栏取较大值，且至少留出输入框高度），避免 adjustResize 再叠一层 inset 把输入框压成 0 高度后丢焦点。
 
 ## 安全与部署注意事项
 

@@ -24,7 +24,6 @@ import androidx.compose.material.ripple.RippleAlpha
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.FocusState
@@ -267,12 +266,10 @@ fun RWSingleOutlinedTextField(
             value = value,
             enabled = enabled,
             singleLine = true,
-            modifier = Modifier.fillMaxWidth().composed {
-                if (focusRequester != null)
-                    focusRequester(focusRequester)
-                        .onFocusChanged(onFocusChanged)
-                else this
-            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+                .onFocusChanged(onFocusChanged),
             trailingIcon = trailingIcon,
             leadingIcon = leadingIcon,
             onValueChange = {

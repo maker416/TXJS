@@ -18,6 +18,9 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,9 +29,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -63,10 +67,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.offset
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
@@ -83,13 +93,13 @@ import io.github.rwpp.net.account.FriendRequestDto
 import io.github.rwpp.net.account.FriendRequestStatus
 import io.github.rwpp.net.account.PublicUser
 import io.github.rwpp.platform.BackHandler
+import io.github.rwpp.platform.setImeImmersiveSuspended
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.group_30
 import io.github.rwpp.widget.AnimatedAlertDialog
 import io.github.rwpp.widget.ExitButton
 import io.github.rwpp.widget.RWSingleOutlinedTextField
 import io.github.rwpp.widget.WindowManager
-import io.github.rwpp.widget.autoClearFocus
 import io.github.rwpp.widget.v2.RWIconButton
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -432,7 +442,15 @@ private fun FriendChatPane(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize().imePadding().autoClearFocus()) {
+    // 离开聊天栏或关掉会话时恢复全屏。输入框父级不能再挂可聚焦的 clickable，否则鸿蒙弹出输入法时会把焦点夺走。
+    DisposableEffect(Unit) {
+        onDispose { setImeImmersiveSuspended(false) }
+    }
+    LaunchedEffect(peer?.id) {
+        if (peer == null) setImeImmersiveSuspended(false)
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
         if (peer == null) {
             Column(
                 modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -460,6 +478,7 @@ private fun FriendChatPane(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .dismissImeOnTap()
                 .padding(start = 12.dp, end = 48.dp, top = 10.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -517,7 +536,7 @@ private fun FriendChatPane(
 
         LazyColumn(
             state = listState,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
+            modifier = Modifier.weight(1f).fillMaxWidth().dismissImeOnTap(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(
                 horizontal = 14.dp,
                 vertical = 10.dp,
@@ -556,7 +575,7 @@ private fun FriendChatPane(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .navigationBarsPadding()
+                .chatInputBottomInset()
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -565,6 +584,7 @@ private fun FriendChatPane(
                 label = readI18n("friends.inputHint", I18nType.RWPP),
                 value = draft,
                 modifier = Modifier.weight(1f),
+                onFocusChanged = { setImeImmersiveSuspended(it.isFocused) },
                 onValueChange = { if (it.codePointCount(0, it.length) <= 2000) draft = it },
             )
             // 有可发送内容时发送按钮染色，给明确可点反馈
@@ -931,6 +951,48 @@ private fun ChatBubble(message: ChatMessageDto, fromMe: Boolean) {
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                 modifier = Modifier.padding(top = 2.dp, start = 4.dp, end = 4.dp),
             )
+        }
+    }
+}
+
+/**
+ * 点在消息区或标题栏的空白处时收起输入法。
+ * 不用 [clickable]：Compose 1.10 的 clickable 在软键盘弹出后会变成可聚焦节点，抢走输入框焦点。
+ */
+@Composable
+private fun Modifier.dismissImeOnTap(): Modifier {
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    return pointerInput(keyboard, focusManager) {
+        awaitEachGesture {
+            awaitFirstDown(requireUnconsumed = true)
+            if (waitForUpOrCancellation() != null) {
+                keyboard?.hide()
+                focusManager.clearFocus()
+            }
+        }
+    }
+}
+
+/**
+ * 输入行底部避让。IME 与导航栏取较大的一边，避免叠两次；
+ * 并且至少给输入框留出高度，防止鸿蒙在 adjustResize 之外再报一遍 IME inset 时把输入框压成 0 高度、焦点丢失、键盘收回。
+ */
+@Composable
+private fun Modifier.chatInputBottomInset(): Modifier {
+    val density = LocalDensity.current
+    val desiredBottom = maxOf(
+        WindowInsets.ime.getBottom(density),
+        WindowInsets.navigationBars.getBottom(density),
+    )
+    val minContentPx = with(density) { 72.dp.roundToPx() }
+    return layout { measurable, constraints ->
+        val pad = desiredBottom.coerceAtMost((constraints.maxHeight - minContentPx).coerceAtLeast(0))
+        val placeable = measurable.measure(constraints.offset(vertical = -pad))
+        val width = placeable.width.coerceAtMost(constraints.maxWidth)
+        val height = (placeable.height + pad).coerceAtMost(constraints.maxHeight)
+        layout(width, height) {
+            placeable.place(0, 0)
         }
     }
 }

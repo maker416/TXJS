@@ -22,6 +22,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,9 +32,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalView
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import com.corrodinggames.rts.appFramework.d
 import io.github.rwpp.App
@@ -48,6 +46,7 @@ import io.github.rwpp.event.events.ReturnMainMenuEvent
 import io.github.rwpp.external.FileChooseProgress
 import io.github.rwpp.game.mod.KeepConnectedReload
 import io.github.rwpp.logger
+import io.github.rwpp.platform.applyImeImmersiveMode
 import io.github.rwpp.ui.UI
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -137,12 +136,12 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             KoinContext(appKoin) {
-                val view = LocalView.current
-                val window = (view.context as Activity).window
-                WindowCompat.getInsetsController(window, view).hide(
-                    WindowInsetsCompat.Type.statusBars() or
-                            WindowInsetsCompat.Type.navigationBars()
-                )
+                // 聊天输入获焦时 imeImmersiveSuspended 为 true，不能在组合阶段无条件 hide，
+                // 否则鸿蒙会把刚弹出的输入法一起收掉。
+                val suspendImmersive = UI.imeImmersiveSuspended
+                SideEffect {
+                    applyImeImmersiveMode(this@MainActivity, suspendImmersive)
+                }
 
                 val isPremium = true
 
