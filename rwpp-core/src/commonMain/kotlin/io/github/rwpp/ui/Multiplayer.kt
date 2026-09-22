@@ -358,6 +358,16 @@ fun MultiplayerView(
         }
     }
 
+    // 好友邀请卡片一键加入：消费 pendingInviteJoin，走下方既有 LoadingView 加入链路
+    //（selectedRoomDescription 保持 null，等价于直连 IP 加入，preJoinSync 按直连处理）
+    LaunchedEffect(UI.pendingInviteJoin) {
+        val invite = UI.pendingInviteJoin ?: return@LaunchedEffect
+        UI.pendingInviteJoin = null
+        pendingHostSession = false
+        serverAddress = invite.address
+        isConnecting = true
+    }
+
     JoinServerRequestDialog(showJoinRequestDialog, { showJoinRequestDialog = false },
        selectedRoomDescription, blacklists
     ) { dismiss ->

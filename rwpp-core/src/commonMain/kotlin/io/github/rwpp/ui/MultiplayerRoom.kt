@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
@@ -68,6 +69,7 @@ import coil3.request.ImageRequest
 import coil3.size.Precision
 import io.github.rwpp.AppContext
 import io.github.rwpp.LocalWindowManager
+import io.github.rwpp.account.AccountSession
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.PublishedRoomInfo
@@ -75,6 +77,7 @@ import io.github.rwpp.config.Settings
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
+import io.github.rwpp.event.events.PlayerJoinEvent
 import io.github.rwpp.event.events.RefreshUIEvent
 import io.github.rwpp.event.events.ReturnMainMenuEvent
 import io.github.rwpp.event.onDispose
@@ -91,6 +94,8 @@ import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.net.DEFAULT_PUBLISH_ROOM_TYPE
 import io.github.rwpp.net.MOD_SYNC_ROOM_TYPE
 import io.github.rwpp.net.Net
+import io.github.rwpp.net.account.RoomInvite
+import io.github.rwpp.net.account.isPlausibleJoinAddress
 import io.github.rwpp.net.composePublishRoomType
 import io.github.rwpp.net.roomListPublishAddress
 import io.github.rwpp.config.DEFAULT_ROOM_LIST_API_URLS
@@ -99,6 +104,9 @@ import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.io.SizeUtils
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.platform.KickPlayerContextMenuAreaMultiplatform
+import io.github.rwpp.projectVersion
+import io.github.rwpp.rwpp_core.generated.resources.Res
+import io.github.rwpp.rwpp_core.generated.resources.group_30
 import io.github.rwpp.scripts.Render
 import io.github.rwpp.ui.UI.chatMessages
 import io.github.rwpp.ui.color.getTeamColor
@@ -120,6 +128,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
 import kotlin.math.roundToInt
 
@@ -158,6 +167,8 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     DisposableEffect(Unit) {
         onDispose {
             CloseUIPanelEvent("multiplayerRoom").broadcastIn()
+            // 离房重置邀请策略（无论房主还是成员）
+            RoomInvitePolicy.reset()
         }
     }
 
@@ -165,6 +176,17 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     val game = koinInject<Game>()
     val net = koinInject<Net>()
     val room = game.gameRoom
+
+    // 房主禁止成员邀请期间，向每个新进房的真人玩家补播控制消息（其进房前的广播收不到）
+    GlobalEventChannel.filter(PlayerJoinEvent::class).onDispose {
+        subscribeAlways(Dispatchers.Main.immediate) {
+            if ((room.isHost || room.isHostServer) && !RoomInvitePolicy.membersCanInvite &&
+                !it.player.isAI && it.player != room.localPlayer
+            ) {
+                room.sendChatMessageOrCommand(RoomInvitePolicy.controlMessage(false))
+            }
+        }
+    }
 
     var update by remember { mutableStateOf(false) }
     var lastSelectedIndex by remember { mutableIntStateOf(0) }
@@ -174,6 +196,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     var optionVisible by remember { mutableStateOf(false) }
     var banUnitVisible by remember { mutableStateOf(false) }
     var showForceStartConfirm by remember { mutableStateOf(false) }
+    var inviteDialogVisible by remember { mutableStateOf(false) }
     var showUnsyncedInRoomBlock by remember { mutableStateOf(false) }
     var unsyncedInRoomNames by remember { mutableStateOf(listOf<String>()) }
     var publishState by remember { mutableStateOf<PublishToListUiState>(PublishToListUiState.Hidden) }
@@ -265,6 +288,8 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 
     var showMapSelectView by remember { mutableStateOf(false) }
     val isHost = remember(update) { room.isHost || room.isHostServer }
+    /** 当前用户是否可发起邀请：房主始终可以；成员取决于房主广播的邀请策略。 */
+    val canInvite = isHost || RoomInvitePolicy.membersCanInvite
 
     val updateAction = { update = !update }
 
@@ -723,6 +748,11 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                         onPlayerClick = onPlayerClick,
                                         enableAnimations = enableAnimations,
                                         expandVertically = false,
+                                        onInvite = if (!isSandboxGame && canInvite) {
+                                            { inviteDialogVisible = true }
+                                        } else {
+                                            null
+                                        },
                                     )
                                     CompactMapSettingsPanel(
                                         modifier = Modifier.fillMaxWidth(),
@@ -736,6 +766,10 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                         onLockToggle = {
                                             isLocked = !isLocked
                                             room.lockedRoom = isLocked
+                                        },
+                                        membersCanInvite = RoomInvitePolicy.membersCanInvite,
+                                        onInvitePolicyToggle = {
+                                            RoomInvitePolicy.setByHost(room, !RoomInvitePolicy.membersCanInvite)
                                         },
                                         isDesktop = isDesktop,
                                         // Q 房本身已公开，无需再走 RWList「公开到列表」
@@ -773,6 +807,11 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                         onPlayerClick = onPlayerClick,
                                         enableAnimations = enableAnimations,
                                         expandVertically = true,
+                                        onInvite = if (!isSandboxGame && canInvite) {
+                                            { inviteDialogVisible = true }
+                                        } else {
+                                            null
+                                        },
                                     )
                                     CompactMapSettingsPanel(
                                         modifier = Modifier
@@ -788,6 +827,10 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                         onLockToggle = {
                                             isLocked = !isLocked
                                             room.lockedRoom = isLocked
+                                        },
+                                        membersCanInvite = RoomInvitePolicy.membersCanInvite,
+                                        onInvitePolicyToggle = {
+                                            RoomInvitePolicy.setByHost(room, !RoomInvitePolicy.membersCanInvite)
                                         },
                                         isDesktop = isDesktop,
                                         showPublishButton = roomIdForPublish.let { id ->
@@ -930,6 +973,15 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                                     },
                                                 )
                                             }
+                                            // 空槽位：追加最多 2 个「邀请好友」占位行
+                                            if (!isSandboxGame && canInvite && players.size < room.maxPlayerCount) {
+                                                items(
+                                                    count = (room.maxPlayerCount - players.size).coerceAtMost(2),
+                                                    key = { "invite_slot_$it" },
+                                                ) {
+                                                    RoomInviteSlotRow(onClick = { inviteDialogVisible = true })
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -998,6 +1050,46 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                     }
                                 }
 
+                                if (!isSandboxGame && isHost) {
+                                    // 房主邀请策略开关：禁止后广播控制消息，成员端隐藏邀请入口
+                                    IconButton(
+                                        onClick = {
+                                            RoomInvitePolicy.setByHost(room, !RoomInvitePolicy.membersCanInvite)
+                                        },
+                                        modifier = Modifier.padding(
+                                            horizontal = 5.dp,
+                                            vertical = 30.dp,
+                                        ),
+                                    ) {
+                                        Icon(
+                                            painterResource(Res.drawable.group_30),
+                                            readI18n(
+                                                if (RoomInvitePolicy.membersCanInvite) {
+                                                    "multiplayer.room.invitePolicyAllowed"
+                                                } else {
+                                                    "multiplayer.room.invitePolicyForbidden"
+                                                },
+                                                I18nType.RWPP,
+                                            ),
+                                            tint = if (RoomInvitePolicy.membersCanInvite) {
+                                                MaterialTheme.colorScheme.primary
+                                            } else {
+                                                Color(237, 112, 20)
+                                            },
+                                        )
+                                    }
+                                }
+
+                                if (!isSandboxGame && canInvite) {
+                                    RWTextButton(
+                                        readI18n("multiplayer.room.invite", I18nType.RWPP),
+                                        modifier = Modifier.padding(
+                                            horizontal = 5.dp,
+                                            vertical = 30.dp,
+                                        ),
+                                    ) { inviteDialogVisible = true }
+                                }
+
                                 var chatMessage by remember { mutableStateOf("") }
                                 if (!isSandboxGame) {
                                     RoomChatMessageTextField(
@@ -1025,6 +1117,51 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     }
 
     ContentView()
+
+    /**
+     * 以当前房间快照生成邀请负载；无法确定可加入地址时返回 null。
+     * 地址优先取当前房间短码（roomDetails 的 [QR]\d+，与「加入上次游戏」的 R 码直连同先例）；
+     * 无短码才回退 lastNetworkIP，且必须像 host:port/IP——快速建房指令（Qnews 等）会被拒绝。
+     */
+    fun buildRoomInvite(): RoomInvite? {
+        val code = roomIdForPublish
+        val lastIp = configIO.getGameConfig<String?>("lastNetworkIP").orEmpty()
+        val address = when {
+            code != null -> code
+            isPlausibleJoinAddress(lastIp) -> lastIp.trim()
+            else -> return null
+        }
+        return RoomInvite(
+            address = address,
+            code = code,
+            inviter = AccountSession.displayName.ifBlank {
+                configIO.getGameConfig<String?>("lastNetworkPlayerName").orEmpty()
+            },
+            map = displayMapName,
+            players = "${players.size}/${room.maxPlayerCount}",
+            mods = room.mods.size,
+            version = projectVersion,
+            invitedAt = System.currentTimeMillis(),
+        )
+    }
+
+    InviteFriendsDialog(
+        visible = inviteDialogVisible,
+        invite = if (inviteDialogVisible) buildRoomInvite() else null,
+        onGoLogin = { UI.showAccountView = true },
+        onSent = { names ->
+            // 在房间聊天里告知房内其他玩家（以自己的名义发言，文案标明是邀请）
+            if (names.isNotEmpty()) {
+                room.sendChatMessageOrCommand(
+                    readI18n(
+                        "multiplayer.room.inviteSent", I18nType.RWPP,
+                        names.joinToString(readI18n("common.listSeparator", I18nType.RWPP)),
+                    )
+                )
+            }
+        },
+        onDismiss = { inviteDialogVisible = false },
+    )
 
     val forceStartPeers = ModSyncController.hostPeerSnapshots.filter { it.phase != SyncPeerPhase.SYNCED }
     AnimatedAlertDialog(
@@ -2234,6 +2371,7 @@ private fun CompactPlayerPanel(
     enableAnimations: Boolean,
     expandVertically: Boolean,
     modifier: Modifier = Modifier,
+    onInvite: (() -> Unit)? = null,
 ) {
     val playerListCanScroll by remember {
         derivedStateOf { lazyListCanScroll(playerListState) }
@@ -2307,6 +2445,19 @@ private fun CompactPlayerPanel(
                         },
                     )
                 }
+                // 空槽位：追加最多 2 个「邀请好友」占位行
+                if (onInvite != null && players.size < room.maxPlayerCount) {
+                    items(
+                        count = (room.maxPlayerCount - players.size).coerceAtMost(2),
+                        key = { "invite_slot_$it" },
+                    ) {
+                        RoomInviteSlotRow(
+                            onClick = onInvite,
+                            compact = true,
+                            rowShape = rowShape,
+                        )
+                    }
+                }
             }
         }
     }
@@ -2321,6 +2472,8 @@ private fun CompactMapSettingsPanel(
     isSandboxGame: Boolean,
     isLocked: Boolean,
     onLockToggle: () -> Unit,
+    membersCanInvite: Boolean,
+    onInvitePolicyToggle: () -> Unit,
     isDesktop: Boolean,
     showPublishButton: Boolean,
     onOption: () -> Unit,
@@ -2381,6 +2534,28 @@ private fun CompactMapSettingsPanel(
                         Color(237, 112, 20)
                     } else {
                         MaterialTheme.colorScheme.onSurface
+                    },
+                )
+            }
+            // 房主邀请策略开关：禁止后广播控制消息，成员端隐藏邀请入口
+            IconButton(
+                onClick = onInvitePolicyToggle,
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            ) {
+                Icon(
+                    painterResource(Res.drawable.group_30),
+                    readI18n(
+                        if (membersCanInvite) {
+                            "multiplayer.room.invitePolicyAllowed"
+                        } else {
+                            "multiplayer.room.invitePolicyForbidden"
+                        },
+                        I18nType.RWPP,
+                    ),
+                    tint = if (membersCanInvite) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        Color(237, 112, 20)
                     },
                 )
             }
@@ -2772,6 +2947,45 @@ private fun CompactRoomPanel(
             .padding(4.dp),
         content = content,
     )
+}
+
+/** 玩家列表中的「邀请好友」空槽位行：加号图标 + 灰字，点击打开邀请弹窗。 */
+@Composable
+private fun RoomInviteSlotRow(
+    onClick: () -> Unit,
+    compact: Boolean = false,
+    rowShape: Shape = CircleShape,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(if (compact) 2.dp else 5.dp)
+            .border(
+                BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                rowShape,
+            )
+            .clip(rowShape)
+            .bounceClick(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            modifier = Modifier.padding(vertical = if (compact) 6.dp else 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                Icons.Default.Add,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                modifier = Modifier.size(18.dp),
+            )
+            Text(
+                readI18n("multiplayer.room.inviteFriends", I18nType.RWPP),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            )
+        }
+    }
 }
 
 @Composable

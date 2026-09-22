@@ -19,6 +19,9 @@ import io.github.rwpp.net.account.FriendItem
 import io.github.rwpp.net.account.FriendRequestBox
 import io.github.rwpp.net.account.FriendRequestDto
 import io.github.rwpp.net.account.PublicUser
+import io.github.rwpp.net.account.RoomInviteCodec
+import io.github.rwpp.ui.RoomInviteNotification
+import io.github.rwpp.ui.UI
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -82,6 +85,7 @@ object FriendsSession {
             if (peer != null && activeConversationId == null) {
                 activeConversationId = c.firstOrNull { it.peer.id == peer.id }?.id
             }
+            maybeNotifyRoomInvite(c)
         } catch (e: AccountApiException) {
             listError = accountErrorText(e)
             if (e.code == io.github.rwpp.net.account.AccountErrorCode.UNAUTHORIZED) {
@@ -169,6 +173,21 @@ object FriendsSession {
         }
     }
 
+    /** 向任意好友发送私信（不依赖当前打开的会话，不影响 [messages] 与 [chatError]），供房间邀请等带外消息使用。 */
+    suspend fun sendTo(peerId: Long, body: String): Boolean {
+        val token = AccountSession.requireToken()
+        return try {
+            withContext(Dispatchers.IO) {
+                AccountSession.client().sendMessage(token, peerId, body)
+            }
+            true
+        } catch (e: Exception) {
+            // 不写 chatError：与当前打开的会话无关，错误由调用方自行呈现
+            logger.warn("发送私信失败：{}", e.message)
+            false
+        }
+    }
+
     suspend fun pollMessages() {
         val conversationId = activeConversationId ?: return
         if (!AccountSession.networkEnabled || !AccountSession.loggedIn) return
@@ -231,6 +250,33 @@ object FriendsSession {
         closeChat()
         listError = ""
         loadingLists = false
+        inviteToastSeen.clear()
+        UI.incomingInviteNotification = null
+    }
+
+    /** 每个会话已弹过悬浮卡片的邀请消息 id（peerId -> messageId），避免轮询重复弹。 */
+    private val inviteToastSeen = mutableMapOf<Long, Long>()
+
+    /**
+     * 房间邀请悬浮通知：从未读私信里识别 `[RWJSINV1]` 邀请并置位 [UI.incomingInviteNotification]。
+     *
+     * 同一会话同一条消息只弹一次（含被抑制的情况：消息仍留在聊天流里，不重复打扰）；
+     * 过期邀请、正在查看该会话、在房间/对局中时不弹。
+     */
+    private fun maybeNotifyRoomInvite(newChats: List<ChatItem>) {
+        val selfId = AccountSession.user?.id ?: return
+        newChats.forEach { chat ->
+            val last = chat.lastMessage ?: return@forEach
+            if (last.senderId == selfId || chat.unread <= 0) return@forEach
+            if (inviteToastSeen[chat.peer.id] == last.id) return@forEach
+            val invite = RoomInviteCodec.decode(last.body) ?: return@forEach
+            inviteToastSeen[chat.peer.id] = last.id
+            if (RoomInviteCodec.isExpired(invite, System.currentTimeMillis())) return@forEach
+            if (UI.showRoomView) return@forEach
+            if (UI.showFriendsView && activePeer?.id == chat.peer.id) return@forEach
+            // 多个好友同时邀请时后到的覆盖先到的；被覆盖的邀请仍可在会话里点卡片加入
+            UI.incomingInviteNotification = RoomInviteNotification(invite, chat.peer, last.id)
+        }
     }
 
     private suspend fun loadLatestMessages(conversationId: Long) {

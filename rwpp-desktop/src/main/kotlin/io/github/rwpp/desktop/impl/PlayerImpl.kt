@@ -82,6 +82,9 @@ interface PlayerImpl : Player {
         get() = team == -3
     override val isAI: Boolean
         get() = self.w
+    override val isRoomHost: Boolean
+        // 引擎侧两种房主标记：自建主机 ping 为 -99（显示 "HOST"），中继房创建者 r() 为真（显示 " (HOST)"）
+        get() = self.A() == -99 || self.r()
     override var difficulty: Int?
         get() = if(isAI) self.z else null
         set(value) {

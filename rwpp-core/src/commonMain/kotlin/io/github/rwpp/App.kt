@@ -144,6 +144,19 @@ fun App(
         }
     }
 
+    // 好友私信全局轮询：驱动未读徽标与房间邀请悬浮卡片。
+    // 好友页/账号页打开时跳过（它们有更频繁的自有轮询）；未登录/预览模式静默跳过
+    LaunchedEffect(Unit) {
+        while (true) {
+            if (AccountSession.loggedIn && AccountSession.networkEnabled &&
+                !UI.showFriendsView && !UI.showAccountView
+            ) {
+                runCatching { FriendsSession.refreshLists() }
+            }
+            delay(10_000)
+        }
+    }
+
     setSingletonImageLoaderFactory { context ->
         ImageLoader.Builder(context)
             .crossfade(true)
@@ -315,16 +328,6 @@ fun App(
                 }
 
                 AnimatedVisibility(
-                    showAccountView,
-                    enter = if (enableAnimations) fadeIn() + slideInVertically() else EnterTransition.None,
-                    exit = if (enableAnimations) fadeOut() + slideOutVertically() else ExitTransition.None,
-                ) {
-                    AccountView(onExit = {
-                        showAccountView = false
-                    })
-                }
-
-                AnimatedVisibility(
                     showFriendsView,
                     enter = if (enableAnimations) fadeIn() + slideInVertically() else EnterTransition.None,
                     exit = if (enableAnimations) fadeOut() + slideOutVertically() else ExitTransition.None,
@@ -446,6 +449,18 @@ fun App(
                             }
                         }
                     }
+                }
+
+                // 账号页必须渲染在房间页之后（上层）：房间内「邀请好友」未登录时会就地打开登录，
+                // 登录完成关闭后回到房间，不能与房间画面交叠。
+                AnimatedVisibility(
+                    showAccountView,
+                    enter = if (enableAnimations) fadeIn() + slideInVertically() else EnterTransition.None,
+                    exit = if (enableAnimations) fadeOut() + slideOutVertically() else ExitTransition.None,
+                ) {
+                    AccountView(onExit = {
+                        showAccountView = false
+                    })
                 }
 
                 var warningDialogVisible by remember { mutableStateOf(false) }
@@ -945,6 +960,13 @@ fun App(
                         UI.dialogWidget?.Render()
                     }
                 }
+
+                // 好友房间邀请悬浮卡片：屏幕右侧滑入，底部进度条倒计时 10 秒自动忽略
+                RoomInviteToastHost(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 14.dp)
+                )
 
                 val appContext = koinInject<AppContext>()
                 val exitOverlay by appContext.exitOverlayVisible.collectAsState()

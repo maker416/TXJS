@@ -38,6 +38,12 @@ interface Player {
      */
     val isSpectator: Boolean
     val isAI: Boolean
+
+    /**
+     * 该玩家是否为房间房主（引擎侧标记：自建主机显示 "HOST"，中继房创建者显示 " (HOST)"）。
+     * 用于校验房间控制消息（如邀请策略广播）的发送者身份。
+     */
+    val isRoomHost: Boolean
     var difficulty: Int?
 
     /**

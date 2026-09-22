@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -92,12 +93,18 @@ import io.github.rwpp.net.account.ChatMessageDto
 import io.github.rwpp.net.account.FriendRequestDto
 import io.github.rwpp.net.account.FriendRequestStatus
 import io.github.rwpp.net.account.PublicUser
+import io.github.rwpp.net.account.RoomInvite
+import io.github.rwpp.net.account.RoomInviteCodec
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.platform.setImeImmersiveSuspended
+import io.github.rwpp.projectVersion
+import io.github.rwpp.utils.compareVersions
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.group_30
 import io.github.rwpp.widget.AnimatedAlertDialog
+import io.github.rwpp.widget.BorderCard
 import io.github.rwpp.widget.ExitButton
+import io.github.rwpp.widget.LargeProportion
 import io.github.rwpp.widget.RWSingleOutlinedTextField
 import io.github.rwpp.widget.WindowManager
 import io.github.rwpp.widget.v2.RWIconButton
@@ -135,6 +142,24 @@ fun FriendsView(
     val scope = rememberCoroutineScope()
     val loggedIn = AccountSession.loggedIn
     var showAdd by remember { mutableStateOf(initiallyShowAdd) }
+    var versionMismatchInvite by remember { mutableStateOf<RoomInvite?>(null) }
+
+    /** 接受邀请：交由多人页消费 pendingInviteJoin 走既有 Loading/directJoinServer 链路。 */
+    val proceedJoinInvite: (RoomInvite) -> Unit = { invite ->
+        UI.pendingInviteJoin = invite
+        FriendsSession.closeChat()
+        UI.showFriendsView = false
+        UI.showMultiplayerView = true
+    }
+
+    val onJoinInvite: (RoomInvite) -> Unit = { invite ->
+        when {
+            UI.showRoomView -> UI.showWarning(readI18n("friends.inviteLeaveRoomFirst", I18nType.RWPP))
+            invite.version.isNotBlank() && compareVersions(invite.version, projectVersion) != 0 ->
+                versionMismatchInvite = invite
+            else -> proceedJoinInvite(invite)
+        }
+    }
 
     LaunchedEffect(Unit) {
         AccountSession.restoreIfNeeded()
@@ -189,6 +214,7 @@ fun FriendsView(
                             FriendChatPane(
                                 showBack = true,
                                 onBack = { FriendsSession.closeChat() },
+                                onJoinInvite = onJoinInvite,
                             )
                         } else {
                             FriendListPane(
@@ -221,7 +247,7 @@ fun FriendsView(
                                 .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.6f)),
                         )
                         Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                            FriendChatPane(showBack = false, onBack = {})
+                            FriendChatPane(showBack = false, onBack = {}, onJoinInvite = onJoinInvite)
                         }
                     }
                 }
@@ -235,6 +261,13 @@ fun FriendsView(
     AddFriendDialog(
         visible = showAdd,
         onDismiss = { showAdd = false },
+    )
+
+    // 邀请方与本机版本不一致时的确认（仍允许尝试加入）
+    InviteVersionMismatchDialog(
+        invite = versionMismatchInvite,
+        onJoinAnyway = proceedJoinInvite,
+        onDismiss = { versionMismatchInvite = null },
     )
 }
 
@@ -427,6 +460,7 @@ private fun FriendListSectionLabel(text: String) {
 private fun FriendChatPane(
     showBack: Boolean,
     onBack: () -> Unit,
+    onJoinInvite: (RoomInvite) -> Unit,
 ) {
     val peer = FriendsSession.activePeer
     val messages = FriendsSession.messages
@@ -555,8 +589,25 @@ private fun FriendChatPane(
                 }
             } else {
                 items(messages, key = { it.id }) { message ->
+                    val fromMe = message.senderId == selfId
+                    // 房间邀请消息渲染为卡片，普通文本照旧气泡
+                    val invite = remember(message.body) { RoomInviteCodec.decode(message.body) }
                     Box(modifier = if (enableAnimations) Modifier.animateItem() else Modifier) {
-                        ChatBubble(message, fromMe = message.senderId == selfId)
+                        if (invite != null) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = if (fromMe) Arrangement.End else Arrangement.Start,
+                            ) {
+                                RoomInviteCard(
+                                    invite = invite,
+                                    fromMe = fromMe,
+                                    modifier = Modifier.fillMaxWidth(0.82f),
+                                    onJoin = if (fromMe) null else ({ onJoinInvite(invite) }),
+                                )
+                            }
+                        } else {
+                            ChatBubble(message, fromMe = fromMe)
+                        }
                     }
                 }
             }

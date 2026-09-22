@@ -227,7 +227,7 @@ object NetworkInject {
             ChatMessageEvent(
                 str ?: "",str2 ?: "", player, i
             ).broadcastIn(onFinished = {
-                UI.onReceiveChatMessage(it.sender, it.message, i)
+                UI.onReceiveChatMessage(it.sender, it.message, i, it.player)
             })
         }
         return Unit

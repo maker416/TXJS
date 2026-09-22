@@ -37,6 +37,8 @@ object ConnectingPlayer : Player {
         get() = false
     override val isAI: Boolean
         get() = false
+    override val isRoomHost: Boolean
+        get() = false
     override var difficulty: Int?
         get() = null
         set(_) {}

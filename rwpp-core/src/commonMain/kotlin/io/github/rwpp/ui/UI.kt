@@ -86,11 +86,13 @@ import io.github.rwpp.coreVersion
 import io.github.rwpp.event.EventPriority
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.events.DisconnectEvent
+import io.github.rwpp.game.Game
 import io.github.rwpp.game.Player
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.net.LatestVersionProfile
 import io.github.rwpp.net.Net
+import io.github.rwpp.net.account.RoomInvite
 import io.github.rwpp.projectVersion
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.group_30
@@ -103,7 +105,6 @@ import io.github.rwpp.widget.AnimatedAlertDialog
 import io.github.rwpp.widget.BorderCard
 import io.github.rwpp.widget.WindowManager
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
@@ -145,6 +146,19 @@ object UI : Initialization, IUserInterface {
      * 华为/鸿蒙平板隐藏系统栏后，输入法会弹出并立刻被系统收掉。
      */
     var imeImmersiveSuspended by mutableStateOf(false)
+
+    /**
+     * 好友聊天中房间邀请卡片点击「立即加入」后暂存的邀请，
+     * 由 MultiplayerView 消费（置回 null）并触发既有 LoadingView/directJoinServer 加入链路。
+     */
+    var pendingInviteJoin by mutableStateOf<RoomInvite?>(null)
+
+    /**
+     * 收到好友房间邀请时屏幕右侧弹出的悬浮卡片（10 秒倒计时自动忽略）。
+     * 由 FriendsSession.refreshLists 检测未读邀请私信后置位；
+     * 等待房间/对局内不弹（房间内无法接受其他房间的邀请）。
+     */
+    var incomingInviteNotification by mutableStateOf<RoomInviteNotification?>(null)
 
     /**
      * 模组重载期间堆耗尽（OutOfMemory）标志。置位后本进程内不再允许模组重载——
@@ -195,7 +209,15 @@ object UI : Initialization, IUserInterface {
         }
     }
 
-    fun onReceiveChatMessage(sender: String,  message: String, color: Int) {
+    fun onReceiveChatMessage(sender: String, message: String, color: Int, senderPlayer: Player? = null) {
+        // 房间邀请策略控制消息：仅房主发送才生效——应用到本地并抑制显示（不进聊天记录）。
+        // 注入层按昵称匹配发送者，同名成员可冒名房主，故额外要求该昵称在房内唯一；
+        // 不信任的控制消息按普通聊天显示，让尝试暴露出来
+        val trustedHostControl = senderPlayer != null && senderPlayer.isRoomHost &&
+            runCatching {
+                appKoin.get<Game>().gameRoom.getPlayers().count { it.name == sender } == 1
+            }.getOrDefault(false)
+        if (trustedHostControl && RoomInvitePolicy.handleControlMessage(message)) return
         val configIO = appKoin.get<ConfigIO>()
         synchronized(UI) {
             chatMessages =
@@ -274,15 +296,7 @@ open class UIProvider {
             }
         }
 
-        // 主菜单好友入口未读徽标数据轮询（未登录/预览模式静默跳过）
-        LaunchedEffect(Unit) {
-            while (true) {
-                if (AccountSession.loggedIn && AccountSession.networkEnabled) {
-                    runCatching { FriendsSession.refreshLists() }
-                }
-                delay(10_000)
-            }
-        }
+        // 好友列表轮询（未读徽标、邀请悬浮卡片）已上移到 App 根的全局轮询，此处不再重复
 
         val latestProfile = UI.latestVersionProfile
         val hasUpdate = latestProfile?.let { compareVersions(it.version, projectVersion) > 0 } == true

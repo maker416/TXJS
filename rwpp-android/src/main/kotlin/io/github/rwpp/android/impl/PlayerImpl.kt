@@ -90,6 +90,9 @@ interface PlayerImpl : Player {
         get() = team == -3
     override val isAI: Boolean
         get() = self.x
+    override val isRoomHost: Boolean
+        // 引擎侧两种房主标记：自建主机 t() 为 -99（显示 "HOST"），中继房创建者 T 为 1（显示 " (HOST)"）
+        get() = self.T == 1 || self.t() == -99
     override var difficulty: Int?
         get() = if(isAI) self.y else null
         set(value) { if(room.isHost) self.y = value!! }
