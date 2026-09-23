@@ -51,6 +51,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.AppContext
 import io.github.rwpp.account.AccountSession
+import io.github.rwpp.account.RoomIdentityController
 import io.github.rwpp.config.*
 import io.github.rwpp.core.Logic
 import io.github.rwpp.core.ModSyncController
@@ -420,13 +421,18 @@ fun MultiplayerView(
             game.setUserName(userName)
             configIO.setGameConfig("lastNetworkIP", serverAddress)
 
+            // selectedRoomDescription 随后即清空，先捕获供身份公示推导候选 key
+            val capturedRoomDescription = selectedRoomDescription
             val result = game.directJoinServer(
                 serverAddress,
-                selectedRoomDescription?.joinRelayUuid(),
+                capturedRoomDescription?.joinRelayUuid(),
                 this,
             )
             selectedRoomDescription = null
             if(result.isSuccess) {
+                // 房间身份公示（带外机制）：暂存候选 key 与玩家名快照；
+                // 房主走 quickHost 指令串产不出 key，靠进房后 roomDetails 短码补充
+                RoomIdentityController.onJoiningRoom(serverAddress, capturedRoomDescription)
                 onExit()
                 onOpenRoomView()
                 // 进房成功：joining Presence 转为 synced 并保活，驱动行内徽章（无同步记录时为空操作）

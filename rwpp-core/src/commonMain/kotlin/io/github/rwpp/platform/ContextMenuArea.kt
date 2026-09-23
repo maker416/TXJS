@@ -10,5 +10,13 @@ package io.github.rwpp.platform
 import androidx.compose.runtime.Composable
 import io.github.rwpp.game.Player
 
+/**
+ * 房间玩家行的平台右键/长按菜单容器。
+ * [onViewProfile] 非空且目标为真人玩家时提供「查看名片」项；踢出项仍仅房主可见。
+ */
 @Composable
-expect fun KickPlayerContextMenuAreaMultiplatform(player: Player, content: @Composable () -> Unit)
+expect fun KickPlayerContextMenuAreaMultiplatform(
+    player: Player,
+    onViewProfile: ((Player) -> Unit)? = null,
+    content: @Composable () -> Unit,
+)

@@ -10,26 +10,42 @@ package io.github.rwpp.platform
 import androidx.compose.foundation.ContextMenuArea
 import androidx.compose.foundation.ContextMenuItem
 import androidx.compose.runtime.Composable
+import io.github.rwpp.game.ConnectingPlayer
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.Player
+import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import org.koin.compose.koinInject
 
 @Composable
-actual fun KickPlayerContextMenuAreaMultiplatform(player: Player, content: @Composable (() -> Unit)) {
+actual fun KickPlayerContextMenuAreaMultiplatform(
+    player: Player,
+    onViewProfile: ((Player) -> Unit)?,
+    content: @Composable (() -> Unit),
+) {
     val room = koinInject<Game>().gameRoom
     ContextMenuArea(
         items = {
-            if ((room.isHost || room.isHostServer) && room.localPlayer != player) {
-                listOf(
-                    ContextMenuItem(
-                        readI18n("multiplayer.room.kick")
-                    ) {
-                        room.kickPlayer(player)
-                    }
-                )
-            } else {
-                emptyList()
+            buildList {
+                // 查看名片：所有真人玩家可见（AI 与占位 ConnectingPlayer 除外）
+                if (onViewProfile != null && !player.isAI && player != ConnectingPlayer) {
+                    add(
+                        ContextMenuItem(
+                            readI18n("playerCard.viewProfile", I18nType.RWPP)
+                        ) {
+                            onViewProfile(player)
+                        }
+                    )
+                }
+                if ((room.isHost || room.isHostServer) && room.localPlayer != player) {
+                    add(
+                        ContextMenuItem(
+                            readI18n("multiplayer.room.kick")
+                        ) {
+                            room.kickPlayer(player)
+                        }
+                    )
+                }
             }
         },
         content = content

@@ -7,6 +7,7 @@
 
 package io.github.rwpp.core
 
+import io.github.rwpp.account.RoomIdentityController
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
 import io.github.rwpp.event.EventPriority
@@ -30,6 +31,7 @@ object Logic : Initialization {
     override fun init() {
         registerListeners()
         ModSyncController.init()
+        RoomIdentityController.init()
 
         GlobalEventChannel.filter(PlayerJoinEvent::class).subscribeAlways(priority = EventPriority.MONITOR) { e ->
             logger.info("New player: ${e.player.name}")

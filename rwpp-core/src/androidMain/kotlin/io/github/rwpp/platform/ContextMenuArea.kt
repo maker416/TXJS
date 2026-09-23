@@ -11,6 +11,11 @@ import androidx.compose.runtime.Composable
 import io.github.rwpp.game.Player
 
 @Composable
-actual fun KickPlayerContextMenuAreaMultiplatform(player: Player, content: @Composable (() -> Unit)) {
+actual fun KickPlayerContextMenuAreaMultiplatform(
+    player: Player,
+    onViewProfile: ((Player) -> Unit)?,
+    content: @Composable (() -> Unit),
+) {
+    // Android 无右键菜单：名片入口为直接点击成员行
     content()
 }

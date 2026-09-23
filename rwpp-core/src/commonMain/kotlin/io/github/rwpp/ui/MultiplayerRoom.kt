@@ -70,6 +70,7 @@ import coil3.size.Precision
 import io.github.rwpp.AppContext
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
+import io.github.rwpp.account.RoomIdentityController
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.PublishedRoomInfo
@@ -169,6 +170,8 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
             CloseUIPanelEvent("multiplayerRoom").broadcastIn()
             // 离房重置邀请策略（无论房主还是成员）
             RoomInvitePolicy.reset()
+            // 离房（含被踢）停止房间身份公示并撤销服务端记录
+            RoomIdentityController.stopPublishing()
         }
     }
 
@@ -352,6 +355,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     val players = remember(update) { room.getPlayers().forRoomPlayerList() }
     var selectedPlayer by remember { mutableStateOf(players.firstOrNull() ?: ConnectingPlayer) }
     var playerOverrideVisible by remember { mutableStateOf(false) }
+    var playerCardVisible by remember { mutableStateOf(false) }
 
     LaunchedEffect(selectedPlayer) {
         UI.roomSelectedPlayer = selectedPlayer
@@ -363,7 +367,19 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
         updateAction,
         room,
         extensions,
-        selectedPlayer
+        selectedPlayer,
+        onViewProfile = { player ->
+            selectedPlayer = player
+            playerOverrideVisible = false
+            playerCardVisible = true
+        },
+    )
+
+    PlayerCardDialog(
+        visible = playerCardVisible,
+        player = selectedPlayer,
+        room = room,
+        onDismiss = { playerCardVisible = false },
     )
 
     MapViewDialog(
@@ -441,6 +457,8 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                     remainingSeconds = 0
                     totalSeconds = 0
                     ModSyncController.bindPublishedServerId(serverId)
+                    // 发布到列表后补充 sid 别名 key（内部立即重发一次 publish）
+                    RoomIdentityController.addServerIdKey(serverId)
                     kickListDetectorPlayers()
                     publishState = PublishToListUiState.Success(roomId, serverId)
                 } else {
@@ -584,7 +602,11 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
         // 房主开启「传输模组」时：拿到短码即启动带外同步会话（内部幂等）
         roomIdForPublish?.let { code ->
             if (room.isHost) ModSyncController.startHostSession(code)
+            // 短码就绪：补充身份公示 key 并立即重发（内部幂等）
+            RoomIdentityController.addRoomCodeKey(code)
         }
+        // 单人/沙盒复用本视图，不做身份公示
+        if (!room.isSinglePlayerGame) RoomIdentityController.startPublishing()
     }
 
     @Composable
@@ -595,9 +617,19 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
         val isDesktop = remember { appKoin.get<AppContext>().isDesktop() }
         val isCompact = LocalWindowManager.current != WindowManager.Large
 
+        val openPlayerCard: (Player) -> Unit = { player ->
+            selectedPlayer = player
+            playerCardVisible = true
+        }
+
         val onPlayerClick: (Player) -> Unit = { player ->
             selectedPlayer = player
-            playerOverrideVisible = true
+            // 房主/主机/点自己：沿用玩家配置弹窗；其余真人玩家：打开个人名片
+            if (room.isHost || room.isHostServer || room.localPlayer == player) {
+                playerOverrideVisible = true
+            } else {
+                playerCardVisible = true
+            }
         }
 
         val startGame: () -> Unit = {
@@ -748,6 +780,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                         onPlayerClick = onPlayerClick,
                                         enableAnimations = enableAnimations,
                                         expandVertically = false,
+                                        onViewProfile = openPlayerCard,
                                         onInvite = if (!isSandboxGame && canInvite) {
                                             { inviteDialogVisible = true }
                                         } else {
@@ -807,6 +840,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                         onPlayerClick = onPlayerClick,
                                         enableAnimations = enableAnimations,
                                         expandVertically = true,
+                                        onViewProfile = openPlayerCard,
                                         onInvite = if (!isSandboxGame && canInvite) {
                                             { inviteDialogVisible = true }
                                         } else {
@@ -966,6 +1000,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                                     game = game,
                                                     update = update,
                                                     onPlayerClick = onPlayerClick,
+                                                    onViewProfile = openPlayerCard,
                                                     modifier = if (koinInject<Settings>().enableAnimations) {
                                                         Modifier.animateItem()
                                                     } else {
@@ -1308,6 +1343,7 @@ private fun PlayerOverrideDialog(
     room: GameRoom,
     extensions: List<Extension>,
     player: Player,
+    onViewProfile: ((Player) -> Unit)? = null,
 ) {
     val game = koinInject<Game>()
 
@@ -1499,6 +1535,13 @@ private fun PlayerOverrideDialog(
                     RWTextButton(readI18n("multiplayer.room.kick"), Modifier.padding(5.dp)) {
                         room.kickPlayer(player)
                         dismiss()
+                    }
+
+                // 真人玩家可查看名片（个人资料 / 加好友）
+                if (onViewProfile != null && !player.isAI && player != ConnectingPlayer)
+                    RWTextButton(readI18n("playerCard.viewProfile", I18nType.RWPP), Modifier.padding(5.dp)) {
+                        dismiss()
+                        onViewProfile(player)
                     }
 
                 RWTextButton(readI18n("multiplayer.room.apply"), Modifier.padding(5.dp)) {
@@ -2372,6 +2415,7 @@ private fun CompactPlayerPanel(
     expandVertically: Boolean,
     modifier: Modifier = Modifier,
     onInvite: (() -> Unit)? = null,
+    onViewProfile: ((Player) -> Unit)? = null,
 ) {
     val playerListCanScroll by remember {
         derivedStateOf { lazyListCanScroll(playerListState) }
@@ -2438,6 +2482,7 @@ private fun CompactPlayerPanel(
                         onPlayerClick = onPlayerClick,
                         compact = true,
                         rowShape = rowShape,
+                        onViewProfile = onViewProfile,
                         modifier = if (enableAnimations) {
                             Modifier.animateItem()
                         } else {
@@ -3021,12 +3066,13 @@ private fun RoomPlayerTableRow(
     modifier: Modifier = Modifier,
     compact: Boolean = false,
     rowShape: Shape = CircleShape,
+    onViewProfile: ((Player) -> Unit)? = null,
 ) {
     // 跟随房间刷新重建，避免模组预设变化后玩家初始单位后缀显示 Unknown
     val options = remember(update) { game.getStartingUnitOptions() }
     val rowPadding = if (compact) 2.dp else 5.dp
     Box(modifier) {
-        KickPlayerContextMenuAreaMultiplatform(player) {
+        KickPlayerContextMenuAreaMultiplatform(player, onViewProfile = onViewProfile) {
             Row(
                 modifier = Modifier
                     .height(IntrinsicSize.Max)
@@ -3036,7 +3082,11 @@ private fun RoomPlayerTableRow(
                         rowShape,
                     )
                     .fillMaxWidth()
-                    .clickable(room.isHost || room.isHostServer || room.localPlayer == player) {
+                    // 任意真人玩家可点（个人名片）；房主/主机/点自己沿用玩家配置弹窗；AI 仅房主可点
+                    .clickable(
+                        room.isHost || room.isHostServer || room.localPlayer == player ||
+                            (!player.isAI && player != ConnectingPlayer)
+                    ) {
                         onPlayerClick(player)
                     },
             ) {
