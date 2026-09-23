@@ -49,6 +49,8 @@ import coil3.size.Precision
 import com.mikepenz.markdown.compose.Markdown
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
+import io.github.rwpp.coil.AccountAvatarFetcherFactory
+import io.github.rwpp.coil.AccountAvatarKeyer
 import io.github.rwpp.coil.ImageableFetcherFactory
 import io.github.rwpp.coil.ImageableKeyer
 import io.github.rwpp.config.CoreData
@@ -163,6 +165,8 @@ fun App(
             .components {
                 add(ImageableFetcherFactory())
                 add(ImageableKeyer())
+                add(AccountAvatarFetcherFactory())
+                add(AccountAvatarKeyer())
             }
             .precision(Precision.EXACT)
             .build()
