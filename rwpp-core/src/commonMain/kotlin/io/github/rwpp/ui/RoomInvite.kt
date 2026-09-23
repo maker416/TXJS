@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
+import io.github.rwpp.coil.AccountAvatar
 import io.github.rwpp.game.GameRoom
 import io.github.rwpp.game.sendChatMessageOrCommand
 import io.github.rwpp.i18n.I18nType
@@ -459,10 +460,8 @@ fun InviteFriendsDialog(
                             ) {
                                 items(friends.size, key = { friends[it].user.id }) { index ->
                                     val friend = friends[index].user
-                                    val name = friend.nickname.ifBlank { friend.username }
                                     InviteFriendPickRow(
-                                        name = name,
-                                        username = friend.username,
+                                        user = friend,
                                         selected = friend.id in selected,
                                         short = short,
                                         onClick = {
@@ -616,12 +615,12 @@ private fun InviteDialogSummary(invite: RoomInvite, short: Boolean) {
 /** 邀请弹窗里的好友多选行。短屏压低行高，让横屏至少能看见两行。 */
 @Composable
 private fun InviteFriendPickRow(
-    name: String,
-    username: String,
+    user: PublicUser,
     selected: Boolean,
     short: Boolean,
     onClick: () -> Unit,
 ) {
+    val name = user.nickname.ifBlank { user.username }
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -653,7 +652,7 @@ private fun InviteFriendPickRow(
             AccountAvatarBox(
                 name,
                 size = if (short) 32.dp else 38.dp,
-                showOnlineDot = false,
+                avatar = AccountAvatar(user.id, user.hasAvatar, AccountSession.avatarVersion),
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -669,7 +668,7 @@ private fun InviteFriendPickRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    "@$username",
+                    "@${user.username}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     maxLines = 1,
@@ -860,7 +859,11 @@ private fun RoomInviteToastCard(
                     AccountAvatarBox(
                         notification.peer.nickname.ifBlank { notification.peer.username },
                         size = 40.dp,
-                        showOnlineDot = false,
+                        avatar = AccountAvatar(
+                            notification.peer.id,
+                            notification.peer.hasAvatar,
+                            AccountSession.avatarVersion,
+                        ),
                     )
                     Column(modifier = Modifier.weight(1f)) {
                         Text(

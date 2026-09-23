@@ -45,6 +45,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
@@ -52,7 +53,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import coil3.compose.AsyncImage
 import io.github.rwpp.LocalWindowManager
+import io.github.rwpp.coil.AccountAvatar
 import io.github.rwpp.widget.BorderCard
 import io.github.rwpp.widget.GeneralProportion
 import io.github.rwpp.widget.LargeProportion
@@ -61,13 +64,14 @@ import io.github.rwpp.widget.autoClearFocus
 
 /** 账号体系共享的现代化 UI 组件（用户页 / 好友 / 登录注册弹窗共用）。 */
 
-/** 圆形头像：首字母 + 主题色描边，可选右下角在线状态点。 */
+/** 圆形头像：有真实头像时显示 JPEG，否则首字母；[online] 非 null 时右下角画状态点（绿在线 / 灰离线）。 */
 @Composable
 internal fun AccountAvatarBox(
     displayName: String,
     modifier: Modifier = Modifier,
     size: Dp = 80.dp,
-    showOnlineDot: Boolean = true,
+    avatar: AccountAvatar? = null,
+    online: Boolean? = null,
 ) {
     Box(modifier = modifier.size(size)) {
         Box(
@@ -85,8 +89,16 @@ internal fun AccountAvatarBox(
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                 fontWeight = FontWeight.Bold,
             )
+            if (avatar != null && avatar.hasAvatar) {
+                AsyncImage(
+                    model = avatar,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize().clip(CircleShape),
+                    contentScale = ContentScale.Crop,
+                )
+            }
         }
-        if (showOnlineDot) {
+        if (online != null) {
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -95,7 +107,13 @@ internal fun AccountAvatarBox(
                     .background(MaterialTheme.colorScheme.surface)
                     .padding(2.dp)
                     .clip(CircleShape)
-                    .background(Color(95, 190, 95)),
+                    .background(
+                        if (online) {
+                            Color(95, 190, 95)
+                        } else {
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                        }
+                    ),
             )
         }
     }

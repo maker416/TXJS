@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -69,6 +70,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -82,7 +84,9 @@ import androidx.compose.ui.unit.dp
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
+import io.github.rwpp.account.RelativeTime
 import io.github.rwpp.account.accountErrorText
+import io.github.rwpp.coil.AccountAvatar
 import io.github.rwpp.config.Settings
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
@@ -101,6 +105,7 @@ import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.projectVersion
 import io.github.rwpp.utils.compareVersions
 import io.github.rwpp.rwpp_core.generated.resources.Res
+import io.github.rwpp.rwpp_core.generated.resources.block_30
 import io.github.rwpp.rwpp_core.generated.resources.group_30
 import io.github.rwpp.widget.AnimatedAlertDialog
 import io.github.rwpp.widget.BorderCard
@@ -331,6 +336,7 @@ private fun FriendListPane(
     val outgoing = FriendsSession.outgoing
     val scope = rememberCoroutineScope()
     val enableAnimations = koinInject<Settings>().enableAnimations
+    var showBlocked by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -360,6 +366,21 @@ private fun FriendListPane(
                     modifier = Modifier.size(18.dp),
                     color = MaterialTheme.colorScheme.primary,
                     strokeWidth = 2.dp,
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.5f))
+                    .clickable { showBlocked = true },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painter = painterResource(Res.drawable.block_30),
+                    contentDescription = readI18n("friends.blockedList", I18nType.RWPP),
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    modifier = Modifier.size(18.dp),
                 )
             }
             Box(
@@ -433,6 +454,8 @@ private fun FriendListPane(
                 items(friends, key = { "friend_${it.user.id}" }) { item ->
                     FriendRow(
                         user = item.user,
+                        online = item.online,
+                        avatar = AccountAvatar(item.user.id, item.user.hasAvatar, AccountSession.avatarVersion),
                         // 邀请消息的报文原文不能见人：列表摘要换成占位文案
                         preview = FriendsSession.lastMessagePreview(item.user.id)?.let { body ->
                             if (body.startsWith(ROOM_INVITE_PREFIX)) {
@@ -448,11 +471,19 @@ private fun FriendListPane(
                         onDelete = {
                             scope.launch { runCatching { FriendsSession.deleteFriend(item.user.id) } }
                         },
+                        onBlock = {
+                            scope.launch { runCatching { FriendsSession.block(item.user.id) } }
+                        },
                     )
                 }
             }
         }
     }
+
+    BlockedUsersDialog(
+        visible = showBlocked,
+        onDismiss = { showBlocked = false },
+    )
 }
 
 @Composable
@@ -512,6 +543,30 @@ private fun FriendChatPane(
         }
 
         val peerName = peer.nickname.ifBlank { peer.username }
+        val presence = FriendsSession.presenceOf(peer.id)
+        val lastActiveAt = presence?.lastActiveAt
+        // 副标题显示在线状态：在线绿字；离线按 lastActiveAt 折算相对时间；解析失败回退「离线」
+        val (presenceText, presenceColor) = when {
+            presence?.online == true ->
+                readI18n("friends.online", I18nType.RWPP) to Color(95, 190, 95)
+            lastActiveAt != null -> {
+                val elapsed = RelativeTime.elapsed(lastActiveAt, System.currentTimeMillis())
+                val text = when (elapsed?.second) {
+                    RelativeTime.Unit.JUST_NOW -> readI18n("friends.lastActiveJustNow", I18nType.RWPP)
+                    RelativeTime.Unit.MINUTES ->
+                        readI18n("friends.lastActiveMinutes", I18nType.RWPP, elapsed.first.toString())
+                    RelativeTime.Unit.HOURS ->
+                        readI18n("friends.lastActiveHours", I18nType.RWPP, elapsed.first.toString())
+                    RelativeTime.Unit.DAYS ->
+                        readI18n("friends.lastActiveDays", I18nType.RWPP, elapsed.first.toString())
+                    null -> readI18n("friends.offline", I18nType.RWPP)
+                }
+                text to MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            }
+            else ->
+                readI18n("friends.offline", I18nType.RWPP) to
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -537,7 +592,12 @@ private fun FriendChatPane(
                     )
                 }
             }
-            AccountAvatarBox(peerName, size = 38.dp, showOnlineDot = false)
+            AccountAvatarBox(
+                peerName,
+                size = 38.dp,
+                avatar = AccountAvatar(peer.id, peer.hasAvatar, AccountSession.avatarVersion),
+                online = presence?.online,
+            )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     peerName,
@@ -548,9 +608,9 @@ private fun FriendChatPane(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    "@${peer.username}",
+                    presenceText,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    color = presenceColor,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -690,7 +750,7 @@ private fun FriendRequestRow(
             AccountAvatarBox(
                 other.nickname.ifBlank { other.username },
                 size = 42.dp,
-                showOnlineDot = false,
+                avatar = AccountAvatar(other.id, other.hasAvatar, AccountSession.avatarVersion),
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -735,14 +795,18 @@ private fun FriendRequestRow(
 @Composable
 private fun FriendRow(
     user: PublicUser,
+    online: Boolean,
+    avatar: AccountAvatar?,
     preview: String?,
     unread: Int,
     selected: Boolean,
     onClick: () -> Unit,
     onDelete: () -> Unit,
+    onBlock: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
+    var confirmBlock by remember { mutableStateOf(false) }
     // 选中态颜色渐变过渡
     val containerColor by animateColorAsState(
         if (selected) {
@@ -779,7 +843,8 @@ private fun FriendRow(
             AccountAvatarBox(
                 user.nickname.ifBlank { user.username },
                 size = 44.dp,
-                showOnlineDot = false,
+                avatar = avatar,
+                online = online,
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -800,6 +865,14 @@ private fun FriendRow(
             if (unread > 0) {
                 SurfaceBadge(unread)
             }
+            Icon(
+                painter = painterResource(Res.drawable.block_30),
+                contentDescription = readI18n("friends.block", I18nType.RWPP),
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                modifier = Modifier
+                    .size(20.dp)
+                    .clickable { confirmBlock = true },
+            )
             Icon(
                 Icons.Default.Delete,
                 contentDescription = readI18n("friends.delete", I18nType.RWPP),
@@ -844,6 +917,47 @@ private fun FriendRow(
                     ) {
                         Text(
                             readI18n("friends.delete", I18nType.RWPP),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
+        }
+    }
+    if (confirmBlock) {
+        AnimatedAlertDialog(
+            visible = true,
+            onDismissRequest = { confirmBlock = false },
+        ) { dismiss ->
+            AccountAuthCard(scrollable = false) {
+                AccountDialogHeader(
+                    title = readI18n("friends.blockConfirmTitle", I18nType.RWPP),
+                    subtitle = readI18n("friends.blockConfirmBody", I18nType.RWPP),
+                    iconTint = MaterialTheme.colorScheme.error,
+                    icon = {
+                        Icon(
+                            painter = painterResource(Res.drawable.block_30),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(24.dp),
+                        )
+                    },
+                )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = dismiss) {
+                        Text(
+                            readI18n("common.cancel", I18nType.RWPP),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        )
+                    }
+                    TextButton(
+                        onClick = {
+                            onBlock()
+                            dismiss()
+                        },
+                    ) {
+                        Text(
+                            readI18n("friends.block", I18nType.RWPP),
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
@@ -966,6 +1080,89 @@ private fun AddFriendDialog(
                         readI18n("common.cancel", I18nType.RWPP),
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                     )
+                }
+            }
+        }
+    }
+}
+
+/** 黑名单弹窗：列出已拉黑用户，可解除拉黑（成功后 FriendsSession 自动刷新列表）。 */
+@Composable
+private fun BlockedUsersDialog(
+    visible: Boolean,
+    onDismiss: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+
+    AnimatedAlertDialog(
+        visible = visible,
+        onDismissRequest = onDismiss,
+    ) {
+        AccountAuthCard(scrollable = false) {
+            AccountDialogHeader(
+                title = readI18n("friends.blockedList", I18nType.RWPP),
+                icon = {
+                    Icon(
+                        painter = painterResource(Res.drawable.block_30),
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(26.dp),
+                    )
+                },
+            )
+            val blocks = FriendsSession.blocks
+            if (blocks.isEmpty()) {
+                Text(
+                    readI18n("friends.blockedEmpty", I18nType.RWPP),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    items(blocks, key = { it.user.id }) { item ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            AccountAvatarBox(
+                                item.user.nickname.ifBlank { item.user.username },
+                                size = 40.dp,
+                                avatar = AccountAvatar(
+                                    item.user.id,
+                                    item.user.hasAvatar,
+                                    AccountSession.avatarVersion,
+                                ),
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    item.user.nickname.ifBlank { item.user.username },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    "@${item.user.username}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            AccountCompactButton(
+                                label = readI18n("friends.unblock", I18nType.RWPP),
+                                onClick = {
+                                    scope.launch { runCatching { FriendsSession.unblock(item.user.id) } }
+                                },
+                            )
+                        }
+                    }
                 }
             }
         }
