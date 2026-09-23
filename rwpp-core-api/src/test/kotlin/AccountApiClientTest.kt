@@ -21,6 +21,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class AccountApiClientTest {
@@ -160,5 +161,177 @@ class AccountApiClientTest {
         )
         val ex = assertFailsWith<AccountApiException> { client.login("x", "yyyyyyyy") }
         assertEquals(AccountErrorCode.UNAUTHORIZED, ex.code)
+    }
+
+    @Test
+    fun getPresenceUsesDocumentedPath() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"presence":{"user_id":2,"online":true,"last_active_at":"2026-09-23T10:00:00+08:00"}}""",
+            ),
+        )
+        val presence = client.getPresence("tok", 2)
+        assertTrue(presence.online)
+        assertEquals(2, presence.userId)
+        val recorded = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("GET", recorded.method)
+        assertEquals("/api/v1/users/2/presence", recorded.path)
+        assertEquals("Bearer tok", recorded.getHeader("Authorization"))
+    }
+
+    @Test
+    fun updatePresenceSettingsOmitsUnspecifiedFields() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"settings":{"hide_from_strangers":true,"hide_from_friends":false}}""",
+            ),
+        )
+        val settings = client.updatePresenceSettings("tok", hideFromStrangers = true)
+        assertTrue(settings.hideFromStrangers)
+        val recorded = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("/api/v1/users/me/presence-settings", recorded.path)
+        val body = recorded.body.readUtf8()
+        assertTrue(body.contains("\"hide_from_strangers\":true"), body)
+        assertTrue(!body.contains("hide_from_friends"), body)
+    }
+
+    @Test
+    fun getPresenceSettingsUsesDocumentedPath() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"settings":{"hide_from_strangers":false,"hide_from_friends":true}}""",
+            ),
+        )
+        val settings = client.getPresenceSettings("tok")
+        assertTrue(settings.hideFromFriends)
+        val recorded = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("GET", recorded.method)
+        assertEquals("/api/v1/users/me/presence-settings", recorded.path)
+    }
+
+    @Test
+    fun changeEmailFlowUsesDocumentedPaths() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"ok":true}"""))
+        client.sendChangeEmailCode("tok", "new@example.com")
+        val codeReq = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("/api/v1/users/change-email/send-code", codeReq.path)
+        assertTrue(codeReq.body.readUtf8().contains("new@example.com"))
+
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"user":{"id":1,"username":"alice","email":"new@example.com","nickname":"Alice","status":1,"created_at":"t","has_avatar":false}}""",
+            ),
+        )
+        val user = client.changeEmail("tok", "new@example.com", "123456")
+        assertEquals("new@example.com", user.email)
+        val confirmReq = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("/api/v1/users/change-email", confirmReq.path)
+        val body = confirmReq.body.readUtf8()
+        assertTrue(body.contains("\"code\":\"123456\""), body)
+    }
+
+    @Test
+    fun listFriendsParsesPresenceFields() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"friends":[{"user":{"id":2,"username":"bob","nickname":"Bob","status":1},"since":"t","online":true,"last_active_at":"2026-09-23T10:00:00+08:00"}]}""",
+            ),
+        )
+        val friends = client.listFriends("tok")
+        assertEquals(1, friends.size)
+        assertTrue(friends[0].online)
+        assertEquals("2026-09-23T10:00:00+08:00", friends[0].lastActiveAt)
+        val recorded = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("/api/v1/friends", recorded.path)
+    }
+
+    @Test
+    fun listPointLedgersUsesQueryParams() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"ledgers":[],"page":2,"page_size":50,"total":0,"total_pages":1}""",
+            ),
+        )
+        val resp = client.listPointLedgers("tok", page = 2, pageSize = 50, pointTypeId = 3)
+        assertEquals(2, resp.page)
+        val recorded = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("/api/v1/points/ledgers?page=2&page_size=50&point_type_id=3", recorded.path)
+    }
+
+    @Test
+    fun listPointsUsesDocumentedPath() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"points":[{"id":1,"code":"gold","name":"金币","balance":10,"status":1}]}""",
+            ),
+        )
+        val points = client.listPoints("tok")
+        assertEquals(10, points.single().balance)
+        val recorded = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("/api/v1/points", recorded.path)
+    }
+
+    @Test
+    fun blockAndUnblockUseDocumentedPaths() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"ok":true}"""))
+        client.block("tok", 2)
+        val blockReq = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("POST", blockReq.method)
+        assertEquals("/api/v1/blocks", blockReq.path)
+        assertTrue(blockReq.body.readUtf8().contains("\"user_id\":2"))
+
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"ok":true}"""))
+        client.unblock("tok", 2)
+        val unblockReq = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("DELETE", unblockReq.method)
+        assertEquals("/api/v1/blocks/2", unblockReq.path)
+    }
+
+    @Test
+    fun uploadAvatarSendsMultipartFilePart() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"has_avatar":true}"""))
+        val hasAvatar = client.uploadAvatar("tok", byteArrayOf(1, 2, 3), "a.jpg", "image/jpeg")
+        assertTrue(hasAvatar)
+        val recorded = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("POST", recorded.method)
+        assertEquals("/api/v1/users/me/avatar", recorded.path)
+        val contentType = recorded.getHeader("Content-Type").orEmpty()
+        assertTrue(contentType.startsWith("multipart/form-data"), contentType)
+        val body = recorded.body.readUtf8()
+        assertTrue(body.contains("name=\"file\""), body)
+        assertTrue(body.contains("a.jpg"), body)
+    }
+
+    @Test
+    fun deleteAvatarParsesHasAvatar() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"ok":true,"has_avatar":false}"""))
+        assertTrue(!client.deleteAvatar("tok"))
+        val recorded = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("DELETE", recorded.method)
+        assertEquals("/api/v1/users/me/avatar", recorded.path)
+    }
+
+    @Test
+    fun getAvatarReturnsBytes() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .setHeader("Content-Type", "image/jpeg")
+                .setBody("jpeg-bytes"),
+        )
+        val bytes = client.getAvatar("tok", 2)
+        assertEquals("jpeg-bytes", bytes?.decodeToString())
+        val recorded = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("GET", recorded.method)
+        assertEquals("/api/v1/users/2/avatar", recorded.path)
+    }
+
+    @Test
+    fun getAvatarReturnsNullOn404() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(404).setBody(
+                """{"code":"not_found","message":"not found"}""",
+            ),
+        )
+        assertNull(client.getAvatar("tok", 2))
     }
 }

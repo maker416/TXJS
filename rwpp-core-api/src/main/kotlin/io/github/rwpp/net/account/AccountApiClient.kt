@@ -17,6 +17,7 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
@@ -145,6 +146,95 @@ class AccountApiClient(
     suspend fun markRead(token: String, conversationId: Long, lastMessageId: Long): OkResponse =
         postJson("/chats/$conversationId/read", MarkChatReadRequest(lastMessageId), token)
 
+    suspend fun getPresence(token: String, userId: Long): PresenceDto =
+        getJson<PresenceResponse>("/users/$userId/presence", token).presence
+
+    suspend fun getPresenceSettings(token: String): PresenceSettings =
+        getJson<PresenceSettingsResponse>("/users/me/presence-settings", token).settings
+
+    suspend fun updatePresenceSettings(
+        token: String,
+        hideFromStrangers: Boolean? = null,
+        hideFromFriends: Boolean? = null,
+    ): PresenceSettings =
+        postJson<UpdatePresenceSettingsRequest, PresenceSettingsResponse>(
+            "/users/me/presence-settings",
+            UpdatePresenceSettingsRequest(hideFromStrangers, hideFromFriends),
+            token,
+        ).settings
+
+    suspend fun sendChangeEmailCode(token: String, email: String): OkResponse =
+        postJson("/users/change-email/send-code", ChangeEmailSendCodeRequest(email), token)
+
+    suspend fun changeEmail(token: String, email: String, code: String): AccountUser =
+        postJson<ChangeEmailRequest, UserResponse>(
+            "/users/change-email",
+            ChangeEmailRequest(email, code),
+            token,
+        ).user
+
+    suspend fun listPoints(token: String): List<PointBalance> =
+        getJson<PointsResponse>("/points", token).points
+
+    suspend fun listPointLedgers(
+        token: String,
+        page: Int? = null,
+        pageSize: Int? = null,
+        pointTypeId: Long? = null,
+    ): PointLedgersResponse {
+        val q = buildString {
+            append("/points/ledgers")
+            val parts = mutableListOf<String>()
+            if (page != null) parts += "page=$page"
+            if (pageSize != null) parts += "page_size=$pageSize"
+            if (pointTypeId != null) parts += "point_type_id=$pointTypeId"
+            if (parts.isNotEmpty()) {
+                append('?')
+                append(parts.joinToString("&"))
+            }
+        }
+        return getJson(q, token)
+    }
+
+    suspend fun listBlocks(token: String): List<BlockItem> =
+        getJson<BlocksResponse>("/blocks", token).blocks
+
+    suspend fun block(token: String, userId: Long): OkResponse =
+        postJson("/blocks", BlockRequest(userId), token)
+
+    suspend fun unblock(token: String, userId: Long): OkResponse =
+        requestJson(method = "DELETE", path = "/blocks/$userId", token = token)
+
+    /** 上传自己的头像（multipart 字段 `file`），返回服务端 `has_avatar`。 */
+    suspend fun uploadAvatar(
+        token: String,
+        bytes: ByteArray,
+        fileName: String,
+        contentType: String,
+    ): Boolean {
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart(
+                "file",
+                fileName,
+                bytes.toRequestBody(contentType.toMediaType()),
+            )
+            .build()
+        return requestJson<AvatarResponse>(
+            method = "POST",
+            path = "/users/me/avatar",
+            token = token,
+            body = body,
+        ).hasAvatar
+    }
+
+    suspend fun deleteAvatar(token: String): Boolean =
+        requestJson<AvatarResponse>(method = "DELETE", path = "/users/me/avatar", token = token).hasAvatar
+
+    /** 拉取用户头像 JPEG 字节；无头像 / 用户不存在返回 null（404）。 */
+    suspend fun getAvatar(token: String, userId: Long): ByteArray? =
+        requestBytes("/users/$userId/avatar", token)
+
     private suspend inline fun <reified Req, reified Res> postJson(
         path: String,
         body: Req,
@@ -215,6 +305,35 @@ class AccountApiClient(
                     return@use OkResponse(true) as Res
                 }
                 json.decodeFromString(text)
+            }
+        } catch (e: AccountApiException) {
+            throw e
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IOException) {
+            throw AccountApiException(AccountApiException.NETWORK, e.message ?: "network error", null)
+        }
+    }
+
+    /** 拉取二进制响应（头像）：404 返回 null，其余失败抛 [AccountApiException]。 */
+    private suspend fun requestBytes(
+        path: String,
+        token: String? = null,
+    ): ByteArray? = withContext(Dispatchers.IO) {
+        val builder = Request.Builder()
+            .url(baseUrl + API_PREFIX + path)
+            .header(APP_KEY_HEADER, appKey)
+        if (!token.isNullOrBlank()) {
+            builder.header("Authorization", "Bearer $token")
+        }
+        val request = builder.get().build()
+        try {
+            http.executeCancellable(request).use { response ->
+                if (response.code == 404) return@use null
+                if (!response.isSuccessful) {
+                    throw response.toAccountException(response.body?.string().orEmpty())
+                }
+                response.body?.bytes() ?: ByteArray(0)
             }
         } catch (e: AccountApiException) {
             throw e

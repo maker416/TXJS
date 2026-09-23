@@ -7,16 +7,26 @@
 
 import io.github.rwpp.net.account.AccountErrorBody
 import io.github.rwpp.net.account.AccountUser
+import io.github.rwpp.net.account.AvatarResponse
+import io.github.rwpp.net.account.BlockRequest
+import io.github.rwpp.net.account.BlocksResponse
 import io.github.rwpp.net.account.ChatItem
 import io.github.rwpp.net.account.ChatMessageDto
+import io.github.rwpp.net.account.FriendItem
 import io.github.rwpp.net.account.FriendRequestDto
 import io.github.rwpp.net.account.LoginRequest
 import io.github.rwpp.net.account.LoginResponse
+import io.github.rwpp.net.account.PointLedger
+import io.github.rwpp.net.account.PointLedgersResponse
+import io.github.rwpp.net.account.PointsResponse
+import io.github.rwpp.net.account.PresenceResponse
+import io.github.rwpp.net.account.PresenceSettingsResponse
 import io.github.rwpp.net.account.PublicUser
 import io.github.rwpp.net.account.RegisterRequest
 import io.github.rwpp.net.account.ResetPasswordRequest
 import io.github.rwpp.net.account.SendChatRequest
 import io.github.rwpp.net.account.SendEmailCodeRequest
+import io.github.rwpp.net.account.UpdatePresenceSettingsRequest
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -179,5 +189,114 @@ class AccountModelsTest {
         assertTrue(encoded.contains("\"username\""), encoded)
         assertTrue(encoded.contains("\"password\""), encoded)
         assertTrue(!encoded.contains("email"), encoded)
+    }
+
+    @Test
+    fun friendItemDecodesPresenceFields() {
+        val wire = """
+            {
+              "user": {"id":2,"username":"bob","nickname":"Bob","status":1},
+              "since": "2026-09-14T23:01:00+08:00",
+              "online": true,
+              "last_active_at": "2026-09-23T10:00:00+08:00"
+            }
+        """.trimIndent()
+        val item = json.decodeFromString<FriendItem>(wire)
+        assertEquals(2, item.user.id)
+        assertTrue(item.online)
+        assertEquals("2026-09-23T10:00:00+08:00", item.lastActiveAt)
+    }
+
+    @Test
+    fun friendItemPresenceDefaultsWhenHidden() {
+        val wire = """
+            {"user":{"id":2,"username":"bob","nickname":"Bob","status":1},"since":"t"}
+        """.trimIndent()
+        val item = json.decodeFromString<FriendItem>(wire)
+        assertTrue(!item.online)
+        assertNull(item.lastActiveAt)
+    }
+
+    @Test
+    fun presenceDtoUsesSnakeCase() {
+        val presence = json.decodeFromString<PresenceResponse>(
+            """{"presence":{"user_id":2,"online":true,"last_active_at":"2026-09-23T10:00:00+08:00"}}""",
+        ).presence
+        assertEquals(2, presence.userId)
+        assertTrue(presence.online)
+        assertEquals("2026-09-23T10:00:00+08:00", presence.lastActiveAt)
+    }
+
+    @Test
+    fun updatePresenceSettingsOmitsNullFields() {
+        val encoded = json.encodeToString(UpdatePresenceSettingsRequest(hideFromStrangers = true))
+        assertTrue(encoded.contains("\"hide_from_strangers\":true"), encoded)
+        assertTrue(!encoded.contains("hide_from_friends"), encoded)
+    }
+
+    @Test
+    fun presenceSettingsRoundTripKeepsSnakeCase() {
+        val settings = json.decodeFromString<PresenceSettingsResponse>(
+            """{"settings":{"hide_from_strangers":false,"hide_from_friends":true}}""",
+        ).settings
+        assertTrue(!settings.hideFromStrangers)
+        assertTrue(settings.hideFromFriends)
+    }
+
+    @Test
+    fun pointBalanceDecodesDocumentFields() {
+        val point = json.decodeFromString<PointsResponse>(
+            """{"points":[{"id":1,"code":"gold","name":"金币","balance":10,"status":1}]}""",
+        ).points.single()
+        assertEquals(1, point.id)
+        assertEquals("gold", point.code)
+        assertEquals(10, point.balance)
+        assertEquals(1, point.status)
+    }
+
+    @Test
+    fun pointLedgerUsesSnakeCase() {
+        val ledger = json.decodeFromString<PointLedger>(
+            """{"id":12,"point_type_id":1,"point_code":"gold","point_name":"金币","change_amount":-10,"balance_after":90,"biz_type":"consume","idempotency_key":"order-1001","operator":"app:game_a","remark":"buy item","created_at":"2026-09-14T11:00:00+08:00"}""",
+        )
+        assertEquals(12, ledger.id)
+        assertEquals(-10, ledger.changeAmount)
+        assertEquals(90, ledger.balanceAfter)
+        assertEquals("order-1001", ledger.idempotencyKey)
+        assertEquals("app:game_a", ledger.operator)
+    }
+
+    @Test
+    fun pointLedgersResponseDecodesPagination() {
+        val resp = json.decodeFromString<PointLedgersResponse>(
+            """{"ledgers":[],"page":2,"page_size":50,"total":120,"total_pages":3}""",
+        )
+        assertEquals(2, resp.page)
+        assertEquals(50, resp.pageSize)
+        assertEquals(120, resp.total)
+        assertEquals(3, resp.totalPages)
+        assertTrue(resp.ledgers.isEmpty())
+    }
+
+    @Test
+    fun blockItemDecodesUserAndCreatedAt() {
+        val item = json.decodeFromString<BlocksResponse>(
+            """{"blocks":[{"user":{"id":2,"username":"bob","nickname":"Bob","status":1},"created_at":"2026-09-14T23:01:00+08:00"}]}""",
+        ).blocks.single()
+        assertEquals(2, item.user.id)
+        assertEquals("2026-09-14T23:01:00+08:00", item.createdAt)
+    }
+
+    @Test
+    fun blockRequestUsesUserIdSnakeCase() {
+        val encoded = json.encodeToString(BlockRequest(2))
+        assertTrue(encoded.contains("\"user_id\":2"), encoded)
+    }
+
+    @Test
+    fun avatarResponseDecodesHasAvatar() {
+        val resp = json.decodeFromString<AvatarResponse>("""{"ok":true,"has_avatar":false}""")
+        assertTrue(resp.ok)
+        assertTrue(!resp.hasAvatar)
     }
 }

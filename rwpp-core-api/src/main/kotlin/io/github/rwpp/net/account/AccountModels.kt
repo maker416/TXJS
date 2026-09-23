@@ -112,6 +112,9 @@ data class FriendRequestListResponse(
 data class FriendItem(
     val user: PublicUser,
     val since: String = "",
+    /** 好友在线状态（文档 6.16 / 6.23）；对方开启隐藏时与真实离线无差别。 */
+    val online: Boolean = false,
+    @SerialName("last_active_at") val lastActiveAt: String? = null,
 )
 
 @Serializable
@@ -170,6 +173,113 @@ data class MarkChatReadRequest(
     @SerialName("last_message_id") val lastMessageId: Long,
 )
 
+/** 在线状态（文档 6.23）。 */
+@Serializable
+data class PresenceDto(
+    @SerialName("user_id") val userId: Long,
+    val online: Boolean = false,
+    @SerialName("last_active_at") val lastActiveAt: String? = null,
+)
+
+@Serializable
+data class PresenceResponse(
+    val presence: PresenceDto,
+)
+
+/** 自己的在线状态可见性设置（文档 6.23）。 */
+@Serializable
+data class PresenceSettings(
+    @SerialName("hide_from_strangers") val hideFromStrangers: Boolean = false,
+    @SerialName("hide_from_friends") val hideFromFriends: Boolean = false,
+)
+
+@Serializable
+data class PresenceSettingsResponse(
+    val settings: PresenceSettings,
+)
+
+/** 修改可见性设置：字段可空，缺省保持不变（配合 client 的 encodeDefaults=false 省略 null 字段）。 */
+@Serializable
+data class UpdatePresenceSettingsRequest(
+    @SerialName("hide_from_strangers") val hideFromStrangers: Boolean? = null,
+    @SerialName("hide_from_friends") val hideFromFriends: Boolean? = null,
+)
+
+@Serializable
+data class ChangeEmailSendCodeRequest(
+    val email: String,
+)
+
+@Serializable
+data class ChangeEmailRequest(
+    val email: String,
+    val code: String,
+)
+
+/** 积分余额（文档 6.9）。 */
+@Serializable
+data class PointBalance(
+    val id: Long,
+    val code: String,
+    val name: String,
+    val balance: Long = 0,
+    val status: Int = 1,
+)
+
+@Serializable
+data class PointsResponse(
+    val points: List<PointBalance> = emptyList(),
+)
+
+/** 积分流水（文档 4.3 / 6.10）。 */
+@Serializable
+data class PointLedger(
+    val id: Long,
+    @SerialName("point_type_id") val pointTypeId: Long = 0,
+    @SerialName("point_code") val pointCode: String = "",
+    @SerialName("point_name") val pointName: String = "",
+    @SerialName("change_amount") val changeAmount: Long = 0,
+    @SerialName("balance_after") val balanceAfter: Long = 0,
+    @SerialName("biz_type") val bizType: String = "",
+    @SerialName("idempotency_key") val idempotencyKey: String = "",
+    val operator: String = "",
+    val remark: String = "",
+    @SerialName("created_at") val createdAt: String = "",
+)
+
+@Serializable
+data class PointLedgersResponse(
+    val ledgers: List<PointLedger> = emptyList(),
+    val page: Int = 1,
+    @SerialName("page_size") val pageSize: Int = 20,
+    val total: Int = 0,
+    @SerialName("total_pages") val totalPages: Int = 1,
+)
+
+/** 拉黑列表项（文档 6.17）。 */
+@Serializable
+data class BlockItem(
+    val user: PublicUser,
+    @SerialName("created_at") val createdAt: String = "",
+)
+
+@Serializable
+data class BlocksResponse(
+    val blocks: List<BlockItem> = emptyList(),
+)
+
+@Serializable
+data class BlockRequest(
+    @SerialName("user_id") val userId: Long,
+)
+
+/** 头像上传 / 删除响应（文档 6.22）。 */
+@Serializable
+data class AvatarResponse(
+    val ok: Boolean = true,
+    @SerialName("has_avatar") val hasAvatar: Boolean,
+)
+
 @Serializable
 data class AccountErrorBody(
     val code: String = "",
@@ -211,6 +321,12 @@ object AccountErrorCode {
     const val EMAIL_TAKEN = "email_taken"
     const val CODE_TOO_FREQUENT = "code_too_frequent"
     const val NICKNAME_CHANGE_TOO_FREQUENT = "nickname_change_too_frequent"
+    const val EMAIL_UNCHANGED = "email_unchanged"
+    const val INVALID_POINT_TYPE = "invalid_point_type"
+    const val INVALID_AMOUNT = "invalid_amount"
+    const val IDEMPOTENCY_REQUIRED = "idempotency_required"
+    const val INSUFFICIENT_BALANCE = "insufficient_balance"
+    const val POINT_TYPE_DISABLED = "point_type_disabled"
     const val MAIL_NOT_CONFIGURED = "mail_not_configured"
     const val MAIL_SEND_FAILED = "mail_send_failed"
     const val INTERNAL_ERROR = "internal_error"
