@@ -180,6 +180,18 @@ class AccountApiClientTest {
     }
 
     @Test
+    fun heartbeatUsesDocumentedPath() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"ok":true}"""))
+        assertTrue(client.heartbeat("tok").ok)
+        val recorded = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("POST", recorded.method)
+        assertEquals("/api/v1/presence/heartbeat", recorded.path)
+        assertEquals("Bearer tok", recorded.getHeader("Authorization"))
+        assertEquals("ak_test", recorded.getHeader("X-App-Key"))
+        assertEquals(0, recorded.body.readUtf8().length)
+    }
+
+    @Test
     fun updatePresenceSettingsOmitsUnspecifiedFields() = runBlocking {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(

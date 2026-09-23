@@ -27,7 +27,14 @@ import io.github.rwpp.net.account.PointBalance
 import io.github.rwpp.net.account.PointLedgersResponse
 import io.github.rwpp.net.account.PresenceSettings
 import io.github.rwpp.net.account.RegisterRequest
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import org.koin.core.component.KoinComponent
@@ -263,6 +270,7 @@ object AccountSession : KoinComponent {
         lastUsername = ""
         profileError = ""
         restoring = false
+        heartbeatIntervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS
     }
 
     private fun applySession(newToken: String, newUser: AccountUser, persist: Boolean) {
@@ -279,6 +287,7 @@ object AccountSession : KoinComponent {
             }
         }
         syncMultiplayerName()
+        startPresenceHeartbeat()
     }
 
     /** 登录态下多人房间昵称固定绑定为账号昵称（登录 / 改昵称 / 恢复会话后即时生效）。 */
@@ -290,6 +299,7 @@ object AccountSession : KoinComponent {
     }
 
     private fun clearSession(persist: Boolean) {
+        stopPresenceHeartbeat()
         token = ""
         user = null
         loggedIn = false
@@ -310,4 +320,72 @@ object AccountSession : KoinComponent {
     private fun savePrefs(prefs: AccountPreferences) {
         runCatching { get<ConfigIO>().saveConfig(prefs) }
     }
+
+    // —— 在线状态心跳（文档 6.23，POST /presence/heartbeat）——
+
+    /**
+     * 心跳间隔毫秒数，默认 5 秒。挂在全局协程作用域上，不随 UI 页面切换停止，
+     * 对局中同样按此频率上报；仅测试可调小。
+     */
+    internal var heartbeatIntervalMs: Long = DEFAULT_HEARTBEAT_INTERVAL_MS
+
+    private val heartbeatScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    @Volatile
+    private var heartbeatJob: Job? = null
+
+    /**
+     * 登录期间每 [heartbeatIntervalMs] 上报一次心跳，保持账号「在线」判定。
+     * 进入对局不影响本循环；预览 / 无网络宿主（[networkEnabled] = false）不启动。
+     */
+    private fun startPresenceHeartbeat() {
+        if (!networkEnabled) return
+        if (heartbeatJob?.isActive == true) return
+        heartbeatJob = heartbeatScope.launch {
+            logger.info("账号在线心跳已启动（间隔 ${heartbeatIntervalMs}ms）")
+            while (isActive) {
+                val tokenSnapshot = token
+                if (!loggedIn || tokenSnapshot.isBlank()) break
+                val extraDelayMs = heartbeatOnce(tokenSnapshot) ?: break
+                delay(heartbeatIntervalMs + extraDelayMs)
+            }
+        }
+    }
+
+    private fun stopPresenceHeartbeat() {
+        heartbeatJob?.cancel()
+        heartbeatJob = null
+    }
+
+    /** 单次心跳；返回限流要求的额外等待毫秒数，返回 null 表示 Token 失效、循环终止。 */
+    private suspend fun heartbeatOnce(tokenSnapshot: String): Long? {
+        return try {
+            client().heartbeat(tokenSnapshot)
+            0L
+        } catch (e: AccountApiException) {
+            when (e.code) {
+                AccountErrorCode.UNAUTHORIZED,
+                AccountErrorCode.USER_DISABLED,
+                AccountErrorCode.NOT_FOUND -> {
+                    logger.warn("账号心跳鉴权失败（{}），停止上报", e.code)
+                    null
+                }
+                AccountErrorCode.RATE_LIMITED -> {
+                    logger.debug("账号心跳被限流（Retry-After={}）", e.retryAfterSeconds)
+                    (e.retryAfterSeconds ?: 0).coerceAtLeast(0) * 1000L
+                }
+                else -> {
+                    logger.debug("账号心跳失败：{} {}", e.code, e.message)
+                    0L
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.debug("账号心跳异常：{}", e.message)
+            0L
+        }
+    }
+
+    private const val DEFAULT_HEARTBEAT_INTERVAL_MS = 5_000L
 }

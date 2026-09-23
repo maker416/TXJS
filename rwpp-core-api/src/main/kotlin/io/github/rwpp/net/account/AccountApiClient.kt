@@ -149,6 +149,10 @@ class AccountApiClient(
     suspend fun getPresence(token: String, userId: Long): PresenceDto =
         getJson<PresenceResponse>("/users/$userId/presence", token).presence
 
+    /** 在线状态心跳（文档 6.23）：无请求体，刷新自己的最后活跃时间。 */
+    suspend fun heartbeat(token: String): OkResponse =
+        postEmpty("/presence/heartbeat", token)
+
     suspend fun getPresenceSettings(token: String): PresenceSettings =
         getJson<PresenceSettingsResponse>("/users/me/presence-settings", token).settings
 
