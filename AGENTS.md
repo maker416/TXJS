@@ -172,6 +172,32 @@ Gradle JVM 参数在根目录 `gradle.properties` 中定义（`-Xmx2048M`）。
 4. 桌面端运行/构建 MSI 需要 `.NET SDK`（用于 `wix/Program.cs` 的 WiX 打包）。
 5. 若首次运行或注入配置变更，`rwpp-desktop` 会在启动时进入「应用注入配置」模式，完成后自动重启。
 
+### Git 工作树（worktree）规范（重要）
+
+新建 git worktree 时，`.gitignore` 排除的本地文件**不会**进入新工作树，但构建/测试依赖其中一部分。**创建 worktree 后必须立即把这部分文件同步过去**，否则 Android 构建、Release 签名、注入元数据生成会失败。
+
+必须同步的文件（相对于仓库根）：
+
+- `local.properties` — Android SDK 路径（无此文件 Android 模块无法配置）
+- `packaging/game-root.local.txt` — 本机游戏根路径（打包/桌面运行需要）
+- `build/key/`（`release.keystore`、`keystore.properties`）— Android Release 签名
+- `build/*.ps1` — 发布打包脚本
+- `rwpp-android/src/main/assets/` 全部 — 从原版客户端提取的资源（约 23MB）
+- `rwpp-android/src/main/res/` 下被忽略的文件（drawable/anim/raw/values 等，从原版客户端提取）
+- `listserver/` — 列表服务器资料
+
+不需要同步：`.gradle/`、`.idea/`、`.kotlin/`、`.claude/`、`.codegraph/`、各模块 `build/` 与 `bin/` 输出、`build/` 下的临时子目录（`artifacts/reports/tmp/tmp-decompile/wix311/wt-verify`）、日志、桌面运行时目录（`generated_lib/`、`maps/`、`units/` 等）、本机用户配置（`io.github.rwpp.config.*.toml`）。`lib/*.jar` 已全部纳入 git 跟踪，worktree 自带，无需复制。
+
+在主仓库根目录执行以下命令一键同步（Git Bash；把 `<worktree路径>` 换成实际路径）：
+
+```bash
+git ls-files --others --ignored --exclude-standard -z \
+  | grep -z -v -E '^\.(gradle|idea|kotlin|claude|codegraph|cursor)/|^rwpp-[a-z-]+/build/|/bin/|^build/(artifacts|reports|tmp|tmp-decompile|wix311|wt-verify)/|\.log$|^generated_lib/|^extension/|^maps/|^units/|^resource_generated/|^io\.github\.rwpp\.config\.' \
+  | tar --null --files-from=- -cf - | tar -xf - -C <worktree路径>
+```
+
+同步后建议在新工作树跑一次 `./gradlew :rwpp-core-api:test` 冒烟验证。
+
 ### 发布产物
 
 - 桌面端：`build/desktop-jar/` 下生成 `.jar`，配合 `launcher.bat` 等脚本使用；MSI 通过 `wix/` 下的 .NET 项目生成
@@ -313,6 +339,13 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 - **多人房间昵称绑定账号昵称**：登录 RWJS 统一账号后，多人页顶部用户名固定为账号显示名（`AccountSession.displayName`），输入框只读并显示锁图标。联动点有两处：`AccountSession.applySession()` 末尾的 `syncMultiplayerName()`（登录/注册/改昵称/刷新资料/恢复会话后写入 `lastNetworkPlayerName` 与 `game.setUserName`），以及 `Multiplayer.kt` 中 `LaunchedEffect(loggedIn, displayName)` 的实时同步。退出登录不回退已写入的名字，输入框恢复可编辑。
 - **账号 UI 组件**：用户页/好友/登录注册弹窗的现代化组件集中在 `rwpp-core` 的 `ui/AccountWidgets.kt`（头像、状态胶囊、信息行、操作项、主按钮、弹窗头部、提示条、`AccountAuthCard`），新增账号相关界面时优先复用。
+- **账号 API 功能边界（presence / 头像 / 积分 / 拉黑 / 换邮箱）**：客户端对接文档 6.23/6.22/6.9-6.10/6.17/6.6-6.7，全部只需 AppKey + Bearer，**不接 `POST /points/change`**（需 AppSecret，文档明确不得进客户端）。
+  - **在线状态**：服务端被动心跳（任何带 Token 的请求自动刷新活跃时间），客户端**没有也不需要**心跳调用。好友列表项自带 `online`/`last_active_at`（`FriendItem`），随 `refreshLists()` 轮询刷新；对方开启隐藏或任一方向拉黑时响应与真实离线完全无差别，UI 不做区分。自己的可见性开关在账号页「隐私」区块（`AccountSession.presenceSettings` / `updatePresenceSettings`，乐观更新失败回滚）。聊天头部副标题的相对时间用 `account/RelativeTime.kt`（手写 RFC3339 解析，项目无 kotlinx-datetime）。
+  - **头像**：`GET /users/{id}/avatar` 返回 JPEG 字节（非 JSON），client 的 `getAvatar` 404 返回 null。Compose 侧走 Coil：`coil/AccountAvatar.kt`（userId + hasAvatar + version）+ Fetcher/Keyer（已注册进 `App.kt` ImageLoader），`AccountAvatarBox(avatar=, online=)` 有头像显真图、否则首字母。自己上传/删除成功后 `AccountSession.avatarVersion++` 使缓存 key 失效；好友覆盖上传会话内可能陈旧（可接受）。上传前客户端预检 ≤1MiB 且 jpg/jpeg/png。
+  - **更换邮箱**：`AccountSession.changeEmail()` 成功后服务端使该身份所有 Token 立即失效，该方法**已自动清空本地会话**（`clearSession` + `FriendsSession.clear()`），UI 只需提示重新登录。
+  - **积分**：账号页「积分」区块只读展示余额（`AccountSession.points`）与分页流水（`fetchPointLedgers`，不常驻会话状态）。
+  - **拉黑**：`FriendsSession.blocks` 随 `refreshLists()` 一起拉取（`runCatching` 容错旧服务端无此端点）；`block()` 后服务端自动删除好友关系与互申，拉黑当前聊天对象会自动 `closeChat()`。入口：好友行拉黑图标（确认弹窗）+ 好友页头部黑名单对话框（解除拉黑）。
+  - **AppKey 迁移**：`resolveAccountAppKey()` 把存储值等于上一代出厂 Key（`LEGACY_ACCOUNT_APP_KEY`）按空处理回落新默认——设置页的 AppKey 输入框以解析值初始化、编辑即写回，老用户配置里可能已持久化旧 Key，不迁移换 Key 对其不生效；环境变量/系统属性覆盖不迁移。
 - **好友聊天输入法（鸿蒙，踩过坑）**：同一台全屏设备上，等待房间输入框能弹出输入法，是因为它在紧凑栏中部，键盘挡住的是下面的消息区；好友聊天输入框在卡片最底部，不顶起来就看不见。输入框必须用与等待房间相同的普通 `OutlinedTextField`（`weight` 直接加在输入框上）。不要用 `RWSingleOutlinedTextField`（外层 `weight` + `IntrinsicSize` 点不中），不要在获焦时 `setImeImmersiveSuspended` 去改系统栏，也不要在弹出过程中用 `imePadding()` 重排——鸿蒙会在输入法显示完成前丢掉焦点。正确做法是 `settledImeAvoidance()`：等 IME inset 稳定后再垫卡片底部（并扣掉窗口已经 `adjustResize` 掉的高度），禁止把输入框钉死在键盘下面。点消息区收起键盘用 `dismissImeOnTap()`（不可聚焦），不要把 `autoClearFocus()` 套在输入框父级上。
 - **房间邀请（好友私信通道）**：等待房间内可通过「邀请好友」入口（按钮行按钮 + 玩家列表空槽位行 `RoomInviteSlotRow`，`MultiplayerRoom.kt`）向好友发邀请。协议在 `rwpp-core-api` 的 `net/account/RoomInvite.kt`：私信 body = `[RWJSINV1]` + JSON（地址/短码/邀请人/地图/人数/模组数/版本/时间戳，TTL 30 分钟），编解码 `RoomInviteCodec`（回归测试 `RoomInviteCodecTest`）。邀请地址优先取当前房间短码（`roomDetails()` 的 `[QR]\d+`），无短码才回退 `lastNetworkIP` 且必须过 `isPlausibleJoinAddress` 校验（拒绝 `Qnews`/`QC6666` 这类快速建房指令——它们会被直连输入框写入 `lastNetworkIP`，但不是可加入地址），都不可用则禁止发送。发送走 `FriendsSession.sendTo(peerId, body)`（不依赖当前会话）。接收端 `Friends.kt` 消息流按前缀识别渲染为 `RoomInviteCard`（`ui/RoomInvite.kt`），点击「立即加入」写入 `UI.pendingInviteJoin` 并跳到多人页，由 `MultiplayerView` 的 `LaunchedEffect(UI.pendingInviteJoin)` 消费后走既有 `LoadingView` → `directJoinServer` 链路（`selectedRoomDescription = null`，等价直连 IP 加入）。房间内聊天不做卡片化（`RoomChatMessageView` 是整段 AnnotatedString 只读 TextField）。
 - **邀请悬浮卡片（房间外通知）**：收到好友邀请私信且不在等待房间/对局中时，屏幕右侧滑入悬浮卡片（`RoomInviteToastHost`，挂在 `App.kt` 根布局退出遮罩之前；卡片 `RoomInviteToastCard`），底部 3dp 进度条 10 秒线性耗尽后自动忽略（`Animatable` + `tween(LinearEasing)`），点「立即加入」关闭其他顶层页并写 `UI.pendingInviteJoin` 走既有加入链路（版本不符先经共用的 `InviteVersionMismatchDialog` 确认），点卡片空白处打开好友页并 `FriendsSession.openChat(peer)` 直达会话。检测在 `FriendsSession.refreshLists()` 末尾（`maybeNotifyRoomInvite`）：未读 >0、非自己发送、`RoomInviteCodec.decode` 命中且未过期才置位 `UI.incomingInviteNotification`，每会话同一条消息只弹一次（`inviteToastSeen`，被抑制也记，避免反复打扰）；正在查看该会话或 `showRoomView` 时不弹，进房瞬间已弹出的卡片由宿主侧的 `LaunchedEffect(UI.showRoomView)` 收起。轮询：主菜单局部轮询已上移到 `App.kt` 根的全局 10s 轮询（好友页/账号页打开时跳过，它们有自有轮询）。
