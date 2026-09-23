@@ -13,6 +13,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.rwpp.logger
 import io.github.rwpp.net.account.AccountApiException
+import io.github.rwpp.net.account.BlockItem
 import io.github.rwpp.net.account.ChatItem
 import io.github.rwpp.net.account.ChatMessageDto
 import io.github.rwpp.net.account.FriendItem
@@ -35,6 +36,7 @@ object FriendsSession {
     val outgoing = mutableStateListOf<FriendRequestDto>()
     val chats = mutableStateListOf<ChatItem>()
     val messages = mutableStateListOf<ChatMessageDto>()
+    val blocks = mutableStateListOf<BlockItem>()
 
     var listError: String by mutableStateOf("")
         private set
@@ -59,18 +61,25 @@ object FriendsSession {
         return chats.firstOrNull { it.peer.id == userId }?.unread ?: 0
     }
 
+    /** 好友的在线状态（文档 6.16 随列表下发）；不在好友列表（或非好友）返回 null。 */
+    fun presenceOf(userId: Long): FriendItem? {
+        return friends.firstOrNull { it.user.id == userId }
+    }
+
     suspend fun refreshLists() {
         if (!AccountSession.networkEnabled || !AccountSession.loggedIn) return
         loadingLists = true
         try {
             val token = AccountSession.requireToken()
             val api = AccountSession.client()
-            val (f, inn, out, c) = withContext(Dispatchers.IO) {
+            val (f, inn, out, c, b) = withContext(Dispatchers.IO) {
                 val friends = api.listFriends(token)
                 val incoming = api.listFriendRequests(token, FriendRequestBox.INCOMING)
                 val outgoing = api.listFriendRequests(token, FriendRequestBox.OUTGOING)
                 val chats = api.listChats(token)
-                Quadruple(friends, incoming, outgoing, chats)
+                // 旧版本服务端没有 blocks 端点：失败不拖垮整个列表刷新
+                val blocks = runCatching { api.listBlocks(token) }.getOrDefault(emptyList())
+                Quintuple(friends, incoming, outgoing, chats, blocks)
             }
             friends.clear()
             friends.addAll(f)
@@ -80,6 +89,8 @@ object FriendsSession {
             outgoing.addAll(out)
             chats.clear()
             chats.addAll(c)
+            blocks.clear()
+            blocks.addAll(b)
             listError = ""
             val peer = activePeer
             if (peer != null && activeConversationId == null) {
@@ -132,6 +143,22 @@ object FriendsSession {
         if (activePeer?.id == userId) {
             closeChat()
         }
+        refreshLists()
+    }
+
+    /** 拉黑（文档 6.17）：服务端会删除双方好友关系与互申记录。 */
+    suspend fun block(userId: Long) {
+        val token = AccountSession.requireToken()
+        withContext(Dispatchers.IO) { AccountSession.client().block(token, userId) }
+        if (activePeer?.id == userId) {
+            closeChat()
+        }
+        refreshLists()
+    }
+
+    suspend fun unblock(userId: Long) {
+        val token = AccountSession.requireToken()
+        withContext(Dispatchers.IO) { AccountSession.client().unblock(token, userId) }
         refreshLists()
     }
 
@@ -222,6 +249,7 @@ object FriendsSession {
         previewOutgoing: List<FriendRequestDto> = emptyList(),
         previewChats: List<ChatItem> = emptyList(),
         previewMessages: List<ChatMessageDto> = emptyList(),
+        previewBlocks: List<BlockItem> = emptyList(),
         peer: PublicUser? = null,
         conversationId: Long? = null,
     ) {
@@ -234,6 +262,8 @@ object FriendsSession {
         outgoing.addAll(previewOutgoing)
         chats.clear()
         chats.addAll(previewChats)
+        blocks.clear()
+        blocks.addAll(previewBlocks)
         messages.clear()
         messages.addAll(previewMessages)
         activePeer = peer
@@ -247,11 +277,13 @@ object FriendsSession {
         incoming.clear()
         outgoing.clear()
         chats.clear()
+        blocks.clear()
         closeChat()
         listError = ""
         loadingLists = false
         inviteToastSeen.clear()
-        UI.incomingInviteNotification = null
+        // 纯单元测试环境没有初始化 appKoin，触碰 UI 会抛 ExceptionInInitializerError
+        runCatching { UI.incomingInviteNotification = null }
     }
 
     /** 每个会话已弹过悬浮卡片的邀请消息 id（peerId -> messageId），避免轮询重复弹。 */
@@ -303,4 +335,4 @@ object FriendsSession {
     }
 }
 
-private data class Quadruple<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
+private data class Quintuple<A, B, C, D, E>(val a: A, val b: B, val c: C, val d: D, val e: E)

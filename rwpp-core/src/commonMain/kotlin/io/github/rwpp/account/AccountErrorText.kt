@@ -33,6 +33,7 @@ fun accountErrorText(error: AccountApiException): String {
         AccountErrorCode.INVALID_REQUEST -> "accountError.invalidRequest"
         AccountErrorCode.INVALID_CODE -> "accountError.invalidCode"
         AccountErrorCode.NICKNAME_UNCHANGED -> "accountError.nicknameUnchanged"
+        AccountErrorCode.EMAIL_UNCHANGED -> "accountError.emailUnchanged"
         AccountErrorCode.NOT_FOUND -> "accountError.notFound"
         AccountErrorCode.USERNAME_TAKEN -> "accountError.usernameTaken"
         AccountErrorCode.EMAIL_TAKEN -> "accountError.emailTaken"

@@ -8,6 +8,7 @@
 package io.github.rwpp.account
 
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.rwpp.config.AccountPreferences
@@ -22,6 +23,9 @@ import io.github.rwpp.net.account.AccountApiException
 import io.github.rwpp.net.account.AccountErrorCode
 import io.github.rwpp.net.account.AccountUser
 import io.github.rwpp.net.account.EmailCodePurpose
+import io.github.rwpp.net.account.PointBalance
+import io.github.rwpp.net.account.PointLedgersResponse
+import io.github.rwpp.net.account.PresenceSettings
 import io.github.rwpp.net.account.RegisterRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -56,6 +60,18 @@ object AccountSession : KoinComponent {
         private set
 
     var restoring: Boolean by mutableStateOf(false)
+        private set
+
+    /** 自己的在线状态可见性设置（文档 6.23），登录后由账号页拉取。 */
+    var presenceSettings: PresenceSettings? by mutableStateOf(null)
+        private set
+
+    /** 积分余额列表（文档 6.9），登录后由账号页拉取。 */
+    var points: List<PointBalance> by mutableStateOf(emptyList())
+        private set
+
+    /** 头像版本号：自己上传 / 删除头像后自增，驱动 Coil 缓存失效。 */
+    var avatarVersion: Int by mutableIntStateOf(0)
         private set
 
     /** 截图 / 组合测试关闭真请求。 */
@@ -158,6 +174,64 @@ object AccountSession : KoinComponent {
         applySession(token, me, persist = true)
     }
 
+    suspend fun refreshPresenceSettings() {
+        val settings = withContext(Dispatchers.IO) { client().getPresenceSettings(requireToken()) }
+        presenceSettings = settings
+    }
+
+    suspend fun updatePresenceSettings(hideFromStrangers: Boolean?, hideFromFriends: Boolean?) {
+        val settings = withContext(Dispatchers.IO) {
+            client().updatePresenceSettings(requireToken(), hideFromStrangers, hideFromFriends)
+        }
+        presenceSettings = settings
+    }
+
+    suspend fun refreshPoints() {
+        points = withContext(Dispatchers.IO) { client().listPoints(requireToken()) }
+    }
+
+    /** 积分流水按需分页拉取（文档 6.10），不常驻会话状态。 */
+    suspend fun fetchPointLedgers(
+        page: Int? = null,
+        pageSize: Int? = null,
+        pointTypeId: Long? = null,
+    ): PointLedgersResponse = withContext(Dispatchers.IO) {
+        client().listPointLedgers(requireToken(), page, pageSize, pointTypeId)
+    }
+
+    suspend fun sendChangeEmailCode(email: String) {
+        withContext(Dispatchers.IO) {
+            client().sendChangeEmailCode(requireToken(), email)
+        }
+    }
+
+    /**
+     * 确认更换绑定邮箱。成功后服务端使该身份所有 Token 立即失效（文档 6.7），
+     * 本地同步清会话，调用方应引导重新登录。
+     */
+    suspend fun changeEmail(email: String, code: String) {
+        withContext(Dispatchers.IO) {
+            client().changeEmail(requireToken(), email, code)
+        }
+        clearSession(persist = true)
+        FriendsSession.clear()
+    }
+
+    /** 上传头像（≤1MiB 的 JPEG/PNG），成功后刷新 hasAvatar 并抬 [avatarVersion] 使缓存失效。 */
+    suspend fun uploadAvatar(bytes: ByteArray, fileName: String, contentType: String) {
+        val hasAvatar = withContext(Dispatchers.IO) {
+            client().uploadAvatar(requireToken(), bytes, fileName, contentType)
+        }
+        user = user?.copy(hasAvatar = hasAvatar)
+        avatarVersion++
+    }
+
+    suspend fun deleteAvatar() {
+        val hasAvatar = withContext(Dispatchers.IO) { client().deleteAvatar(requireToken()) }
+        user = user?.copy(hasAvatar = hasAvatar)
+        avatarVersion++
+    }
+
     suspend fun logout() {
         val current = token
         try {
@@ -220,6 +294,8 @@ object AccountSession : KoinComponent {
         user = null
         loggedIn = false
         profileError = ""
+        presenceSettings = null
+        points = emptyList()
         if (persist) {
             prefsOrNull()?.let { prefs ->
                 prefs.token = ""
