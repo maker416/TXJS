@@ -26,13 +26,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -53,6 +53,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -60,6 +61,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -69,15 +71,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.offset
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
@@ -96,7 +97,6 @@ import io.github.rwpp.net.account.PublicUser
 import io.github.rwpp.net.account.RoomInvite
 import io.github.rwpp.net.account.RoomInviteCodec
 import io.github.rwpp.platform.BackHandler
-import io.github.rwpp.platform.setImeImmersiveSuspended
 import io.github.rwpp.projectVersion
 import io.github.rwpp.utils.compareVersions
 import io.github.rwpp.rwpp_core.generated.resources.Res
@@ -105,6 +105,7 @@ import io.github.rwpp.widget.AnimatedAlertDialog
 import io.github.rwpp.widget.BorderCard
 import io.github.rwpp.widget.ExitButton
 import io.github.rwpp.widget.LargeProportion
+import io.github.rwpp.widget.RWOutlinedTextColors
 import io.github.rwpp.widget.RWSingleOutlinedTextField
 import io.github.rwpp.widget.WindowManager
 import io.github.rwpp.widget.v2.RWIconButton
@@ -188,6 +189,8 @@ fun FriendsView(
                     .copy((UI.backgroundTransparency + 0.2f).coerceAtMost(1f)),
             ),
             modifier = Modifier
+                // 必须垫在 fillMaxHeight 前面：先扣掉键盘高度，卡片才能坐在键盘上方。
+                .settledImeAvoidance()
                 .fillMaxHeight()
                 .fillMaxWidth(if (isSmall) 0.95f else 0.88f),
         ) {
@@ -476,14 +479,6 @@ private fun FriendChatPane(
         }
     }
 
-    // 离开聊天栏或关掉会话时恢复全屏。输入框父级不能再挂可聚焦的 clickable，否则鸿蒙弹出输入法时会把焦点夺走。
-    DisposableEffect(Unit) {
-        onDispose { setImeImmersiveSuspended(false) }
-    }
-    LaunchedEffect(peer?.id) {
-        if (peer == null) setImeImmersiveSuspended(false)
-    }
-
     Column(modifier = Modifier.fillMaxSize()) {
         if (peer == null) {
             Column(
@@ -626,17 +621,29 @@ private fun FriendChatPane(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .chatInputBottomInset()
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            RWSingleOutlinedTextField(
-                label = readI18n("friends.inputHint", I18nType.RWPP),
+            // 与等待房间紧凑输入框相同：普通 OutlinedTextField。
+            // 不要用 RWSingleOutlinedTextField（weight + IntrinsicSize），不要在获焦时改系统栏。
+            // 键盘避让在外层卡片的 settledImeAvoidance：弹出过程中绝不重排。
+            OutlinedTextField(
                 value = draft,
-                modifier = Modifier.weight(1f),
-                onFocusChanged = { setImeImmersiveSuspended(it.isFocused) },
                 onValueChange = { if (it.codePointCount(0, it.length) <= 2000) draft = it },
+                placeholder = {
+                    Text(
+                        readI18n("friends.inputHint", I18nType.RWPP),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                },
+                textStyle = MaterialTheme.typography.bodyMedium,
+                singleLine = true,
+                colors = RWOutlinedTextColors,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = 52.dp),
             )
             // 有可发送内容时发送按钮染色，给明确可点反馈
             val canSend = AccountFieldRules.isValidChatBody(draft.trim())
@@ -1006,6 +1013,44 @@ private fun ChatBubble(message: ChatMessageDto, fromMe: Boolean) {
     }
 }
 
+/** 输入法弹出动画结束前不要改布局，否则鸿蒙会在显示完成前丢掉焦点。 */
+private const val IME_SETTLE_MS = 300L
+
+/**
+ * 等输入法高度稳定后再把底部垫起来，让输入行落到键盘上方。
+ * 弹出过程中保持原布局；窗口已经 adjustResize 掉的高度要扣掉，避免叠两次。
+ */
+@Composable
+private fun Modifier.settledImeAvoidance(): Modifier {
+    val density = LocalDensity.current
+    val imeBottomPx = WindowInsets.ime.getBottom(density)
+    val containerHeight = LocalWindowInfo.current.containerSize.height
+    var reservedPx by remember { mutableIntStateOf(0) }
+    var baselineHeight by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(imeBottomPx, containerHeight) {
+        if (imeBottomPx <= 0) {
+            if (containerHeight > 0) baselineHeight = containerHeight
+            reservedPx = 0
+            return@LaunchedEffect
+        }
+        delay(IME_SETTLE_MS)
+        val alreadyResized = if (baselineHeight > 0) {
+            (baselineHeight - containerHeight).coerceAtLeast(0)
+        } else {
+            0
+        }
+        reservedPx = (imeBottomPx - alreadyResized).coerceAtLeast(0)
+    }
+
+    val reserved = reservedPx
+    return if (reserved > 0) {
+        padding(bottom = with(density) { reserved.toDp() })
+    } else {
+        this
+    }
+}
+
 /**
  * 点在消息区或标题栏的空白处时收起输入法。
  * 不用 [clickable]：Compose 1.10 的 clickable 在软键盘弹出后会变成可聚焦节点，抢走输入框焦点。
@@ -1021,29 +1066,6 @@ private fun Modifier.dismissImeOnTap(): Modifier {
                 keyboard?.hide()
                 focusManager.clearFocus()
             }
-        }
-    }
-}
-
-/**
- * 输入行底部避让。IME 与导航栏取较大的一边，避免叠两次；
- * 并且至少给输入框留出高度，防止鸿蒙在 adjustResize 之外再报一遍 IME inset 时把输入框压成 0 高度、焦点丢失、键盘收回。
- */
-@Composable
-private fun Modifier.chatInputBottomInset(): Modifier {
-    val density = LocalDensity.current
-    val desiredBottom = maxOf(
-        WindowInsets.ime.getBottom(density),
-        WindowInsets.navigationBars.getBottom(density),
-    )
-    val minContentPx = with(density) { 72.dp.roundToPx() }
-    return layout { measurable, constraints ->
-        val pad = desiredBottom.coerceAtMost((constraints.maxHeight - minContentPx).coerceAtLeast(0))
-        val placeable = measurable.measure(constraints.offset(vertical = -pad))
-        val width = placeable.width.coerceAtMost(constraints.maxWidth)
-        val height = (placeable.height + pad).coerceAtMost(constraints.maxHeight)
-        layout(width, height) {
-            placeable.place(0, 0)
         }
     }
 }
