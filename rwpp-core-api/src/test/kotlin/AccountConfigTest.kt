@@ -6,6 +6,7 @@
  */
 
 import io.github.rwpp.config.DEFAULT_ACCOUNT_API_URL
+import io.github.rwpp.config.LEGACY_ACCOUNT_APP_KEY
 import io.github.rwpp.config.resolveAccountApiUrl
 import io.github.rwpp.config.resolveAccountAppKey
 import kotlin.test.Test
@@ -25,5 +26,17 @@ class AccountConfigTest {
         val key = resolveAccountAppKey("")
         assertTrue(key.startsWith("ak_"))
         assertTrue(key.length > 8)
+    }
+
+    @Test
+    fun legacyAppKeyMigratesToShippedDefault() {
+        val migrated = resolveAccountAppKey(LEGACY_ACCOUNT_APP_KEY)
+        assertTrue(migrated.startsWith("ak_"))
+        assertTrue(migrated != LEGACY_ACCOUNT_APP_KEY)
+    }
+
+    @Test
+    fun customAppKeyIsKept() {
+        assertEquals("ak_custom123", resolveAccountAppKey("ak_custom123"))
     }
 }

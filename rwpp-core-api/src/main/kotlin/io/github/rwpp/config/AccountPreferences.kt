@@ -33,7 +33,13 @@ data class AccountPreferences(
  * 出厂默认 AppKey，保证未改配置也能连上默认服务器。
  * 不要把该值写进 PR / 提交说明 / 用户可见文档。
  */
-internal const val DEFAULT_ACCOUNT_APP_KEY = "ak_76da2bdc67c6bea253f67b031566860a"
+internal const val DEFAULT_ACCOUNT_APP_KEY = "ak_607b04bac2c96567ea132fed5a84652c"
+
+/**
+ * 上一代出厂默认 AppKey。老用户的配置里可能已通过设置页持久化了该值，
+ * 解析时按空处理以回落到新默认，避免换 Key 对这部分用户不生效。
+ */
+internal const val LEGACY_ACCOUNT_APP_KEY = "ak_5980ceebf89affa4b88ecdf3c9a72456"
 
 fun resolveAccountApiUrl(stored: String): String {
     val override = System.getProperty("rwjs.account.apiUrl")
@@ -45,6 +51,8 @@ fun resolveAccountApiUrl(stored: String): String {
 fun resolveAccountAppKey(stored: String): String {
     val override = System.getProperty("rwjs.account.appKey")
         ?: System.getenv("RWJS_ACCOUNT_APP_KEY")
-    val raw = override?.trim().orEmpty().ifBlank { stored.trim() }
-    return raw.ifBlank { DEFAULT_ACCOUNT_APP_KEY }
+    if (!override.isNullOrBlank()) return override.trim()
+    val raw = stored.trim()
+    if (raw.isBlank() || raw == LEGACY_ACCOUNT_APP_KEY) return DEFAULT_ACCOUNT_APP_KEY
+    return raw
 }
