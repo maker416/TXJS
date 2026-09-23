@@ -94,6 +94,7 @@ import io.github.rwpp.net.account.ChatMessageDto
 import io.github.rwpp.net.account.FriendRequestDto
 import io.github.rwpp.net.account.FriendRequestStatus
 import io.github.rwpp.net.account.PublicUser
+import io.github.rwpp.net.account.ROOM_INVITE_PREFIX
 import io.github.rwpp.net.account.RoomInvite
 import io.github.rwpp.net.account.RoomInviteCodec
 import io.github.rwpp.platform.BackHandler
@@ -432,7 +433,14 @@ private fun FriendListPane(
                 items(friends, key = { "friend_${it.user.id}" }) { item ->
                     FriendRow(
                         user = item.user,
-                        preview = FriendsSession.lastMessagePreview(item.user.id),
+                        // 邀请消息的报文原文不能见人：列表摘要换成占位文案
+                        preview = FriendsSession.lastMessagePreview(item.user.id)?.let { body ->
+                            if (body.startsWith(ROOM_INVITE_PREFIX)) {
+                                readI18n("friends.inviteSummary", I18nType.RWPP)
+                            } else {
+                                body
+                            }
+                        },
                         unread = FriendsSession.unreadOf(item.user.id),
                         selected = FriendsSession.activePeer?.id == item.user.id,
                         modifier = if (enableAnimations) Modifier.animateItem() else Modifier,

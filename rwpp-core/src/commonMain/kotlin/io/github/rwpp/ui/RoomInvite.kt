@@ -16,6 +16,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,18 +26,23 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -56,6 +62,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
 import io.github.rwpp.game.GameRoom
@@ -73,7 +80,8 @@ import io.github.rwpp.rwpp_core.generated.resources.swords_30
 import io.github.rwpp.widget.AnimatedAlertDialog
 import io.github.rwpp.widget.BorderCard
 import io.github.rwpp.widget.LargeProportion
-import io.github.rwpp.widget.RWSingleOutlinedTextField
+import io.github.rwpp.widget.RWOutlinedTextColors
+import io.github.rwpp.widget.WindowManager
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.painterResource
 
@@ -123,7 +131,8 @@ object RoomInvitePolicy {
 }
 
 /**
- * 房间邀请卡片：在好友聊天流中替代普通气泡渲染，也可作为邀请弹窗内的预览。
+ * 房间邀请卡片：在好友聊天流中替代普通气泡渲染。
+ * 邀请弹窗内不用它，改用紧凑的 [InviteDialogSummary]，避免小屏上挤占好友列表。
  *
  * @param fromMe 自己发出的邀请（按钮替换为等待提示）
  * @param onJoin 点击「立即加入」；为 null 时仅展示（预览态）
@@ -262,7 +271,12 @@ fun RoomInviteCard(
 }
 
 /**
- * 邀请好友弹窗：房间摘要预览 + 好友多选 + 发送。
+ * 邀请好友弹窗：房间摘要 + 好友多选 + 发送。
+ *
+ * 摘要是一行紧凑条，不再嵌入聊天用的 [RoomInviteCard]（那张卡在横屏手机上会把好友列表挤成一条缝）。
+ * 弹窗高度按内容收包、封顶 540.dp（短屏窗口自身的约束会进一步收紧）；装不下时好友列表
+ * 收缩为可滚动，标题、搜索框与发送按钮始终留在屏内。短屏（[WindowManager.Small]，含手机
+ * 横屏）整体压缩行高与字号。
  *
  * @param invite 打开时快照的邀请负载；为 null 表示当前房间无法生成邀请（如无地址）
  * @param onGoLogin 未登录时点击「去登录」
@@ -290,207 +304,389 @@ fun InviteFriendsDialog(
             }
         },
     ) { dismiss ->
-    val scope = rememberCoroutineScope()
-    var search by remember { mutableStateOf("") }
-    val selected = remember { mutableStateListOf<Long>() }
-    var sending by remember { mutableStateOf(false) }
-    var sendError by remember { mutableStateOf("") }
+        val scope = rememberCoroutineScope()
+        var search by remember { mutableStateOf("") }
+        val selected = remember { mutableStateListOf<Long>() }
+        var sending by remember { mutableStateOf(false) }
+        var sendError by remember { mutableStateOf("") }
 
-    LaunchedEffect(visible) {
-        if (visible) {
-            search = ""
-            selected.clear()
-            sendError = ""
-            FriendsSession.refreshLists()
-        }
-    }
-
-    BorderCard(
-        modifier = Modifier
-            .fillMaxWidth(LargeProportion())
-            .widthIn(max = 480.dp)
-            .padding(10.dp),
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(
-                readI18n("multiplayer.room.inviteFriends", I18nType.RWPP),
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.Bold,
-            )
-
-            if (invite != null) {
-                RoomInviteCard(invite = invite, fromMe = true)
+        LaunchedEffect(visible) {
+            if (visible) {
+                search = ""
+                selected.clear()
+                sendError = ""
+                FriendsSession.refreshLists()
             }
+        }
 
-            when {
-                !AccountSession.loggedIn -> {
-                    AccountMessageBanner(readI18n("multiplayer.room.inviteNeedLogin", I18nType.RWPP))
-                    AccountPrimaryButton(
-                        label = readI18n("friends.goLogin", I18nType.RWPP),
-                        onClick = { goLoginOnDismiss = true; dismiss() },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                invite == null -> {
-                    AccountMessageBanner(
-                        readI18n("multiplayer.room.inviteNoAddress", I18nType.RWPP),
-                        isError = true,
-                    )
-                }
-                else -> {
-                    RWSingleOutlinedTextField(
-                        label = readI18n("friends.searchHint", I18nType.RWPP),
-                        value = search,
-                        modifier = Modifier.fillMaxWidth(),
-                        onValueChange = { search = it },
-                    )
+        // 短屏（手机横屏）用项目自身的窗口分级判定，紧凑模式压缩行高与字号。
+        // 不在对话框里读 LocalWindowInfo.containerSize——那是对话框自身窗口的尺寸，
+        // 桌面端对话框按内容测量时会与布局形成反馈环。
+        val short = LocalWindowManager.current == WindowManager.Small
+        val gap = if (short) 6.dp else 10.dp
 
-                    val friends = FriendsSession.friends
-                        .filter {
-                            search.isBlank() ||
-                                it.user.nickname.contains(search, true) ||
-                                it.user.username.contains(search, true)
-                        }
-                        .sortedBy { (it.user.nickname.ifBlank { it.user.username }).lowercase() }
-
-                    if (friends.isEmpty()) {
-                        Text(
-                            readI18n("friends.empty", I18nType.RWPP),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+        BorderCard(
+            modifier = Modifier
+                .fillMaxWidth(if (short) 0.94f else LargeProportion())
+                .widthIn(max = if (short) 640.dp else 480.dp)
+                // 高度只封顶不撑满：内容少时按内容收包，装不下时由下方列表 weight 收缩滚动；
+                // 窗口约束会进一步收紧这个上限，短屏上 540.dp 不会把对话框顶出屏外。
+                // 不加 imePadding()：弹出过程中按 IME inset 重排会让鸿蒙在输入法显示完成前
+                // 丢掉焦点（参见 Friends.kt 的 settledImeAvoidance），且横屏输入法是
+                // extract 全屏 UI，IME 边垫在此场景本无意义
+                .heightIn(max = 540.dp)
+                .navigationBarsPadding(),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        horizontal = if (short) 10.dp else 12.dp,
+                        vertical = if (short) 8.dp else 12.dp,
+                    ),
+                verticalArrangement = Arrangement.spacedBy(gap),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        readI18n("multiplayer.room.inviteFriends", I18nType.RWPP),
+                        style = if (short) {
+                            MaterialTheme.typography.titleMedium
+                        } else {
+                            MaterialTheme.typography.titleLarge
+                        },
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(if (short) 32.dp else 36.dp)
+                            .clip(CircleShape)
+                            .clickable(onClick = dismiss),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = readI18n("common.close", I18nType.RWPP),
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                            modifier = Modifier.size(18.dp),
                         )
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            items(friends.size, key = { friends[it].user.id }) { index ->
-                                val friend = friends[index].user
-                                val name = friend.nickname.ifBlank { friend.username }
-                                val isSelected = friend.id in selected
-                                Surface(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .clickable {
-                                            if (isSelected) selected.remove(friend.id)
-                                            else selected.add(friend.id)
-                                        },
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = if (isSelected) {
-                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
-                                    } else {
-                                        MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)
-                                    },
-                                    border = BorderStroke(
-                                        1.dp,
-                                        if (isSelected) {
-                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-                                        } else {
-                                            MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.8f)
-                                        },
-                                    ),
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    ) {
-                                        AccountAvatarBox(name, size = 38.dp, showOnlineDot = false)
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                name,
-                                                style = MaterialTheme.typography.bodyLarge,
-                                                color = MaterialTheme.colorScheme.onSurface,
-                                                fontWeight = FontWeight.SemiBold,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                            )
-                                            Text(
-                                                "@${friend.username}",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                            )
-                                        }
-                                        Icon(
-                                            Icons.Default.CheckCircle,
-                                            contentDescription = null,
-                                            tint = if (isSelected) {
-                                                MaterialTheme.colorScheme.primary
-                                            } else {
-                                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
-                                            },
-                                            modifier = Modifier.size(24.dp),
-                                        )
-                                    }
-                                }
-                            }
-                        }
                     }
+                }
 
-                    if (sendError.isNotBlank()) {
-                        AccountMessageBanner(sendError, isError = true)
-                    }
+                if (invite != null) {
+                    InviteDialogSummary(invite, short)
+                }
 
-                    if (sending) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(32.dp).align(Alignment.CenterHorizontally),
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    } else {
+                when {
+                    !AccountSession.loggedIn -> {
+                        AccountMessageBanner(readI18n("multiplayer.room.inviteNeedLogin", I18nType.RWPP))
                         AccountPrimaryButton(
-                            label = readI18n(
-                                "multiplayer.room.inviteSend", I18nType.RWPP,
-                                selected.size.toString(),
-                            ),
-                            onClick = {
-                                val body = RoomInviteCodec.encode(invite)
-                                val targets = FriendsSession.friends
-                                    .filter { it.user.id in selected }
-                                scope.launch {
-                                    sending = true
-                                    val okIds = mutableListOf<Long>()
-                                    val okNames = mutableListOf<String>()
-                                    var failed = 0
-                                    targets.forEach {
-                                        if (FriendsSession.sendTo(it.user.id, body)) {
-                                            okIds += it.user.id
-                                            okNames += it.user.nickname.ifBlank { it.user.username }
-                                        } else {
-                                            failed++
-                                        }
-                                    }
-                                    sending = false
-                                    // 部分成功语义：已送达的从选中移除（重试不会重复发）并在房间内播报；
-                                    // 失败者保留选中，弹窗内提示后可原地重试
-                                    selected.removeAll(okIds.toSet())
-                                    if (okNames.isNotEmpty()) onSent(okNames)
-                                    if (failed == 0) {
-                                        dismiss()
-                                    } else {
-                                        sendError = readI18n(
-                                            "multiplayer.room.inviteSendFailed", I18nType.RWPP,
-                                            failed.toString(),
-                                        )
-                                    }
-                                }
-                            },
-                            enabled = selected.isNotEmpty(),
+                            label = readI18n("friends.goLogin", I18nType.RWPP),
+                            onClick = { goLoginOnDismiss = true; dismiss() },
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
+                    invite == null -> {
+                        AccountMessageBanner(
+                            readI18n("multiplayer.room.inviteNoAddress", I18nType.RWPP),
+                            isError = true,
+                        )
+                    }
+                    else -> {
+                        OutlinedTextField(
+                            value = search,
+                            onValueChange = { search = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = {
+                                Text(
+                                    readI18n("friends.searchHint", I18nType.RWPP),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Default.Search,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(if (short) 18.dp else 20.dp),
+                                )
+                            },
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyMedium,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = RWOutlinedTextColors,
+                        )
+
+                        val friends = FriendsSession.friends
+                            .filter {
+                                search.isBlank() ||
+                                    it.user.nickname.contains(search, true) ||
+                                    it.user.username.contains(search, true)
+                            }
+                            .sortedBy { (it.user.nickname.ifBlank { it.user.username }).lowercase() }
+
+                        if (friends.isEmpty()) {
+                            // fill = false：空态只占自身高度，弹窗按内容收包，不强行撑满
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f, fill = false)
+                                    .fillMaxWidth()
+                                    .padding(vertical = if (short) 8.dp else 16.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    readI18n("friends.empty", I18nType.RWPP),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
+                        } else {
+                            // fill = false：好友少时列表按内容收包；装不下时才吃满剩余空间并滚动，
+                            // 标题、摘要、搜索框与发送按钮始终在屏内
+                            LazyColumn(
+                                modifier = Modifier
+                                    .weight(1f, fill = false)
+                                    .fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(if (short) 4.dp else 6.dp),
+                            ) {
+                                items(friends.size, key = { friends[it].user.id }) { index ->
+                                    val friend = friends[index].user
+                                    val name = friend.nickname.ifBlank { friend.username }
+                                    InviteFriendPickRow(
+                                        name = name,
+                                        username = friend.username,
+                                        selected = friend.id in selected,
+                                        short = short,
+                                        onClick = {
+                                            if (friend.id in selected) selected.remove(friend.id)
+                                            else selected.add(friend.id)
+                                        },
+                                    )
+                                }
+                            }
+                        }
+
+                        if (sendError.isNotBlank()) {
+                            AccountMessageBanner(sendError, isError = true)
+                        }
+
+                        if (sending) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(28.dp).align(Alignment.CenterHorizontally),
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        } else {
+                            AccountPrimaryButton(
+                                label = readI18n(
+                                    "multiplayer.room.inviteSend", I18nType.RWPP,
+                                    selected.size.toString(),
+                                ),
+                                onClick = {
+                                    val body = RoomInviteCodec.encode(invite)
+                                    val targets = FriendsSession.friends
+                                        .filter { it.user.id in selected }
+                                    scope.launch {
+                                        sending = true
+                                        val okIds = mutableListOf<Long>()
+                                        val okNames = mutableListOf<String>()
+                                        var failed = 0
+                                        targets.forEach {
+                                            if (FriendsSession.sendTo(it.user.id, body)) {
+                                                okIds += it.user.id
+                                                okNames += it.user.nickname.ifBlank { it.user.username }
+                                            } else {
+                                                failed++
+                                            }
+                                        }
+                                        sending = false
+                                        // 部分成功语义：已送达的从选中移除（重试不会重复发）并在房间内播报；
+                                        // 失败者保留选中，弹窗内提示后可原地重试
+                                        selected.removeAll(okIds.toSet())
+                                        if (okNames.isNotEmpty()) onSent(okNames)
+                                        if (failed == 0) {
+                                            dismiss()
+                                        } else {
+                                            sendError = readI18n(
+                                                "multiplayer.room.inviteSendFailed", I18nType.RWPP,
+                                                failed.toString(),
+                                            )
+                                        }
+                                    }
+                                },
+                                enabled = selected.isNotEmpty(),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+/**
+ * 邀请弹窗顶部的房间摘要：地图、人数、模组、有效期、短码挤在一条里。
+ * 聊天流里的完整卡片仍用 [RoomInviteCard]。
+ */
+@Composable
+private fun InviteDialogSummary(invite: RoomInvite, short: Boolean) {
+    val meta = readI18n(
+        "friends.inviteMeta", I18nType.RWPP,
+        invite.players, invite.mods.toString(),
+    )
+    val valid = readI18n(
+        "friends.inviteValidMinutes", I18nType.RWPP,
+        (ROOM_INVITE_TTL_MS / 60_000L).toString(),
+    )
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.9f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = if (short) 6.dp else 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(if (short) 28.dp else 36.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painter = painterResource(Res.drawable.swords_30),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(if (short) 16.dp else 20.dp),
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    invite.map.ifBlank { "-" },
+                    style = if (short) {
+                        MaterialTheme.typography.bodyMedium
+                    } else {
+                        MaterialTheme.typography.bodyLarge
+                    },
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "$meta · $valid",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            val code = invite.code
+            if (!code.isNullOrBlank()) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                ) {
+                    Text(
+                        code,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 邀请弹窗里的好友多选行。短屏压低行高，让横屏至少能看见两行。 */
+@Composable
+private fun InviteFriendPickRow(
+    name: String,
+    username: String,
+    selected: Boolean,
+    short: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected) {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+        } else {
+            MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)
+        },
+        border = BorderStroke(
+            1.dp,
+            if (selected) {
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+            } else {
+                MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.8f)
+            },
+        ),
+    ) {
+        Row(
+            modifier = Modifier.padding(
+                horizontal = 10.dp,
+                vertical = if (short) 4.dp else 8.dp,
+            ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            AccountAvatarBox(
+                name,
+                size = if (short) 32.dp else 38.dp,
+                showOnlineDot = false,
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    name,
+                    style = if (short) {
+                        MaterialTheme.typography.bodyMedium
+                    } else {
+                        MaterialTheme.typography.bodyLarge
+                    },
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "@$username",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(
+                Icons.Default.CheckCircle,
+                contentDescription = null,
+                tint = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
+                },
+                modifier = Modifier.size(if (short) 20.dp else 24.dp),
+            )
+        }
     }
 }
 
