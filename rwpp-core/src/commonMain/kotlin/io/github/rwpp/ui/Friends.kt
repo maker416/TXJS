@@ -172,7 +172,7 @@ fun FriendsView(
         AccountSession.restoreIfNeeded()
         runCatching { FriendsSession.refreshLists() }
         while (true) {
-            delay(8_000)
+            delay(1_000)
             runCatching { FriendsSession.refreshLists() }
         }
     }
@@ -182,7 +182,7 @@ fun FriendsView(
             if (AccountSession.networkEnabled && FriendsSession.activePeer != null) {
                 runCatching { FriendsSession.pollMessages() }
             }
-            delay(4_000)
+            delay(1_000)
         }
     }
 
