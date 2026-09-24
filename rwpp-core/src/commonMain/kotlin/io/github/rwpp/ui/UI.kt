@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.PaddingValues
@@ -79,6 +80,7 @@ import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
 import io.github.rwpp.appKoin
+import io.github.rwpp.coil.AccountAvatar
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.Settings
 import io.github.rwpp.core.Initialization
@@ -339,7 +341,9 @@ open class UIProvider {
             Column(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .padding(top = 8.dp, start = 10.dp),
+                    .padding(top = 8.dp, start = 10.dp)
+                    // 让账号/好友两个入口小框外边框等宽（取两者中较宽者）
+                    .width(IntrinsicSize.Max),
                 horizontalAlignment = Alignment.Start,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -354,14 +358,14 @@ open class UIProvider {
                     .padding(top = 8.dp, end = 10.dp),
                 horizontalAlignment = Alignment.End
             ) {
-                AnnouncementEnvelope(
-                    hasUpdate = hasUpdate,
-                    onClick = { showAnnouncement = true },
-                )
                 Text(
                     "$coreVersion (app $projectVersion)",
                     style = versionStyle,
                     color = Color.White,
+                )
+                AnnouncementEnvelope(
+                    hasUpdate = hasUpdate,
+                    onClick = { showAnnouncement = true },
                 )
             }
 
@@ -511,6 +515,8 @@ open class UIProvider {
             border = BorderStroke(1.5.dp, Color.White.copy(alpha = 0.55f)),
             tonalElevation = 0.dp,
             shadowElevation = 0.dp,
+            // 撑满父列宽（父列为 IntrinsicSize.Max），保证两个入口外边框等宽
+            modifier = Modifier.fillMaxWidth(),
             onClick = onClick,
         ) {
             Row(
@@ -540,27 +546,15 @@ open class UIProvider {
                 contentAlignment = Alignment.Center,
             ) {
                 if (loggedIn) {
-                    Box(
-                        modifier = Modifier
-                            .size(56.dp)
-                            .clip(CircleShape)
-                            .background(Color(151, 188, 98)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            displayName.firstOrNull()?.toString() ?: "?",
-                            color = Color(27, 18, 18),
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(16.dp)
-                            .align(Alignment.TopEnd)
-                            .offset(x = (-4).dp, y = 4.dp)
-                            .clip(CircleShape)
-                            .background(Color(95, 190, 95)),
+                    // 与账号页同款的头像组件：有自定义头像走 Coil 加载，否则回退首字母
+                    val user = AccountSession.user
+                    AccountAvatarBox(
+                        displayName = displayName,
+                        size = 56.dp,
+                        avatar = user?.let {
+                            AccountAvatar(it.id, it.hasAvatar, AccountSession.avatarVersion)
+                        },
+                        online = true,
                     )
                 } else {
                     Icon(

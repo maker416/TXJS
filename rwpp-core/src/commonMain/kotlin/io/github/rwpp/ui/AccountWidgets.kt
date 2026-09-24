@@ -431,7 +431,7 @@ internal fun AccountMessageBanner(
     }
 }
 
-/** 顶部渐变个人资料卡容器（登录后的 hero 区域）。 */
+/** 顶部渐变个人资料卡容器（登录后的 hero 区域）。底色保持较高不透明度，避免低透明度主题下被游戏画面穿透。 */
 @Composable
 internal fun AccountProfileHeroCard(
     modifier: Modifier = Modifier,
@@ -444,14 +444,14 @@ internal fun AccountProfileHeroCard(
             .background(
                 Brush.verticalGradient(
                     listOf(
-                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.30f),
-                        MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
+                        MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
                     )
                 )
             )
             .border(
                 1.dp,
-                MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
                 RoundedCornerShape(20.dp),
             )
             .padding(horizontal = 18.dp, vertical = 18.dp),
