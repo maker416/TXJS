@@ -197,6 +197,8 @@ inviteSend = "发送邀请 ({0})"
 inviteSendFailed = "{0} 位好友邀请发送失败，请稍后重试"
 invitePolicyAllowed = "成员可邀请"
 invitePolicyForbidden = "已禁止成员邀请"
+roomLocked = "已锁房"
+roomUnlocked = "未锁房"
 
 [multiplayer.room.teamMode]
 twoTeams = "两队（如 5v5）"

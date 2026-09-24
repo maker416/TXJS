@@ -41,6 +41,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -1062,55 +1063,61 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 
                                 var isLocked by remember(update) { mutableStateOf(room.lockedRoom) }
                                 if (!isSandboxGame) {
-                                    IconButton(
+                                    // 锁房开关：成员视角为只读状态展示（enabled = isHost）
+                                    RoomToggleChip(
+                                        label = readI18n(
+                                            if (isLocked) {
+                                                "multiplayer.room.roomLocked"
+                                            } else {
+                                                "multiplayer.room.roomUnlocked"
+                                            },
+                                            I18nType.RWPP,
+                                        ),
+                                        stateColor = if (isLocked) {
+                                            Color(237, 112, 20)
+                                        } else {
+                                            MaterialTheme.colorScheme.surfaceTint
+                                        },
                                         onClick = {
                                             isLocked = !isLocked
                                             room.lockedRoom = isLocked
                                         },
                                         enabled = isHost,
-                                        modifier = Modifier.padding(
-                                            horizontal = 5.dp,
-                                            vertical = 30.dp,
-                                        ),
+                                        modifier = Modifier
+                                            .padding(horizontal = 5.dp)
+                                            .align(Alignment.CenterVertically),
                                     ) {
-                                        Icon(
-                                            Icons.Default.Lock,
-                                            null,
-                                            tint = if (isLocked) {
-                                                Color(237, 112, 20)
-                                            } else {
-                                                MaterialTheme.colorScheme.surfaceTint
-                                            },
-                                        )
+                                        Icon(Icons.Default.Lock, null, modifier = Modifier.size(16.dp))
                                     }
                                 }
 
                                 if (!isSandboxGame && isHost) {
                                     // 房主邀请策略开关：禁止后广播控制消息，成员端隐藏邀请入口
-                                    IconButton(
+                                    RoomToggleChip(
+                                        label = readI18n(
+                                            if (RoomInvitePolicy.membersCanInvite) {
+                                                "multiplayer.room.invitePolicyAllowed"
+                                            } else {
+                                                "multiplayer.room.invitePolicyForbidden"
+                                            },
+                                            I18nType.RWPP,
+                                        ),
+                                        stateColor = if (RoomInvitePolicy.membersCanInvite) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            Color(237, 112, 20)
+                                        },
                                         onClick = {
                                             RoomInvitePolicy.setByHost(room, !RoomInvitePolicy.membersCanInvite)
                                         },
-                                        modifier = Modifier.padding(
-                                            horizontal = 5.dp,
-                                            vertical = 30.dp,
-                                        ),
+                                        modifier = Modifier
+                                            .padding(horizontal = 5.dp)
+                                            .align(Alignment.CenterVertically),
                                     ) {
                                         Icon(
                                             painterResource(Res.drawable.group_30),
-                                            readI18n(
-                                                if (RoomInvitePolicy.membersCanInvite) {
-                                                    "multiplayer.room.invitePolicyAllowed"
-                                                } else {
-                                                    "multiplayer.room.invitePolicyForbidden"
-                                                },
-                                                I18nType.RWPP,
-                                            ),
-                                            tint = if (RoomInvitePolicy.membersCanInvite) {
-                                                MaterialTheme.colorScheme.primary
-                                            } else {
-                                                Color(237, 112, 20)
-                                            },
+                                            null,
+                                            modifier = Modifier.size(16.dp),
                                         )
                                     }
                                 }
@@ -2567,29 +2574,36 @@ private fun CompactMapSettingsPanel(
             },
         )
         if (!isSandboxGame && isHost) {
-            IconButton(
-                onClick = onLockToggle,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-                enabled = isHost,
+            // 房间管理开关条：锁房 + 成员邀请策略。图标带文字标签，避免裸图标语义不明；
+            // 紧邻下方操作按钮行，与散在中央的孤立图标相比不再突兀
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Icon(
-                    Icons.Default.Lock,
-                    null,
-                    tint = if (isLocked) {
+                RoomToggleChip(
+                    label = readI18n(
+                        if (isLocked) {
+                            "multiplayer.room.roomLocked"
+                        } else {
+                            "multiplayer.room.roomUnlocked"
+                        },
+                        I18nType.RWPP,
+                    ),
+                    stateColor = if (isLocked) {
                         Color(237, 112, 20)
                     } else {
                         MaterialTheme.colorScheme.onSurface
                     },
-                )
-            }
-            // 房主邀请策略开关：禁止后广播控制消息，成员端隐藏邀请入口
-            IconButton(
-                onClick = onInvitePolicyToggle,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-            ) {
-                Icon(
-                    painterResource(Res.drawable.group_30),
-                    readI18n(
+                    onClick = onLockToggle,
+                    compact = true,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(Icons.Default.Lock, null, modifier = Modifier.size(14.dp))
+                }
+                RoomToggleChip(
+                    label = readI18n(
                         if (membersCanInvite) {
                             "multiplayer.room.invitePolicyAllowed"
                         } else {
@@ -2597,12 +2611,17 @@ private fun CompactMapSettingsPanel(
                         },
                         I18nType.RWPP,
                     ),
-                    tint = if (membersCanInvite) {
+                    stateColor = if (membersCanInvite) {
                         MaterialTheme.colorScheme.primary
                     } else {
                         Color(237, 112, 20)
                     },
-                )
+                    onClick = onInvitePolicyToggle,
+                    compact = true,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(painterResource(Res.drawable.group_30), null, modifier = Modifier.size(14.dp))
+                }
             }
         }
         if (isHost) {
@@ -2992,6 +3011,57 @@ private fun CompactRoomPanel(
             .padding(4.dp),
         content = content,
     )
+}
+
+/**
+ * 房间状态开关条目：图标 + 文字标签，[stateColor] 同时着色图标、文字、边框与底色，
+ * 紧凑与桌面两种布局共用。[enabled] 为 false 时仅展示状态（如成员视角的锁房状态），不可点击。
+ */
+@Composable
+private fun RoomToggleChip(
+    label: String,
+    stateColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    compact: Boolean = false,
+    icon: @Composable () -> Unit,
+) {
+    Card(
+        border = BorderStroke(1.5.dp, stateColor.copy(alpha = 0.6f)),
+        colors = CardDefaults.cardColors(containerColor = stateColor.copy(alpha = 0.10f)),
+        shape = RoundedCornerShape(8.dp),
+        modifier = modifier.then(
+            if (enabled) {
+                Modifier.bounceClick(onClick = onClick)
+            } else {
+                Modifier.alpha(0.65f)
+            }
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 6.dp, vertical = if (compact) 4.dp else 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+        ) {
+            CompositionLocalProvider(LocalContentColor provides stateColor) {
+                icon()
+            }
+            Text(
+                label,
+                color = stateColor,
+                style = if (compact) {
+                    MaterialTheme.typography.labelSmall
+                } else {
+                    MaterialTheme.typography.bodySmall
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
 }
 
 /** 玩家列表中的「邀请好友」空槽位行：加号图标 + 灰字，点击打开邀请弹窗。 */
