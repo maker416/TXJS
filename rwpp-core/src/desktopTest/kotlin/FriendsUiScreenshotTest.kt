@@ -267,6 +267,30 @@ class FriendsUiScreenshotTest {
         save("account_home_small.png")
     }
 
+    @Test
+    fun captureLoggedInAccountLandscapeLowTransparency() = runDesktopComposeUiTest(width = 720, height = 360) {
+        // 模拟把背景透明度拉到最低的横屏设备：个人中心必须有可读性下限，不能被游戏画面穿透
+        val oldTransparency = UI.backgroundTransparency
+        UI.backgroundTransparency = 0.05f
+        try {
+            setContent {
+                ScreenshotTheme {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color(53, 57, 53)),
+                    ) {
+                        AccountView(onExit = {})
+                    }
+                }
+            }
+            waitForIdle()
+            save("account_home_landscape_low_transparency.png")
+        } finally {
+            UI.backgroundTransparency = oldTransparency
+        }
+    }
+
     private fun seedPreview() {
         val self = AccountUser(
             id = 1,

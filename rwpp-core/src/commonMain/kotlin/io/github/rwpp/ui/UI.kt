@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.PaddingValues
@@ -339,7 +340,9 @@ open class UIProvider {
             Column(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .padding(top = 8.dp, start = 10.dp),
+                    .padding(top = 8.dp, start = 10.dp)
+                    // 让账号/好友两个入口小框外边框等宽（取两者中较宽者）
+                    .width(IntrinsicSize.Max),
                 horizontalAlignment = Alignment.Start,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -354,14 +357,14 @@ open class UIProvider {
                     .padding(top = 8.dp, end = 10.dp),
                 horizontalAlignment = Alignment.End
             ) {
-                AnnouncementEnvelope(
-                    hasUpdate = hasUpdate,
-                    onClick = { showAnnouncement = true },
-                )
                 Text(
                     "$coreVersion (app $projectVersion)",
                     style = versionStyle,
                     color = Color.White,
+                )
+                AnnouncementEnvelope(
+                    hasUpdate = hasUpdate,
+                    onClick = { showAnnouncement = true },
                 )
             }
 
@@ -511,6 +514,8 @@ open class UIProvider {
             border = BorderStroke(1.5.dp, Color.White.copy(alpha = 0.55f)),
             tonalElevation = 0.dp,
             shadowElevation = 0.dp,
+            // 撑满父列宽（父列为 IntrinsicSize.Max），保证两个入口外边框等宽
+            modifier = Modifier.fillMaxWidth(),
             onClick = onClick,
         ) {
             Row(
