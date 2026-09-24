@@ -194,10 +194,8 @@ inviteNeedLogin = "Sign in to invite friends to your room."
 inviteNoAddress = "Cannot create an invite for this room (missing server address)."
 inviteSend = "Send Invite ({0})"
 inviteSendFailed = "Failed to send invites to {0} friend(s). Please try again."
-invitePolicyAllowed = "Invites allowed"
-invitePolicyForbidden = "Invites blocked"
-roomLocked = "Room locked"
-roomUnlocked = "Room open"
+lockRoom = "Lock room"
+memberInvites = "Member invites"
 
 [multiplayer.room.teamMode]
 twoTeams = "2 Teams (eg 5v5)"
