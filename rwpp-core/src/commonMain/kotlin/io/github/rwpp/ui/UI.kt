@@ -80,6 +80,7 @@ import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
 import io.github.rwpp.appKoin
+import io.github.rwpp.coil.AccountAvatar
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.Settings
 import io.github.rwpp.core.Initialization
@@ -545,27 +546,15 @@ open class UIProvider {
                 contentAlignment = Alignment.Center,
             ) {
                 if (loggedIn) {
-                    Box(
-                        modifier = Modifier
-                            .size(56.dp)
-                            .clip(CircleShape)
-                            .background(Color(151, 188, 98)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            displayName.firstOrNull()?.toString() ?: "?",
-                            color = Color(27, 18, 18),
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(16.dp)
-                            .align(Alignment.TopEnd)
-                            .offset(x = (-4).dp, y = 4.dp)
-                            .clip(CircleShape)
-                            .background(Color(95, 190, 95)),
+                    // 与账号页同款的头像组件：有自定义头像走 Coil 加载，否则回退首字母
+                    val user = AccountSession.user
+                    AccountAvatarBox(
+                        displayName = displayName,
+                        size = 56.dp,
+                        avatar = user?.let {
+                            AccountAvatar(it.id, it.hasAvatar, AccountSession.avatarVersion)
+                        },
+                        online = true,
                     )
                 } else {
                     Icon(

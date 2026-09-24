@@ -482,7 +482,7 @@ private fun AccountLoggedInState(
         backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            AccountInfoRow(Icons.Default.Person, readI18n("account.accountId", I18nType.RWPP), username)
+            AccountInfoRow(Icons.Default.Person, readI18n("account.username", I18nType.RWPP), username)
             AccountInfoDivider()
             AccountInfoRow(Icons.Default.Face, readI18n("account.nickname", I18nType.RWPP), nickname)
             AccountInfoDivider()
