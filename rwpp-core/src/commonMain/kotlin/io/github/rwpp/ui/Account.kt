@@ -141,7 +141,7 @@ fun AccountView(onExit: () -> Unit) {
             runCatching { AccountSession.refreshPresenceSettings() }
             runCatching { AccountSession.refreshPoints() }
             while (true) {
-                delay(8_000)
+                delay(1_000)
                 runCatching { FriendsSession.refreshLists() }
             }
         }

@@ -147,7 +147,7 @@ fun App(
     }
 
     // 好友私信全局轮询：驱动未读徽标与房间邀请悬浮卡片。
-    // 好友页/账号页打开时跳过（它们有更频繁的自有轮询）；未登录/预览模式静默跳过
+    // 好友页/账号页打开时跳过（它们有自有轮询）；未登录/预览模式静默跳过
     LaunchedEffect(Unit) {
         while (true) {
             if (AccountSession.loggedIn && AccountSession.networkEnabled &&
@@ -155,7 +155,7 @@ fun App(
             ) {
                 runCatching { FriendsSession.refreshLists() }
             }
-            delay(10_000)
+            delay(1_000)
         }
     }
 
