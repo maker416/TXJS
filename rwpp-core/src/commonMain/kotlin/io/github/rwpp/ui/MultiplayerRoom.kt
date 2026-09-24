@@ -1063,7 +1063,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 
                                 var isLocked by remember(update) { mutableStateOf(room.lockedRoom) }
                                 if (!isSandboxGame) {
-                                    // 锁房开关：成员视角为只读状态展示（enabled = isHost）
+                                    // 锁房开关：成员视角为只读状态展示（enabled = isHost，无阴影降透明度）
                                     RoomToggleChip(
                                         label = readI18n(
                                             if (isLocked) {
@@ -1073,11 +1073,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                             },
                                             I18nType.RWPP,
                                         ),
-                                        stateColor = if (isLocked) {
-                                            Color(237, 112, 20)
-                                        } else {
-                                            MaterialTheme.colorScheme.surfaceTint
-                                        },
+                                        active = isLocked,
                                         onClick = {
                                             isLocked = !isLocked
                                             room.lockedRoom = isLocked
@@ -1102,11 +1098,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                             },
                                             I18nType.RWPP,
                                         ),
-                                        stateColor = if (RoomInvitePolicy.membersCanInvite) {
-                                            MaterialTheme.colorScheme.primary
-                                        } else {
-                                            Color(237, 112, 20)
-                                        },
+                                        active = !RoomInvitePolicy.membersCanInvite,
                                         onClick = {
                                             RoomInvitePolicy.setByHost(room, !RoomInvitePolicy.membersCanInvite)
                                         },
@@ -2574,8 +2566,8 @@ private fun CompactMapSettingsPanel(
             },
         )
         if (!isSandboxGame && isHost) {
-            // 房间管理开关条：锁房 + 成员邀请策略。图标带文字标签，避免裸图标语义不明；
-            // 紧邻下方操作按钮行，与散在中央的孤立图标相比不再突兀
+            // 房间管理开关条：锁房 + 成员邀请策略。与下方操作按钮同款的按钮外观
+            // （描边/阴影/按压回弹）明确可点击；文字标签避免裸图标语义不明
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2591,11 +2583,7 @@ private fun CompactMapSettingsPanel(
                         },
                         I18nType.RWPP,
                     ),
-                    stateColor = if (isLocked) {
-                        Color(237, 112, 20)
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
+                    active = isLocked,
                     onClick = onLockToggle,
                     compact = true,
                     modifier = Modifier.weight(1f),
@@ -2611,11 +2599,7 @@ private fun CompactMapSettingsPanel(
                         },
                         I18nType.RWPP,
                     ),
-                    stateColor = if (membersCanInvite) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        Color(237, 112, 20)
-                    },
+                    active = !membersCanInvite,
                     onClick = onInvitePolicyToggle,
                     compact = true,
                     modifier = Modifier.weight(1f),
@@ -3014,52 +2998,68 @@ private fun CompactRoomPanel(
 }
 
 /**
- * 房间状态开关条目：图标 + 文字标签，[stateColor] 同时着色图标、文字、边框与底色，
- * 紧凑与桌面两种布局共用。[enabled] 为 false 时仅展示状态（如成员视角的锁房状态），不可点击。
+ * 房间状态开关条目：与操作按钮同款的 Card 外观（描边、阴影、按压回弹），一眼可知可点击。
+ * [active] 为 true（已锁房 / 已禁止邀请）时边框与文字变为 [activeColor] 起警示作用；
+ * [enabled] 为 false 时仅展示状态（如成员视角的锁房状态）：去阴影、降透明度、不可点击。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RoomToggleChip(
     label: String,
-    stateColor: Color,
+    active: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    activeColor: Color = Color(237, 112, 20),
     enabled: Boolean = true,
     compact: Boolean = false,
     icon: @Composable () -> Unit,
 ) {
-    Card(
-        border = BorderStroke(1.5.dp, stateColor.copy(alpha = 0.6f)),
-        colors = CardDefaults.cardColors(containerColor = stateColor.copy(alpha = 0.10f)),
-        shape = RoundedCornerShape(8.dp),
-        modifier = modifier.then(
-            if (enabled) {
-                Modifier.bounceClick(onClick = onClick)
-            } else {
-                Modifier.alpha(0.65f)
-            }
-        ),
+    val contentColor = if (active) activeColor else MaterialTheme.colorScheme.onSurface
+    CompositionLocalProvider(
+        LocalRippleConfiguration provides RippleConfiguration(Color.Transparent, RippleAlpha(0f, 0f, 0f, 0f)),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 6.dp, vertical = if (compact) 4.dp else 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
-        ) {
-            CompositionLocalProvider(LocalContentColor provides stateColor) {
-                icon()
-            }
-            Text(
-                label,
-                color = stateColor,
-                style = if (compact) {
-                    MaterialTheme.typography.labelSmall
+        Card(
+            border = BorderStroke(
+                2.dp,
+                if (active) {
+                    activeColor.copy(alpha = 0.8f)
                 } else {
-                    MaterialTheme.typography.bodySmall
+                    MaterialTheme.colorScheme.surfaceContainer
                 },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            ),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            shape = RoundedCornerShape(8.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = if (enabled) 4.dp else 0.dp),
+            modifier = modifier.then(
+                if (enabled) {
+                    Modifier.bounceClick(onClick = onClick)
+                } else {
+                    Modifier.alpha(0.65f)
+                }
+            ),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = if (compact) 6.dp else 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+            ) {
+                CompositionLocalProvider(LocalContentColor provides contentColor) {
+                    icon()
+                }
+                Text(
+                    label,
+                    color = contentColor,
+                    style = if (compact) {
+                        MaterialTheme.typography.labelSmall
+                    } else {
+                        MaterialTheme.typography.bodySmall
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
