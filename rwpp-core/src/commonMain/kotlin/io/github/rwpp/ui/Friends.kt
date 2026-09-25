@@ -43,6 +43,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -72,12 +74,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -708,10 +716,24 @@ private fun FriendChatPane(
                 textStyle = MaterialTheme.typography.bodyMedium,
                 singleLine = true,
                 colors = RWOutlinedTextColors,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { send() }),
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .defaultMinSize(minHeight = 52.dp),
+                    .defaultMinSize(minHeight = 52.dp)
+                    // 硬件回车发送（桌面端；软键盘走上面的 ImeAction.Send）。
+                    // 只消费回车，其余按键放行给输入框；只响应 KeyDown，避免 KeyUp 重复发送。
+                    .onKeyEvent {
+                        if (it.type == KeyEventType.KeyDown &&
+                            (it.key == Key.Enter || it.key == Key.NumPadEnter)
+                        ) {
+                            send()
+                            true
+                        } else {
+                            false
+                        }
+                    },
             )
             // 有可发送内容时发送按钮染色，给明确可点反馈
             val canSend = AccountFieldRules.isValidChatBody(draft.trim())
