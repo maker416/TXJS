@@ -763,7 +763,20 @@ fun AccountLoginDialog(
     val isSmall = LocalWindowManager.current == WindowManager.Small
     var password by remember(visible) { mutableStateOf("") }
     var error by remember(visible) { mutableStateOf("") }
+    var info by remember(visible) { mutableStateOf("") }
     var submitting by remember(visible) { mutableStateOf(false) }
+    var useEmailCode by remember(visible) { mutableStateOf(false) }
+    var email by remember(visible) { mutableStateOf("") }
+    var code by remember(visible) { mutableStateOf("") }
+    var sendingCode by remember(visible) { mutableStateOf(false) }
+    var cooldown by remember(visible) { mutableIntStateOf(0) }
+
+    LaunchedEffect(cooldown) {
+        if (cooldown > 0) {
+            delay(1000)
+            cooldown -= 1
+        }
+    }
 
     AnimatedAlertDialog(
         visible = visible,
@@ -783,23 +796,78 @@ fun AccountLoginDialog(
                     )
                 },
             )
-            RWSingleOutlinedTextField(
-                label = readI18n("account.username", I18nType.RWPP),
-                value = username,
-                enabled = !submitting,
-                modifier = Modifier.fillMaxWidth(),
-                leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
-                onValueChange = onUsernameChange,
-            )
-            RWSingleOutlinedTextField(
-                label = readI18n("account.password", I18nType.RWPP),
-                value = password,
-                enabled = !submitting,
-                modifier = Modifier.fillMaxWidth(),
-                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                visualTransformation = PasswordVisualTransformation(),
-                onValueChange = { password = it },
-            )
+            if (useEmailCode) {
+                RWSingleOutlinedTextField(
+                    label = readI18n("account.email", I18nType.RWPP),
+                    value = email,
+                    enabled = !submitting,
+                    modifier = Modifier.fillMaxWidth(),
+                    leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+                    onValueChange = { email = it },
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    RWSingleOutlinedTextField(
+                        label = readI18n("account.code", I18nType.RWPP),
+                        value = code,
+                        enabled = !submitting,
+                        modifier = Modifier.weight(1f),
+                        onValueChange = { if (it.length <= 6) code = it.filter { ch -> ch.isDigit() } },
+                    )
+                    AccountCompactButton(
+                        label = if (cooldown > 0) {
+                            readI18n("account.sendCodeWait", I18nType.RWPP, cooldown.toString())
+                        } else {
+                            readI18n("account.sendCode", I18nType.RWPP)
+                        },
+                        enabled = !submitting && !sendingCode && cooldown == 0,
+                        onClick = {
+                            if (!AccountFieldRules.isValidEmail(email)) {
+                                error = readI18n("account.emailInvalid", I18nType.RWPP)
+                            } else {
+                                error = ""
+                                sendingCode = true
+                                scope.launch {
+                                    runCatching {
+                                        AccountSession.sendLoginCode(AccountFieldRules.normalizeEmail(email))
+                                    }.onSuccess {
+                                        info = readI18n("account.codeSent", I18nType.RWPP)
+                                        cooldown = 60
+                                    }.onFailure { e ->
+                                        error = (e as? AccountApiException)?.let { accountErrorText(it) }
+                                            ?: e.message.orEmpty()
+                                    }
+                                    sendingCode = false
+                                }
+                            }
+                        },
+                    )
+                }
+            } else {
+                RWSingleOutlinedTextField(
+                    label = readI18n("account.identifier", I18nType.RWPP),
+                    value = username,
+                    enabled = !submitting,
+                    modifier = Modifier.fillMaxWidth(),
+                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                    onValueChange = onUsernameChange,
+                )
+                RWSingleOutlinedTextField(
+                    label = readI18n("account.password", I18nType.RWPP),
+                    value = password,
+                    enabled = !submitting,
+                    modifier = Modifier.fillMaxWidth(),
+                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                    visualTransformation = PasswordVisualTransformation(),
+                    onValueChange = { password = it },
+                )
+            }
+            if (info.isNotBlank() && error.isBlank()) {
+                AccountMessageBanner(info)
+            }
             if (error.isNotBlank()) {
                 AccountMessageBanner(error, isError = true)
             }
@@ -816,43 +884,106 @@ fun AccountLoginDialog(
                 },
                 onCancel = dismiss,
                 onConfirm = {
-                    when {
-                        !AccountFieldRules.isValidUsername(username) ->
-                            error = readI18n("account.usernameInvalid", I18nType.RWPP)
-                        password.isBlank() ->
-                            error = readI18n("account.passwordRequired", I18nType.RWPP)
-                        else -> {
-                            error = ""
-                            submitting = true
-                            scope.launch {
-                                runCatching {
-                                    AccountSession.login(AccountFieldRules.normalizeUsername(username), password)
-                                    FriendsSession.refreshLists()
-                                }.onSuccess {
-                                    submitting = false
-                                    dismiss()
-                                }.onFailure { e ->
-                                    error = (e as? AccountApiException)?.let { accountLoginUnauthorizedText(it) }
-                                        ?: e.message.orEmpty()
-                                    submitting = false
+                    if (useEmailCode) {
+                        val mail = AccountFieldRules.normalizeEmail(email)
+                        error = when {
+                            !AccountFieldRules.isValidEmail(mail) ->
+                                readI18n("account.emailInvalid", I18nType.RWPP)
+                            !AccountFieldRules.isValidCode(code) ->
+                                readI18n("account.codeInvalid", I18nType.RWPP)
+                            else -> ""
+                        }
+                        if (error.isNotBlank()) return@AccountAuthActions
+                        submitting = true
+                        scope.launch {
+                            runCatching {
+                                AccountSession.loginWithEmailCode(mail, code.trim())
+                                FriendsSession.refreshLists()
+                            }.onSuccess {
+                                submitting = false
+                                dismiss()
+                            }.onFailure { e ->
+                                error = (e as? AccountApiException)?.let { accountErrorText(it) }
+                                    ?: e.message.orEmpty()
+                                submitting = false
+                            }
+                        }
+                    } else {
+                        val identifier = username.trim()
+                        val byEmail = "@" in identifier
+                        error = when {
+                            identifier.isBlank() ->
+                                readI18n("account.identifierRequired", I18nType.RWPP)
+                            byEmail && !AccountFieldRules.isValidEmail(identifier) ->
+                                readI18n("account.identifierInvalid", I18nType.RWPP)
+                            !byEmail && !AccountFieldRules.isValidUsername(identifier) ->
+                                readI18n("account.usernameInvalid", I18nType.RWPP)
+                            password.isBlank() ->
+                                readI18n("account.passwordRequired", I18nType.RWPP)
+                            else -> ""
+                        }
+                        if (error.isNotBlank()) return@AccountAuthActions
+                        submitting = true
+                        scope.launch {
+                            runCatching {
+                                if (byEmail) {
+                                    AccountSession.loginWithEmail(
+                                        AccountFieldRules.normalizeEmail(identifier),
+                                        password,
+                                    )
+                                } else {
+                                    AccountSession.login(
+                                        AccountFieldRules.normalizeUsername(identifier),
+                                        password,
+                                    )
                                 }
+                                FriendsSession.refreshLists()
+                            }.onSuccess {
+                                submitting = false
+                                dismiss()
+                            }.onFailure { e ->
+                                error = (e as? AccountApiException)?.let { accountLoginUnauthorizedText(it) }
+                                    ?: e.message.orEmpty()
+                                submitting = false
                             }
                         }
                     }
                 },
             )
+            TextButton(
+                enabled = !submitting,
+                onClick = {
+                    if (!useEmailCode && "@" in username.trim()) {
+                        email = username.trim()
+                    }
+                    useEmailCode = !useEmailCode
+                    error = ""
+                    info = ""
+                },
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            ) {
+                Text(
+                    readI18n(
+                        if (useEmailCode) "account.loginWithPassword" else "account.loginWithEmailCode",
+                        I18nType.RWPP,
+                    ),
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center,
             ) {
-                TextButton(
-                    enabled = !submitting,
-                    onClick = onForgot,
-                ) {
-                    Text(
-                        readI18n("account.forgotPassword", I18nType.RWPP),
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                    )
+                if (!useEmailCode) {
+                    TextButton(
+                        enabled = !submitting,
+                        onClick = onForgot,
+                    ) {
+                        Text(
+                            readI18n("account.forgotPassword", I18nType.RWPP),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        )
+                    }
                 }
                 TextButton(
                     enabled = !submitting,

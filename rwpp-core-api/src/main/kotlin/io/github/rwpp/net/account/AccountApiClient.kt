@@ -63,6 +63,14 @@ class AccountApiClient(
     suspend fun login(username: String, password: String): LoginResponse =
         postJson("/users/login", LoginRequest(username, password))
 
+    /** 邮箱 + 密码登录（文档 6.3.1）。 */
+    suspend fun loginWithEmail(email: String, password: String): LoginResponse =
+        postJson("/users/login/email", EmailLoginRequest(email, password))
+
+    /** 邮箱 + 验证码登录（文档 6.3.2），须先发 `purpose=login` 的验证码。 */
+    suspend fun loginWithEmailCode(email: String, code: String): LoginResponse =
+        postJson("/users/login/email-code", EmailCodeLoginRequest(email, code))
+
     suspend fun resetPassword(email: String, code: String, newPassword: String): OkResponse =
         postJson("/users/reset-password", ResetPasswordRequest(email, code, newPassword))
 

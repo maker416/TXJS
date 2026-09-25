@@ -65,6 +65,20 @@ data class LoginRequest(
     val password: String,
 )
 
+/** 邮箱 + 密码登录（文档 6.3.1）。 */
+@Serializable
+data class EmailLoginRequest(
+    val email: String,
+    val password: String,
+)
+
+/** 邮箱 + 验证码登录（文档 6.3.2）。 */
+@Serializable
+data class EmailCodeLoginRequest(
+    val email: String,
+    val code: String,
+)
+
 @Serializable
 data class LoginResponse(
     val token: String,
@@ -289,6 +303,7 @@ data class AccountErrorBody(
 object EmailCodePurpose {
     const val REGISTER = "register"
     const val RESET_PASSWORD = "reset_password"
+    const val LOGIN = "login"
 }
 
 object FriendRequestBox {
@@ -319,6 +334,7 @@ object AccountErrorCode {
     const val NOT_FOUND = "not_found"
     const val USERNAME_TAKEN = "username_taken"
     const val EMAIL_TAKEN = "email_taken"
+    const val NICKNAME_TAKEN = "nickname_taken"
     const val CODE_TOO_FREQUENT = "code_too_frequent"
     const val NICKNAME_CHANGE_TOO_FREQUENT = "nickname_change_too_frequent"
     const val EMAIL_UNCHANGED = "email_unchanged"

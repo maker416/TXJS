@@ -92,6 +92,55 @@ class AccountApiClientTest {
     }
 
     @Test
+    fun sendEmailCodeSupportsLoginPurpose() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"ok":true}"""))
+        assertTrue(client.sendEmailCode("a@b.com", EmailCodePurpose.LOGIN).ok)
+        val recorded = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("/api/v1/email/send-code", recorded.path)
+        assertTrue(recorded.body.readUtf8().contains("\"purpose\":\"login\""))
+    }
+
+    @Test
+    fun loginWithEmailUsesDocumentedPath() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"token":"jwt","user":{"id":1,"username":"alice","nickname":"Alice","status":1,"created_at":"t","has_avatar":false}}""",
+            ),
+        )
+        val resp = client.loginWithEmail("alice@example.com", "passw0rd")
+        assertEquals("jwt", resp.token)
+        val recorded = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("POST", recorded.method)
+        assertEquals("/api/v1/users/login/email", recorded.path)
+        assertEquals("ak_test", recorded.getHeader("X-App-Key"))
+        val body = recorded.body.readUtf8()
+        assertTrue(body.contains("\"email\""), body)
+        assertTrue(body.contains("\"password\""), body)
+        assertTrue(!body.contains("username"), body)
+        assertEquals(null, recorded.getHeader("Authorization"))
+    }
+
+    @Test
+    fun loginWithEmailCodeUsesDocumentedPath() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"token":"jwt","user":{"id":1,"username":"alice","nickname":"Alice","status":1,"created_at":"t","has_avatar":false}}""",
+            ),
+        )
+        val resp = client.loginWithEmailCode("alice@example.com", "123456")
+        assertEquals("jwt", resp.token)
+        val recorded = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("POST", recorded.method)
+        assertEquals("/api/v1/users/login/email-code", recorded.path)
+        assertEquals("ak_test", recorded.getHeader("X-App-Key"))
+        val body = recorded.body.readUtf8()
+        assertTrue(body.contains("\"email\""), body)
+        assertTrue(body.contains("\"code\""), body)
+        assertTrue(!body.contains("password"), body)
+        assertEquals(null, recorded.getHeader("Authorization"))
+    }
+
+    @Test
     fun authedGetMeSendsBearer() = runBlocking {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(

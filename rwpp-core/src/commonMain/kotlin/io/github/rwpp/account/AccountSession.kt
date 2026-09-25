@@ -144,6 +144,18 @@ object AccountSession : KoinComponent {
         applySession(resp.token, resp.user, persist = true)
     }
 
+    /** 邮箱 + 密码登录（文档 6.3.1）。 */
+    suspend fun loginWithEmail(email: String, password: String) {
+        val resp = withContext(Dispatchers.IO) { client().loginWithEmail(email, password) }
+        applySession(resp.token, resp.user, persist = true)
+    }
+
+    /** 邮箱 + 验证码登录（文档 6.3.2），须先 [sendLoginCode]。 */
+    suspend fun loginWithEmailCode(email: String, code: String) {
+        val resp = withContext(Dispatchers.IO) { client().loginWithEmailCode(email, code) }
+        applySession(resp.token, resp.user, persist = true)
+    }
+
     suspend fun register(req: RegisterRequest, password: String) {
         withContext(Dispatchers.IO) {
             client().register(req)
@@ -155,6 +167,13 @@ object AccountSession : KoinComponent {
     suspend fun sendRegisterCode(email: String) {
         withContext(Dispatchers.IO) {
             client().sendEmailCode(email, EmailCodePurpose.REGISTER)
+        }
+    }
+
+    /** 邮箱验证码登录的发码（文档 6.1，`purpose=login`）。 */
+    suspend fun sendLoginCode(email: String) {
+        withContext(Dispatchers.IO) {
+            client().sendEmailCode(email, EmailCodePurpose.LOGIN)
         }
     }
 

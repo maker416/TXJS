@@ -37,6 +37,7 @@ fun accountErrorText(error: AccountApiException): String {
         AccountErrorCode.NOT_FOUND -> "accountError.notFound"
         AccountErrorCode.USERNAME_TAKEN -> "accountError.usernameTaken"
         AccountErrorCode.EMAIL_TAKEN -> "accountError.emailTaken"
+        AccountErrorCode.NICKNAME_TAKEN -> "accountError.nicknameTaken"
         AccountErrorCode.CODE_TOO_FREQUENT -> "accountError.codeTooFrequent"
         AccountErrorCode.NICKNAME_CHANGE_TOO_FREQUENT -> "accountError.nicknameTooFrequent"
         AccountErrorCode.MAIL_NOT_CONFIGURED -> "accountError.mailNotConfigured"

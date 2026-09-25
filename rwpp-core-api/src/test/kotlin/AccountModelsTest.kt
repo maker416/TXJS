@@ -12,6 +12,9 @@ import io.github.rwpp.net.account.BlockRequest
 import io.github.rwpp.net.account.BlocksResponse
 import io.github.rwpp.net.account.ChatItem
 import io.github.rwpp.net.account.ChatMessageDto
+import io.github.rwpp.net.account.EmailCodeLoginRequest
+import io.github.rwpp.net.account.EmailCodePurpose
+import io.github.rwpp.net.account.EmailLoginRequest
 import io.github.rwpp.net.account.FriendItem
 import io.github.rwpp.net.account.FriendRequestDto
 import io.github.rwpp.net.account.LoginRequest
@@ -189,6 +192,31 @@ class AccountModelsTest {
         assertTrue(encoded.contains("\"username\""), encoded)
         assertTrue(encoded.contains("\"password\""), encoded)
         assertTrue(!encoded.contains("email"), encoded)
+    }
+
+    @Test
+    fun emailLoginRequestOnlyHasEmailAndPassword() {
+        val encoded = json.encodeToString(EmailLoginRequest("alice@example.com", "passw0rd"))
+        assertTrue(encoded.contains("\"email\""), encoded)
+        assertTrue(encoded.contains("\"password\""), encoded)
+        assertTrue(!encoded.contains("username"), encoded)
+        assertTrue(!encoded.contains("code"), encoded)
+    }
+
+    @Test
+    fun emailCodeLoginRequestOnlyHasEmailAndCode() {
+        val encoded = json.encodeToString(EmailCodeLoginRequest("alice@example.com", "123456"))
+        assertTrue(encoded.contains("\"email\""), encoded)
+        assertTrue(encoded.contains("\"code\""), encoded)
+        assertTrue(!encoded.contains("password"), encoded)
+        assertTrue(!encoded.contains("username"), encoded)
+    }
+
+    @Test
+    fun emailCodePurposeIncludesLogin() {
+        assertEquals("login", EmailCodePurpose.LOGIN)
+        assertEquals("register", EmailCodePurpose.REGISTER)
+        assertEquals("reset_password", EmailCodePurpose.RESET_PASSWORD)
     }
 
     @Test

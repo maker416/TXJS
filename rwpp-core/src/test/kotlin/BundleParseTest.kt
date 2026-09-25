@@ -190,6 +190,8 @@ class BundleParseTest {
                 "code",
                 "sendCode",
                 "forgotPassword",
+                "loginWithEmailCode",
+                "loginWithPassword",
                 "displayName",
                 "password",
                 "confirmPassword",
@@ -222,6 +224,7 @@ class BundleParseTest {
                 "badCredentials",
                 "rateLimited",
                 "usernameTaken",
+                "nicknameTaken",
                 "invalidCode",
                 "network",
             ).forEach { key ->
