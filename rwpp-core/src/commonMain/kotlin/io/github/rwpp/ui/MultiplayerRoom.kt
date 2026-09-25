@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Lock
@@ -2375,6 +2376,9 @@ private val RoomPlayerNameWeight = 0.6f
 private val RoomPlayerSpawnWeight = 0.1f
 private val RoomPlayerTeamWeight = 0.1f
 private val RoomPlayerPingWeight = 0.2f
+/** 行尾「查看名片」操作格的固定宽度：表头与数据行取同一值，保证列对齐 */
+private val RoomPlayerCardCellWidth = 40.dp
+private val CompactRoomPlayerCardCellWidth = 34.dp
 
 private val CompactChatPanelMinHeight = 220.dp
 private val CompactChatMessageAreaMinHeight = 160.dp
@@ -3050,8 +3054,11 @@ private fun RoomToggleChip(
             ),
         ) {
             Row(
+                // compact 用于紧凑面板的有界槽位（父级 weight 定宽）：撑满整卡，开关推到尾部；
+                // 非 compact 用在桌面按钮行（无 weight 约束）：必须按内容收缩，
+                // 否则 fillMaxWidth + weight(1f) 会吃掉行内剩余全部宽度，把后面的输入框挤出屏外。
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .then(if (compact) Modifier.fillMaxWidth() else Modifier)
                     .padding(horizontal = 6.dp, vertical = if (compact) 5.dp else 7.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -3071,7 +3078,7 @@ private fun RoomToggleChip(
                     },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
+                    modifier = if (compact) Modifier.weight(1f) else Modifier,
                 )
                 MiniToggleSwitch(checked = checked, checkedColor = checkedColor)
             }
@@ -3138,6 +3145,20 @@ private fun RoomPlayerTableHeader(
         TableCell(readI18n("multiplayer.room.colSpawn"), RoomPlayerSpawnWeight, strokeColor = strokeColor)
         TableCell(readI18n("multiplayer.room.colTeam"), RoomPlayerTeamWeight, strokeColor = strokeColor)
         TableCell(readI18n("multiplayer.room.colPing"), RoomPlayerPingWeight, drawStroke = false, strokeColor = strokeColor)
+        // 行尾操作列表头：与数据行名片按钮同宽，放说明性图标表明该列用途
+        Box(
+            modifier = Modifier
+                .width(if (compact) CompactRoomPlayerCardCellWidth else RoomPlayerCardCellWidth)
+                .align(Alignment.CenterVertically),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Default.AccountBox,
+                contentDescription = readI18n("playerCard.viewProfile", I18nType.RWPP),
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                modifier = Modifier.size(if (compact) 14.dp else 16.dp),
+            )
+        }
     }
 }
 
@@ -3207,6 +3228,48 @@ private fun RoomPlayerTableRow(
                     RoomPlayerPingWeight,
                     drawStroke = false,
                     modifier = Modifier.fillMaxHeight(),
+                )
+                RoomPlayerCardActionCell(
+                    player = player,
+                    compact = compact,
+                    onViewProfile = onViewProfile,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 行尾「查看名片」按钮：真人玩家（含自己）可点，一键打开个人名片，
+ * 不再需要先点玩家打开配置弹窗。AI 与连接占位行只保留同宽空白，维持表格列对齐。
+ * 点击由按钮自身消费，不会触发行点击（玩家配置弹窗/整行名片分派）。
+ */
+@Composable
+private fun RowScope.RoomPlayerCardActionCell(
+    player: Player,
+    compact: Boolean,
+    onViewProfile: ((Player) -> Unit)?,
+) {
+    Box(
+        modifier = Modifier
+            .width(if (compact) CompactRoomPlayerCardCellWidth else RoomPlayerCardCellWidth)
+            .fillMaxHeight(),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (onViewProfile != null && !player.isAI && player != ConnectingPlayer) {
+            Box(
+                modifier = Modifier
+                    .size(if (compact) 26.dp else 30.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f))
+                    .clickable { onViewProfile(player) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Default.AccountBox,
+                    contentDescription = readI18n("playerCard.viewProfile", I18nType.RWPP),
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(if (compact) 15.dp else 17.dp),
                 )
             }
         }
