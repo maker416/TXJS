@@ -750,17 +750,20 @@ fun ModsView(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        mod.name,
-                        style = if (dense) {
+                    // 长模组名默认仍单行省略，出现截断时追加「展开」入口，点击后换行显示完整名称
+                    ExpandableText(
+                        modifier = Modifier.weight(1f),
+                        text = mod.name,
+                        collapsedMaxLine = 1,
+                        style = (if (dense) {
                             MaterialTheme.typography.titleSmall
                         } else {
                             MaterialTheme.typography.titleMedium
-                        },
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
+                        }).copy(color = MaterialTheme.colorScheme.primary),
+                        showMoreText = readI18n("mod.showMore"),
+                        showLessText = readI18n("mod.showLess"),
+                        showMoreStyle = expandedStyle,
+                        showLessStyle = expandedStyle
                     )
                 }
 
@@ -926,14 +929,15 @@ fun ModsView(
                             )
                         }
                         HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outlineVariant)
-                        Text(
-                            mod.name,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        // 模组名允许完整换行并可选择复制，避免长名在弹窗里仍被省略
+                        SelectionContainer {
+                            Text(
+                                mod.name,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                            )
+                        }
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.85f),
@@ -1268,9 +1272,7 @@ fun ModsView(
                     Text(
                         readI18n("mod.deleteConfirmMessage", I18nType.RWPP, mod.name),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 4,
-                        overflow = TextOverflow.Ellipsis
+                        color = MaterialTheme.colorScheme.onSurface
                     )
 
                     Row(
@@ -1374,8 +1376,6 @@ fun ModsView(
                                         "• ${item.name}",
                                         style = MaterialTheme.typography.titleSmall,
                                         color = MaterialTheme.colorScheme.error,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
                                     )
                                     Text(
                                         item.errorMessage,
