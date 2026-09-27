@@ -7,6 +7,7 @@
 
 package io.github.rwpp.account
 
+import androidx.compose.runtime.mutableStateMapOf
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.AccountPreferences
 import io.github.rwpp.config.ConfigIO
@@ -100,6 +101,13 @@ object RoomIdentityController {
     private var publishJob: Job? = null
     private var eventsBound = false
 
+    /**
+     * 房内真人玩家的名片可用性（行尾「查看名片」按钮状态数据源），key 为 trim 后的玩家名：
+     * true=已公示可获取（按钮点亮）；false=确认获取不到（对方未登录账号或非极速版客户端）；
+     * 无记录=未知（尚未查询或查询失败）。按钮只在 true 时点亮，其余状态点击仅提示原因。
+     */
+    val cardAvailability = mutableStateMapOf<String, Boolean>()
+
     /** 订阅断线事件：离房即停止公示并撤销记录（与 [io.github.rwpp.core.ModSyncController.init] 同款 MONITOR 订阅）。 */
     fun init() {
         if (eventsBound) return
@@ -122,6 +130,8 @@ object RoomIdentityController {
             addAll(identityKeysForAddress(address))
         }
         roomKeys = prioritizeIdentityKeys(keys)
+        // 新房清空上一房间的可用性标记，避免旧房同名玩家的缓存误导按钮状态
+        cardAvailability.clear()
         logger.info("[ROOMID] 进房候选 key：$roomKeys（玩家名 $playerName）")
     }
 
@@ -171,6 +181,7 @@ object RoomIdentityController {
         publishJob?.cancel()
         publishJob = null
         playerName = ""
+        cardAvailability.clear()
         val keys = roomKeys
         roomKeys = emptyList()
         if (keys.isEmpty()) return
@@ -218,6 +229,47 @@ object RoomIdentityController {
             throw e
         } catch (e: Exception) {
             RoomIdentityResult.Error(e.message ?: e.javaClass.simpleName)
+        }
+    }
+
+    /**
+     * 预取房内真人玩家（除自己外）的名片可用性，写入 [cardAvailability]，驱动行尾「查看名片」按钮置灰。
+     * 由房间视图的周期循环调用；单个玩家查询失败保持未知（下轮再试），不做整批失败处理。
+     * 自己永远可打开名片（[resolvePlayer] 返回 Self），不参与预取。
+     */
+    suspend fun prefetchPlayerCards(room: GameRoom) {
+        val self = room.localPlayer
+        val names = room.getPlayers()
+            .filter { !it.isAI && it != self }
+            .map { it.name.trim() }
+            .filter { it.isNotEmpty() }
+            .toSet()
+        // 清理已离房玩家的标记
+        cardAvailability.keys.filter { it !in names }.forEach { cardAvailability.remove(it) }
+        // 未登录 / 功能降级时不做判定：按钮保持可点，由名片弹窗解释全局状态（去登录 / 服务端未升级）
+        if (!AccountSession.loggedIn || !AccountSession.networkEnabled || featureUnavailable) return
+        val keys = roomKeys
+        if (keys.isEmpty()) {
+            // 同 resolvePlayer 口径：本端无 key 即双方都不可能查到，全部按获取不到处理
+            names.forEach { cardAvailability[it] = false }
+            return
+        }
+        val client = newClient()
+        val appKey = resolveAppKey()
+        val token = AccountSession.requireToken()
+        for (name in names) {
+            val entries = try {
+                client.lookup(keys, name, appKey, token)
+            } catch (e: RoomIdFeatureUnavailableException) {
+                featureUnavailable = true
+                return
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // 网络错误等：该玩家保持未知（按钮可点），下一轮再试
+                continue
+            }
+            cardAvailability[name] = entries.isNotEmpty()
         }
     }
 

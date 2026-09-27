@@ -141,6 +141,9 @@ private const val PUBLISHED_ROOM_EXPIRY_SYNC_INTERVAL_MS = 30_000L
 
 private const val PUBLISH_LOADING_MIN_MS = 400L
 
+/** 房内玩家名片可用性预取间隔（每秒一轮，新进房并完成公示的玩家最迟约 1s 后点亮按钮） */
+private const val ROOM_CARD_PREFETCH_INTERVAL_MS = 1_000L
+
 private const val LIST_DETECTOR_PLAYER_KEYWORD = "列表探测器"
 
 private enum class PublishStep {
@@ -620,6 +623,16 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
         }
         // 单人/沙盒复用本视图，不做身份公示
         if (!room.isSinglePlayerGame) RoomIdentityController.startPublishing()
+    }
+
+    // 行尾「查看名片」按钮点亮态：每秒预取一轮房内真人玩家的名片公示记录，
+    // 确认对方已公示（登录账号的极速版客户端）才点亮按钮，其余状态点击仅提示原因
+    LaunchedEffect(room.isSinglePlayerGame) {
+        if (room.isSinglePlayerGame) return@LaunchedEffect
+        while (true) {
+            runCatching { RoomIdentityController.prefetchPlayerCards(room) }
+            delay(ROOM_CARD_PREFETCH_INTERVAL_MS)
+        }
     }
 
     @Composable
@@ -1535,11 +1548,13 @@ private fun PlayerOverrideDialog(
                         dismiss()
                     }
 
-                // 真人玩家可查看名片（个人资料 / 加好友）
+                // 真人玩家可查看名片（个人资料 / 加好友）；未确认有名片的玩家仅提示原因（与行尾名片按钮一致）
                 if (onViewProfile != null && !player.isAI && player != ConnectingPlayer)
                     RWTextButton(readI18n("playerCard.viewProfile", I18nType.RWPP), Modifier.padding(5.dp)) {
-                        dismiss()
-                        onViewProfile(player)
+                        onPlayerCardButtonClick(player, room) { target ->
+                            dismiss()
+                            onViewProfile(target)
+                        }
                     }
 
                 RWTextButton(readI18n("multiplayer.room.apply"), Modifier.padding(5.dp)) {
@@ -3240,6 +3255,7 @@ private fun RoomPlayerTableRow(
                 )
                 RoomPlayerCardActionCell(
                     player = player,
+                    room = room,
                     compact = compact,
                     onViewProfile = onViewProfile,
                 )
@@ -3252,10 +3268,14 @@ private fun RoomPlayerTableRow(
  * 行尾「查看名片」按钮：真人玩家（含自己）可点，一键打开个人名片，
  * 不再需要先点玩家打开配置弹窗。AI 与连接占位行只保留同宽空白，维持表格列对齐。
  * 点击由按钮自身消费，不会触发行点击（玩家配置弹窗/整行名片分派）。
+ *
+ * 按钮只在确认对方有名片后点亮（见 [io.github.rwpp.account.RoomIdentityController.cardAvailability]
+ * 与每秒一轮的预取）；未点亮时点击仅提示原因而不打开弹窗。自己的按钮常亮（名片弹窗走 Self 分支）。
  */
 @Composable
 private fun RowScope.RoomPlayerCardActionCell(
     player: Player,
+    room: GameRoom,
     compact: Boolean,
     onViewProfile: ((Player) -> Unit)?,
 ) {
@@ -3266,22 +3286,58 @@ private fun RowScope.RoomPlayerCardActionCell(
         contentAlignment = Alignment.Center,
     ) {
         if (onViewProfile != null && !player.isAI && player != ConnectingPlayer) {
+            val lit = isPlayerCardLit(player, room)
             Box(
                 modifier = Modifier
                     .size(if (compact) 26.dp else 30.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f))
-                    .clickable { onViewProfile(player) },
+                    .background(
+                        if (lit) {
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                        } else {
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                        },
+                    )
+                    .clickable { onPlayerCardButtonClick(player, room, onViewProfile) },
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     Icons.Default.AccountBox,
                     contentDescription = readI18n("playerCard.viewProfile", I18nType.RWPP),
-                    tint = MaterialTheme.colorScheme.primary,
+                    tint = if (lit) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                    },
                     modifier = Modifier.size(if (compact) 15.dp else 17.dp),
                 )
             }
         }
+    }
+}
+
+/** 名片按钮是否点亮：仅已确认对方有名片（或自己，名片弹窗走 Self 分支）时点亮。 */
+@Composable
+private fun isPlayerCardLit(player: Player, room: GameRoom): Boolean =
+    player == room.localPlayer ||
+        RoomIdentityController.cardAvailability[player.name.trim()] == true
+
+/**
+ * 名片按钮点击分派：点亮才打开名片弹窗；未点亮按当前状态提示原因——
+ * 本端未登录引导登录、服务端未升级、已确认获取不到，其余（查询中/失败重试中）提示正在查询。
+ */
+private fun onPlayerCardButtonClick(player: Player, room: GameRoom, onViewProfile: (Player) -> Unit) {
+    val availability = RoomIdentityController.cardAvailability[player.name.trim()]
+    when {
+        player == room.localPlayer || availability == true -> onViewProfile(player)
+        !AccountSession.loggedIn || !AccountSession.networkEnabled ->
+            UI.showWarning(readI18n("playerCard.notLoggedIn", I18nType.RWPP))
+        RoomIdentityController.featureUnavailable ->
+            UI.showWarning(readI18n("playerCard.featureUnavailable", I18nType.RWPP))
+        availability == false ->
+            UI.showWarning(readI18n("playerCard.unavailable", I18nType.RWPP))
+        else ->
+            UI.showWarning(readI18n("playerCard.loading", I18nType.RWPP))
     }
 }
 
