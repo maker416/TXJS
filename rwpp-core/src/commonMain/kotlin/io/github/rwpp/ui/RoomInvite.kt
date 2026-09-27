@@ -724,23 +724,14 @@ fun RoomInviteToastHost(modifier: Modifier = Modifier) {
         if (UI.showRoomView) UI.incomingInviteNotification = null
     }
 
-    /** 接受邀请：关闭其他顶层页，交由多人页消费 pendingInviteJoin 走既有加入链路。 */
+    /** 接受邀请：硬跳转回多人页（清返回栈与叠加页），交由多人页消费 pendingInviteJoin 走既有加入链路。 */
     val join: (RoomInvite) -> Unit = { invite ->
         UI.incomingInviteNotification = null
         FriendsSession.closeChat()
         UI.pendingInviteJoin = invite
         UI.showFriendsView = false
         UI.showAccountView = false
-        UI.showSettingsView = false
-        UI.showModsView = false
-        UI.showMissionView = false
-        UI.showSurvivalView = false
-        UI.showSinglePlayerView = false
-        UI.showReplayView = false
-        UI.showExtensionView = false
-        UI.showResourceBrowser = false
-        UI.showOpenSourceInfoView = false
-        UI.showMultiplayerView = true
+        resetNavigation(LauncherPage.Multiplayer)
     }
 
     // 退出动画期间状态已置 null，缓存最后一条内容保证卡片能完整滑出

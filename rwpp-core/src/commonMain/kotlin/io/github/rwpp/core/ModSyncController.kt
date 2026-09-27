@@ -46,7 +46,9 @@ import io.github.rwpp.net.sync.forRoomDescription
 import io.github.rwpp.net.sync.toNetwork
 import io.github.rwpp.net.sync.toSnapshot
 import io.github.rwpp.net.sync.toSync
+import io.github.rwpp.ui.LauncherPage
 import io.github.rwpp.ui.UI
+import io.github.rwpp.ui.resetNavigation
 import io.github.rwpp.widget.loadingMessage
 import io.github.rwpp.widget.parseEngineLoadProgress
 import kotlinx.coroutines.CancellationException
@@ -875,8 +877,8 @@ object ModSyncController {
             scope.launch(Dispatchers.Main.immediate) {
                 inRoomSyncPhase = null
                 resetReceivingStateOnMain()
-                UI.showRoomView = false
-                UI.showMultiplayerView = true
+                // 取消同步退房是硬跳转：放弃返回栈直达多人列表
+                resetNavigation(LauncherPage.Multiplayer)
                 GameSessionController.onExternalSessionEnd()
             }
             scope.launch(Dispatchers.IO) {

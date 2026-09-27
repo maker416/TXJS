@@ -436,7 +436,7 @@ fun MultiplayerView(
                 // 房间身份公示（带外机制）：暂存候选 key 与玩家名快照；
                 // 房主走 quickHost 指令串产不出 key，靠进房后 roomDetails 短码补充
                 RoomIdentityController.onJoiningRoom(serverAddress, capturedRoomDescription)
-                onExit()
+                // 不调 onExit()：多人列表留在返回栈中，退出房间时 navigateBack 能回到列表
                 onOpenRoomView()
                 // 进房成功：joining Presence 转为 synced 并保活，驱动行内徽章（无同步记录时为空操作）
                 ModSyncController.onJoinedRoom()
@@ -1767,7 +1767,7 @@ fun MultiplayerView(
 
     FilterSurfaceDialog(filterSurfaceDialogVisible) { filterSurfaceDialogVisible = false }
     HostGameDialog(hostDialogVisible, { hostDialogVisible = false }) {
-        onExit()
+        // 不调 onExit()：多人列表留在返回栈中，退出房间时 navigateBack 能回到列表
         onOpenRoomView()
         game.setUserName(userName)
     }

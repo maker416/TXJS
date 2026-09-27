@@ -296,19 +296,16 @@ fun App(
                     SinglePlayerView(
                         onExit = { showSinglePlayerView = false },
                         onMission = {
-                            showSinglePlayerView = false
-                            showMissionView = true
+                            navigateTo(LauncherPage.Mission)
                         },
                         onSurvival = {
-                            showSinglePlayerView = false
-                            showSurvivalView = true
+                            navigateTo(LauncherPage.Survival)
                         },
                         onSkirmish = {
                             appScope.launch {
                                 GameSessionController.beginSession()
-                                showSinglePlayerView = false
-                                showRoomView = true
                                 isSinglePlayerGame = true
+                                navigateTo(LauncherPage.Room)
                                 game.hostNewSinglePlayer(false)
                                 GameSessionController.onRoomOpened()
                             }
@@ -316,9 +313,8 @@ fun App(
                         onSandbox = {
                             appScope.launch {
                                 GameSessionController.beginSession()
-                                showSinglePlayerView = false
                                 isSinglePlayerGame = true
-                                showRoomView = true
+                                navigateTo(LauncherPage.Room)
                                 game.hostNewSinglePlayer(sandbox = true)
                                 GameSessionController.onRoomOpened()
                             }
@@ -442,8 +438,8 @@ fun App(
                         val returnToMultiplayerView = !isSinglePlayerGame
                         roomExitInProgress = true
 
-                        showRoomView = false
-                        if (returnToMultiplayerView) showMultiplayerView = true
+                        // 返回上一级：单人房回「单人游戏」子菜单，多人房回多人列表
+                        navigateBack()
 
                         // 退房延迟清理由 GameSessionController 持有：新会话 beginSession 会先
                         // 等待其完成，保证旧会话先拆后建（不再有清理迟到误拆新会话的竞态）
@@ -485,8 +481,8 @@ fun App(
                     if (UI.warning != null) {
                         warningDialogVisible = true
                         if (UI.warning?.isKicked == true && !ModSyncController.isInRoomSyncInProgress()) {
-                            showRoomView = false
-                            showMultiplayerView = true
+                            // 被踢是硬跳转：放弃返回栈直达多人列表
+                            resetNavigation(LauncherPage.Multiplayer)
                             GameSessionController.onExternalSessionEnd()
                         }
                     }
@@ -831,8 +827,7 @@ fun App(
                         questionDialogVisible = false
                         UI.question?.callback?.invoke(null)
                         if (showRoomView && !ModSyncController.isInRoomSyncInProgress()) {
-                            showRoomView = false
-                            showMultiplayerView = true
+                            resetNavigation(LauncherPage.Multiplayer)
                             GameSessionController.onExternalSessionEnd()
                         }
 

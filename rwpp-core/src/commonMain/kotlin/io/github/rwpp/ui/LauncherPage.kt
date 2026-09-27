@@ -56,27 +56,51 @@ sealed interface LauncherPage {
 }
 
 /**
- * 当前页面级页面。
- * 写入请走 [navigateTo] / [closePage]，或经 [pageBinding] 代理的旧布尔量。
+ * 当前页面级页面（返回栈栈顶）。
+ * 写入请走 [navigateTo] / [navigateBack] / [resetNavigation]，或经 [pageBinding] 代理的旧布尔量。
  */
 var launcherPage: LauncherPage by mutableStateOf(LauncherPage.MainMenu)
     private set
 
-/** 切换到目标页面（隐含关闭当前页面；[LauncherPage.MainMenu] 即回主菜单）。 */
+/**
+ * 页面返回栈（不含当前页）。只在主线程读写；
+ * 不驱动渲染（渲染只看 [launcherPage]），故无需 Compose 状态。
+ */
+private val pageStack = ArrayDeque<LauncherPage>()
+
+/** 前进一步：当前页压栈，进入 [page]（与当前页相同则忽略，防止重复压栈）。 */
 fun navigateTo(page: LauncherPage) {
+    if (launcherPage == page) return
+    pageStack.addLast(launcherPage)
     launcherPage = page
 }
 
-/** 仅当当前页面是 [page] 时关闭它（回主菜单）；否则视为过期调用，忽略。 */
-fun closePage(page: LauncherPage) {
-    if (launcherPage == page) launcherPage = LauncherPage.MainMenu
+/** 返回上一级：弹出栈顶；栈空（或栈顶即主菜单）时回主菜单。 */
+fun navigateBack() {
+    launcherPage =
+        if (pageStack.isEmpty()) LauncherPage.MainMenu
+        else pageStack.removeLast()
 }
 
 /**
- * 旧 showXxxView 布尔量的读写代理：读 = 当前页是否为 [page]；
- * 写 true = [navigateTo]；写 false = [closePage]。
+ * 硬跳转：清空返回栈并直达 [page]。
+ * 用于被踢回列表、接受房间邀请等「放弃当前导航上下文」的系统驱动转场。
+ */
+fun resetNavigation(page: LauncherPage) {
+    pageStack.clear()
+    launcherPage = page
+}
+
+/** 仅当当前页面是 [page] 时返回上一级；否则视为过期调用，忽略。 */
+fun closePage(page: LauncherPage) {
+    if (launcherPage == page) navigateBack()
+}
+
+/**
+ * 旧 showXxxView 布尔量的读写代理：读 = 当前页（栈顶）是否为 [page]；
+ * 写 true = [navigateTo]（压栈前进）；写 false = [closePage]（返回上一级）。
  * 让既有调用点在语义不变的前提下零改动迁移到单一导航状态：
- * 「关当前页再开目标页」的成对写法最终都收敛为正确的单一页面。
+ * 「关当前页再开目标页」的成对写法最终都收敛为正确的前进/返回。
  */
 fun pageBinding(page: LauncherPage): ReadWriteProperty<Any?, Boolean> =
     object : ReadWriteProperty<Any?, Boolean> {
