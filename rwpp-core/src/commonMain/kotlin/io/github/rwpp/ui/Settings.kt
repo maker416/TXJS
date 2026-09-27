@@ -170,6 +170,8 @@ fun SettingsView(
                                                 defaultValue = settings.isFullscreen,
                                                 customConfigSettingAction = {
                                                     settings.isFullscreen = it
+                                                    // 桌面端即时切换全屏/窗口，无需重启进程
+                                                    appContext.setFullscreen(it)
                                                 }
                                             )
                                         }

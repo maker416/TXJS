@@ -382,6 +382,7 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 ## 常见问题
 
+- **桌面端全屏/窗口切换（免重启）**：`Settings.isFullscreen` 的开关在运行时即时生效，不再依赖重启。实现位于 `rwpp-desktop` 的 `FullscreenController.kt`：Windows 下通过 JNA 调 `SetWindowLongPtr(GWL_STYLE)` 去/加 `WS_CAPTION|WS_THICKFRAME` 等装饰样式并铺满当前显示器（无边框窗口化，非独占全屏），窗口句柄与 LWJGL GL 上下文均不销毁，对局中也可切换；非 Windows 平台回退 `GraphicsDevice.setFullScreenWindow`。启动路径统一为带装饰窗口，全屏在 `pack()` 后、`setVisible` 前应用，避免闪现标题栏（此时禁止 `SWP_SHOWWINDOW`，否则会提前显示窗口）。`Main.kt` 另挂了 F11 全局快捷键走同一切换路径并立即持久化配置。
 - **KSP 增量编译**：根目录 `gradle.properties` 中显式设置了 `ksp.incremental=false`，因为注入元数据变更通常需要全量重新生成。
 - **JitPack 构建**：通过检测 `JITPACK` 环境变量排除 app 模块，仅发布 library（`rwpp-core-api`、`rwpp-core`）。
 - **Android 模组重载 OOM 防线**：模组能否加载取决于 ini 表达式密度（`select(`/`memory.`/`[decal_]`/`copyFrom`）而非文件体积——图片音频解码后落在 native 堆，不占 ART 堆（largeHeap=512MB）配额；进程内重载新旧单位表并存，峰值约翻倍，脚本密集型模组必撞 OOM。防线只保不闪退、不做重启引导：两端 `runReloadCore()` 外层 catch `OutOfMemoryError` 吞掉异常并置位 `UI.modReloadMemoryExhausted`（游戏线程不因未捕获 OOM 崩溃）；引擎会把 OOM 包装进肇事模组的错误消息，Mods 页据此弹窗**指名元凶模组**（`MemoryExhaustedDialog`）；标志置位后锁定一切后续重载（二次 OOM 必崩），进程重启后自然清除。

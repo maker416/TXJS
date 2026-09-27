@@ -94,8 +94,10 @@ import java.awt.Canvas
 import java.awt.Dialog
 import java.awt.Dimension
 import java.awt.GraphicsEnvironment
+import java.awt.KeyboardFocusManager
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
+import java.awt.event.KeyEvent
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import java.io.File
@@ -125,6 +127,9 @@ lateinit var focusRequester: FocusRequester
 var inGameWidget: Widget? = null
 lateinit var inGameWidgetDialog: Dialog
 var requireReloadingLib = false
+
+/** 主窗口是否已创建（供 FullscreenController 等跨文件判断 lateinit 状态） */
+val isMainWindowInitialized: Boolean get() = ::mainJFrame.isInitialized
 
 //val cacheModSize = AtomicInteger(0)
 
@@ -316,6 +321,7 @@ fun swingApplication() = SwingUtilities.invokeLater {
     }
 
     val window = JFrame()
+    mainJFrame = window
     val frame = JFrame("退出RWJS")
     frame.setSize(300, 200)
     if (requireReloadingLib) {
@@ -325,12 +331,17 @@ fun swingApplication() = SwingUtilities.invokeLater {
         window.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE)
     }
     window.background = java.awt.Color.BLACK
+    // 全屏/窗口模式不再由启动时的 isUndecorated 决定（该属性在窗口可见后无法修改，只能重启进程），
+    // 统一以带装饰窗口启动；需要全屏时由 FullscreenController 在窗口可见前应用无边框样式，
+    // 运行时切换同样走该控制器，窗口句柄与游戏 OpenGL 上下文均不销毁。
+    window.minimumSize = Dimension(800, 600)
+    window.isResizable = true
     window.extendedState = JFrame.MAXIMIZED_BOTH
-    if(!requireReloadingLib && appKoin.get<Settings>().isFullscreen) {
+    val startFullscreen = !requireReloadingLib && appKoin.get<Settings>().isFullscreen
+    FullscreenController.init(startFullscreen)
+    if (startFullscreen && !FullscreenController.isWindowsPlatform) {
+        // 非 Windows 平台保留原有无边框启动方式（其运行时切换走 AWT 全屏独占回退）
         window.isUndecorated = true
-    } else {
-        window.minimumSize = Dimension(800, 600)
-        window.isResizable = true
     }
     window.title = "RWJS"
     window.iconImage = ImageIO.read(ClassLoader.getSystemResource("composeResources/io.github.rwpp.rwpp_core.generated.resources/drawable/logo.png"))
@@ -382,6 +393,11 @@ fun swingApplication() = SwingUtilities.invokeLater {
         SwingUtilities.invokeLater { syncGameCanvasSizeToNative() }
     }
 
+    // Windows 下需要全屏启动时，先创建原生句柄再在窗口可见前应用无边框样式，避免闪现标题栏
+    if (startFullscreen && FullscreenController.isWindowsPlatform) {
+        window.pack()
+        FullscreenController.enterFullscreenAtStartup(window)
+    }
     window.isVisible = true
     panel.requestFocus()
 
@@ -513,7 +529,19 @@ fun swingApplication() = SwingUtilities.invokeLater {
     sendMessageDialog.isAlwaysOnTop = true
     sendMessageDialog.size = Dimension(550, 540)
     sendMessageDialog.add(panel2)
-    mainJFrame = window
+
+    // F11 即时切换全屏/窗口（与设置页中的「沉浸式全屏」开关等价，并立即持久化配置）
+    KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher { e ->
+        if (!requireReloadingLib && e.id == KeyEvent.KEY_PRESSED && e.keyCode == KeyEvent.VK_F11) {
+            val settings = appKoin.get<Settings>()
+            settings.isFullscreen = !settings.isFullscreen
+            FullscreenController.setFullscreen(settings.isFullscreen)
+            Thread {
+                runCatching { appKoin.get<ConfigIO>().saveAllConfig() }
+            }.apply { isDaemon = true; name = "rwpp-config-save" }.start()
+            true
+        } else false
+    }
 
     window.addComponentListener(object : ComponentAdapter() {
         override fun componentResized(e: ComponentEvent) {
