@@ -26,12 +26,7 @@ interface Game : KoinComponent {
     val world: World
 
     /**
-     * Post an action to the game thread (the engine main loop).
-     *
-     * 两端实现都把动作排进由游戏主循环消费的通道（桌面 `RWPPContainer` 的 channel；
-     * Android `mainThreadChannel`，由主循环的 InsertBefore 注入取出执行），
-     * 因此动作与主循环串行。所有对引擎状态的写操作必须经此通道；
-     * UI 线程（Compose/EDT）不得直接读写引擎状态。
+     * Post an action to the main thread.
      */
     fun post(action: () -> Unit)
 

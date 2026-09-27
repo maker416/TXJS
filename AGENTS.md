@@ -222,14 +222,6 @@ git ls-files --others --ignored --exclude-standard -z \
 
 Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现在 `rwpp-desktop/src/main/kotlin/io/github/rwpp/desktop/impl/` 中（部分直接内联实现，部分通过独立类）。
 
-## 引擎线程契约
-
-- **`Game.post(action)` 的唯一语义是「投到游戏线程（引擎主循环）」**：桌面排进 `RWPPContainer` 的 channel，Android 排进 `mainThreadChannel`（由主循环 `i.b(float)` 的 InsertBefore 注入取出执行），动作与主循环串行。
-- **所有对引擎状态的写操作必须经 `Game.post`**；UI 线程（Compose/Android 主线程、桌面 EDT）不得直接读写引擎状态。Android 的 `hostNewSinglePlayer` 与 `startNewMissionGame` 的引擎部分已迁到游戏线程（此前在 UI 线程同步执行，既卡 Compose 又与主循环并发读写引擎）；`startNewMissionGame` 的 `gameLauncher.launch(intent)` 等 Activity 操作仍经 `uiHandler` 回主线程。
-- 跨线程可见的会话标志（Android `isSinglePlayerGame`/`isGaming`/`isReturnToBattleRoom`/`gameOver`/`questionOption`）用 `@Volatile`。
-- 阻塞型网络操作（`directJoinServer` 的连接）不得投游戏线程（会停掉保活泵），保持在 IO 协程。
-- 读侧配合 `RoomSnapshotStore`：事件在 Main 上采样一次供 UI 消费；后续若把采样也迁到游戏线程，UI 无需改动。
-
 ## 导航与 UI 架构
 
 项目**未使用**任何第三方导航库。页面级导航的单一事实来源是 `rwpp-core` 的 `ui/LauncherPage.kt`：密封类 `LauncherPage`（`MainMenu`/`SinglePlayer`/`Mission`/`Survival`/`Multiplayer`/`Room`/`Replay`/`Settings`/`Mods`/`Extensions`/`ResourceBrowser`/`OpenSourceInfo`）+ 全局 `launcherPage` 状态 + **页面返回栈**。

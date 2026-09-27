@@ -40,22 +40,11 @@ var message by mutableStateOf("loading")
 lateinit var gameLauncher: ActivityResultLauncher<Intent>
 lateinit var fileChooser: ActivityResultLauncher<Intent>
 val mainThreadChannel = Channel<() -> Unit>(Channel.UNLIMITED)
-
-@Volatile
 var gameOver = false
 val defeatedPlayerSet = CopyOnWriteArraySet<PlayerInternal>()
-
-@Volatile
 var questionOption: String? = null
-
-/** 写入发生在主线程、游戏线程（`Game.post` 迁入后）与 Activity 回调三侧，必须保证可见性。 */
-@Volatile
 var isSinglePlayerGame: Boolean = false
-
-@Volatile
 var isGaming = false
-
-@Volatile
 var isReturnToBattleRoom = false
 var roomMods = arrayOf<String>()
 var bannedUnitList: List<String> = listOf()
