@@ -64,6 +64,7 @@ import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.io.copyToWithProgress
 import io.github.rwpp.platform.BackHandler
+import io.github.rwpp.roomSessionEpoch
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.file_open
 import io.github.rwpp.widget.*
@@ -501,7 +502,10 @@ fun ReplaysViewDialog(
                                                     unknownVersion = false
                                                 }
                                             },
-                                            onClick = { game.watchReplay(item.replay) },
+                                            onClick = {
+                                                roomSessionEpoch.incrementAndGet()
+                                                game.watchReplay(item.replay)
+                                            },
                                         )
                                     }
                                 }

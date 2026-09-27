@@ -24,6 +24,7 @@ import io.github.rwpp.game.map.Mission
 import io.github.rwpp.game.map.MissionType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.platform.BackHandler
+import io.github.rwpp.roomSessionEpoch
 import io.github.rwpp.widget.*
 import org.koin.compose.koinInject
 
@@ -121,6 +122,7 @@ fun MissionView(fixedType: MissionType? = null, onExit: () -> Unit) {
                             val mission = missions[it]
                             val difficulty = Difficulty.entries[selectedIndex1]
                             MapItem(mission.displayName(), mission) {
+                                roomSessionEpoch.incrementAndGet()
                                 startNewMissionGame(
                                     difficulty,
                                     mission

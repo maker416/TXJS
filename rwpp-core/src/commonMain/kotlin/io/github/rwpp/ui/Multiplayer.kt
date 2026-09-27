@@ -81,6 +81,7 @@ import io.github.rwpp.net.parseRequiredModNames
 import io.github.rwpp.net.sorted
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.platform.readPainterByBytes
+import io.github.rwpp.roomSessionEpoch
 import io.github.rwpp.rwpp_core.generated.resources.*
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.*
@@ -390,6 +391,8 @@ fun MultiplayerView(
         },
         cancellable = true,
     ) {
+        // 新的加入/开房会话开始：作废可能仍挂起的退房延迟清理，防止其 cancelJoinServer/disconnect 误伤本次会话
+        roomSessionEpoch.incrementAndGet()
         try {
             if(serverAddress.isBlank()) {
                 message("That server no longer exists")
