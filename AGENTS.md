@@ -224,11 +224,11 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 ## 导航与 UI 架构
 
-项目**未使用**任何第三方导航库。页面切换在 `App.kt` 中通过全局 `MutableState<Boolean>` 变量控制：
+项目**未使用**任何第三方导航库。页面级导航的单一事实来源是 `rwpp-core` 的 `ui/LauncherPage.kt`：密封类 `LauncherPage`（`MainMenu`/`SinglePlayer`/`Mission`/`Survival`/`Multiplayer`/`Room`/`Replay`/`Settings`/`Mods`/`Extensions`/`ResourceBrowser`/`OpenSourceInfo`）+ 全局 `launcherPage` 状态，任何时刻至多一个页面级页面可见；切换经 `navigateTo(page)` / `closePage(page)`（后者仅当当前页匹配时才回主菜单，过期调用自动忽略）。
 
-- `showMultiplayerView`、`showSettingsView`、`showRoomView`、`showMissionView`、`showModsView`、`showExtensionView`、`showReplayView`、`showContributorList`、`showResourceBrowser`、`showSinglePlayerView`
-- 配合 `AnimatedVisibility`（`fadeIn`/`fadeOut` + `slideInVertically`/`expandIn`/`shrinkOut`）实现过渡动画
-- 当所有视图状态均为 `false` 时，显示主菜单（`UI.UiProvider.MainMenu`）
+- 旧的 11 个 `UI.showXxxView` 布尔量（`showMultiplayerView`、`showSettingsView`、`showRoomView`、`showMissionView`、`showModsView`、`showExtensionView`、`showReplayView`、`showResourceBrowser`、`showSinglePlayerView`、`showSurvivalView`）保留为 `pageBinding(page)` 读写代理（读 = 当前页是否为该页；写 true = `navigateTo`，写 false = `closePage`），既有调用点零改动；新代码请直接使用 `navigateTo`/`closePage`/`launcherPage`。
+- **上层叠加页**不参与页面级互斥：账号页（`UI.showAccountView`）与好友页（`UI.showFriendsView`）保持独立布尔量，可合法叠加在房间页之上（房间内邀请好友就地登录、房间名片发私信）。
+- 页面可见性仍由 `App.kt` 的 `AnimatedVisibility`（`fadeIn`/`fadeOut` + `slideInVertically`/`expandIn`/`shrinkOut`）呈现过渡动画；`launcherPage == LauncherPage.MainMenu` 且无叠加页打开时显示主菜单（`UI.UiProvider.MainMenu`）。
 
 `UI.kt` 中维护了一些全局 UI 状态（`UI.warning`、`UI.question`、`UI.dialogWidget`、`UI.showNetworkDialog` 等），通过 Compose 重组驱动弹窗与覆盖层。
 
