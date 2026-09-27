@@ -35,6 +35,12 @@ interface AppContext : KoinComponent {
 
     fun exit()
 
+    /**
+     * 请求切换全屏/窗口模式（仅桌面端生效，其它平台为空实现）。
+     * 桌面端在不销毁窗口与 OpenGL 上下文的前提下即时切换，无需重启进程。
+     */
+    fun setFullscreen(fullscreen: Boolean) {}
+
     /** Emits `true` once [exit] has been called; drives the full-screen "exiting" overlay. */
     val exitOverlayVisible: StateFlow<Boolean>
 }

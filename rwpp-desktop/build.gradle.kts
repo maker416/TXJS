@@ -31,6 +31,8 @@ dependencies {
     implementation(compose.desktop.windows_x64)
     implementation(compose.desktop.linux_x64)
     implementation("org.slf4j:slf4j-simple:2.0.16")
+    // 运行时切换全屏/窗口模式需要修改 Win32 窗口样式（SetWindowLongPtr），纯 JDK 无此能力
+    implementation("net.java.dev.jna:jna:5.15.0")
     compileOnly(fileTree(
         "dir" to rootDir.absolutePath + "/lib",
         "include" to "*.jar",
