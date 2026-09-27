@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
+import io.github.rwpp.core.GameSessionController
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.external.ExternalHandler
@@ -64,7 +65,6 @@ import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.io.copyToWithProgress
 import io.github.rwpp.platform.BackHandler
-import io.github.rwpp.roomSessionEpoch
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.file_open
 import io.github.rwpp.widget.*
@@ -503,8 +503,10 @@ fun ReplaysViewDialog(
                                                 }
                                             },
                                             onClick = {
-                                                roomSessionEpoch.incrementAndGet()
-                                                game.watchReplay(item.replay)
+                                                scope.launch {
+                                                    GameSessionController.beginSession()
+                                                    game.watchReplay(item.replay)
+                                                }
                                             },
                                         )
                                     }

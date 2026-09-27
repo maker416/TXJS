@@ -232,6 +232,16 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 `UI.kt` 中维护了一些全局 UI 状态（`UI.warning`、`UI.question`、`UI.dialogWidget`、`UI.showNetworkDialog` 等），通过 Compose 重组驱动弹窗与覆盖层。
 
+## 会话生命周期（GameSessionController）
+
+`rwpp-core` 的 `core/GameSessionController.kt` 是游戏会话（单人遭遇战/沙盒、多人加入/开房、任务、回放）生命周期的单一事实来源，阶段为 `IDLE → STARTING → IN_ROOM → CLOSING`（`sessionPhase`，信息性标记）。
+
+- **新会话必须经 `beginSession()`**（挂起函数）：它会先等待未完成的退房清理跑完再返回，保证旧会话一定先于新会话 setup 被完整拆除（`DisconnectEvent` 照常广播）。这取代了早期的 `roomSessionEpoch` 世代号补丁，从机制上消除「退房延迟清理迟到误拆新会话」（沙盒变遭遇战）的竞态。无挂起清理时立即返回，不引入延迟。
+- **房间退出统一经 `scheduleClose(scope)` 登记**：清理动作（`withFrameNanos` + `ROOM_EXIT_DISCONNECT_DELAY_MS` 延迟 + `cancelJoinServer`/`onBanUnits`/`disconnect`）在 Main 作用域执行，控制器持有其 `Job` 供 `beginSession` 等待。
+- 被踢回列表、引擎断连、房内同步取消退房等**绕过 `scheduleClose` 的结束路径**，调用 `onExternalSessionEnd()` 同步阶段标记。
+- 房间视图打开（进房/开房成功）调 `onRoomOpened()`。
+- 注意：本控制器只串行「开始/结束」的时序，不镜像引擎房间状态；引擎仍是房间状态的真身。
+
 ## 依赖注入（DI）
 
 使用 **Koin 4.0.1**，采用编译期注解 + KSP 生成代码的方式：

@@ -57,6 +57,7 @@ import io.github.rwpp.config.CoreData
 import io.github.rwpp.config.Settings
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
+import io.github.rwpp.core.GameSessionController
 import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.net.sync.SyncPeerPhase
 import io.github.rwpp.event.GlobalEventChannel
@@ -102,20 +103,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.koin.compose.koinInject
-import java.util.concurrent.atomic.AtomicLong
 
 var LocalWindowManager = staticCompositionLocalOf { WindowManager.Large }
 
 private const val ROOM_EXIT_DISCONNECT_DELAY_MS = 120L
-
-/**
- * 房间会话世代号：任何新会话开始（单人遭遇战/沙盒、多人加入/开房、任务、回放）时自增。
- * 退房清算是延迟执行的（见 [ROOM_EXIT_DISCONNECT_DELAY_MS]），执行前比对世代号，
- * 不一致说明等待期间已建立新会话，迟到的清理必须作废——否则会把新会话当作旧会话拆掉
- *（沙盒房变遭遇战、进行中的加入被取消、主线程被 disconnect 的 join/wait 卡死）。
- * 自增发生在主线程与 LoadingView 的 IO 协程两侧，必须用原子类。
- */
-val roomSessionEpoch = AtomicLong(0)
 
 @Suppress("UnusedBoxWithConstraintsScope", "UnusedMaterial3ScaffoldPaddingParameter")
 @Composable
@@ -313,18 +304,24 @@ fun App(
                             showSurvivalView = true
                         },
                         onSkirmish = {
-                            roomSessionEpoch.incrementAndGet()
-                            showSinglePlayerView = false
-                            showRoomView = true
-                            isSinglePlayerGame = true
-                            game.hostNewSinglePlayer(false)
+                            appScope.launch {
+                                GameSessionController.beginSession()
+                                showSinglePlayerView = false
+                                showRoomView = true
+                                isSinglePlayerGame = true
+                                game.hostNewSinglePlayer(false)
+                                GameSessionController.onRoomOpened()
+                            }
                         },
                         onSandbox = {
-                            roomSessionEpoch.incrementAndGet()
-                            showSinglePlayerView = false
-                            isSinglePlayerGame = true
-                            showRoomView = true
-                            game.hostNewSinglePlayer(sandbox = true)
+                            appScope.launch {
+                                GameSessionController.beginSession()
+                                showSinglePlayerView = false
+                                isSinglePlayerGame = true
+                                showRoomView = true
+                                game.hostNewSinglePlayer(sandbox = true)
+                                GameSessionController.onRoomOpened()
+                            }
                         },
                     )
                 }
@@ -339,6 +336,7 @@ fun App(
                         {
                             isSinglePlayerGame = false
                             showRoomView = true
+                            GameSessionController.onRoomOpened()
                         },
                     )
                 }
@@ -443,21 +441,18 @@ fun App(
 
                         val returnToMultiplayerView = !isSinglePlayerGame
                         roomExitInProgress = true
-                        val exitEpoch = roomSessionEpoch.get()
 
                         showRoomView = false
                         if (returnToMultiplayerView) showMultiplayerView = true
 
-                        appScope.launch {
+                        // 退房延迟清理由 GameSessionController 持有：新会话 beginSession 会先
+                        // 等待其完成，保证旧会话先拆后建（不再有清理迟到误拆新会话的竞态）
+                        GameSessionController.scheduleClose(appScope) {
                             try {
                                 withFrameNanos { }
                                 if (settings.enableAnimations) {
                                     delay(ROOM_EXIT_DISCONNECT_DELAY_MS)
                                 }
-
-                                // 等待期间已开启新会话（世代号变化）：本次清理过期，
-                                // 迟到的 disconnect 会拆掉刚建立的新会话，必须作废
-                                if (roomSessionEpoch.get() != exitEpoch) return@launch
 
                                 if (returnToMultiplayerView) {
                                     game.cancelJoinServer()
@@ -492,6 +487,7 @@ fun App(
                         if (UI.warning?.isKicked == true && !ModSyncController.isInRoomSyncInProgress()) {
                             showRoomView = false
                             showMultiplayerView = true
+                            GameSessionController.onExternalSessionEnd()
                         }
                     }
                 }
@@ -837,6 +833,7 @@ fun App(
                         if (showRoomView && !ModSyncController.isInRoomSyncInProgress()) {
                             showRoomView = false
                             showMultiplayerView = true
+                            GameSessionController.onExternalSessionEnd()
                         }
 
                         UI.question = null

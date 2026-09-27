@@ -16,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.config.ConfigIO
+import io.github.rwpp.core.GameSessionController
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.game.Game
@@ -24,8 +25,8 @@ import io.github.rwpp.game.map.Mission
 import io.github.rwpp.game.map.MissionType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.platform.BackHandler
-import io.github.rwpp.roomSessionEpoch
 import io.github.rwpp.widget.*
+import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
 /**
@@ -43,6 +44,7 @@ fun MissionView(fixedType: MissionType? = null, onExit: () -> Unit) {
 
     val game = koinInject<Game>()
     val configIO = koinInject<ConfigIO>()
+    val scope = rememberCoroutineScope()
 
     BorderCard(
         modifier = Modifier
@@ -122,11 +124,13 @@ fun MissionView(fixedType: MissionType? = null, onExit: () -> Unit) {
                             val mission = missions[it]
                             val difficulty = Difficulty.entries[selectedIndex1]
                             MapItem(mission.displayName(), mission) {
-                                roomSessionEpoch.incrementAndGet()
-                                startNewMissionGame(
-                                    difficulty,
-                                    mission
-                                )
+                                scope.launch {
+                                    GameSessionController.beginSession()
+                                    startNewMissionGame(
+                                        difficulty,
+                                        mission
+                                    )
+                                }
                             }
                         }
                     }

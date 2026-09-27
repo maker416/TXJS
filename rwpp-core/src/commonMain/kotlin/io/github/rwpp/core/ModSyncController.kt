@@ -877,6 +877,7 @@ object ModSyncController {
                 resetReceivingStateOnMain()
                 UI.showRoomView = false
                 UI.showMultiplayerView = true
+                GameSessionController.onExternalSessionEnd()
             }
             scope.launch(Dispatchers.IO) {
                 // 只断网，不立刻 activityResume/`i.q()`：单位表回落仍在工作线程。
