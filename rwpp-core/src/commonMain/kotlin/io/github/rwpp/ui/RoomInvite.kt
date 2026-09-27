@@ -70,6 +70,7 @@ import io.github.rwpp.game.GameRoom
 import io.github.rwpp.game.sendChatMessageOrCommand
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.net.account.FriendItem
 import io.github.rwpp.net.account.PublicUser
 import io.github.rwpp.net.account.ROOM_INVITE_TTL_MS
 import io.github.rwpp.net.account.RoomInvite
@@ -431,7 +432,14 @@ fun InviteFriendsDialog(
                                     it.user.nickname.contains(search, true) ||
                                     it.user.username.contains(search, true)
                             }
-                            .sortedBy { (it.user.nickname.ifBlank { it.user.username }).lowercase() }
+                            // 在线好友排前面：邀请时优先看到能立刻进房的人；
+                            // 状态由 App 根的全局 1s 轮询持续刷新，弹窗开着也会实时变化
+                            .sortedWith(
+                                compareByDescending<FriendItem> { it.online }
+                                    .thenBy {
+                                        (it.user.nickname.ifBlank { it.user.username }).lowercase()
+                                    },
+                            )
 
                         if (friends.isEmpty()) {
                             // fill = false：空态只占自身高度，弹窗按内容收包，不强行撑满
@@ -459,14 +467,16 @@ fun InviteFriendsDialog(
                                 verticalArrangement = Arrangement.spacedBy(if (short) 4.dp else 6.dp),
                             ) {
                                 items(friends.size, key = { friends[it].user.id }) { index ->
-                                    val friend = friends[index].user
+                                    val item = friends[index]
                                     InviteFriendPickRow(
-                                        user = friend,
-                                        selected = friend.id in selected,
+                                        user = item.user,
+                                        online = item.online,
+                                        lastActiveAt = item.lastActiveAt,
+                                        selected = item.user.id in selected,
                                         short = short,
                                         onClick = {
-                                            if (friend.id in selected) selected.remove(friend.id)
-                                            else selected.add(friend.id)
+                                            if (item.user.id in selected) selected.remove(item.user.id)
+                                            else selected.add(item.user.id)
                                         },
                                     )
                                 }
@@ -616,6 +626,8 @@ private fun InviteDialogSummary(invite: RoomInvite, short: Boolean) {
 @Composable
 private fun InviteFriendPickRow(
     user: PublicUser,
+    online: Boolean,
+    lastActiveAt: String?,
     selected: Boolean,
     short: Boolean,
     onClick: () -> Unit,
@@ -653,6 +665,7 @@ private fun InviteFriendPickRow(
                 name,
                 size = if (short) 32.dp else 38.dp,
                 avatar = AccountAvatar(user.id, user.hasAvatar, AccountSession.avatarVersion),
+                online = online,
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -667,13 +680,24 @@ private fun InviteFriendPickRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    "@${user.username}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "@${user.username}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        // 用户名过长时压缩它，状态文案始终完整可见
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    val (presenceText, presenceColor) = friendPresenceLabel(online, lastActiveAt)
+                    Text(
+                        " · $presenceText",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = presenceColor,
+                        maxLines = 1,
+                    )
+                }
             }
             Icon(
                 Icons.Default.CheckCircle,

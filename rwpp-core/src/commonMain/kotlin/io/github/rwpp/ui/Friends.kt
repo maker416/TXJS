@@ -72,7 +72,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -92,7 +91,6 @@ import androidx.compose.ui.unit.dp
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
-import io.github.rwpp.account.RelativeTime
 import io.github.rwpp.account.accountErrorText
 import io.github.rwpp.coil.AccountAvatar
 import io.github.rwpp.config.Settings
@@ -553,28 +551,9 @@ private fun FriendChatPane(
         val peerName = peer.nickname.ifBlank { peer.username }
         val presence = FriendsSession.presenceOf(peer.id)
         val lastActiveAt = presence?.lastActiveAt
-        // 副标题显示在线状态：在线绿字；离线按 lastActiveAt 折算相对时间；解析失败回退「离线」
-        val (presenceText, presenceColor) = when {
-            presence?.online == true ->
-                readI18n("friends.online", I18nType.RWPP) to Color(95, 190, 95)
-            lastActiveAt != null -> {
-                val elapsed = RelativeTime.elapsed(lastActiveAt, System.currentTimeMillis())
-                val text = when (elapsed?.second) {
-                    RelativeTime.Unit.JUST_NOW -> readI18n("friends.lastActiveJustNow", I18nType.RWPP)
-                    RelativeTime.Unit.MINUTES ->
-                        readI18n("friends.lastActiveMinutes", I18nType.RWPP, elapsed.first.toString())
-                    RelativeTime.Unit.HOURS ->
-                        readI18n("friends.lastActiveHours", I18nType.RWPP, elapsed.first.toString())
-                    RelativeTime.Unit.DAYS ->
-                        readI18n("friends.lastActiveDays", I18nType.RWPP, elapsed.first.toString())
-                    null -> readI18n("friends.offline", I18nType.RWPP)
-                }
-                text to MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-            }
-            else ->
-                readI18n("friends.offline", I18nType.RWPP) to
-                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-        }
+        // 副标题显示在线状态（与邀请弹窗好友行共用同一套文案与颜色）
+        val (presenceText, presenceColor) =
+            friendPresenceLabel(presence?.online == true, lastActiveAt)
         Row(
             modifier = Modifier
                 .fillMaxWidth()

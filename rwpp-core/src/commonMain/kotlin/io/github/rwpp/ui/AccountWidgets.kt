@@ -55,7 +55,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import io.github.rwpp.LocalWindowManager
+import io.github.rwpp.account.RelativeTime
 import io.github.rwpp.coil.AccountAvatar
+import io.github.rwpp.i18n.I18nType
+import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.widget.BorderCard
 import io.github.rwpp.widget.GeneralProportion
 import io.github.rwpp.widget.LargeProportion
@@ -117,6 +120,33 @@ internal fun AccountAvatarBox(
             )
         }
     }
+}
+
+/**
+ * 好友在线状态的文案与颜色：在线绿字；离线按 [lastActiveAt] 折算相对时间；解析失败回退「离线」。
+ * 好友聊天头部与房间邀请弹窗好友行共用。
+ */
+@Composable
+internal fun friendPresenceLabel(online: Boolean, lastActiveAt: String?): Pair<String, Color> = when {
+    online ->
+        readI18n("friends.online", I18nType.RWPP) to Color(95, 190, 95)
+    lastActiveAt != null -> {
+        val elapsed = RelativeTime.elapsed(lastActiveAt, System.currentTimeMillis())
+        val text = when (elapsed?.second) {
+            RelativeTime.Unit.JUST_NOW -> readI18n("friends.lastActiveJustNow", I18nType.RWPP)
+            RelativeTime.Unit.MINUTES ->
+                readI18n("friends.lastActiveMinutes", I18nType.RWPP, elapsed.first.toString())
+            RelativeTime.Unit.HOURS ->
+                readI18n("friends.lastActiveHours", I18nType.RWPP, elapsed.first.toString())
+            RelativeTime.Unit.DAYS ->
+                readI18n("friends.lastActiveDays", I18nType.RWPP, elapsed.first.toString())
+            null -> readI18n("friends.offline", I18nType.RWPP)
+        }
+        text to MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+    }
+    else ->
+        readI18n("friends.offline", I18nType.RWPP) to
+            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
 }
 
 /** 状态胶囊：小圆点 + 文本（如「已登录」）。 */
