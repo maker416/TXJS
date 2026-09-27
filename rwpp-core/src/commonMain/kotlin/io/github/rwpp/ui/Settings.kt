@@ -157,6 +157,7 @@ fun SettingsView(
                                         SettingsSwitchComp("showHp", "alwayUnitHealth") // I don't why they are different
                                         SettingsSwitchComp("showUnitIcons", "unitIcons")
                                         SettingsSwitchComp("renderVsync")
+                                        SettingsSwitchComp("highRefreshRate")
                                         SettingsSwitchComp("renderClouds")
                                         SettingsSwitchComp("shaderEffects")
                                         SettingsSwitchComp("enableMouseCapture")
