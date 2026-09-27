@@ -62,14 +62,20 @@ class GameImpl : Game, CoroutineScope {
     }
 
     override fun startNewMissionGame(difficulty: Difficulty, mission: Mission) {
-        val t = GameEngine.t()
-        GameEngine.t().bU.b("starting singleplayer")
-        t.bN.aiDifficulty = difficulty.ordinal - 2
-        t.bN.save()
-        LevelSelectActivity.loadSinglePlayerMapRaw("maps/${mission.type.pathName()}/${mission.mapName}.tmx", false, 0, 0, true, false)
-        val intent = Intent(get(), CustomInGameActivity::class.java)
-        intent.putExtra("level", t.di)
-        gameLauncher.launch(intent)
+        // 引擎写操作投游戏线程（与主循环串行）；Activity 启动必须回主线程
+        post {
+            val t = GameEngine.t()
+            GameEngine.t().bU.b("starting singleplayer")
+            t.bN.aiDifficulty = difficulty.ordinal - 2
+            t.bN.save()
+            LevelSelectActivity.loadSinglePlayerMapRaw("maps/${mission.type.pathName()}/${mission.mapName}.tmx", false, 0, 0, true, false)
+            val level = t.di
+            uiHandler.post {
+                val intent = Intent(get(), CustomInGameActivity::class.java)
+                intent.putExtra("level", level)
+                gameLauncher.launch(intent)
+            }
+        }
     }
 
     override suspend fun load(context: LoadingContext) {
@@ -93,18 +99,25 @@ class GameImpl : Game, CoroutineScope {
         }
     }
 
+    /**
+     * 引擎写操作全部投游戏线程（`post` → mainThreadChannel，由主循环 InsertBefore 取出执行），
+     * 与主循环串行——不再像旧实现那样在 UI 线程上直接跑 `loadSinglePlayerMapRaw`/`ae.r()`：
+     * 既消除进入时 Compose 卡顿，也消除与主循环并发读写引擎状态的竞态（对齐桌面端模型）。
+     */
     override fun hostNewSinglePlayer(sandbox: Boolean) {
-        val t = GameEngine.t()
-        GameEngine.t().bU.b("starting singleplayer")
-        LevelSelectActivity.loadSinglePlayerMapRaw("skirmish/[z;p10]Crossing Large (10p).tmx", true, 3, 1, true, true)
-        t.bU.b("starting singleplayer")
-        t.bU.y = "You"
-        t.bU.o = true
-        if (sandbox) t.bU.r() else t.bU.s()
-        isSinglePlayerGame = true
-        initMap(true)
-        RefreshUIEvent().broadcastIn(delay = 200L)
-        HostSinglePlayerGameEvent().broadcastIn()
+        post {
+            val t = GameEngine.t()
+            GameEngine.t().bU.b("starting singleplayer")
+            LevelSelectActivity.loadSinglePlayerMapRaw("skirmish/[z;p10]Crossing Large (10p).tmx", true, 3, 1, true, true)
+            t.bU.b("starting singleplayer")
+            t.bU.y = "You"
+            t.bU.o = true
+            if (sandbox) t.bU.r() else t.bU.s()
+            isSinglePlayerGame = true
+            initMap(true)
+            RefreshUIEvent().broadcastIn(delay = 200L)
+            HostSinglePlayerGameEvent().broadcastIn()
+        }
     }
 
     override fun setUserName(name: String) {
