@@ -104,6 +104,7 @@ import io.github.rwpp.net.roomListPublishAddress
 import io.github.rwpp.config.DEFAULT_ROOM_LIST_API_URLS
 import com.eclipsesource.json.Json
 import io.github.rwpp.core.ModSyncController
+import io.github.rwpp.core.RoomSnapshotStore
 import io.github.rwpp.io.SizeUtils
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.platform.KickPlayerContextMenuAreaMultiplatform
@@ -196,7 +197,12 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     var update by remember { mutableStateOf(false) }
     var lastSelectedIndex by remember { mutableIntStateOf(0) }
     var selectedMap by remember(update) { mutableStateOf(room.selectedMap) }
-    val displayMapName = remember(update) { room.displayMapName }
+
+    // 房间核心状态（玩家列表/地图名/地图类型/房主状态）由 RoomSnapshotStore 统一采样；
+    // 组合内不再直读引擎这些字段
+    val snapshot by RoomSnapshotStore.snapshot.collectAsState()
+    LaunchedEffect(Unit) { RoomSnapshotStore.resample(game) }
+    val displayMapName = snapshot.displayMapName
 
     var optionVisible by remember { mutableStateOf(false) }
     var banUnitVisible by remember { mutableStateOf(false) }
@@ -292,11 +298,16 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     }
 
     var showMapSelectView by remember { mutableStateOf(false) }
-    val isHost = remember(update) { room.isHost || room.isHostServer }
+    val isHost = snapshot.isHost
     /** 当前用户是否可发起邀请：房主始终可以；成员取决于房主广播的邀请策略。 */
     val canInvite = isHost || RoomInvitePolicy.membersCanInvite
 
-    val updateAction = { update = !update }
+    // 本地动作（踢人/换队/锁房等）后也立即重采样一次，保证快照与引擎同步；
+    // update 翻转仍驱动未迁移字段（锁房/开局单位选项/实时 ping）
+    val updateAction = {
+        RoomSnapshotStore.resample(game)
+        update = !update
+    }
 
     val scope = rememberCoroutineScope()
 
@@ -354,7 +365,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 
 
 // （旧协议内同步的残留占位已随重构移除）
-    val players = remember(update) { room.getPlayers().forRoomPlayerList() }
+    val players = snapshot.players
     var selectedPlayer by remember { mutableStateOf(players.firstOrNull() ?: ConnectingPlayer) }
     var playerOverrideVisible by remember { mutableStateOf(false) }
     var playerCardVisible by remember { mutableStateOf(false) }
@@ -714,7 +725,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
             var chatMessage by remember { mutableStateOf("") }
             var roomDetailsDialogVisible by remember { mutableStateOf(false) }
             var isLocked by remember(update) { mutableStateOf(room.lockedRoom) }
-            val mapType = remember(update) { room.mapType }
+            val mapType = snapshot.mapType
             val compactRowShape = RoundedCornerShape(6.dp)
             val scrollState = rememberScrollState()
             val enableAnimations = koinInject<Settings>().enableAnimations
@@ -933,7 +944,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                     )
                     Column(modifier = Modifier.fillMaxWidth().weight(1f)) {
                         Row(modifier = Modifier.fillMaxWidth()) {
-                            val mapType = remember(update) { room.mapType }
+                            val mapType = snapshot.mapType
                             BorderCard(
                                 modifier = Modifier
                                     .weight(.48f)
@@ -2362,11 +2373,9 @@ private fun PublishToListDialog(
 
 /**
  * 引擎玩家数组里 [Player.connectHexId]（Android `p.S` / 桌面 `n.O`）并不保证唯一：
- * 缺省值、握手占位与正式槽位可能共用同一把 SHA-256。LazyColumn 只用它当 key，
- * 第二人进房刷新列表就会 `Key was already used` 把房主和加入者一起崩掉。
+ * 缺省值、握手占位与正式槽位可能共用同一把 SHA-256。玩家列表的去重/排序已上移到
+ * RoomSnapshotStore.resample；这里的行 key 仍保留 connectHexId 仅作展示区分。
  */
-private fun List<Player>.forRoomPlayerList(): List<Player> =
-    distinctBy { System.identityHashCode(it) }.sortedBy { it.team }
 
 private fun roomPlayerListKey(player: Player, index: Int): String =
     "${player.spawnPoint}\u0000${player.name}\u0000${player.connectHexId}\u0000$index"

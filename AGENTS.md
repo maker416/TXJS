@@ -244,6 +244,10 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 - 房间视图打开（进房/开房成功）调 `onRoomOpened()`。
 - 注意：本控制器只串行「开始/结束」的时序，不镜像引擎房间状态；引擎仍是房间状态的真身。
 
+### 房间状态快照（RoomSnapshotStore）
+
+`rwpp-core` 的 `core/RoomSnapshotStore.kt` 是等待房间核心状态（玩家列表、地图名/地图类型、房主状态）的**单一采样点**：`App.kt` 在 `RefreshUIEvent`（引擎→UI 的既有刷新漏斗）上于 Main 线程 `resample(game)` 一次，房间 UI 只 `collectAsState()` 采集不可变的 `RoomSnapshot`，不再在组合中直读这些引擎字段；玩家列表的去重/按队伍排序（防 `connectHexId` 撞 key 崩溃）也在采样时完成。房间内的本地动作（踢人/换队等）经 `updateAction` 追加一次即时重采样。锁房状态、开局单位选项、实时 ping 等可写/高频字段仍由旧的 `remember(update)` 翻转驱动，后续逐步迁移。
+
 ## 依赖注入（DI）
 
 使用 **Koin 4.0.1**，采用编译期注解 + KSP 生成代码的方式：

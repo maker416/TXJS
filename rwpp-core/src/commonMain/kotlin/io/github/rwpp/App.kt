@@ -59,10 +59,12 @@ import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
 import io.github.rwpp.core.GameSessionController
 import io.github.rwpp.core.ModSyncController
+import io.github.rwpp.core.RoomSnapshotStore
 import io.github.rwpp.net.sync.SyncPeerPhase
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.broadcast
 import io.github.rwpp.event.events.KeyboardEvent
+import io.github.rwpp.event.events.RefreshUIEvent
 import io.github.rwpp.event.events.ReloadModEvent
 import io.github.rwpp.event.events.ReloadModFinishedEvent
 import io.github.rwpp.event.onDispose
@@ -188,6 +190,14 @@ fun App(
             || showFriendsView)
 
     val game = koinInject<Game>()
+
+    // 房间状态快照的唯一采样入口：RefreshUIEvent 是引擎→UI 的既有刷新漏斗，
+    // 在 Main 上重采样 RoomSnapshot，房间 UI 只采集不可变快照
+    LaunchedEffect(Unit) {
+        GlobalEventChannel.filter(RefreshUIEvent::class).subscribeAlways(Dispatchers.Main.immediate) {
+            RoomSnapshotStore.resample(game)
+        }
+    }
 
     val globalFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
