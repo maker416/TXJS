@@ -123,22 +123,24 @@ object UI : Initialization, IUserInterface {
     var chatMessages by mutableStateOf(AnnotatedString(""))
         internal set
 
-    var showMissionView by mutableStateOf(false)
-    var showMultiplayerView by mutableStateOf(false)
-    var showReplayView by mutableStateOf(false)
-    var showSettingsView by mutableStateOf(false)
-    var showModsView by mutableStateOf(false)
+    // ---- 页面级导航开关：单一事实来源是 launcherPage（见 LauncherPage.kt），以下为兼容代理 ----
+    var showMissionView by pageBinding(LauncherPage.Mission)
+    var showMultiplayerView by pageBinding(LauncherPage.Multiplayer)
+    var showReplayView by pageBinding(LauncherPage.Replay)
+    var showSettingsView by pageBinding(LauncherPage.Settings)
+    var showModsView by pageBinding(LauncherPage.Mods)
     /**
      * 打开「模组与地图」页时的初始 tab；消费一次后清空。
      * 供 Android `.tmx` 深链等场景直达地图管理。
      */
     var pendingModsMapsTab by mutableStateOf<ModsMapsTab?>(null)
-    var showRoomView by mutableStateOf(false)
-    var showExtensionView by mutableStateOf(false)
-    var showResourceBrowser by mutableStateOf(false)
-    var showOpenSourceInfoView by mutableStateOf(false)
-    var showSinglePlayerView by mutableStateOf(false)
-    var showSurvivalView by mutableStateOf(false)
+    var showRoomView by pageBinding(LauncherPage.Room)
+    var showExtensionView by pageBinding(LauncherPage.Extensions)
+    var showResourceBrowser by pageBinding(LauncherPage.ResourceBrowser)
+    var showOpenSourceInfoView by pageBinding(LauncherPage.OpenSourceInfo)
+    var showSinglePlayerView by pageBinding(LauncherPage.SinglePlayer)
+    var showSurvivalView by pageBinding(LauncherPage.Survival)
+    // ---- 上层叠加页：可合法叠加在房间页之上（房间内就地登录/发私信），不参与页面级互斥 ----
     var showAccountView by mutableStateOf(false)
     /** 好友主页（微信式：左列表右聊天）。独立于用户主页的顶级页面。 */
     var showFriendsView by mutableStateOf(false)
