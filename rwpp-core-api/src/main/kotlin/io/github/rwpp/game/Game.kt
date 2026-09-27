@@ -26,7 +26,17 @@ interface Game : KoinComponent {
     val world: World
 
     /**
-     * Post an action to the main thread.
+     * Post an action to be executed inside the game main loop (on the loop's own thread).
+     *
+     * 桌面端排进 `RWPPContainer` 的 channel；Android 排进 `mainThreadChannel`
+     *（由主循环 `i.b(float)` 的 InsertBefore 注入逐帧取出执行）。
+     *
+     * 注意（踩过坑）：这**不是**通用的「引擎写操作专用通道」。Android 原版不少引擎入口
+     *（如 `LevelSelectActivity.loadSinglePlayerMapRaw`、`ae.r()/s()`）隐含 UI 线程依赖
+     *（会触碰 Android View/Activity 路径），必须照原版约定在 UI 线程调用；
+     * 曾因此把 `hostNewSinglePlayer`/`startNewMissionGame` 经本通道迁移导致
+     * 沙盒闪退、任务启动动作积压丢失（commit bfc6cb2，已回滚）。
+     * 任何引擎调用迁入游戏线程前，必须逐点核实其线程依赖并真机验证。
      */
     fun post(action: () -> Unit)
 

@@ -222,6 +222,16 @@ git ls-files --others --ignored --exclude-standard -z \
 
 Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现在 `rwpp-desktop/src/main/kotlin/io/github/rwpp/desktop/impl/` 中（部分直接内联实现，部分通过独立类）。
 
+## 引擎线程契约（踩过坑，务必先读）
+
+两端的真实线程模型**不对称**，不要想当然对齐：
+
+- **桌面端**：引擎写操作约定投游戏线程——`AbstractGame` 的大量方法用 `post {}`（`RWPPContainer` channel，主循环消费）包住引擎调用。
+- **Android 端**：原版大量引擎入口**隐含 UI 线程依赖**（会触碰 Android View/Activity 路径），原版就在 UI 线程调用它们，与主循环之间靠引擎监视锁（`k`）互斥。`LevelSelectActivity.loadSinglePlayerMapRaw`、`ae.r()/s()` 等即属此类。**曾把 `hostNewSinglePlayer`/`startNewMissionGame` 迁入 `mainThreadChannel`（游戏线程）导致：点沙盒闪退（游戏线程抛异常致死）、任务/生存启动动作积压丢失、直到多人对局开新主循环才被冲刷执行（commit `bfc6cb2`，已全量回滚）。**
+- 因此：`Game.post` 只表示「在游戏主循环线程上执行」，**不等于**「引擎写操作都可以/应该投进来」。任何引擎调用要换线程，必须逐点核实其线程依赖（是否触碰 View/Activity、是否需 GL 上下文、是否阻塞）并**真机验证**；阻塞型网络操作（`directJoinServer` 的连接）无论如何不得投游戏线程（会停掉保活泵）。
+- Android 进入遭遇战/沙盒时 Compose 的一次性卡顿（UI 线程跑 `loadSinglePlayerMapRaw`）目前视为原版固有行为保留，未找到安全迁移方案前不要动。
+- 跨线程可见的会话标志（Android `isSinglePlayerGame`/`isGaming`/`isReturnToBattleRoom`/`gameOver`/`questionOption`）用 `@Volatile`。
+
 ## 导航与 UI 架构
 
 项目**未使用**任何第三方导航库。页面级导航的单一事实来源是 `rwpp-core` 的 `ui/LauncherPage.kt`：密封类 `LauncherPage`（`MainMenu`/`SinglePlayer`/`Mission`/`Survival`/`Multiplayer`/`Room`/`Replay`/`Settings`/`Mods`/`Extensions`/`ResourceBrowser`/`OpenSourceInfo`）+ 全局 `launcherPage` 状态 + **页面返回栈**。
