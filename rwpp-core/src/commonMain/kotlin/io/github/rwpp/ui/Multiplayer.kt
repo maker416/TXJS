@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
@@ -33,13 +34,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
@@ -2159,51 +2165,93 @@ private fun AnimatedBlacklistInfo(
 }
 
 @Composable
-private fun RoomDetailsSection(
-    title: String? = null,
-    content: @Composable ColumnScope.() -> Unit,
+private fun RoomInfoTile(
+    icon: ImageVector,
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
 ) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerLow,
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        modifier = modifier,
     ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            if (title != null) {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.primary,
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(18.dp),
                 )
             }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    value,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+/** 加入房间弹窗标题栏右侧的圆形玻璃质感按钮（黑名单 / 关闭）。 */
+@Composable
+private fun JoinDialogHeaderAction(
+    label: String,
+    onClick: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.18f))
+            .clickable(onClickLabel = label, role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onPrimary) {
             content()
         }
     }
 }
 
+/** 黑名单（禁止）图标；material-icons-core 未内置 Block，这里用 Canvas 绘制。 */
 @Composable
-private fun RoomDetailItem(label: String, value: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        Text(
-            label,
-            modifier = Modifier.widthIn(min = 72.dp),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            value,
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
+private fun BlockGlyph(modifier: Modifier = Modifier) {
+    val tint = LocalContentColor.current
+    Canvas(modifier.size(20.dp)) {
+        val strokeWidth = size.minDimension * 0.14f
+        val radius = (size.minDimension - strokeWidth) / 2f
+        drawCircle(color = tint, radius = radius, style = Stroke(width = strokeWidth))
+        val diagonal = radius * 0.7071f
+        drawLine(
+            color = tint,
+            start = Offset(center.x - diagonal, center.y - diagonal),
+            end = Offset(center.x + diagonal, center.y + diagonal),
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Round,
         )
     }
 }
@@ -2230,13 +2278,14 @@ private fun JoinServerRequestDialog(
         val requiredMods = parseRequiredModNames(roomDescription.mods)
         val modSyncText = roomModSyncStatusI18nKey(roomDescription)?.let(::readI18n)
         val statusText = roomListDegradeReasonI18nKey(roomDescription.listDegradeReason())?.let(::readI18n)
+        val joinable = roomDescription.isJoinableFromList
 
         BorderCard(
             modifier = Modifier
                 .widthIn(max = 560.dp)
                 .padding(10.dp),
+            shape = RoundedCornerShape(24.dp),
         ) {
-
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2245,46 +2294,52 @@ private fun JoinServerRequestDialog(
                             listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary),
                         ),
                     )
-                    .padding(horizontal = 20.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    .padding(start = 20.dp, top = 14.dp, end = 10.dp, bottom = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     Text(
-                        if (roomDescription.isJoinableFromList) {
+                        if (joinable) {
                             readI18n("multiplayer.roomList.joinTitle")
                         } else {
                             readI18n("multiplayer.roomList.roomInfoTitle")
                         },
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onPrimary,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f),
                     )
                     Text(
                         roomDescription.mapName.removeSuffix(".tmx"),
                         style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimary,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                // 加入按钮放在标题栏右侧，避免小屏底部操作栏被遮挡
-                if (roomDescription.isJoinableFromList) {
-                    Button(
-                        onClick = { onJoin(dismiss) },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.onPrimary,
-                            contentColor = MaterialTheme.colorScheme.primary,
-                        ),
-                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
-                    ) {
-                        Text(
-                            readI18n("multiplayer.join"),
-                            style = MaterialTheme.typography.titleMedium,
+                JoinDialogHeaderAction(
+                    label = readI18n("multiplayer.addToBlackList"),
+                    onClick = {
+                        blacklists.add(
+                            Blacklist("${roomDescription.creator}: ${roomDescription.mapName}", roomDescription.uuid)
                         )
-                    }
+                        dismiss()
+                    },
+                ) {
+                    BlockGlyph()
+                }
+                JoinDialogHeaderAction(
+                    label = readI18n("common.close"),
+                    onClick = { dismiss() },
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                    )
                 }
             }
 
@@ -2293,7 +2348,7 @@ private fun JoinServerRequestDialog(
                     .heightIn(max = 440.dp)
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
@@ -2309,58 +2364,108 @@ private fun JoinServerRequestDialog(
                     if (statusText != null) RoomStatusChip(statusText)
                 }
 
-                RoomDetailsSection {
-                    RoomDetailItem(readI18n("multiplayer.roomList.detailHost"), roomDescription.creator)
-                    RoomDetailItem(readI18n("multiplayer.roomList.detailMap"), roomDescription.mapName.removeSuffix(".tmx"))
-                    RoomDetailItem(
-                        readI18n("multiplayer.roomList.detailPlayers"),
-                        "${roomDescription.playerCurrentCount ?: "?"}/${roomDescription.playerMaxCount ?: "?"}",
-                    )
-                    RoomDetailItem(readI18n("multiplayer.roomList.detailCategory"), categoryText)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        RoomInfoTile(
+                            Icons.Default.Person,
+                            readI18n("multiplayer.roomList.detailHost"),
+                            roomDescription.creator,
+                            Modifier.weight(1f),
+                        )
+                        RoomInfoTile(
+                            Icons.Default.Face,
+                            readI18n("multiplayer.roomList.detailPlayers"),
+                            "${roomDescription.playerCurrentCount ?: "?"}/${roomDescription.playerMaxCount ?: "?"}",
+                            Modifier.weight(1f),
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        RoomInfoTile(
+                            Icons.Default.Place,
+                            readI18n("multiplayer.roomList.detailMap"),
+                            roomDescription.mapName.removeSuffix(".tmx"),
+                            Modifier.weight(1f),
+                        )
+                        RoomInfoTile(
+                            if (roomDescription.isModdedRoom) Icons.Default.Build else Icons.Default.CheckCircle,
+                            readI18n("multiplayer.roomList.detailCategory"),
+                            categoryText,
+                            Modifier.weight(1f),
+                        )
+                    }
                 }
 
-                RoomDetailsSection(title = readI18n("multiplayer.roomList.requiredMods")) {
-                    when {
-                        !roomDescription.isModdedRoom -> Text(
-                            readI18n("multiplayer.roomList.noRequiredMods"),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        requiredMods.isEmpty() -> Text(
-                            readI18n("multiplayer.roomList.modInfoUnavailable"),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        else -> FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            requiredMods.forEach { modName ->
-                                AssistChip(onClick = {}, label = { Text(modName) })
+                            Icon(
+                                Icons.Default.Build,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Text(
+                                readI18n("multiplayer.roomList.requiredMods"),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                        when {
+                            !roomDescription.isModdedRoom -> Text(
+                                readI18n("multiplayer.roomList.noRequiredMods"),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            requiredMods.isEmpty() -> Text(
+                                readI18n("multiplayer.roomList.modInfoUnavailable"),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            else -> FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                requiredMods.forEach { modName ->
+                                    AssistChip(onClick = {}, label = { Text(modName) })
+                                }
                             }
                         }
                     }
                 }
             }
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surface)
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                OutlinedButton(
-                    onClick = {
-                        blacklists.add(
-                            Blacklist("${roomDescription.creator}: ${roomDescription.mapName}", roomDescription.uuid)
-                        )
-                        dismiss()
-                    },
-                    modifier = Modifier.fillMaxWidth(),
+            // 主操作固定在底部；不可加入的房间只保留标题栏动作
+            if (joinable) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceContainer)
+                Button(
+                    onClick = { onJoin(dismiss) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                        .height(52.dp),
+                    shape = RoundedCornerShape(14.dp),
                 ) {
-                    Text(readI18n("multiplayer.addToBlackList"))
+                    Icon(
+                        Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        readI18n("multiplayer.join"),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
                 }
             }
         }
