@@ -91,7 +91,9 @@ val defaultRWPPColorScheme = darkColorScheme(
 
 @Composable
 fun RWPPTheme(default: Boolean = false, content: @Composable () -> Unit) {
-    val jostFonts = JostFonts()
+    // 主题美术包字体（v2）：包内字体文件存在时替换全局正文/标题字体族，回落内置 Jost
+    val themeFontFamily = ArtThemeController.activeTheme?.fontFamily
+    val jostFonts = themeFontFamily ?: JostFonts()
     val valoraxFont = ValoraxFont()
     val selectedColorScheme = remember(
         if (!default)
@@ -118,7 +120,7 @@ fun RWPPTheme(default: Boolean = false, content: @Composable () -> Unit) {
         }
     }
 
-    val typography = Typography(
+    val baseTypography = Typography(
         displayLarge = TextStyle(
             color = selectedColorScheme.onSurface,
             fontFamily = valoraxFont,
@@ -156,6 +158,19 @@ fun RWPPTheme(default: Boolean = false, content: @Composable () -> Unit) {
             fontSize = 13.sp
         )
     )
+
+    // 主菜单按钮等使用 titleSmall/titleMedium（Material 默认 Typography 里是系统默认字体族）：
+    // 仅当主题包提供字体时才把这些档位一并换成包字体，否则保持内置外观逐像素不变
+    val typography = if (themeFontFamily == null) {
+        baseTypography
+    } else {
+        baseTypography.copy(
+            titleLarge = baseTypography.titleLarge.copy(fontFamily = themeFontFamily),
+            titleMedium = baseTypography.titleMedium.copy(fontFamily = themeFontFamily),
+            titleSmall = baseTypography.titleSmall.copy(fontFamily = themeFontFamily),
+            labelLarge = baseTypography.labelLarge.copy(fontFamily = themeFontFamily),
+        )
+    }
 
     MaterialTheme(
         typography = typography,

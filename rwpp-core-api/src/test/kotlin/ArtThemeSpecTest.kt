@@ -152,4 +152,118 @@ class ArtThemeSpecTest {
         assertFalse(isSafeZipEntryName("C:\\windows"))
         assertFalse(isSafeZipEntryName("a\\b"))
     }
+
+    // ---- v2：布局 / 按钮槽位 / 字体 ----
+
+    @Test
+    fun layoutSpecDefaultsReplicateBuiltIn() {
+        val layout = MenuLayoutSpec()
+        assertEquals("grid", layout.orientation)
+        assertEquals(2, layout.columns)
+        assertEquals("center", layout.align)
+        assertEquals(65, layout.widthPercent)
+        assertEquals(layout, layout.sanitized())
+    }
+
+    @Test
+    fun layoutSanitizeClampsUnsafeValues() {
+        val layout = MenuLayoutSpec(
+            orientation = "diagonal",
+            columns = 99,
+            align = "left",
+            offsetY = 99999,
+            widthPercent = 5,
+            buttonHeight = 1000,
+            buttonCorner = -3,
+            spacing = -1,
+        ).sanitized()
+        assertEquals("grid", layout.orientation)
+        assertEquals(4, layout.columns)
+        assertEquals("center", layout.align)
+        assertEquals(400, layout.offsetY)
+        assertEquals(30, layout.widthPercent)
+        assertEquals(96, layout.buttonHeight)
+        assertEquals(0, layout.buttonCorner)
+        assertEquals(0, layout.spacing)
+    }
+
+    @Test
+    fun buttonsAndFontsParse() {
+        val (spec, validation) = validateThemeToml(
+            """
+            [theme]
+            id = "v2"
+            name = "布局测试"
+
+            [menu.layout]
+            orientation = "vertical"
+            columns = 3
+            align = "bottom"
+            offsetY = -20
+            widthPercent = 80
+            buttonHeight = 56
+            buttonCorner = 8
+            spacing = 12
+
+            [menu.buttons.mods]
+            order = -1
+            span = 2
+
+            [menu.buttons.openSourceInfo]
+            hidden = true
+
+            [fonts]
+            regular = "fonts/regular.ttf"
+            bold = "fonts/bold.ttf"
+            """.trimIndent()
+        )
+        assertTrue(validation.isValid, "errors: ${validation.errors}")
+        assertTrue(validation.warnings.isEmpty(), "warnings: ${validation.warnings}")
+        assertNotNull(spec)
+        assertEquals("vertical", spec.menu.layout.orientation)
+        assertEquals(3, spec.menu.layout.columns)
+        assertEquals("bottom", spec.menu.layout.align)
+        assertEquals(-1, spec.menu.buttons.getValue("mods").order)
+        assertEquals(2, spec.menu.buttons.getValue("mods").span)
+        assertTrue(spec.menu.buttons.getValue("openSourceInfo").hidden)
+        assertEquals("fonts/regular.ttf", spec.fonts.regular)
+        assertEquals("fonts/bold.ttf", spec.fonts.bold)
+    }
+
+    @Test
+    fun unknownButtonIdAndBadOrientationWarn() {
+        val (spec, validation) = validateThemeToml(
+            """
+            [theme]
+            id = "warn2"
+            name = "警告"
+
+            [menu.layout]
+            orientation = "circle"
+            align = "nowhere"
+
+            [menu.buttons.notAButton]
+            span = 2
+            """.trimIndent()
+        )
+        assertTrue(validation.isValid)
+        assertNotNull(spec)
+        assertEquals(3, validation.warnings.size)
+    }
+
+    @Test
+    fun unsafeFontPathIsRejected() {
+        val (spec, validation) = validateThemeToml(
+            """
+            [theme]
+            id = "evil-font"
+            name = "x"
+
+            [fonts]
+            regular = "../outside.ttf"
+            """.trimIndent()
+        )
+        assertNull(spec)
+        assertFalse(validation.isValid)
+    }
 }

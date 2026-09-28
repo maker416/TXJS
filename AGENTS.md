@@ -371,12 +371,18 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 ## 主题美术包（`.rwtheme`）
 
-玩家可导入主题包自定义启动器外观，v1 覆盖：主题配色、启动器背景图、主菜单标题图、文本覆盖（含主菜单按钮文字）。**全部仅本地生效**，不影响联机。
+玩家可导入主题包自定义启动器外观。**全部仅本地生效**，不影响联机。
 
-- **包格式**：zip（后缀 `.rwtheme`），含 `theme.toml`（必需：`[theme]` id/name，`[colors]` 角色 → `#RRGGBB`/`#AARRGGBB`，`[menu] showTitleBadge`）、可选 `strings_zh.toml`/`strings_en.toml`（i18n 覆盖）、`background.png|jpg`、`title.png`、`icon.png`。
-- **模型与安装器（rwpp-core-api，纯 JVM 可测）**：`theme/ArtThemeSpec.kt`（spec + `SUPPORTED_COLOR_ROLES` + `parseColorHex` + `validateThemeToml` + `isSafeZipEntryName`）、`theme/ThemePackInstaller.kt`（导入校验与解压；**校验全部在落盘前完成**，缺 theme.toml/坏 id/重复 id/路径穿越/非法 strings TOML 均拒绝）。
+- **v1**：主题配色、启动器背景图、主菜单标题图、文本覆盖（含主菜单按钮文字）。
+- **v2**：主菜单按钮区布局（方向/列数/对齐/偏移/宽度比/按钮高度/圆角/间距）、按钮槽位排序与隐藏、按钮背景图、全局字体。
+
+包格式与机制：
+
+- **包格式**：zip（后缀 `.rwtheme`），含 `theme.toml`（必需：`[theme]` id/name，`[colors]` 角色 → `#RRGGBB`/`#AARRGGBB`；可选 `[menu]` showTitleBadge + `[menu.layout]` + `[menu.buttons.<id>]` order/span/hidden + `[fonts]` regular/bold 包内相对路径）、可选 `strings_zh.toml`/`strings_en.toml`（i18n 覆盖）、`background.png|jpg`、`title.png`、`icon.png`、`buttons/<语义id>.png`、`fonts/*.ttf`。
+- **主菜单按钮语义 id**（`MENU_BUTTON_IDS`，文档承诺稳定）：`singlePlayer`、`multiplayer`、`resourceBrowser`、`mods`、`settings`、`openSourceInfo`。`[menu.layout]` 数值在使用前经 `MenuLayoutSpec.sanitized()` 钳制到安全范围；不开放绝对坐标。
+- **模型与安装器（rwpp-core-api，纯 JVM 可测）**：`theme/ArtThemeSpec.kt`（spec + `SUPPORTED_COLOR_ROLES` + `parseColorHex` + `validateThemeToml` + `isSafeZipEntryName`）、`theme/ThemePackInstaller.kt`（导入校验与解压；**校验全部在落盘前完成**，缺 theme.toml/坏 id/重复 id/路径穿越/非法 strings TOML/非法字体路径均拒绝）。
 - **控制器（rwpp-core）**：`theme/ArtThemeController.kt` 单例——`installedThemes`/`activeTheme`（`mutableStateOf`，热切换），`import/apply/delete/scan/ensureInitialized`（App 根 `LaunchedEffect` 调一次）。包存放于 `themeDir`（`global.kt`，`externalStoragePath("themes/")`，每包一个 `<id>/` 子目录）。启用 id 持久化在 `Settings.selectedThemePack`。
-- **生效链路**：配色 = `RWPPTheme` 优先取 `activeTheme.colorScheme`（以 `defaultRWPPColorScheme` 为底逐角色 `copy` 覆盖），回落内置下拉选择；标题图 = 主菜单磁盘优先（Coil `AsyncImage(File)`）回落 `Res.drawable.title`；背景 = 两端 Main 取 `activeTheme.backgroundFile` 优先于 `Settings.backgroundImagePath`；文本 = `i18nOverrideTable`（`i18n/i18n.kt`），`readI18n` 先安全导航覆盖表、缺键回落内置 bundle（**绝不 NPE**），语言切换经 `BaseGameI18nResolverImpl.init()` 重放。
+- **生效链路**：配色 = `RWPPTheme` 优先取 `activeTheme.colorScheme`（以 `defaultRWPPColorScheme` 为底逐角色 `copy` 覆盖），回落内置下拉选择；标题图 = 主菜单磁盘优先（Coil `AsyncImage(File)`）回落 `Res.drawable.title`；背景 = 两端 Main 取 `activeTheme.backgroundFile` 优先于 `Settings.backgroundImagePath`；文本 = `i18nOverrideTable`（`i18n/i18n.kt`），`readI18n` 先安全导航覆盖表、缺键回落内置 bundle（**绝不 NPE**），语言切换经 `BaseGameI18nResolverImpl.init()` 重放；字体 = `platform/ThemeFonts.kt` expect/actual（Android `Font(File)`，桌面 `androidx.compose.ui.text.platform.Font(File, weight)`），包字体存在时替换 Typography 正文/标题档，未提供时内置外观逐像素不变；按钮背景图 = `MainMenuAction` 有图时 Surface 透明 + Crop 裁切 + 保留描边。
 - **管理界面**：`ui/Themes.kt`（`LauncherPage.Themes`），入口在设置页「主题」分组「主题包管理」。
 - **回归测试**：core-api `ArtThemeSpecTest`/`ThemePackInstallerTest`/`I18nOverrideTest`；core `BundleParseTest.themesKeysExistInAllBundles`；desktopTest `ArtThemeControllerTest`（用 `themeRootOverride` 指临时目录，不碰真实游戏目录）。
 - **设计红线**：不做逐按钮自定义（配色走 ColorScheme 令牌，按钮文本走 i18n 覆盖）；运行时路径零解析失败（校验前置到导入）；主题包任何资源缺失都必须回落内置。

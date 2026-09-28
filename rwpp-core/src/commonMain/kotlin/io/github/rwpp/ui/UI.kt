@@ -112,6 +112,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
+import java.io.File
 
 object UI : Initialization, IUserInterface {
     internal var backgroundTransparency by mutableStateOf(appKoin.get<Settings>().backgroundTransparency)
@@ -323,9 +324,6 @@ open class UIProvider {
             WindowManager.Small, WindowManager.Middle -> MaterialTheme.typography.bodySmall
             WindowManager.Large -> MaterialTheme.typography.bodyLarge
         }
-        val extraItems: List<@Composable () -> Unit> = extraMenuList.map { menu ->
-            { MainMenuAction(menu.title, menu.onClick) }
-        }
 
         BoxWithConstraints(
             modifier = Modifier.fillMaxSize(),
@@ -338,11 +336,16 @@ open class UIProvider {
                 WindowManager.Middle -> maxWidth * 0.55f
                 WindowManager.Large -> maxWidth * 0.48f
             }
-            val contentMaxWidth = when (windowManager) {
-                WindowManager.Small -> maxWidth * 0.85f
-                WindowManager.Middle -> maxWidth * 0.75f
-                WindowManager.Large -> maxWidth * 0.65f
-            }.coerceAtMost(520.dp)
+            // 主题美术包：配色/标题/按钮文字之外，v2 起还可覆盖按钮区布局
+            val artTheme = ArtThemeController.activeTheme
+            val menuLayout = artTheme?.spec?.menu?.layout?.sanitized()
+            val contentMaxWidth = (
+                menuLayout?.let { maxWidth * it.widthPercent / 100f } ?: when (windowManager) {
+                    WindowManager.Small -> maxWidth * 0.85f
+                    WindowManager.Middle -> maxWidth * 0.75f
+                    WindowManager.Large -> maxWidth * 0.65f
+                }
+            ).coerceAtMost(520.dp)
 
             Column(
                 modifier = Modifier
@@ -378,12 +381,16 @@ open class UIProvider {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 16.dp),
+                    .padding(horizontal = 16.dp)
+                    .offset(y = (menuLayout?.offsetY ?: 0).dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+                verticalArrangement = when (menuLayout?.align) {
+                    "top" -> Arrangement.Top
+                    "bottom" -> Arrangement.Bottom
+                    else -> Arrangement.Center
+                }
             ) {
                 // Title area
-                val artTheme = ArtThemeController.activeTheme
                 Box(
                     modifier = Modifier
                         .width(titleWidth)
@@ -430,71 +437,72 @@ open class UIProvider {
                     }
                 }
 
-                // Menu buttons container - reduced spacing to fit all buttons
+                // Menu buttons container
+                val buttonOverrides = artTheme?.spec?.menu?.buttons.orEmpty()
+                val columns = if (menuLayout?.orientation == "vertical") 1 else (menuLayout?.columns ?: 2)
+                val rowSpacing = menuLayout?.spacing?.dp ?: buttonSpacing
+                val columnSpacing = menuLayout?.spacing?.dp ?: gridSpacing
+
+                // 语义槽位：id 稳定（主题包据此覆盖排布与背景图，见 MENU_BUTTON_IDS）
+                val menuItems = buildList {
+                    add(MenuButtonItem("singlePlayer", readI18n("menu.singlePlayerGame"), singlePlayer, defaultFullWidth = true))
+                    add(MenuButtonItem("multiplayer", readI18n("menu.multiplayer"), multiplayer, defaultFullWidth = true))
+                    add(MenuButtonItem("resourceBrowser", readI18n("browser.resourceBrowser"), resourceBrowser))
+                    add(MenuButtonItem("mods", readI18n("menu.modsAndMaps"), mods))
+                    add(MenuButtonItem("settings", readI18n("menu.settings"), settings))
+                    add(MenuButtonItem("openSourceInfo", readI18n("menu.openSourceInfo"), openSourceInfo))
+                    extraMenuList.forEach { add(MenuButtonItem(null, it.title, it.onClick)) }
+                }
+
+                val ordered = menuItems
+                    .mapIndexed { index, item -> Triple(index, item, buttonOverrides[item.slotId]) }
+                    .filter { it.third?.hidden != true }
+                    .sortedBy { (index, _, override) -> (override?.order ?: 0) * 1000 + index }
+
+                // 网格装箱：span 为占用列数，装满一行即换行
+                val rows = mutableListOf<List<Pair<MenuButtonItem, Int>>>()
+                var currentRow = mutableListOf<Pair<MenuButtonItem, Int>>()
+                var usedColumns = 0
+                for ((_, item, override) in ordered) {
+                    val span = (when {
+                        override != null && override.span > 0 -> override.span
+                        item.defaultFullWidth -> columns
+                        else -> 1
+                    }).coerceIn(1, columns)
+                    if (usedColumns + span > columns && currentRow.isNotEmpty()) {
+                        rows += currentRow.toList()
+                        currentRow = mutableListOf()
+                        usedColumns = 0
+                    }
+                    currentRow += item to span
+                    usedColumns += span
+                }
+                if (currentRow.isNotEmpty()) rows += currentRow.toList()
+
                 Column(
                     modifier = Modifier.widthIn(max = contentMaxWidth),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(buttonSpacing)
+                    verticalArrangement = Arrangement.spacedBy(rowSpacing)
                 ) {
-                    // Full-width primary buttons
-                    MainMenuAction(
-                        readI18n("menu.singlePlayerGame"),
-                        onClick = singlePlayer,
-                        isFullWidth = true
-                    )
-                    MainMenuAction(
-                        readI18n("menu.multiplayer"),
-                        onClick = multiplayer,
-                        isFullWidth = true
-                    )
-
-                    // Two-column grid for secondary buttons
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(gridSpacing)
-                    ) {
-                        MainMenuAction(
-                            readI18n("browser.resourceBrowser"),
-                            onClick = resourceBrowser,
-                            modifier = Modifier.weight(1f)
-                        )
-                        MainMenuAction(
-                            readI18n("menu.modsAndMaps"),
-                            onClick = mods,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(gridSpacing)
-                    ) {
-                        MainMenuAction(
-                            readI18n("menu.settings"),
-                            onClick = settings,
-                            modifier = Modifier.weight(1f)
-                        )
-                        MainMenuAction(
-                            readI18n("menu.openSourceInfo"),
-                            onClick = openSourceInfo,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-
-                    // Extra items in grid (if any)
-                    extraItems.chunked(2).forEach { rowItems ->
+                    rows.forEach { rowItems ->
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(gridSpacing)
+                            horizontalArrangement = Arrangement.spacedBy(columnSpacing)
                         ) {
-                            rowItems.forEach { item ->
-                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                    item()
-                                }
+                            rowItems.forEach { (item, span) ->
+                                MainMenuAction(
+                                    item.text,
+                                    onClick = item.onClick,
+                                    modifier = Modifier.weight(span.toFloat()),
+                                    heightOverride = menuLayout?.buttonHeight?.dp,
+                                    cornerOverride = menuLayout?.buttonCorner?.dp,
+                                    backgroundImage = item.slotId?.let { artTheme?.buttonImages?.get(it) }
+                                )
                             }
-                            // Fill empty slot if odd number
-                            if (rowItems.size == 1) {
-                                Spacer(modifier = Modifier.weight(1f))
+                            // 补齐空列，保持网格对齐
+                            val usedSpan = rowItems.sumOf { it.second }
+                            if (usedSpan < columns) {
+                                Spacer(modifier = Modifier.weight((columns - usedSpan).toFloat()))
                             }
                         }
                     }
@@ -888,21 +896,23 @@ open class UIProvider {
         content: String,
         onClick: () -> Unit,
         modifier: Modifier = Modifier,
-        isFullWidth: Boolean = false,
-        isEmphasized: Boolean = true
+        isEmphasized: Boolean = true,
+        heightOverride: Dp? = null,
+        cornerOverride: Dp? = null,
+        backgroundImage: File? = null,
     ) {
         val windowManager = LocalWindowManager.current
-        val buttonHeight = when (windowManager) {
+        val buttonHeight = heightOverride ?: when (windowManager) {
             WindowManager.Small -> 36.dp
             WindowManager.Middle -> 40.dp
             WindowManager.Large -> 44.dp
         }
-        val cornerRadius = when (windowManager) {
+        val cornerRadius = cornerOverride ?: when (windowManager) {
             WindowManager.Small -> 16.dp
             WindowManager.Middle -> 18.dp
             WindowManager.Large -> 20.dp
         }
-        
+
         // Aesthetic improvements: more transparent background, subtler border
         val backgroundColor = if (isEmphasized) {
             Color(0x5A1A1A1A)
@@ -914,36 +924,56 @@ open class UIProvider {
         } else {
             Color.White.copy(alpha = 0.35f)
         }
-        
+        val shape = RoundedCornerShape(cornerRadius)
+
         Surface(
-            color = backgroundColor,
+            // 有按钮背景图时底色透明，图片裁切填充，描边保留以保证可辨识度
+            color = if (backgroundImage != null) Color.Transparent else backgroundColor,
             contentColor = Color.White,
-            shape = RoundedCornerShape(cornerRadius),
+            shape = shape,
             border = BorderStroke(1.5.dp, borderColor),
             tonalElevation = 0.dp,
             shadowElevation = 0.dp,
-            modifier = if (isFullWidth) {
-                modifier.fillMaxWidth()
-            } else {
-                modifier
-            },
+            modifier = modifier,
             onClick = onClick
         ) {
             Box(
                 modifier = Modifier
+                    .fillMaxWidth()
                     .heightIn(min = buttonHeight)
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                contentAlignment = Alignment.Center
             ) {
-                Text(
-                    content,
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
-                )
+                if (backgroundImage != null) {
+                    AsyncImage(
+                        model = backgroundImage,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.matchParentSize().clip(shape)
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        content,
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }
+
+    /** 主菜单按钮槽位（语义 id 见 [io.github.rwpp.theme.MENU_BUTTON_IDS]）。 */
+    private data class MenuButtonItem(
+        val slotId: String?,
+        val text: String,
+        val onClick: () -> Unit,
+        val defaultFullWidth: Boolean = false,
+    )
 
     class Menu(
         val title: String,

@@ -17,6 +17,7 @@ import io.github.rwpp.config.Settings
 import io.github.rwpp.i18n.LanguageHelper
 import io.github.rwpp.i18n.setI18nOverride
 import io.github.rwpp.logger
+import io.github.rwpp.platform.themeFontFamily
 import io.github.rwpp.themeDir
 import io.github.rwpp.widget.defaultRWPPColorScheme
 import kotlinx.coroutines.Dispatchers
@@ -41,8 +42,17 @@ object ArtThemeController {
         val iconFile: File?,
         val stringsZhFile: File?,
         val stringsEnFile: File?,
+        /** 按钮背景图：语义 id（[MENU_BUTTON_IDS]）→ 图片文件，来自包内 `buttons/` 目录。 */
+        val buttonImages: Map<String, File> = emptyMap(),
+        val fontRegularFile: File? = null,
+        val fontBoldFile: File? = null,
     ) {
         val id: String get() = spec.theme.id
+
+        /** 主题字体（v2）：包内字体文件构建的 FontFamily；缺失或加载失败为 null，回落内置字体。 */
+        val fontFamily: androidx.compose.ui.text.font.FontFamily? by lazy {
+            themeFontFamily(fontRegularFile, fontBoldFile)
+        }
 
         /** 以内置 RWPP 主题为底、按包内 `[colors]` 逐角色覆盖生成的 [ColorScheme]。 */
         val colorScheme: ColorScheme by lazy {
@@ -135,6 +145,9 @@ object ArtThemeController {
                     iconFile = pickFile(dir, "icon.png"),
                     stringsZhFile = pickFile(dir, "strings_zh.toml"),
                     stringsEnFile = pickFile(dir, "strings_en.toml"),
+                    buttonImages = scanButtonImages(dir),
+                    fontRegularFile = resolveInDir(dir, spec.fonts.regular),
+                    fontBoldFile = resolveInDir(dir, spec.fonts.bold),
                 )
             }
             ?.sortedBy { it.spec.theme.name }
@@ -192,4 +205,26 @@ object ArtThemeController {
 
     private fun pickFile(dir: File, vararg names: String): File? =
         names.firstNotNullOfOrNull { name -> File(dir, name).takeIf { it.exists() } }
+
+    /** 扫描包内 `buttons/` 目录，键为去掉扩展名的文件名，只承认 [MENU_BUTTON_IDS] 中的语义 id。 */
+    private fun scanButtonImages(dir: File): Map<String, File> {
+        val buttonsDir = File(dir, "buttons")
+        if (!buttonsDir.isDirectory) return emptyMap()
+        return buttonsDir.listFiles()
+            ?.filter {
+                it.isFile && it.extension.lowercase() in setOf("png", "jpg", "jpeg") &&
+                    it.nameWithoutExtension in MENU_BUTTON_IDS
+            }
+            ?.associateBy { it.nameWithoutExtension }
+            ?: emptyMap()
+    }
+
+    /** 解析包内相对路径；逃逸出包目录或不存在的返回 null。 */
+    private fun resolveInDir(dir: File, path: String): File? {
+        if (path.isBlank()) return null
+        return runCatching {
+            val file = File(dir, path)
+            if (file.canonicalPath.startsWith(dir.canonicalPath) && file.exists()) file else null
+        }.getOrNull()
+    }
 }

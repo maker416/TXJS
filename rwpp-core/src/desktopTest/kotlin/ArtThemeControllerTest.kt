@@ -89,9 +89,19 @@ class ArtThemeControllerTest {
 
                     [colors]
                     primary = "#EEC4D8"
+
+                    [menu.layout]
+                    orientation = "vertical"
+                    columns = 3
+
+                    [fonts]
+                    regular = "fonts/regular.ttf"
                 """.trimIndent(),
                 "strings_zh.toml" to "[menu]\nsinglePlayerGame = \"孤胆征程\"\n",
-                "title.png" to "fake-png"
+                "title.png" to "fake-png",
+                "buttons/mods.png" to "fake-png",
+                "buttons/notAButton.png" to "fake-png",
+                "fonts/regular.ttf" to "fake-ttf"
             )
         )
 
@@ -103,6 +113,11 @@ class ArtThemeControllerTest {
         assertEquals("sample", theme.id)
         assertNotNull(theme.titleFile)
         assertNotNull(theme.stringsZhFile)
+        // v2：按钮图只承认语义 id，字体文件按包内相对路径解析
+        assertEquals(setOf("mods"), theme.buttonImages.keys)
+        assertNotNull(theme.fontRegularFile)
+        assertNull(theme.fontBoldFile)
+        assertEquals("vertical", theme.spec.menu.layout.orientation)
 
         // 启用：配色 + 文本覆盖 + 持久化字段同时生效
         ArtThemeController.apply("sample")

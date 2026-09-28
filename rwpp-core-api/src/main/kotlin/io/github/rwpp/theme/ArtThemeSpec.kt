@@ -21,6 +21,7 @@ data class ArtThemeSpec(
     val theme: ThemeMeta,
     val colors: Map<String, String> = emptyMap(),
     val menu: MenuSpec = MenuSpec(),
+    val fonts: FontsSpec = FontsSpec(),
 )
 
 @Serializable
@@ -36,6 +37,77 @@ data class ThemeMeta(
 data class MenuSpec(
     /** 是否显示主菜单标题图右下角的「极速版」角标。 */
     val showTitleBadge: Boolean = true,
+    /** 主菜单按钮区布局参数（v2）。缺省值精确复刻内置布局。 */
+    val layout: MenuLayoutSpec = MenuLayoutSpec(),
+    /** 按语义 id 的按钮槽位覆盖（v2），键必须是 [MENU_BUTTON_IDS] 之一。 */
+    val buttons: Map<String, MenuButtonSpec> = emptyMap(),
+)
+
+/**
+ * 主菜单按钮区布局。所有数值在使用前经 [sanitized] 钳制到安全范围，
+ * 不开放绝对坐标（响应式布局下写死像素必然在小屏/大屏破碎）。
+ */
+@Serializable
+data class MenuLayoutSpec(
+    /** grid：按列网格排布；vertical：全部整行宽竖排。 */
+    val orientation: String = "grid",
+    /** grid 模式的列数（1-4）。 */
+    val columns: Int = 2,
+    /** 主菜单整块（标题+按钮）的垂直对齐：top | center | bottom。 */
+    val align: String = "center",
+    /** 整块额外的垂直偏移（dp，-400..400）。 */
+    val offsetY: Int = 0,
+    /** 按钮区占屏宽百分比（30-100），仍受内置最大宽度上限约束。 */
+    val widthPercent: Int = 65,
+    /** 按钮最小高度 dp（28-96）。 */
+    val buttonHeight: Int = 44,
+    /** 按钮圆角 dp（0-32）。 */
+    val buttonCorner: Int = 20,
+    /** 按钮间距 dp（0-32）。 */
+    val spacing: Int = 10,
+) {
+    fun sanitized(): MenuLayoutSpec = copy(
+        orientation = if (orientation in ORIENTATIONS) orientation else "grid",
+        columns = columns.coerceIn(1, 4),
+        align = if (align in ALIGNS) align else "center",
+        offsetY = offsetY.coerceIn(-400, 400),
+        widthPercent = widthPercent.coerceIn(30, 100),
+        buttonHeight = buttonHeight.coerceIn(28, 96),
+        buttonCorner = buttonCorner.coerceIn(0, 32),
+        spacing = spacing.coerceIn(0, 32),
+    )
+
+    companion object {
+        val ORIENTATIONS = setOf("grid", "vertical")
+        val ALIGNS = setOf("top", "center", "bottom")
+    }
+}
+
+/**
+ * 单个主菜单按钮槽位的覆盖。order 相同的保持默认相对顺序。
+ */
+@Serializable
+data class MenuButtonSpec(
+    /** 排序权重，越小越靠前；默认 0 表示保持内置顺序。 */
+    val order: Int = 0,
+    /** grid 模式下占用列数（1-4，自动钳制到列数内）。 */
+    val span: Int = 1,
+    /** 隐藏该按钮（仅视觉隐藏，功能仍可从其他入口到达）。 */
+    val hidden: Boolean = false,
+)
+
+/** 主菜单按钮的稳定语义 id，美术包据此覆盖排布与背景图（文档承诺不变）。 */
+val MENU_BUTTON_IDS: Set<String> = setOf(
+    "singlePlayer", "multiplayer", "resourceBrowser", "mods", "settings", "openSourceInfo",
+)
+
+/**
+ * 主题字体（v2）：包内字体文件路径（相对包根），生效于全局 Typography。
+ */
+@Serializable
+data class FontsSpec(
+    val regular: String = "",
+    val bold: String = "",
 )
 
 /**
@@ -110,6 +182,25 @@ fun validateThemeToml(text: String): Pair<ArtThemeSpec?, ThemeValidation> {
             warnings += "未知配色角色已忽略: $role"
         } else if (parseColorHex(hex) == null) {
             warnings += "色值格式非法已忽略: $role = \"$hex\"（应为 #RRGGBB 或 #AARRGGBB）"
+        }
+    }
+
+    // v2：布局与按钮槽位校验（数值越界在使用处钳制，此处只对「作者显然写错」的情况给警告）
+    if (spec.menu.layout.orientation !in MenuLayoutSpec.ORIENTATIONS) {
+        warnings += "未知布局方向已回落 grid: ${spec.menu.layout.orientation}"
+    }
+    if (spec.menu.layout.align !in MenuLayoutSpec.ALIGNS) {
+        warnings += "未知对齐方式已回落 center: ${spec.menu.layout.align}"
+    }
+    spec.menu.buttons.keys.forEach { id ->
+        if (id !in MENU_BUTTON_IDS) {
+            warnings += "未知按钮槽位已忽略: $id（可用: ${MENU_BUTTON_IDS.joinToString()}）"
+        }
+    }
+    // 字体路径必须是包内相对路径
+    listOf(spec.fonts.regular, spec.fonts.bold).forEach { path ->
+        if (path.isNotBlank() && !isSafeZipEntryName(path)) {
+            errors += "字体路径非法: $path"
         }
     }
 
