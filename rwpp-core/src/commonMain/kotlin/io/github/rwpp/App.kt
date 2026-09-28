@@ -96,6 +96,8 @@ import io.github.rwpp.ui.UI.showFriendsView
 import io.github.rwpp.ui.UI.showSettingsView
 import io.github.rwpp.ui.UI.showSinglePlayerView
 import io.github.rwpp.ui.UI.showSurvivalView
+import io.github.rwpp.ui.UI.showThemesView
+import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.LineSpinFadeLoaderIndicator
 import io.github.rwpp.widget.v2.bounceClick
@@ -186,8 +188,14 @@ fun App(
             || showOpenSourceInfoView
             || showSinglePlayerView
             || showSurvivalView
+            || showThemesView
             || showAccountView
             || showFriendsView)
+
+    // 主题美术包：进程内一次初始化（扫描 themes/ 并恢复上次启用的包）
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) { ArtThemeController.ensureInitialized() }
+    }
 
     val game = koinInject<Game>()
 
@@ -409,6 +417,16 @@ fun App(
                 ) {
                     ExtensionView {
                         showExtensionView = false
+                    }
+                }
+
+                AnimatedVisibility(
+                    showThemesView,
+                    enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
+                    exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
+                ) {
+                    ThemesView {
+                        showThemesView = false
                     }
                 }
 

@@ -18,6 +18,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import io.github.rwpp.config.Settings
 import io.github.rwpp.game.Game
+import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.ui.UI
 import org.koin.compose.koinInject
 
@@ -95,17 +96,23 @@ fun RWPPTheme(default: Boolean = false, content: @Composable () -> Unit) {
     val selectedColorScheme = remember(
         if (!default)
             UI.selectedColorSchemeName
-        else Unit
-    ) { themes[if (default) "RWPP" else UI.selectedColorSchemeName]!! }
+        else Unit,
+        ArtThemeController.activeTheme
+    ) {
+        // 主题美术包优先于内置主题下拉；包停用后回落内置选择
+        ArtThemeController.activeTheme?.colorScheme
+            ?: themes[if (default) "RWPP" else UI.selectedColorSchemeName]
+            ?: defaultRWPPColorScheme
+    }
 
     if (!default) {
         val game = koinInject<Game>()
         val settings = koinInject<Settings>()
 
 
-        remember(UI.selectedColorSchemeName) {
+        remember(UI.selectedColorSchemeName, ArtThemeController.activeTheme) {
             if (settings.changeGameTheme) {
-                val color = themes[UI.selectedColorSchemeName]!!.primary
+                val color = selectedColorScheme.primary
                 game.gui.textPaint.argb = color.toArgb()
             }
         }

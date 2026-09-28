@@ -583,6 +583,17 @@ fun SettingsView(
                                                     UI.backgroundTransparency = it
                                                 }
                                             )
+
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                                horizontalArrangement = Arrangement.Center
+                                            ) {
+                                                RWTextButton(
+                                                    readI18n("themes.manageEntry", I18nType.RWPP)
+                                                ) {
+                                                    navigateTo(LauncherPage.Themes)
+                                                }
+                                            }
                                         }
                                     }
                                 }

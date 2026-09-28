@@ -53,6 +53,8 @@ sealed interface LauncherPage {
     data object ResourceBrowser : LauncherPage
     /** 开源信息页。 */
     data object OpenSourceInfo : LauncherPage
+    /** 主题美术包管理页。 */
+    data object Themes : LauncherPage
 }
 
 /**

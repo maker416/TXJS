@@ -267,4 +267,33 @@ class BundleParseTest {
             }
         }
     }
+
+    @Test
+    fun themesKeysExistInAllBundles() {
+        bundleNames.forEach { name ->
+            val table = Toml.parseToTomlTable(File(bundleDir, name).readText())
+            val themes = table["themes"] as? TomlTable
+            assertNotNull(themes, "[themes] table missing in $name")
+            listOf(
+                "title",
+                "manageEntry",
+                "import",
+                "importing",
+                "refresh",
+                "enable",
+                "disable",
+                "inUse",
+                "delete",
+                "deleteConfirmTitle",
+                "deleteConfirmBody",
+                "empty",
+                "importSuccess",
+                "importFailed",
+                "invalidFile",
+                "activeHint",
+            ).forEach { key ->
+                assertTrue(themes.containsKey(key), "themes.$key missing in $name")
+            }
+        }
+    }
 }

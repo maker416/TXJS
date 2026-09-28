@@ -94,6 +94,13 @@ val extensionPath by lazy {
     appKoin.get<AppContext>().externalStoragePath("extension/")
 }
 
+/**
+ * 主题美术包（`.rwtheme`）的存放目录：每个包导入后解压为 `themes/<id>/` 子目录。
+ */
+val themeDir by lazy {
+    appKoin.get<AppContext>().externalStoragePath("themes/")
+}
+
 val resourceOutputDir by lazy {
     appKoin.get<AppContext>().externalStoragePath("resource_generated/")
 }

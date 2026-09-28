@@ -72,6 +72,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil3.compose.AsyncImage
 import com.mikepenz.markdown.compose.Markdown
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
@@ -96,6 +97,7 @@ import io.github.rwpp.net.LatestVersionProfile
 import io.github.rwpp.net.Net
 import io.github.rwpp.net.account.RoomInvite
 import io.github.rwpp.projectVersion
+import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.group_30
 import io.github.rwpp.rwpp_core.generated.resources.title
@@ -136,6 +138,8 @@ object UI : Initialization, IUserInterface {
     var pendingModsMapsTab by mutableStateOf<ModsMapsTab?>(null)
     var showRoomView by pageBinding(LauncherPage.Room)
     var showExtensionView by pageBinding(LauncherPage.Extensions)
+    /** 主题美术包管理页。 */
+    var showThemesView by pageBinding(LauncherPage.Themes)
     var showResourceBrowser by pageBinding(LauncherPage.ResourceBrowser)
     var showOpenSourceInfoView by pageBinding(LauncherPage.OpenSourceInfo)
     var showSinglePlayerView by pageBinding(LauncherPage.SinglePlayer)
@@ -379,35 +383,51 @@ open class UIProvider {
                 verticalArrangement = Arrangement.Center
             ) {
                 // Title area
+                val artTheme = ArtThemeController.activeTheme
                 Box(
                     modifier = Modifier
                         .width(titleWidth)
                         .height(titleAreaHeight),
                     contentAlignment = Alignment.Center
                 ) {
-                    Image(
-                        painter = painterResource(Res.drawable.title),
-                        contentDescription = "Menu",
-                        modifier = Modifier
-                            .width(titleWidth)
-                            .height(titleAreaHeight),
-                        contentScale = ContentScale.Fit
-                    )
+                    val themeTitleFile = artTheme?.titleFile
+                    if (themeTitleFile != null) {
+                        // 主题美术包标题图：磁盘文件优先，缺失时回落内置 title.png
+                        AsyncImage(
+                            model = themeTitleFile,
+                            contentDescription = "Menu",
+                            modifier = Modifier
+                                .width(titleWidth)
+                                .height(titleAreaHeight),
+                            contentScale = ContentScale.Fit
+                        )
+                    } else {
+                        Image(
+                            painter = painterResource(Res.drawable.title),
+                            contentDescription = "Menu",
+                            modifier = Modifier
+                                .width(titleWidth)
+                                .height(titleAreaHeight),
+                            contentScale = ContentScale.Fit
+                        )
+                    }
 
-                    Text(
-                        text = "极速版",
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(end = 4.dp, bottom = 4.dp),
-                        color = Color.White,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = when (windowManager) {
-                            WindowManager.Small -> 12.sp
-                            WindowManager.Middle -> 14.sp
-                            WindowManager.Large -> 16.sp
-                        }
-                    )
+                    if (artTheme?.spec?.menu?.showTitleBadge != false) {
+                        Text(
+                            text = "极速版",
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(end = 4.dp, bottom = 4.dp),
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = when (windowManager) {
+                                WindowManager.Small -> 12.sp
+                                WindowManager.Middle -> 14.sp
+                                WindowManager.Large -> 16.sp
+                            }
+                        )
+                    }
                 }
 
                 // Menu buttons container - reduced spacing to fit all buttons

@@ -40,6 +40,7 @@ import io.github.rwpp.app.PermissionHelper
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.Settings
+import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.QuitGameEvent
 import io.github.rwpp.event.events.ReturnMainMenuEvent
@@ -149,13 +150,16 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    val painter = remember(backgroundImagePath) {
-                        if (backgroundImagePath.isNotBlank() && isPremium && appKoin.get<PermissionHelper>()
-                                .hasManageFilePermission()
+                    // 主题美术包的背景图优先于用户在设置中手选的背景；主题文件在 app 可控目录，无需存储权限
+                    val themeBackground = ArtThemeController.activeTheme?.backgroundFile?.absolutePath
+                    val effectiveBackgroundPath = themeBackground ?: backgroundImagePath
+                    val painter = remember(effectiveBackgroundPath) {
+                        if (effectiveBackgroundPath.isNotBlank() && isPremium &&
+                            (themeBackground != null || appKoin.get<PermissionHelper>().hasManageFilePermission())
                         ) {
                             runCatching {
                                 BitmapPainter(
-                                    BitmapFactory.decodeFile(backgroundImagePath).asImageBitmap()
+                                    BitmapFactory.decodeFile(effectiveBackgroundPath).asImageBitmap()
                                 )
                             }.getOrNull()
                         } else {
@@ -163,7 +167,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    if (backgroundImagePath.isNotBlank() && isPremium && painter != null) {
+                    if (effectiveBackgroundPath.isNotBlank() && isPremium && painter != null) {
                         Image(
                             painter = painter,
                             null,

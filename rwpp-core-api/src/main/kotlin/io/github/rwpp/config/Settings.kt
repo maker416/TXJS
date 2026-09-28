@@ -20,6 +20,10 @@ data class Settings(
     var enhancedReinforceTroops: Boolean = false,
     var backgroundImagePath: String? = null,
     var selectedTheme: String? = null,
+    /**
+     * 当前启用的主题美术包 id（`themes/<id>/` 目录名）。null 表示未启用，使用内置主题。
+     */
+    var selectedThemePack: String? = null,
     var backgroundTransparency: Float = 0.7f,
     var backgroundImageTransparency: Float = 1f,
     var showBuildingAttackRange: Boolean = false,

@@ -54,6 +54,7 @@ import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.CoreImplModule
 import io.github.rwpp.config.ConfigModule
 import io.github.rwpp.config.Settings
+import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.GameLoadedEvent
@@ -274,9 +275,12 @@ fun swingApplication() = SwingUtilities.invokeLater {
             val settings = koinInject<Settings>()
             val isPremium = true
             var backgroundImagePath by remember { mutableStateOf(settings.backgroundImagePath ?: "") }
-            val painter = remember(backgroundImagePath) {
-                if (backgroundImagePath.isNotBlank() && isPremium) {
-                    runCatching { ImageIO.read(File(backgroundImagePath)).toPainter() }.getOrNull()
+            // 主题美术包的背景图优先于用户在设置中手选的背景
+            val themeBackground = ArtThemeController.activeTheme?.backgroundFile?.absolutePath
+            val effectiveBackgroundPath = themeBackground ?: backgroundImagePath
+            val painter = remember(effectiveBackgroundPath) {
+                if (effectiveBackgroundPath.isNotBlank() && isPremium) {
+                    runCatching { ImageIO.read(File(effectiveBackgroundPath)).toPainter() }.getOrNull()
                 } else {
                     null
                 }
@@ -284,7 +288,7 @@ fun swingApplication() = SwingUtilities.invokeLater {
 
             Box(
                 modifier = Modifier.fillMaxSize().composed {
-                    if (backgroundImagePath.isBlank() || !isPremium || painter == null) {
+                    if (effectiveBackgroundPath.isBlank() || !isPremium || painter == null) {
                         background(
                             brush = Brush.verticalGradient(
                                 listOf(
@@ -303,7 +307,7 @@ fun swingApplication() = SwingUtilities.invokeLater {
                 contentAlignment = Alignment.Center
             ) {
 
-                if (backgroundImagePath.isNotBlank() && isPremium && painter != null) {
+                if (effectiveBackgroundPath.isNotBlank() && isPremium && painter != null) {
                     Image(
                         painter = painter,
                         null,

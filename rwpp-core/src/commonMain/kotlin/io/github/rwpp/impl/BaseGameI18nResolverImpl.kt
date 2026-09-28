@@ -14,6 +14,7 @@ import io.github.rwpp.i18n.LanguageHelper
 import io.github.rwpp.i18n.i18nTable
 import io.github.rwpp.i18n.reloadI18n
 import io.github.rwpp.rwpp_core.generated.resources.Res
+import io.github.rwpp.theme.ArtThemeController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -32,6 +33,8 @@ abstract class BaseGameI18nResolverImpl : GameI18nResolver {
                 }.getOrNull() ?: Res.readBytes("files/bundle_en.toml")
             }.decodeToString().replace("\r", "\n"))
         }
+        // 主题美术包的文本覆盖按当前语言重放（语言切换/reloadBundle 后覆盖不丢失）
+        ArtThemeController.applyStringOverrides()
     }
 
     override fun reloadBundle() {
