@@ -174,6 +174,14 @@ Gradle JVM 参数在根目录 `gradle.properties` 中定义（`-Xmx2048M`）。
 
 ### Git 工作树（worktree）规范（重要）
 
+**功能开发工作流（强制）**：任何功能/代码修改必须先在专用 worktree 中开发，禁止直接在主检出（`main` 分支所在目录）改动代码。标准流程：
+
+1. `git worktree add ../TXJS-<特性名> -b feature/<特性名>` 创建工作树；
+2. **立即**按下方一键同步命令同步本地必需文件（否则 Android 构建、签名、注入元数据生成会失败）；
+3. 在 worktree 内完成开发、测试与验证（提交信息使用中文）；
+4. 回主仓库 `git merge <特性分支>` 合并到 `main` 并确认测试通过；
+5. `git worktree remove ../TXJS-<特性名>` 删除工作树，并删除已合并的特性分支。
+
 新建 git worktree 时，`.gitignore` 排除的本地文件**不会**进入新工作树，但构建/测试依赖其中一部分。**创建 worktree 后必须立即把这部分文件同步过去**，否则 Android 构建、Release 签名、注入元数据生成会失败。
 
 必须同步的文件（相对于仓库根）：
