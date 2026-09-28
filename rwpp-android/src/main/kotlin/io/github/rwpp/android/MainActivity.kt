@@ -32,6 +32,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.layout.ContentScale
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import com.corrodinggames.rts.appFramework.d
 import io.github.rwpp.App
@@ -59,6 +61,9 @@ import java.io.File
 
 class MainActivity : ComponentActivity() {
     private val configIO: ConfigIO by appKoin.inject()
+
+    /** IME 是否可见，由 onCreate 中的 OnApplyWindowInsetsListener 维护，驱动系统栏操作闸门。 */
+    private var imeVisible by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -136,13 +141,23 @@ class MainActivity : ComponentActivity() {
             gameView = d.b(this)
         }
 
+        // 维护 IME 可见性并打 [IMEGUARD] 日志：无真机时供远程诊断键盘被打断的时序。
+        ViewCompat.setOnApplyWindowInsetsListener(window.decorView) { v, insets ->
+            val visible = insets.isVisible(WindowInsetsCompat.Type.ime())
+            if (visible != imeVisible) {
+                logger.info("[IMEGUARD] ime visibility -> $visible")
+                imeVisible = visible
+            }
+            ViewCompat.onApplyWindowInsets(v, insets)
+        }
+
         setContent {
             KoinContext(appKoin) {
-                // 聊天输入获焦时 imeImmersiveSuspended 为 true，不能在组合阶段无条件 hide，
-                // 否则鸿蒙会把刚弹出的输入法一起收掉。
-                val suspendImmersive = UI.imeImmersiveSuspended
+                // IME 可见期间绝不触碰系统栏：键盘弹出时系统会连带亮出导航栏，此时再
+                // 隐藏/显示系统栏可能把正在弹起的输入法打断（Android 各 ROM 均有报告，
+                // 华为平板上必现；详见 AGENTS.md 好友输入法踩坑记录）。
                 SideEffect {
-                    applyImeImmersiveMode(this@MainActivity, suspendImmersive)
+                    applyImeImmersiveMode(this@MainActivity, imeVisible)
                 }
 
                 val isPremium = true

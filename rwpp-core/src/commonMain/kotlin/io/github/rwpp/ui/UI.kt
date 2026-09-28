@@ -151,12 +151,6 @@ object UI : Initialization, IUserInterface {
     var showFriendsView by mutableStateOf(false)
 
     /**
-     * 聊天输入框持有焦点时暂时退出全屏沉浸。
-     * 华为/鸿蒙平板隐藏系统栏后，输入法会弹出并立刻被系统收掉。
-     */
-    var imeImmersiveSuspended by mutableStateOf(false)
-
-    /**
      * 好友聊天中房间邀请卡片点击「立即加入」后暂存的邀请，
      * 由 MultiplayerView 消费（置回 null）并触发既有 LoadingView/directJoinServer 加入链路。
      */
