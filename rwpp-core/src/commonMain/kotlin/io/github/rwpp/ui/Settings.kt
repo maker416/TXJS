@@ -38,6 +38,7 @@ import io.github.rwpp.external.ExternalHandler
 import io.github.rwpp.i18n.GameI18nResolver
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.theme.LauncherMusicController
 import com.eclipsesource.json.Json
 import io.github.rwpp.net.LatestVersionProfile
 import io.github.rwpp.net.Net
@@ -581,6 +582,15 @@ fun SettingsView(
                                                 {
                                                     settings.backgroundTransparency = it
                                                     UI.backgroundTransparency = it
+                                                }
+                                            )
+
+                                            SettingsSlider(
+                                                readI18n("settings.launcherMusicVolume"),
+                                                settings.launcherMusicVolume,
+                                                {
+                                                    settings.launcherMusicVolume = it
+                                                    LauncherMusicController.sync()
                                                 }
                                             )
 

@@ -40,6 +40,7 @@ import io.github.rwpp.app.PermissionHelper
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.Settings
+import io.github.rwpp.platform.LauncherMusic
 import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.QuitGameEvent
@@ -191,10 +192,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
+        LauncherMusic.pause()
         if(gameView != null) GameEngine.t()?.b(gameView)
     }
     override fun onResume() {
         super.onResume()
+        LauncherMusic.resume()
         if(gameView != null) activityResume()
     }
 

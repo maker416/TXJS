@@ -68,6 +68,11 @@ kotlin {
                     "include" to "lwjgl.jar"
                 ))
                 implementation(compose.desktop.common)
+                // 主题美术包背景音乐：桌面端 OGG 解码（仓库 lib/ 已有的纯 Java 库）
+                implementation(fileTree(
+                    "dir" to "$rootDir/lib",
+                    "include" to listOf("jogg-0.0.7.jar", "jorbis-0.0.15.jar")
+                ))
             }
         }
 

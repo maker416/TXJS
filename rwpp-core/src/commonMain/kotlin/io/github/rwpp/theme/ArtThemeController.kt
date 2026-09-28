@@ -17,6 +17,7 @@ import io.github.rwpp.config.Settings
 import io.github.rwpp.i18n.LanguageHelper
 import io.github.rwpp.i18n.setI18nOverride
 import io.github.rwpp.logger
+import io.github.rwpp.platform.LauncherMusic
 import io.github.rwpp.platform.themeFontFamily
 import io.github.rwpp.themeDir
 import io.github.rwpp.widget.defaultRWPPColorScheme
@@ -46,6 +47,8 @@ object ArtThemeController {
         val buttonImages: Map<String, File> = emptyMap(),
         val fontRegularFile: File? = null,
         val fontBoldFile: File? = null,
+        /** 背景音乐文件（包根 `music.<扩展名>`，扩展名须为当前平台支持格式）。 */
+        val musicFile: File? = null,
     ) {
         val id: String get() = spec.theme.id
 
@@ -148,18 +151,20 @@ object ArtThemeController {
                     buttonImages = scanButtonImages(dir),
                     fontRegularFile = resolveInDir(dir, spec.fonts.regular),
                     fontBoldFile = resolveInDir(dir, spec.fonts.bold),
+                    musicFile = scanMusicFile(dir),
                 )
             }
             ?.sortedBy { it.spec.theme.name }
             ?: emptyList()
     }
 
-    /** 启用指定主题包；传 null 停用并回落内置外观。配色/标题/背景经 Compose 状态热生效。 */
+    /** 启用指定主题包；传 null 停用并回落内置外观。配色/标题/背景/音乐经 Compose 状态与播放器热生效。 */
     fun apply(id: String?) {
         val target = if (id == null) null else installedThemes.firstOrNull { it.id == id }
         activeTheme = target
         settings.selectedThemePack = target?.id
         applyStringOverrides()
+        LauncherMusicController.sync()
     }
 
     /**
@@ -217,6 +222,14 @@ object ArtThemeController {
             }
             ?.associateBy { it.nameWithoutExtension }
             ?: emptyMap()
+    }
+
+    /** 扫描包根 `music.<扩展名>`，只保留当前平台支持的格式，按平台偏好顺序取最优。 */
+    private fun scanMusicFile(dir: File): File? {
+        val supported = LauncherMusic.supportedMusicExtensions
+        return dir.listFiles()
+            ?.filter { it.isFile && it.nameWithoutExtension == "music" && it.extension.lowercase() in supported }
+            ?.minByOrNull { supported.indexOf(it.extension.lowercase()) }
     }
 
     /** 解析包内相对路径；逃逸出包目录或不存在的返回 null。 */

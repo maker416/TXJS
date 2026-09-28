@@ -26,6 +26,8 @@ data class Settings(
     var selectedThemePack: String? = null,
     var backgroundTransparency: Float = 0.7f,
     var backgroundImageTransparency: Float = 1f,
+    /** 主题美术包背景音乐音量（0-1），0 为静音。 */
+    var launcherMusicVolume: Float = 0.5f,
     var showBuildingAttackRange: Boolean = false,
     var showExtraButton: Boolean = false,
     /** @see unitAttackRangeTypes */

@@ -375,10 +375,13 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 - **v1**：主题配色、启动器背景图、主菜单标题图、文本覆盖（含主菜单按钮文字）。
 - **v2**：主菜单按钮区布局（方向/列数/对齐/偏移/宽度比/按钮高度/圆角/间距）、按钮槽位排序与隐藏、按钮背景图、全局字体。
+- **v3**：背景音乐（包根 `music.<扩展名>`）。
 
 包格式与机制：
 
-- **包格式**：zip（后缀 `.rwtheme`），含 `theme.toml`（必需：`[theme]` id/name，`[colors]` 角色 → `#RRGGBB`/`#AARRGGBB`；可选 `[menu]` showTitleBadge + `[menu.layout]` + `[menu.buttons.<id>]` order/span/hidden + `[fonts]` regular/bold 包内相对路径）、可选 `strings_zh.toml`/`strings_en.toml`（i18n 覆盖）、`background.png|jpg`、`title.png`、`icon.png`、`buttons/<语义id>.png`、`fonts/*.ttf`。
+- **包格式**：zip（后缀 `.rwtheme`），含 `theme.toml`（必需：`[theme]` id/name，`[colors]` 角色 → `#RRGGBB`/`#AARRGGBB`；可选 `[menu]` showTitleBadge + `[menu.layout]` + `[menu.buttons.<id>]` order/span/hidden + `[fonts]` regular/bold 包内相对路径）、可选 `strings_zh.toml`/`strings_en.toml`（i18n 覆盖）、`background.png|jpg`、`title.png`、`icon.png`、`buttons/<语义id>.png`、`fonts/*.ttf`、`music.<ext>`。
+- **背景音乐**：格式按平台分——Android 走 `MediaPlayer`（mp3/ogg/m4a/aac/wav/flac），桌面端走 `javax.sound.sampled`（wav）+ 仓库 `lib/` 内置 jorbis（ogg），**桌面不支持 mp3**（无解码库）。编排器 `theme/LauncherMusicController.kt`：启用主题+有音乐+音量>0+非对局中才播；对局进出由 `StartGameEvent`/`ReturnMainMenuEvent` 驱动停/续；Android `onPause/onResume` 暂停/恢复；音量在设置页（`Settings.launcherMusicVolume`，0 即静音）。播放器 `platform/LauncherMusic.kt` expect/actual（`LauncherMusic.android.kt` / `LauncherMusic.desktop.kt`），全部幂等静默失败。
+- **坑**：`lib/jogg-0.0.7.jar`/`jorbis-0.0.15.jar` 的原始 zip 结构（2004 年格式）会被 Kotlin 编译器**静默忽略**（jorbis 可见而 jogg 不可见），已重写为现代 zip 结构（类内容不变）；若从上游恢复旧 jar 会复发「Unresolved reference 'jogg'」。
 - **主菜单按钮语义 id**（`MENU_BUTTON_IDS`，文档承诺稳定）：`singlePlayer`、`multiplayer`、`resourceBrowser`、`mods`、`settings`、`openSourceInfo`。`[menu.layout]` 数值在使用前经 `MenuLayoutSpec.sanitized()` 钳制到安全范围；不开放绝对坐标。
 - **模型与安装器（rwpp-core-api，纯 JVM 可测）**：`theme/ArtThemeSpec.kt`（spec + `SUPPORTED_COLOR_ROLES` + `parseColorHex` + `validateThemeToml` + `isSafeZipEntryName`）、`theme/ThemePackInstaller.kt`（导入校验与解压；**校验全部在落盘前完成**，缺 theme.toml/坏 id/重复 id/路径穿越/非法 strings TOML/非法字体路径均拒绝）。
 - **控制器（rwpp-core）**：`theme/ArtThemeController.kt` 单例——`installedThemes`/`activeTheme`（`mutableStateOf`，热切换），`import/apply/delete/scan/ensureInitialized`（App 根 `LaunchedEffect` 调一次）。包存放于 `themeDir`（`global.kt`，`externalStoragePath("themes/")`，每包一个 `<id>/` 子目录）。启用 id 持久化在 `Settings.selectedThemePack`。
