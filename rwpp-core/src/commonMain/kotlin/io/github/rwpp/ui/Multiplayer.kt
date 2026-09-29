@@ -2343,8 +2343,11 @@ private fun JoinServerRequestDialog(
                 }
             }
 
+            // 中间内容区用 weight 弹性收缩（fill = false 保持内容不足时自然高度），
+            // 保证小屏/大字体设备上标题栏与底部加入按钮始终完整可见，仅内容区滚动
             Column(
                 modifier = Modifier
+                    .weight(1f, fill = false)
                     .heightIn(max = 440.dp)
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp),
