@@ -33,7 +33,9 @@ class ExternalHandlerImpl : BaseExternalHandlerImpl() {
     override fun rebuildResourceOverlay() {
         val overlays = composeResourceOverlays()
         val outDir = File(resourceOutputDir)
-        val tmpDir = File(resourceOutputDir + "_tmp")
+        // 注意：resourceOutputDir 自带结尾 "/"，直接拼接 "_tmp" 会变成其子目录（resource_generated/_tmp），
+        // renameTo 父目录必失败、回退复制又因 outDir 先删而丢失源——必须是同级目录
+        val tmpDir = File(outDir.parentFile, outDir.name + "_tmp")
 
         if (overlays.isEmpty()) {
             tmpDir.deleteRecursively()
