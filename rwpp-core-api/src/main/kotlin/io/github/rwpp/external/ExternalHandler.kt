@@ -28,6 +28,14 @@ interface ExternalHandler : KoinComponent, Initialization {
 
     fun getUsingResource(): Extension?
 
+    /**
+     * 重建 `resource_generated/`：原版基线 + 当前启用的覆盖层
+     *（扩展系统的 `.rwres` 资源包 + 主题美术包的 `game/` 目录，后者最后叠加）。
+     * 所有覆盖层均不存在时删除输出目录（资源重定向随之关闭）。
+     * 实现必须先把内容构建到临时目录再原子换名，避免引擎读到半成品。
+     */
+    fun rebuildResourceOverlay()
+
     fun openFileChooser(
         onProgress: ((FileChooseProgress) -> Unit)? = null,
         onChooseFile: (File) -> Unit

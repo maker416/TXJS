@@ -21,9 +21,13 @@ import java.io.FileInputStream
 
 @InjectClass(c::class)
 object AssetInject {
-    private val usingResource by lazy {
-        File(resourceOutputDir).exists()
-    }
+    /**
+     * 资源重定向是否生效：运行时可变（主题美术包/资源包切换时会重建或删除该目录），
+     * 不能在启动期缓存。目录不存在时引擎按原版路径读取，天然安全回落。
+     */
+    private val usingResource: Boolean
+        get() = File(resourceOutputDir).exists()
+
     @Inject("f", injectMode = InjectMode.InsertBefore)
     fun redirectAsset(str: String): Any {
         if(!usingResource

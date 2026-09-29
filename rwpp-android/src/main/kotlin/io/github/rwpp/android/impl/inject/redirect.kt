@@ -30,8 +30,6 @@ import com.corrodinggames.rts.gameFramework.utility.o
 import io.github.rwpp.R
 import io.github.rwpp.android.impl.GameEngine
 import io.github.rwpp.android.impl.getResourceFileName
-import io.github.rwpp.appKoin
-import io.github.rwpp.external.ExternalHandler
 import io.github.rwpp.inject.*
 import io.github.rwpp.resOutputDir
 import io.github.rwpp.resourceOutputDir
@@ -44,8 +42,8 @@ import java.io.FileInputStream
 object AssetInject {
     @Inject("h", InjectMode.InsertBefore)
     fun redirectAsset(str: String): Any {
-        val externalHandler = appKoin.get<ExternalHandler>()
-        if (externalHandler.getUsingResource() == null) return Unit
+        // 运行时可变：主题美术包/资源包切换会重建或删除该目录，不能启动期缓存
+        if (!File(resourceOutputDir).exists()) return Unit
         if(str.contains("builtin_mods")
             || (str.contains("maps") && !str.contains("bitmaps"))
             || str.contains("translations")) return Unit
@@ -70,8 +68,7 @@ object AssetInject {
 object MusicInject {
     @Inject("a", InjectMode.InsertBefore)
     fun com.corrodinggames.rts.gameFramework.bc.redirectMusic(z: Boolean): Any {
-        val externalHandler = appKoin.get<ExternalHandler>()
-        if (externalHandler.getUsingResource() == null) return Unit
+        if (!File(resourceOutputDir).exists()) return Unit
 
         val b = Reflect.get<com.corrodinggames.rts.gameFramework.bb>(this, "b")!!
 
@@ -101,8 +98,7 @@ object MusicInject {
 object ImageInject {
     @Inject("a", InjectMode.InsertBefore)
     fun redirectBitmap(i: Int, bool: Boolean): Any {
-        val externalHandler = appKoin.get<ExternalHandler>()
-        if (externalHandler.getUsingResource() == null) return Unit
+        if (!File(resourceOutputDir).exists()) return Unit
 
         val resFileExist = File(resOutputDir).exists()
         if(!resFileExist) return Unit
@@ -139,8 +135,7 @@ object ImageInject {
 object ResInject {
     @Inject("a", InjectMode.InsertBefore)
     fun com.corrodinggames.rts.gameFramework.a.a.redirectRes(i: Int): Any {
-        val externalHandler = appKoin.get<ExternalHandler>()
-        if (externalHandler.getUsingResource() == null) return Unit
+        if (!File(resourceOutputDir).exists()) return Unit
 
         val resFileExist = File(resOutputDir).exists()
         if (!resFileExist) return Unit

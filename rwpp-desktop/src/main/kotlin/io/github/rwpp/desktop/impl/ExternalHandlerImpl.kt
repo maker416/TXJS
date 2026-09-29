@@ -13,7 +13,7 @@ import io.github.rwpp.external.ExternalHandler
 import io.github.rwpp.external.FileChooseProgress
 import io.github.rwpp.impl.BaseExternalHandlerImpl
 import io.github.rwpp.io.unzipTo
-import io.github.rwpp.resOutputDir
+import io.github.rwpp.logger
 import io.github.rwpp.resourceOutputDir
 import io.github.rwpp.utils.Reflect
 import javassist.LoaderClassPath
@@ -27,33 +27,43 @@ class ExternalHandlerImpl : BaseExternalHandlerImpl() {
     override fun enableResource(resource: Extension?) {
         if (resource?.config?.hasResource == false) return
         _usingResource = resource
+        rebuildResourceOverlay()
+    }
 
-        File(resourceOutputDir).let {
-            if (it.exists()) it.deleteRecursively()
-        }
-        File(resOutputDir).let {
-            if (it.exists()) it.deleteRecursively()
-        }
+    override fun rebuildResourceOverlay() {
+        val overlays = composeResourceOverlays()
+        val outDir = File(resourceOutputDir)
+        val tmpDir = File(resourceOutputDir + "_tmp")
 
-        if (resource == null) return
-
-        val resourceList = listOf("gui", "units", "tilesets", "music", "shaders")
-        resourceList.forEach {
-            File("assets/$it").copyRecursively(
-                File(resourceOutputDir + it), true
-            )
+        if (overlays.isEmpty()) {
+            tmpDir.deleteRecursively()
+            outDir.deleteRecursively()
+            return
         }
 
-        val resList = listOf("drawable", "raw")
-
-        resList.forEach {
-            File("res/$it").copyRecursively(
-                File(resOutputDir + it), true
-            )
+        // 先在临时目录完整构建（原版基线 + 覆盖层），完成后原子换名，
+        // 避免引擎在重建中途读到半成品
+        tmpDir.deleteRecursively()
+        listOf("gui", "units", "tilesets", "music", "shaders").forEach {
+            File("assets/$it").copyRecursively(File(tmpDir, it), true)
+        }
+        listOf("drawable", "raw").forEach {
+            File("res/$it").copyRecursively(File(tmpDir, "res/$it"), true)
+        }
+        overlays.forEach { overlay ->
+            if (overlay.isDirectory) {
+                overlay.copyRecursively(tmpDir, true)
+            } else {
+                overlay.unzipTo(tmpDir)
+            }
         }
 
-
-        resource.file.unzipTo(File(resourceOutputDir))
+        outDir.deleteRecursively()
+        if (!tmpDir.renameTo(outDir)) {
+            logger.warn("rename resource tmp dir failed, fallback to copy")
+            tmpDir.copyRecursively(outDir, true)
+            tmpDir.deleteRecursively()
+        }
     }
 
     override fun openFileChooser(

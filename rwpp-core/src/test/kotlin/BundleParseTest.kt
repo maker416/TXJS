@@ -291,6 +291,8 @@ class BundleParseTest {
                 "importFailed",
                 "invalidFile",
                 "activeHint",
+                "hasGameArt",
+                "applyingGameArt",
             ).forEach { key ->
                 assertTrue(themes.containsKey(key), "themes.$key missing in $name")
             }

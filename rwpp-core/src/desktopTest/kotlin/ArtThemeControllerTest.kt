@@ -103,7 +103,8 @@ class ArtThemeControllerTest {
                 "buttons/notAButton.png" to "fake-png",
                 "fonts/regular.ttf" to "fake-ttf",
                 "music.mp3" to "fake-mp3",
-                "music.ogg" to "fake-ogg"
+                "music.ogg" to "fake-ogg",
+                "game/units/tank.png" to "fake-png"
             )
         )
 
@@ -122,6 +123,9 @@ class ArtThemeControllerTest {
         assertEquals("vertical", theme.spec.menu.layout.orientation)
         // v3：桌面端不支持 mp3，应选 ogg（按平台偏好顺序）
         assertEquals("music.ogg", theme.musicFile?.name)
+        // v4：game/ 目录识别为游戏内贴图覆盖层
+        assertNotNull(theme.gameOverlayDir)
+        assertTrue(File(theme.gameOverlayDir!!, "units/tank.png").exists())
 
         // 启用：配色 + 文本覆盖 + 持久化字段同时生效
         ArtThemeController.apply("sample")

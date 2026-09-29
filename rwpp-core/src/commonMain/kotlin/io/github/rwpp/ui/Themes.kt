@@ -55,6 +55,7 @@ import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.file_open
 import io.github.rwpp.theme.ArtThemeController
+import io.github.rwpp.theme.GameArtOverlayManager
 import io.github.rwpp.theme.ThemeInstallResult
 import io.github.rwpp.theme.parseColorHex
 import io.github.rwpp.widget.AnimatedAlertDialog
@@ -101,6 +102,26 @@ fun ThemesView(
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
                     readI18n("themes.importing", I18nType.RWPP),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+    }
+
+    // 游戏内贴图覆盖层应用进度（重建资源目录 + 单位重载，不可关闭）
+    val applyingGameArt = GameArtOverlayManager.applying
+    AnimatedAlertDialog(applyingGameArt, onDismissRequest = { }) { _ ->
+        BorderCard(modifier = Modifier.size(320.dp, 160.dp)) {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                CircularProgressIndicator()
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    readI18n("themes.applyingGameArt", I18nType.RWPP),
                     color = MaterialTheme.colorScheme.onSurface,
                     style = MaterialTheme.typography.bodyMedium
                 )
@@ -355,6 +376,15 @@ private fun ThemeCard(
                         style = MaterialTheme.typography.bodySmall,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
+                    )
+                }
+                // 含游戏内贴图覆盖层（v4）的标记
+                if (theme.gameOverlayDir != null) {
+                    Text(
+                        readI18n("themes.hasGameArt", I18nType.RWPP),
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 2.dp)
                     )
                 }
                 // 配色预览色板（取前 6 个合法色值）

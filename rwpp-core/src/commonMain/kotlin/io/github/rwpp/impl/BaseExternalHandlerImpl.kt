@@ -19,6 +19,7 @@ import io.github.rwpp.inject.RedirectMethodInfo
 import io.github.rwpp.inject.RootInfo
 import io.github.rwpp.scripts.LuaRootInfo
 import io.github.rwpp.scripts.Scripts
+import io.github.rwpp.theme.GameArtOverlayManager
 import io.github.rwpp.ui.UI
 import io.github.rwpp.utils.compareVersions
 import net.peanuuutz.tomlkt.Toml
@@ -194,6 +195,15 @@ abstract class BaseExternalHandlerImpl : ExternalHandler {
         }.also { _usingResource = it }
     }
 
+    /**
+     * 组合当前生效的资源覆盖层（依序叠加，后者覆盖前者）：
+     * 扩展系统启用的 `.rwres` 资源包 → 主题美术包的 `game/` 目录。
+     */
+    protected fun composeResourceOverlays(): List<File> = listOfNotNull(
+        getUsingResource()?.file,
+        GameArtOverlayManager.currentThemeOverlayDir()
+    )
+
     override fun init() {
         logger.info("Init extensions...")
         val extensions = getAllExtensions().onFailure {
@@ -217,6 +227,9 @@ abstract class BaseExternalHandlerImpl : ExternalHandler {
         } else {
             logger.info("Resource is not changed. Skip.")
         }
+        // 主题美术包的游戏内贴图覆盖层（v4）：启动期同步，引擎尚未读取资产，重建即生效
+        runCatching { GameArtOverlayManager.syncAtStartup() }
+            .onFailure { logger.error("Sync game art overlay failed: ${it.message}") }
         logger.info("Init resources finished.")
 
         extensions?.forEach { extension ->

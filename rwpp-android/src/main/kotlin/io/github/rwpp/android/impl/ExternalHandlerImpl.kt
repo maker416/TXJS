@@ -22,7 +22,6 @@ import io.github.rwpp.external.FileChooseProgress
 import io.github.rwpp.impl.BaseExternalHandlerImpl
 import io.github.rwpp.io.unzipTo
 import io.github.rwpp.logger
-import io.github.rwpp.resOutputDir
 import io.github.rwpp.resourceOutputDir
 import org.koin.core.annotation.Single
 import org.koin.core.component.get
@@ -35,19 +34,26 @@ class ExternalHandlerImpl : BaseExternalHandlerImpl() {
     override fun enableResource(resource: Extension?) {
         if (resource?.config?.hasResource == false) return
         _usingResource = resource
+        rebuildResourceOverlay()
+    }
 
-        File(resourceOutputDir).let {
-            if (it.exists()) it.deleteRecursively()
+    override fun rebuildResourceOverlay() {
+        val overlays = composeResourceOverlays()
+        val outDir = File(resourceOutputDir)
+        val tmpDir = File(resourceOutputDir + "_tmp")
+
+        if (overlays.isEmpty()) {
+            tmpDir.deleteRecursively()
+            outDir.deleteRecursively()
+            return
         }
-        File(resOutputDir).let {
-            if (it.exists()) it.deleteRecursively()
-        }
 
-        if (resource == null) return
-
+        // 先在临时目录完整构建（原版基线 + 覆盖层），完成后原子换名，
+        // 避免引擎在重建中途读到半成品
+        tmpDir.deleteRecursively()
         val resourceList = listOf("units", "tilesets", "music", "shaders")
         resourceList.forEach {
-            copyAssets(get(), it, resourceOutputDir + it)
+            copyAssets(get(), it, File(tmpDir, it).absolutePath + "/")
         }
 
         val resList = listOf(
@@ -63,7 +69,7 @@ class ExternalHandlerImpl : BaseExternalHandlerImpl() {
                     val i = field.get(null) as Int
                     // openRawResource 仅适用于 res/raw；drawable（含 vector）会抛 NotFoundException
                     val bytes = resources.openRawResource(i).use { res -> res.readBytes() }
-                    val fi = File(resOutputDir + resources.getResourceFileName(i))
+                    val fi = File(File(tmpDir, "res"), resources.getResourceFileName(i))
                     fi.parentFile!!.run { if (!exists()) mkdirs() }
                     if (!fi.exists()) fi.createNewFile()
                     fi.writeBytes(bytes)
@@ -73,7 +79,20 @@ class ExternalHandlerImpl : BaseExternalHandlerImpl() {
             }
         }
 
-        resource.file.unzipTo(File(resourceOutputDir))
+        overlays.forEach { overlay ->
+            if (overlay.isDirectory) {
+                overlay.copyRecursively(tmpDir, true)
+            } else {
+                overlay.unzipTo(tmpDir)
+            }
+        }
+
+        outDir.deleteRecursively()
+        if (!tmpDir.renameTo(outDir)) {
+            logger.warn("rename resource tmp dir failed, fallback to copy")
+            tmpDir.copyRecursively(outDir, true)
+            tmpDir.deleteRecursively()
+        }
     }
 
     override fun openFileChooser(

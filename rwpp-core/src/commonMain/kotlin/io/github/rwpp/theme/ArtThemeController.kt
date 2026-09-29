@@ -52,6 +52,13 @@ object ArtThemeController {
     ) {
         val id: String get() = spec.theme.id
 
+        /**
+         * 游戏内贴图覆盖层（v4）：包内 `game/` 目录（镜像 assets 结构），
+         * 仅在目录存在且含文件时非 null。
+         */
+        val gameOverlayDir: File? =
+            File(dir, "game").takeIf { it.isDirectory && it.walkTopDown().any { f -> f.isFile } }
+
         /** 主题字体（v2）：包内字体文件构建的 FontFamily；缺失或加载失败为 null，回落内置字体。 */
         val fontFamily: androidx.compose.ui.text.font.FontFamily? by lazy {
             themeFontFamily(fontRegularFile, fontBoldFile)
@@ -160,11 +167,16 @@ object ArtThemeController {
 
     /** 启用指定主题包；传 null 停用并回落内置外观。配色/标题/背景/音乐经 Compose 状态与播放器热生效。 */
     fun apply(id: String?) {
+        val oldOverlay = activeTheme?.gameOverlayDir
         val target = if (id == null) null else installedThemes.firstOrNull { it.id == id }
         activeTheme = target
         settings.selectedThemePack = target?.id
         applyStringOverrides()
         LauncherMusicController.sync()
+        // 游戏内贴图覆盖层变化时重建 resource_generated/ 并重载单位（幂等：启动期已同步则跳过）
+        if (oldOverlay != target?.gameOverlayDir) {
+            GameArtOverlayManager.syncAsync()
+        }
     }
 
     /**
