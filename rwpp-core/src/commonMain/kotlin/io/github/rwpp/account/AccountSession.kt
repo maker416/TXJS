@@ -39,6 +39,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.get
+import java.util.UUID
 
 /**
  * RWJS 统一账号会话，对接 `/api/v1` 用户通道。
@@ -110,6 +111,25 @@ object AccountSession : KoinComponent {
         val t = token
         if (t.isBlank()) throw AccountApiException(AccountErrorCode.UNAUTHORIZED, "missing bearer token", 401)
         return t
+    }
+
+    // 无配置宿主只持有内存消息，同一次进程运行仍使用固定标识。
+    private val transientChatClientId = UUID.randomUUID().toString()
+
+    @Synchronized
+    internal fun messageChangesClientId(): String {
+        val prefs = prefsOrNull() ?: return transientChatClientId
+        if (prefs.chatClientId.matches(Regex("[A-Za-z0-9._:-]{1,64}"))) return prefs.chatClientId
+        val previous = prefs.chatClientId
+        prefs.chatClientId = UUID.randomUUID().toString()
+        try {
+            // 必须在领取变更前落盘；保存失败时下次重新尝试。
+            get<ConfigIO>().saveConfig(prefs)
+        } catch (e: Exception) {
+            prefs.chatClientId = previous
+            throw e
+        }
+        return prefs.chatClientId
     }
 
     suspend fun restoreIfNeeded() {
@@ -293,6 +313,7 @@ object AccountSession : KoinComponent {
     }
 
     private fun applySession(newToken: String, newUser: AccountUser, persist: Boolean) {
+        if (token != newToken || user?.id != newUser.id) FriendsSession.clear()
         token = newToken
         user = newUser
         loggedIn = true

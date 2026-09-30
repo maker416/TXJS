@@ -11,10 +11,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
 import io.github.rwpp.logger
 import io.github.rwpp.net.account.AccountApiException
+import io.github.rwpp.net.account.AccountErrorCode
 import io.github.rwpp.net.account.BlockItem
 import io.github.rwpp.net.account.ChatItem
+import io.github.rwpp.net.account.ChatMessageChange
 import io.github.rwpp.net.account.ChatMessageDto
 import io.github.rwpp.net.account.FriendItem
 import io.github.rwpp.net.account.FriendRequestBox
@@ -23,7 +26,11 @@ import io.github.rwpp.net.account.PublicUser
 import io.github.rwpp.net.account.RoomInviteCodec
 import io.github.rwpp.ui.RoomInviteNotification
 import io.github.rwpp.ui.UI
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -31,6 +38,17 @@ import kotlinx.coroutines.withContext
  * 只调用文档中的 friends / chats / lookup 路径，用轮询拉新消息。
  */
 object FriendsSession {
+    // 聊天列表、申请箱、消息及变更 GET/ACK 共用服务端 20/10s 配额。
+    const val LIST_POLL_INTERVAL_MS = 5_000L
+    const val MESSAGE_POLL_INTERVAL_MS = 2_000L
+    internal var changeBatchDelayMs = 3_000L
+
+    private val chatSyncMutex = Mutex()
+    private val messageChangesMutex = Mutex()
+    private val lastAppliedChangeIds = mutableMapOf<Long, Long>()
+    private var cacheEpoch = 0L
+    private var chatPollRetryAtMs = 0L
+
     val friends = mutableStateListOf<FriendItem>()
     val incoming = mutableStateListOf<FriendRequestDto>()
     val outgoing = mutableStateListOf<FriendRequestDto>()
@@ -67,10 +85,29 @@ object FriendsSession {
     }
 
     suspend fun refreshLists() {
-        if (!AccountSession.networkEnabled || !AccountSession.loggedIn) return
+        val (token, epoch) = chatSyncMutex.withLock { refreshListsLocked() } ?: return
+        try {
+            messageChangesMutex.withLock { syncMessageChanges(token, epoch) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: AccountApiException) {
+            if (isCurrentSession(token, epoch)) {
+                deferChatPolls(e)
+                listError = accountErrorText(e)
+            }
+        } catch (e: Exception) {
+            if (isCurrentSession(token, epoch)) listError = e.message.orEmpty()
+            logger.warn("同步消息变更失败：{}", e.message)
+        }
+    }
+
+    private suspend fun refreshListsLocked(): Pair<String, Long>? {
+        if (!AccountSession.networkEnabled || !AccountSession.loggedIn) return null
+        if (System.currentTimeMillis() < chatPollRetryAtMs) return null
         loadingLists = true
         try {
             val token = AccountSession.requireToken()
+            val epoch = cacheEpoch
             val api = AccountSession.client()
             val (f, inn, out, c, b) = withContext(Dispatchers.IO) {
                 val friends = api.listFriends(token)
@@ -81,6 +118,7 @@ object FriendsSession {
                 val blocks = runCatching { api.listBlocks(token) }.getOrDefault(emptyList())
                 Quintuple(friends, incoming, outgoing, chats, blocks)
             }
+            if (!isCurrentSession(token, epoch)) return null
             friends.clear()
             friends.addAll(f)
             incoming.clear()
@@ -96,8 +134,12 @@ object FriendsSession {
             if (peer != null && activeConversationId == null) {
                 activeConversationId = c.firstOrNull { it.peer.id == peer.id }?.id
             }
-            maybeNotifyRoomInvite(c)
+            maybeNotifyRoomInvite(chats.toList())
+            return token to epoch
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: AccountApiException) {
+            deferChatPolls(e)
             listError = accountErrorText(e)
             if (e.code == io.github.rwpp.net.account.AccountErrorCode.UNAUTHORIZED) {
                 logger.warn("好友列表鉴权失败")
@@ -108,6 +150,7 @@ object FriendsSession {
         } finally {
             loadingLists = false
         }
+        return null
     }
 
     suspend fun sendRequest(username: String): FriendRequestDto {
@@ -181,12 +224,18 @@ object FriendsSession {
     }
 
     suspend fun send(body: String): Boolean {
+        return chatSyncMutex.withLock { sendLocked(body) }
+    }
+
+    private suspend fun sendLocked(body: String): Boolean {
         val peer = activePeer ?: return false
         val token = AccountSession.requireToken()
+        val epoch = cacheEpoch
         return try {
             val msg = withContext(Dispatchers.IO) {
                 AccountSession.client().sendMessage(token, peer.id, body)
             }
+            if (!isCurrentSession(token, epoch) || activePeer?.id != peer.id) return true
             activeConversationId = msg.conversationId
             if (messages.none { it.id == msg.id }) {
                 messages.add(msg)
@@ -216,14 +265,21 @@ object FriendsSession {
     }
 
     suspend fun pollMessages() {
+        chatSyncMutex.withLock { pollMessagesLocked() }
+    }
+
+    private suspend fun pollMessagesLocked() {
         val conversationId = activeConversationId ?: return
         if (!AccountSession.networkEnabled || !AccountSession.loggedIn) return
+        if (System.currentTimeMillis() < chatPollRetryAtMs) return
         try {
             val token = AccountSession.requireToken()
+            val epoch = cacheEpoch
             val after = messages.maxOfOrNull { it.id }
             val page = withContext(Dispatchers.IO) {
                 AccountSession.client().listMessages(token, conversationId, afterId = after, pageSize = 50)
             }
+            if (!isCurrentSession(token, epoch) || activeConversationId != conversationId) return
             var added = false
             page.messages.forEach { msg ->
                 if (messages.none { it.id == msg.id }) {
@@ -236,7 +292,10 @@ object FriendsSession {
                 markReadIfNeeded()
             }
             chatError = ""
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: AccountApiException) {
+            deferChatPolls(e)
             chatError = accountErrorText(e)
         } catch (e: Exception) {
             logger.warn("拉聊天失败：{}", e.message)
@@ -253,6 +312,9 @@ object FriendsSession {
         peer: PublicUser? = null,
         conversationId: Long? = null,
     ) {
+        cacheEpoch++
+        lastAppliedChangeIds.clear()
+        chatPollRetryAtMs = 0L
         AccountSession.networkEnabled = false
         friends.clear()
         friends.addAll(previewFriends)
@@ -273,6 +335,9 @@ object FriendsSession {
     }
 
     fun clear() {
+        cacheEpoch++
+        lastAppliedChangeIds.clear()
+        chatPollRetryAtMs = 0L
         friends.clear()
         incoming.clear()
         outgoing.clear()
@@ -299,6 +364,7 @@ object FriendsSession {
         val selfId = AccountSession.user?.id ?: return
         newChats.forEach { chat ->
             val last = chat.lastMessage ?: return@forEach
+            if (last.deleted) return@forEach
             if (last.senderId == selfId || chat.unread <= 0) return@forEach
             if (inviteToastSeen[chat.peer.id] == last.id) return@forEach
             val invite = RoomInviteCodec.decode(last.body) ?: return@forEach
@@ -312,13 +378,85 @@ object FriendsSession {
     }
 
     private suspend fun loadLatestMessages(conversationId: Long) {
+        chatSyncMutex.withLock { loadLatestMessagesLocked(conversationId) }
+    }
+
+    private suspend fun loadLatestMessagesLocked(conversationId: Long) {
         val token = AccountSession.requireToken()
+        val epoch = cacheEpoch
         val page = withContext(Dispatchers.IO) {
             AccountSession.client().listMessages(token, conversationId, pageSize = 50)
         }
+        if (!isCurrentSession(token, epoch) || activeConversationId != conversationId) return
         messages.clear()
         messages.addAll(page.messages.sortedBy { it.id })
         markReadIfNeeded()
+    }
+
+    /** 持有 messageChangesMutex，严格串行查询 → 替换 → ACK → 下一批。 */
+    private suspend fun syncMessageChanges(token: String, epoch: Long) {
+        if (!isCurrentSession(token, epoch)) return
+        val api = AccountSession.client()
+        val clientId = AccountSession.messageChangesClientId()
+        while (isCurrentSession(token, epoch)) {
+            val hasMore = chatSyncMutex.withLock {
+                if (!isCurrentSession(token, epoch) || System.currentTimeMillis() < chatPollRetryAtMs) return
+                val page = withContext(Dispatchers.IO) { api.listMessageChanges(token, clientId, pageSize = 100) }
+                if (!isCurrentSession(token, epoch) || page.changes.isEmpty()) return
+                applyMessageChanges(page.changes)
+                // 本地替换或快照提交抛异常时不会走到 ACK；失败的 ACK 留给下一轮重试。
+                val ack = withContext(Dispatchers.IO) {
+                    api.ackMessageChanges(token, clientId, page.changes.map { it.changeId })
+                }
+                check(ack.ok) { "消息变更确认失败" }
+                page.hasMore
+            }
+            if (!hasMore) return
+            // 分页退避期间释放缓存锁，仍可正常发送和拉取新私信。
+            delay(changeBatchDelayMs)
+        }
+    }
+
+    private fun applyMessageChanges(changes: List<ChatMessageChange>) {
+        val applied = lastAppliedChangeIds.toMutableMap()
+        Snapshot.withMutableSnapshot {
+            changes.forEach { change ->
+                val message = change.message
+                if (change.changeId <= (applied[message.id] ?: 0L)) return@forEach
+                val messageIndex = messages.indexOfFirst {
+                    it.id == message.id && it.conversationId == message.conversationId
+                }
+                if (messageIndex >= 0) messages[messageIndex] = message
+                val chatIndex = chats.indexOfFirst {
+                    it.id == message.conversationId && it.lastMessage?.id == message.id
+                }
+                if (chatIndex >= 0) chats[chatIndex] = chats[chatIndex].copy(lastMessage = message)
+                // 没有本地缓存的消息也可确认，以后打开历史会得到服务端最新正文。
+                applied[message.id] = change.changeId
+            }
+        }
+        val cachedMessageIds = (messages.map { it.id } + chats.mapNotNull { it.lastMessage?.id }).toSet()
+        lastAppliedChangeIds.clear()
+        lastAppliedChangeIds.putAll(applied.filterKeys { it in cachedMessageIds })
+        // 已显示的房间邀请若被封禁，同步撤掉悬浮卡片。
+        runCatching {
+            val notification = UI.incomingInviteNotification
+            if (notification != null && changes.any {
+                    it.message.id == notification.messageId && it.message.deleted &&
+                        applied[it.message.id] == it.changeId
+                }
+            ) UI.incomingInviteNotification = null
+        }
+    }
+
+    private fun isCurrentSession(token: String, epoch: Long): Boolean =
+        cacheEpoch == epoch && AccountSession.loggedIn && AccountSession.token == token && AccountSession.networkEnabled
+
+    private fun deferChatPolls(error: AccountApiException) {
+        if (error.code == AccountErrorCode.RATE_LIMITED) {
+            val seconds = (error.retryAfterSeconds ?: 5).coerceAtLeast(1)
+            chatPollRetryAtMs = System.currentTimeMillis() + seconds * 1_000L
+        }
     }
 
     private suspend fun markReadIfNeeded() {

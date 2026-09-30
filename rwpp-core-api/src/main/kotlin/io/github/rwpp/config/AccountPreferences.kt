@@ -27,6 +27,8 @@ data class AccountPreferences(
     var appKey: String = "",
     var token: String = "",
     var lastUsername: String = "",
+    /** 消息变更确认的稳定设备标识，首次同步时生成并保存，不随登出清除。 */
+    var chatClientId: String = "",
 ) : Config
 
 /**

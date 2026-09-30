@@ -154,6 +154,30 @@ class AccountApiClient(
     suspend fun markRead(token: String, conversationId: Long, lastMessageId: Long): OkResponse =
         postJson("/chats/$conversationId/read", MarkChatReadRequest(lastMessageId), token)
 
+    /** 查询当前设备尚未确认的消息变更；GET 本身不确认（文档 6.20a）。 */
+    suspend fun listMessageChanges(
+        token: String,
+        clientId: String,
+        pageSize: Int = 50,
+    ): ChatMessageChangesResponse {
+        requireValidChatClientId(clientId)
+        require(pageSize in 1..100) { "pageSize 必须为 1～100" }
+        return getJson("/chats/message-changes?client_id=${enc(clientId)}&page_size=$pageSize", token)
+    }
+
+    /** 只确认已经成功替换的变更 ID；重复确认幂等（文档 6.20b）。 */
+    suspend fun ackMessageChanges(token: String, clientId: String, changeIds: List<Long>): OkResponse {
+        requireValidChatClientId(clientId)
+        require(changeIds.size in 1..100 && changeIds.all { it > 0 }) {
+            "changeIds 必须包含 1～100 个正整数"
+        }
+        return postJson("/chats/message-changes/ack", AckChatMessageChangesRequest(clientId, changeIds), token)
+    }
+
+    private fun requireValidChatClientId(clientId: String) {
+        require(clientId.matches(Regex("[A-Za-z0-9._:-]{1,64}"))) { "clientId 格式非法" }
+    }
+
     suspend fun getPresence(token: String, userId: Long): PresenceDto =
         getJson<PresenceResponse>("/users/$userId/presence", token).presence
 

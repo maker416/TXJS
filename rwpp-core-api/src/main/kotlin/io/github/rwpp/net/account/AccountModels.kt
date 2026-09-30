@@ -148,6 +148,7 @@ data class ChatMessageDto(
     @SerialName("sender_id") val senderId: Long,
     val body: String,
     @SerialName("created_at") val createdAt: String,
+    val deleted: Boolean = false,
 )
 
 @Serializable
@@ -180,6 +181,26 @@ data class ChatMessageResponse(
 data class ChatMessagesResponse(
     val messages: List<ChatMessageDto> = emptyList(),
     @SerialName("page_size") val pageSize: Int = 20,
+)
+
+/** 封禁 / 解封后的完整消息快照，changeId 与原消息 id 独立（文档 6.20a）。 */
+@Serializable
+data class ChatMessageChange(
+    @SerialName("change_id") val changeId: Long,
+    @SerialName("changed_at") val changedAt: String,
+    val message: ChatMessageDto,
+)
+
+@Serializable
+data class ChatMessageChangesResponse(
+    val changes: List<ChatMessageChange> = emptyList(),
+    @SerialName("has_more") val hasMore: Boolean = false,
+)
+
+@Serializable
+data class AckChatMessageChangesRequest(
+    @SerialName("client_id") val clientId: String,
+    @SerialName("change_ids") val changeIds: List<Long>,
 )
 
 @Serializable

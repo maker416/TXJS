@@ -188,6 +188,58 @@ class AccountApiClientTest {
     }
 
     @Test
+    fun messageChangesUseStableClientIdAndDecodeFullSnapshot() = runBlocking {
+        server.enqueue(MockResponse().setBody("""
+            {"changes":[{"change_id":101,"changed_at":"changed","message":
+              {"id":20,"conversation_id":5,"sender_id":1,"body":"此条消息由于违规已经被删除","deleted":true,"created_at":"created"}}],"has_more":true}
+        """.trimIndent()))
+        val page = client.listMessageChanges("tok", "device-001", 100)
+        assertTrue(page.hasMore)
+        assertEquals(101, page.changes.single().changeId)
+        assertEquals(20, page.changes.single().message.id)
+        assertTrue(page.changes.single().message.deleted)
+        val request = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("GET", request.method)
+        assertEquals("/api/v1/chats/message-changes?client_id=device-001&page_size=100", request.path)
+        assertEquals("Bearer tok", request.getHeader("Authorization"))
+        assertEquals("ak_test", request.getHeader("X-App-Key"))
+        assertNull(request.getHeader("X-App-Secret"))
+    }
+
+    @Test
+    fun ackMessageChangesUsesChangeIdsAndBearer() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"ok":true}"""))
+        assertTrue(client.ackMessageChanges("tok", "device-001", listOf(101, 102)).ok)
+        val request = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("POST", request.method)
+        assertEquals("/api/v1/chats/message-changes/ack", request.path)
+        assertEquals("""{"client_id":"device-001","change_ids":[101,102]}""", request.body.readUtf8())
+        assertEquals("Bearer tok", request.getHeader("Authorization"))
+        assertEquals("ak_test", request.getHeader("X-App-Key"))
+        assertNull(request.getHeader("X-App-Secret"))
+    }
+
+    @Test
+    fun invalidMessageChangeParametersDoNotSendRequests() = runBlocking {
+        assertFailsWith<IllegalArgumentException> { client.listMessageChanges("tok", "") }
+        assertFailsWith<IllegalArgumentException> { client.listMessageChanges("tok", "设备") }
+        assertFailsWith<IllegalArgumentException> { client.listMessageChanges("tok", "device", 101) }
+        assertFailsWith<IllegalArgumentException> { client.ackMessageChanges("tok", "device", emptyList()) }
+        assertFailsWith<IllegalArgumentException> { client.ackMessageChanges("tok", "device", listOf(0)) }
+        assertFailsWith<IllegalArgumentException> { client.ackMessageChanges("tok", "device", List(101) { 1 }) }
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun messageChangeRateLimitPreservesRetryAfter() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(429).setHeader("Retry-After", "7")
+            .setBody("""{"code":"rate_limited","message":"too frequent"}"""))
+        val error = assertFailsWith<AccountApiException> { client.listMessageChanges("tok", "device") }
+        assertEquals("rate_limited", error.code)
+        assertEquals(7, error.retryAfterSeconds)
+    }
+
+    @Test
     fun errorBodyMapsDocumentedCode() = runBlocking {
         server.enqueue(
             MockResponse().setResponseCode(409).setBody(

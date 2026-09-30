@@ -153,7 +153,7 @@ fun App(
     }
 
     // 好友私信全局轮询：驱动未读徽标与房间邀请悬浮卡片。
-    // 好友页/账号页打开时跳过（它们有自有轮询）；未登录/预览模式静默跳过
+    // 好友页/账号页打开时跳过（它们有自有轮询）；共用聊天配额，列表每 5s 刷新
     LaunchedEffect(Unit) {
         while (true) {
             if (AccountSession.loggedIn && AccountSession.networkEnabled &&
@@ -161,7 +161,7 @@ fun App(
             ) {
                 runCatching { FriendsSession.refreshLists() }
             }
-            delay(1_000)
+            delay(FriendsSession.LIST_POLL_INTERVAL_MS)
         }
     }
 

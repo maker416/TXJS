@@ -12,6 +12,7 @@ import io.github.rwpp.net.account.BlockRequest
 import io.github.rwpp.net.account.BlocksResponse
 import io.github.rwpp.net.account.ChatItem
 import io.github.rwpp.net.account.ChatMessageDto
+import io.github.rwpp.net.account.ChatMessageChangesResponse
 import io.github.rwpp.net.account.EmailCodeLoginRequest
 import io.github.rwpp.net.account.EmailCodePurpose
 import io.github.rwpp.net.account.EmailLoginRequest
@@ -161,6 +162,22 @@ class AccountModelsTest {
         assertEquals(20, msg.id)
         assertEquals(5, msg.conversationId)
         assertEquals(1, msg.senderId)
+        assertTrue(!msg.deleted)
+    }
+
+    @Test
+    fun messageChangesDecodeUnbannedSnapshotAndEmptyPage() {
+        val page = json.decodeFromString<ChatMessageChangesResponse>("""
+            {"changes":[{"change_id":102,"changed_at":"changed","message":
+              {"id":20,"conversation_id":5,"sender_id":1,"body":"恢复正文","deleted":false,"created_at":"created"}}],"has_more":false}
+        """.trimIndent())
+        assertEquals(102, page.changes.single().changeId)
+        assertEquals("changed", page.changes.single().changedAt)
+        assertEquals("恢复正文", page.changes.single().message.body)
+        assertTrue(!page.changes.single().message.deleted)
+        val empty = json.decodeFromString<ChatMessageChangesResponse>("""{"changes":[],"has_more":false}""")
+        assertTrue(empty.changes.isEmpty())
+        assertTrue(!empty.hasMore)
     }
 
     @Test
