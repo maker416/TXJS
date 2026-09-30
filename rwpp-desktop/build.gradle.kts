@@ -88,6 +88,9 @@ compose.desktop {
                 "-Dfile.encoding=UTF-8",
                 "-Djava.library.path=\$ROOTDIR",
                 "--add-opens=java.base/java.net=ALL-UNNAMED",
+                "--add-opens=java.desktop/sun.awt=ALL-UNNAMED",
+                "--add-opens=java.desktop/sun.lwawt=ALL-UNNAMED",
+                "--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED",
                 "'-cp \$ROOTDIR/generated_lib/*;\$ROOTDIR/extension/*;\$ROOTDIR/app/*;\$ROOTDIR/libs/*'"
             )
 

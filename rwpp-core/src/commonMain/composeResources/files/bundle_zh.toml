@@ -310,6 +310,11 @@ resourceBrowser = "资源获取"
 resourceType = "资源类型"
 loadMore = "加载更多"
 search = "搜索"
+back = "后退"
+forward = "前进"
+home = "主页"
+refresh = "刷新"
+loadFailed = "网页加载失败，请检查网络后点击刷新重试。"
 
 [menu]
 mission = "战役"

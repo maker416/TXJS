@@ -7,489 +7,108 @@
 
 package io.github.rwpp.ui
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil3.compose.AsyncImage
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.i18n.readI18n
-import io.github.rwpp.impl.formatRtsBoxHeat
-import io.github.rwpp.customMapDir
-import io.github.rwpp.modDir
-import io.github.rwpp.net.Net
-import io.github.rwpp.net.NetResourceInfo
-import io.github.rwpp.net.ResourceType
 import io.github.rwpp.platform.BackHandler
-import io.github.rwpp.rwpp_core.generated.resources.Res
-import io.github.rwpp.rwpp_core.generated.resources.download
-import io.github.rwpp.rwpp_core.generated.resources.login
-import io.github.rwpp.rwpp_core.generated.resources.replay_30
-import io.github.rwpp.widget.*
-import io.github.rwpp.widget.v2.RWIconButton
-import org.jetbrains.compose.resources.painterResource
-import org.koin.compose.koinInject
-import java.io.File
+import io.github.rwpp.platform.EmbeddedBrowser
+import io.github.rwpp.platform.EmbeddedBrowserState
+import io.github.rwpp.widget.BorderCard
 
-@Suppress("UnusedMaterial3ScaffoldPaddingParameter")
+private const val RESOURCE_BROWSER_URL = "http://192.168.1.106:8080"
+
 @Composable
-fun ResourceBrowser(
-    onExit: () -> Unit
-) {
-    BackHandler(true, onExit)
-    DisposableEffect(Unit) {
-        onDispose {
-            CloseUIPanelEvent("browser").broadcastIn()
-        }
+fun ResourceBrowser(onExit: () -> Unit) {
+    val browser = remember { EmbeddedBrowserState(RESOURCE_BROWSER_URL) }
+    BackHandler(true) {
+        if (!browser.goBack()) onExit()
     }
-
-    var downloadingMod by remember { mutableStateOf(false) }
-    var progress by remember { mutableStateOf(0f) }
+    DisposableEffect(Unit) {
+        onDispose { CloseUIPanelEvent("browser").broadcastIn() }
+    }
 
     BorderCard(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(10.dp)
+        modifier = Modifier.fillMaxSize().padding(10.dp),
+        backgroundColor = MaterialTheme.colorScheme.surface,
     ) {
-
-        var isLoading by remember { mutableStateOf(false) }
-        val net = koinInject<Net>()
-        var page by remember { mutableStateOf(1) }
-        var selectedProtocolIndex by remember { mutableStateOf(1) }
-        var selectedTypeIndex by remember { mutableStateOf(0) }
-        var keyword by remember { mutableStateOf("") }
-        val allInfo = remember { SnapshotStateList<NetResourceInfo>() }
-
-        Scaffold(
-            modifier = Modifier.fillMaxSize(),
-            containerColor = Color.Transparent,
-            bottomBar = {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    if (isLoading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.padding(10.dp).size(40.dp),
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    } else {
-                        // 热门资源无分页；仅搜索协议支持「加载更多」
-                        if (selectedProtocolIndex == 0) {
-                            RWTextButton(
-                                label = readI18n("browser.loadMore"),
-                                leadingIcon = {
-                                    Icon(
-                                        painter = painterResource(Res.drawable.replay_30),
-                                        null,
-                                        modifier = Modifier.size(30.dp)
-                                    )
-                                },
-                                modifier = Modifier.padding(10.dp)
-                            ) {
-                                page += 1
-                            }
-                        }
-                    }
-                }
-            }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box {
-                ExitButton(onExit)
-                Column {
-                    Spacer(modifier = Modifier.height(20.dp))
-                    LaunchedEffect(keyword, page, selectedTypeIndex, selectedProtocolIndex) {
-                        isLoading = true
-                        val protocolIndex = selectedProtocolIndex
-                        net.searchBBS(
-                            net.bbsProtocols[protocolIndex],
-                            page,
-                            keyword,
-                            if (selectedTypeIndex == 0)
-                                ResourceType.Mod
-                            else ResourceType.Map,
-                        ) { result ->
-                            result.getOrNull()?.let { list ->
-                                // 热门资源为固定精选列表，无分页，每次用新结果替换
-                                if (protocolIndex == 1) {
-                                    allInfo.clear()
-                                    allInfo.addAll(list)
-                                } else {
-                                    allInfo.addAll(list)
-                                }
-                            }
-                            isLoading = false
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RWIconButton(
-                            Icons.Default.Person,
-                            modifier = Modifier.padding(5.dp),
-                            size = 50.dp,
-                        ) {
-                            onExit()
-                            UI.showAccountView = true
-                        }
-
-                        val list = remember {
-                            listOf(readI18n(("common.mod")), readI18n("common.map"))
-                        }
-                        LargeDropdownMenu(
-                            modifier = Modifier.weight(.3f).padding(5.dp),
-                            label = readI18n("browser.resourceType"),
-                            items = list,
-                            selectedIndex = selectedTypeIndex,
-                            onItemSelected = { index, _ ->
-                                allInfo.clear()
-                                page = 1
-                                selectedTypeIndex = index
-                            }
-                        )
-
-//                        LargeDropdownMenu(
-//                            modifier = Modifier.weight(.3f).padding(5.dp),
-//                            enabled = false,
-//                            label = "Api",
-//                            items = net.bbsProtocols,
-//                            selectedIndex = selectedProtocolIndex,
-//                            selectedItemToString = { it.name },
-//                            onItemSelected = { index, _ -> selectedProtocolIndex = index }
-//                        )
-
-
-                        var search by remember { mutableStateOf("") }
-                        RWSingleOutlinedTextField(
-                            readI18n("browser.search"),
-                            search,
-                            modifier = Modifier.weight(.3f).padding(5.dp),
-                            leadingIcon = { Icon(Icons.Default.Search, null) },
-                            trailingIcon = {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.ArrowForward,
-                                    null,
-                                    modifier = Modifier.clickable {
-                                        keyword = search
-                                        selectedProtocolIndex = if (keyword.isNotBlank()) {
-                                            0
-                                        } else {
-                                            1
-                                        }
-                                        page = 1
-                                        allInfo.clear()
-                                    })
-                            },
-                        ) {
-                            search = it
-                        }
-                    }
-
-                    @Composable
-                    fun ResourceInfoCard(resourceInfo: NetResourceInfo) {
-                        BorderCard(
-                            modifier = Modifier.width(300.dp).padding(10.dp),
-                            backgroundColor = MaterialTheme.colorScheme.surfaceContainer
-                        ) {
-                            val model = remember { resourceInfo.imageUrl }
-                            Row(modifier = Modifier.fillMaxSize()) {
-                                Card(
-                                    Modifier.padding(5.dp),
-                                    shape = RectangleShape,
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                    border = BorderStroke(3.dp, MaterialTheme.colorScheme.secondary)
-                                ) {
-
-                                    AsyncImage(
-                                        model,
-                                        null,
-                                        modifier = Modifier.size(100.dp)
-                                    )
-                                }
-
-                                Column(modifier = Modifier.height(IntrinsicSize.Max).weight(1f)) {
-                                    Text(
-                                        resourceInfo.title,
-                                        modifier = Modifier.padding(5.dp).align(Alignment.Start),
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        overflow = TextOverflow.Ellipsis,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        maxLines = 1
-                                    )
-
-                                    if (resourceInfo.version != null) {
-                                        Text(
-                                            resourceInfo.version!!,
-                                            modifier = Modifier.padding(start = 2.dp).widthIn(10.dp, 150.dp),
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.secondary
-                                        )
-                                    }
-
-                                    if (resourceInfo.description != null) {
-                                        Text(
-                                            resourceInfo.description!!,
-                                            modifier = Modifier.padding(start = 2.dp).widthIn(10.dp, 150.dp),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            overflow = TextOverflow.Ellipsis,
-                                            color = MaterialTheme.colorScheme.error,
-                                            maxLines = 1
-                                        )
-                                    }
-
-                                    if (resourceInfo.author != null) {
-                                        Text(
-                                            resourceInfo.author!!,
-                                            modifier = Modifier.padding(start = 2.dp).widthIn(10.dp, 150.dp),
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            overflow = TextOverflow.Ellipsis,
-                                            color = MaterialTheme.colorScheme.secondary,
-                                            maxLines = 1
-                                        )
-                                    }
-
-                                    if (resourceInfo.downloadNum != null) {
-                                        // 热门列表协议下 downloadNum 表示热度（非下载次数）
-                                        Text(
-                                            "热度： " + formatRtsBoxHeat(resourceInfo.downloadNum!!),
-                                            modifier = Modifier.padding(start = 2.dp).widthIn(10.dp, 150.dp),
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                    }
-                                }
-
-                                VerticalDivider(
-                                    modifier = Modifier
-                                        .height(100.dp)
-                                        .padding(2.dp)
-                                        .align(Alignment.CenterVertically),
-                                    thickness = 4.dp,
-                                )
-
-                                Column(Modifier.align(Alignment.CenterVertically)) {
-                                    if (resourceInfo.bbsUrl != null) {
-                                        IconButton(onClick = {
-                                            resourceInfo.bbsUrl.let { net.openUriInBrowser(it!!) }
-                                        }, modifier = Modifier.size(45.dp)) {
-                                            Icon(
-                                                Icons.Default.Home,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.surfaceTint
-                                            )
-                                        }
-                                    }
-
-                                    if (resourceInfo.downloadUrl != null) {
-                                        IconButton(onClick = {
-                                            resourceInfo.downloadUrl.let {
-                                                downloadingMod = true
-                                                net.downloadFile(
-                                                    it!!,
-                                                    File(
-                                                        if (selectedTypeIndex == 0)
-                                                            "$modDir/${resourceInfo.title}.rwmod"
-                                                        else "$customMapDir/${resourceInfo.title}.tmx"
-                                                    )
-                                                ) { p -> progress = p }
-                                            }
-                                        }, modifier = Modifier.size(45.dp)) {
-                                            Icon(
-                                                painter = painterResource(Res.drawable.download),
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.surfaceTint
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    LazyVerticalGrid(GridCells.Adaptive(320.dp), modifier = Modifier.fillMaxWidth()) {
-                        item(span = {
-                            // LazyGridItemSpanScope:
-                            // maxLineSpan
-                            GridItemSpan(maxLineSpan)
-                        }) {
-                            Column(
-                                modifier = Modifier.padding(5.dp).fillMaxWidth()
-                            ) {
-                                Text(
-                                    net.bbsProtocols[selectedProtocolIndex].name,
-                                    style = MaterialTheme.typography.headlineLarge,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.padding(start = 5.dp)
-                                )
-
-                                HorizontalDivider(thickness = 3.dp,
-                                    modifier = Modifier.padding(top = 2.dp, bottom = 5.dp),
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-
-                        items(allInfo, key = { it.id }) { info ->
-                            ResourceInfoCard(info)
-                        }
-
-                        item(span = {
-                            // LazyGridItemSpanScope:
-                            // maxLineSpan
-                            GridItemSpan(maxLineSpan)
-                        }) {
-                            Spacer(Modifier.height(50.dp))
-                        }
-                    }
-                }
+            IconButton(onClick = { browser.goBack() }, enabled = browser.canGoBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, readI18n("browser.back"))
             }
-        }
-
-    }
-
-    val downloaded by remember {
-        derivedStateOf {
-            progress >= 1
-        }
-    }
-
-    val failed by remember {
-        derivedStateOf {
-            progress < 0
-        }
-    }
-
-    AnimatedAlertDialog(
-        downloadingMod,
-        {
-            downloadingMod = false
-            progress = 0f
-        }, enableDismiss = downloaded
-    ) { dismiss ->
-        BorderCard(modifier = Modifier.size(200.dp)) {
-            Spacer(Modifier.weight(1f))
+            IconButton(onClick = browser::goForward, enabled = browser.canGoForward) {
+                Icon(Icons.AutoMirrored.Filled.ArrowForward, readI18n("browser.forward"))
+            }
+            IconButton(onClick = browser::goHome) {
+                Icon(Icons.Default.Home, readI18n("browser.home"))
+            }
             Text(
-                if (downloaded) {
-                    readI18n("common.done")
-                } else if (failed)
-                    readI18n("common.failed")
-                else readI18n("common.downloading"),
-                modifier = Modifier.padding(start = 2.dp).align(Alignment.CenterHorizontally),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.primary
+                browser.url,
+                modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            LinearProgressIndicator(
-                progress = { progress },
-                trackColor = MaterialTheme.colorScheme.surface,
-                modifier = Modifier.fillMaxWidth().padding(5.dp)
-            )
-            Spacer(Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-fun LoginDialog(
-    visible: Boolean,
-    onDismiss: () -> Unit
-) {
-    AnimatedAlertDialog(visible, onDismiss) {
-        BorderCard {
-            val net = koinInject<Net>()
-            var log by remember { mutableStateOf("") }
-            var isFailed by remember { mutableStateOf(false) }
-            var isLoading by remember { mutableStateOf(false) }
-            var username by remember { mutableStateOf("") }
-            var password by remember { mutableStateOf("") }
-
-            Column(
-                modifier = Modifier.padding(10.dp).autoClearFocus(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                RWSingleOutlinedTextField(
-                    label = readI18n("browser.username"),
-                    value = username,
-                    modifier = Modifier.width(400.dp).padding(10.dp),
-                    leadingIcon = { Icon(Icons.Default.Person, null, modifier = Modifier.size(30.dp)) },
-                    onValueChange =
-                        {
-                            username = it
-                        },
-                )
-
-                RWSingleOutlinedTextField(
-                    label = readI18n("browser.password"),
-                    value = password,
-                    modifier = Modifier.width(400.dp).padding(10.dp),
-                    visualTransformation = PasswordVisualTransformation(),
-                    leadingIcon = { Icon(Icons.Default.Lock, null, modifier = Modifier.size(30.dp)) },
-                    onValueChange =
-                        {
-                            password = it
-                        },
-                )
-
-                if (log.isNotBlank()) {
-                    Text(
-                        log,
-                        modifier = Modifier.padding(10.dp),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = if (isFailed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                if (isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(40.dp).padding(10.dp),
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                } else {
-                    RWTextButton(
-                        readI18n("browser.login"),
-                        modifier = Modifier.padding(10.dp),
-                        leadingIcon = {
-                            Icon(
-                                painter = painterResource(Res.drawable.login),
-                                null,
-                                modifier = Modifier.size(30.dp)
-                            )
-                        },
-                    ) {
-                        isLoading = true
-                        log = ""
-                        isFailed = false
-                        net.loginInBBS(username, password) {
-                            isLoading = false
-                            log = if (it.isSuccess) {
-                                it.getOrDefault("login success")
-                            } else {
-                                isFailed = true
-                                it.exceptionOrNull()?.message.toString()
-                            }
-                        }
-                    }
-                }
+            IconButton(onClick = browser::reload) {
+                Icon(Icons.Default.Refresh, readI18n("browser.refresh"))
+            }
+            IconButton(onClick = onExit) {
+                Icon(Icons.Default.Close, readI18n("common.close"))
             }
         }
+
+        if (browser.isLoading) {
+            val progress = browser.progress
+            if (progress == null) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(3.dp))
+            } else {
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier.fillMaxWidth().height(3.dp),
+                )
+            }
+        } else {
+            Spacer(Modifier.height(3.dp))
+        }
+
+        browser.error?.let { error ->
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(readI18n("browser.loadFailed"), color = MaterialTheme.colorScheme.error)
+                Text(error, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        EmbeddedBrowser(browser, Modifier.fillMaxWidth().weight(1f))
     }
 }
