@@ -309,6 +309,11 @@ resourceBrowser = "Resource Acquisition"
 resourceType = "Resource Type"
 loadMore = "Load More"
 search = "Search"
+back = "Back"
+forward = "Forward"
+home = "Home"
+refresh = "Refresh"
+loadFailed = "Unable to load this page. Check your connection and refresh to retry."
 
 [menu]
 mission = "Mission"

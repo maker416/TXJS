@@ -68,6 +68,22 @@ kotlin {
                     "include" to "lwjgl.jar"
                 ))
                 implementation(compose.desktop.common)
+                // Chromium runtime 随桌面包提供；每个构建只包含当前平台的 native 库。
+                val jcefVersion = "jcef-d3de827+cef-146.0.10+g8219561+chromium-146.0.7680.179"
+                val osName = System.getProperty("os.name").lowercase()
+                val jcefOs = when {
+                    osName.contains("win") -> "windows"
+                    osName.contains("mac") -> "macosx"
+                    else -> "linux"
+                }
+                val jcefArch = when (System.getProperty("os.arch")) {
+                    "aarch64", "arm64" -> "arm64"
+                    "x86", "i386" -> "i386"
+                    "arm" -> "arm"
+                    else -> "amd64"
+                }
+                implementation("me.friwi:jcefmaven:146.0.10")
+                runtimeOnly("me.friwi:jcef-natives-$jcefOs-$jcefArch:$jcefVersion")
                 // 主题美术包背景音乐：桌面端 OGG 解码（仓库 lib/ 已有的纯 Java 库）
                 implementation(fileTree(
                     "dir" to "$rootDir/lib",
