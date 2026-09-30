@@ -81,6 +81,7 @@ kotlin {
                 implementation(compose.desktop.currentOs)
                 implementation(compose.desktop.uiTestJUnit4)
                 implementation(kotlin("test"))
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${findProperty("kotlin.coroutines.version")}")
             }
         }
     }

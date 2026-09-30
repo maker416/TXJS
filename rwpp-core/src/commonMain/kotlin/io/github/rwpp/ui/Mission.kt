@@ -125,11 +125,10 @@ fun MissionView(fixedType: MissionType? = null, onExit: () -> Unit) {
                             val difficulty = Difficulty.entries[selectedIndex1]
                             MapItem(mission.displayName(), mission) {
                                 scope.launch {
-                                    GameSessionController.beginSession()
-                                    startNewMissionGame(
-                                        difficulty,
-                                        mission
-                                    )
+                                    GameSessionController.beginSession {
+                                        startNewMissionGame(difficulty, mission)
+                                        GameSessionController.onRoomOpened()
+                                    }
                                 }
                             }
                         }

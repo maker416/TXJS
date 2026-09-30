@@ -248,7 +248,8 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 - `resetNavigation(page)`：**硬跳转**（清空返回栈直达目标页），用于被踢回列表、接受房间邀请、房内同步取消退房等放弃导航上下文的系统驱动转场。
 - 旧的 11 个 `UI.showXxxView` 布尔量（`showMultiplayerView`、`showSettingsView`、`showRoomView`、`showMissionView`、`showModsView`、`showExtensionView`、`showReplayView`、`showResourceBrowser`、`showSinglePlayerView`、`showSurvivalView`）保留为 `pageBinding(page)` 读写代理（读 = 当前页是否为该页；写 true = `navigateTo`，写 false = `closePage`），既有调用点零改动；新代码请直接使用 `navigateTo`/`navigateBack`/`resetNavigation`/`launcherPage`。
 - **上层叠加页**不参与页面级互斥：账号页（`UI.showAccountView`）与好友页（`UI.showFriendsView`）保持独立布尔量，可合法叠加在房间页之上（房间内邀请好友就地登录、房间名片发私信）。
-- 页面可见性仍由 `App.kt` 的 `AnimatedVisibility`（`fadeIn`/`fadeOut` + `slideInVertically`/`expandIn`/`shrinkOut`）呈现过渡动画；`launcherPage == LauncherPage.MainMenu` 且无叠加页打开时显示主菜单（`UI.UiProvider.MainMenu`）。注意：返回栈中只有栈顶页面对应的 AnimatedVisibility 为 true，父页面在子页面打开期间会退出组合（与旧行为一致），返回时重组。
+- 页面动画由 `LauncherPageHost` / `LauncherOverlayHost` 内的 `AnimatedVisibility` 呈现；`launcherPage == LauncherPage.MainMenu` 且无叠加页打开时显示主菜单（`UI.UiProvider.MainMenu`）。返回栈中只有栈顶页面可交互；退出动画中的页面仍在组合内，但不能接收返回或指针点击。父页面在子页面打开期间退出组合，返回时重组。
+- 导航写入函数会检查 UI 线程；IO 加入成功回调必须切到 `Dispatchers.Main.immediate` 后导航。账号、好友、页面的交互优先级从高到低，两个叠加页均绘制在房间之上，并拦截空白区域点击。桌面 `BackHandler` 统一分派给最后注册的可用处理器，用 `rememberUpdatedState` 更新回调；通过 Swing EDT 执行，避免同步键盘广播与 Main 等待死锁。
 
 `UI.kt` 中维护了一些全局 UI 状态（`UI.warning`、`UI.question`、`UI.dialogWidget`、`UI.showNetworkDialog` 等），通过 Compose 重组驱动弹窗与覆盖层。
 
@@ -256,8 +257,9 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 `rwpp-core` 的 `core/GameSessionController.kt` 是游戏会话（单人遭遇战/沙盒、多人加入/开房、任务、回放）生命周期的单一事实来源，阶段为 `IDLE → STARTING → IN_ROOM → CLOSING`（`sessionPhase`，信息性标记）。
 
-- **新会话必须经 `beginSession()`**（挂起函数）：它会先等待未完成的退房清理跑完再返回，保证旧会话一定先于新会话 setup 被完整拆除（`DisconnectEvent` 照常广播）。这取代了早期的 `roomSessionEpoch` 世代号补丁，从机制上消除「退房延迟清理迟到误拆新会话」（沙盒变遭遇战）的竞态。无挂起清理时立即返回，不引入延迟。
-- **房间退出统一经 `scheduleClose(scope)` 登记**：清理动作（`withFrameNanos` + `ROOM_EXIT_DISCONNECT_DELAY_MS` 延迟 + `cancelJoinServer`/`onBanUnits`/`disconnect`）在 Main 作用域执行，控制器持有其 `Job` 供 `beginSession` 等待。
+- **新会话必须经 `beginSession { setup }`**（挂起函数）：互斥覆盖等待旧退房和整个 setup，期间重复请求返回 null，不排队开启第二个会话。旧清理取消或失败会向上传播，不放行 setup。引擎调用保留调用方原有线程；控制器只将阶段写入切到 Main，不能据此把 Android 引擎入口搬到游戏线程。
+- **房间退出统一经 `scheduleClose { cleanup }` 登记**：清理在控制器持有的独立 Main 作用域执行，不随 App 重建取消。等待房间退出动画真正完成并 dispose 后，再执行 `cancelJoinServer`/`onBanUnits`/`disconnectAndWait`，不使用固定毫秒延迟猜测 UI 生命周期。重复退出不会取消正在进行的清理；新会话等待其 `Deferred` 完成。
+- `disconnectAndWait` 等待 `DisconnectEvent` 订阅者完成；模组 Presence/房主会话清理、公示撤销所派生的任务也由订阅者等待，避免旧任务迟到清空新会话或撤销新公示。应用阶段的原版回落任务继续保留。事件拦截立即停止后续订阅者（含同优先级），普通订阅者异常记日志后仍执行其余清理订阅者。
 - 被踢回列表、引擎断连、房内同步取消退房等**绕过 `scheduleClose` 的结束路径**，调用 `onExternalSessionEnd()` 同步阶段标记。
 - 房间视图打开（进房/开房成功）调 `onRoomOpened()`。
 - 注意：本控制器只串行「开始/结束」的时序，不镜像引擎房间状态；引擎仍是房间状态的真身。
@@ -313,6 +315,8 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 ## 测试策略
 
 当前测试覆盖度**极低**，以手动/集成测试为主：
+
+- **导航与生命周期回归**：`rwpp-core-api` 的 `EventChannelTest`，以及 `rwpp-core/src/desktopTest/kotlin/` 的 `LauncherPageTest`、`BackDispatcherTest`、`BackHandlerComposeTest`、`SessionLifecycleTest`。覆盖同优先级拦截、订阅者异常后的清理、返回栈与线程约束、最新返回回调、叠加页优先级、退出动画中的点击/返回屏蔽、UI 订阅释放、重复开始/退出、取消/失败与断线清理屏障。两端编译通过仍不能代替 Android 真机与实际游戏会话验证。
 
 - **单元测试**：`rwpp-core-api/src/test/kotlin/`
   - `RwListParserTest.kt` — 房间列表 JSON 解析、URL 迁移、可加入性过滤、mod 房间版本映射等

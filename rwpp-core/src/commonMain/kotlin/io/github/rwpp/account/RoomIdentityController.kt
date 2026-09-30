@@ -34,6 +34,7 @@ import io.github.rwpp.net.sync.CODE_PREFIX
 import io.github.rwpp.net.sync.SID_PREFIX
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -99,6 +100,7 @@ object RoomIdentityController {
         private set
 
     private var publishJob: Job? = null
+    private var stopJob: Job? = null
     private var eventsBound = false
 
     /**
@@ -112,8 +114,8 @@ object RoomIdentityController {
     fun init() {
         if (eventsBound) return
         eventsBound = true
-        GlobalEventChannel.filter(DisconnectEvent::class).subscribeAlways(priority = EventPriority.MONITOR) {
-            stopPublishing()
+        GlobalEventChannel.filter(DisconnectEvent::class).subscribeAlways(Dispatchers.Main.immediate, priority = EventPriority.MONITOR) {
+            stopPublishing()?.join()
         }
     }
 
@@ -154,8 +156,9 @@ object RoomIdentityController {
         if (merged == roomKeys) return
         roomKeys = merged
         // 让新 key 尽快生效；未在发布中（未登录/单人房）则跳过，由 startPublishing 后的首个周期兜底
-        if (publishJob?.isActive == true) {
-            scope.launch { runCatching { publishOnce() } }
+        val publishing = publishJob
+        if (publishing?.isActive == true) {
+            scope.launch(publishing) { runCatching { publishOnce() } }
         }
     }
 
@@ -167,7 +170,9 @@ object RoomIdentityController {
      */
     fun startPublishing() {
         if (publishJob?.isActive == true) return
+        val pendingStop = stopJob
         publishJob = scope.launch {
+            pendingStop?.join()
             logger.info("[ROOMID] 房间身份公示已启动（间隔 ${PUBLISH_INTERVAL_MS}ms）")
             while (isActive) {
                 if (!publishOnce()) break
@@ -177,24 +182,29 @@ object RoomIdentityController {
     }
 
     /** 停止公示循环，并尽力向服务端撤销公示记录。 */
-    fun stopPublishing() {
-        publishJob?.cancel()
+    @Synchronized
+    fun stopPublishing(): Job? {
+        val stoppedPublish = publishJob
+        stoppedPublish?.cancel()
         publishJob = null
         playerName = ""
         cardAvailability.clear()
         val keys = roomKeys
         roomKeys = emptyList()
-        if (keys.isEmpty()) return
-        scope.launch {
+        if (keys.isEmpty() && stoppedPublish == null) return stopJob
+        val previousStop = stopJob
+        return scope.launch(start = CoroutineStart.LAZY) {
+            previousStop?.join()
+            stoppedPublish?.join()
             runCatching {
-                if (AccountSession.loggedIn && AccountSession.networkEnabled && !featureUnavailable) {
+                if (keys.isNotEmpty() && AccountSession.loggedIn && AccountSession.networkEnabled && !featureUnavailable) {
                     newClient().delete(resolveAppKey(), AccountSession.requireToken())
                     logger.info("[ROOMID] 已撤销房间身份公示")
                 }
             }.onFailure {
                 logger.debug("[ROOMID] 撤销公示失败：${it.message}")
             }
-        }
+        }.also { stopJob = it; it.start() }
     }
 
     /**

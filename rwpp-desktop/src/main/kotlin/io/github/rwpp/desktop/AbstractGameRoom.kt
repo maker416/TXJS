@@ -12,6 +12,7 @@ import com.corrodinggames.rts.gameFramework.e
 import com.corrodinggames.rts.gameFramework.j.c
 import io.github.rwpp.appKoin
 import io.github.rwpp.desktop.impl.PlayerImpl
+import io.github.rwpp.event.broadcast
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.DisconnectEvent
 import io.github.rwpp.event.events.MapChangedEvent
@@ -347,6 +348,14 @@ abstract class AbstractGameRoom  : GameRoom {
     }
 
     override fun disconnect(reason: String) {
+        disconnectRoom(reason).broadcastIn()
+    }
+
+    override suspend fun disconnectAndWait(reason: String) {
+        disconnectRoom(reason).broadcast()
+    }
+
+    private fun disconnectRoom(reason: String): DisconnectEvent {
         singlePlayer = false
         bannedUnitList = listOf()
         roomMods = arrayOf()
@@ -356,7 +365,7 @@ abstract class AbstractGameRoom  : GameRoom {
         lastMapPath = null
 
         if (isConnecting) GameEngine.B().bX.b(reason)
-        DisconnectEvent(reason).broadcastIn()
+        return DisconnectEvent(reason)
     }
 
     override fun updateUI() {

@@ -10,88 +10,102 @@ package io.github.rwpp.core
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import io.github.rwpp.platform.checkUiThread
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.withContext
 
 /**
- * 游戏会话生命周期控制器（单一事实来源）。
- *
- * 会话指一次「游戏局」的完整生命周期：单人遭遇战/沙盒、多人加入/开房、任务、回放。
- * 历史上会话的开始与结束散落在各 UI 回调里，退房清理更是用「延迟约 120ms 后断连」的
- * 写法等退出动画结束——新会话若在该窗口内建立，迟到的 disconnect 会把新会话当作旧会话
- * 拆掉（沙盒变遭遇战、加入被取消、主线程卡顿）。后改用 roomSessionEpoch 世代号补丁
- * 识别过期清理；本控制器用结构化并发从机制上消除该竞态：
- *
- * - 退房清理统一经 [scheduleClose] 登记，控制器持有其 [Job]；
- * - 新会话统一经 [beginSession] 开始，**先挂起等待未完成的退房清理跑完再返回**，
- *   保证旧会话一定先于新会话 setup 被完整拆除（DisconnectEvent 照常广播，
- *   模组同步等依赖该事件的清理不错位）；无挂起清理时立即返回，不引入任何延迟。
- *
- * [sessionPhase] 为信息性标记（Compose 可观察），供 UI 与后续步骤消费；
- * 引擎侧状态（房间/连接）仍以引擎为准，本控制器不持有镜像。
+ * 会话开始/结束的单一协调入口。开始请求独占等待退房和 setup 的整个过程，重复请求直接忽略。
+ * 退房 action 必须等待必要清理完成（含 DisconnectEvent 订阅者），不能只排队发送事件。
+ * 引擎调用仍在调用方原有线程执行；控制器只把生命周期状态提交到 Main。
  */
 object GameSessionController {
+    enum class SessionPhase { IDLE, STARTING, IN_ROOM, CLOSING }
 
-    enum class SessionPhase {
-        /** 无会话（主菜单/列表页）。 */
-        IDLE,
+    private val lifecycle = SessionLifecycle(Dispatchers.Main.immediate)
+    val sessionPhase: SessionPhase get() = lifecycle.sessionPhase
 
-        /** 新会话建立中（退房等待已完成，正在加载地图/连接服务器）。 */
-        STARTING,
+    /** 返回 null 表示已有开始请求；action 只会在旧退房完整结束后执行。 */
+    suspend fun <T> beginSession(action: suspend () -> T): T? = lifecycle.beginSession(action)
 
-        /** 房间会话活跃（等待房间或对局中）。 */
-        IN_ROOM,
-
-        /** 退房清理执行中（延迟等待 + cancelJoinServer/disconnect 拆除）。 */
-        CLOSING,
+    fun onRoomOpened() {
+        checkUiThread()
+        lifecycle.onRoomOpened()
     }
 
-    /** 当前会话阶段（信息性；只读）。 */
-    var sessionPhase by mutableStateOf(SessionPhase.IDLE)
+    fun onExternalSessionEnd() {
+        checkUiThread()
+        lifecycle.onExternalSessionEnd()
+    }
+
+    fun scheduleClose(action: suspend () -> Unit) {
+        checkUiThread()
+        lifecycle.scheduleClose(action)
+    }
+}
+
+/** 可注入 Main dispatcher，供回归测试确定性地控制退出与开始的交错。 */
+internal class SessionLifecycle(private val mainDispatcher: CoroutineDispatcher) {
+    var sessionPhase by mutableStateOf(GameSessionController.SessionPhase.IDLE)
         private set
 
-    @Volatile
-    private var closeJob: Job? = null
+    private val startMutex = Mutex()
+    private var closeJob: Deferred<Unit>? = null
+    // 必要退房清理不随 App 重建取消；action 不应依赖已销毁组合的 frame clock。
+    private val closeScope = CoroutineScope(SupervisorJob() + mainDispatcher)
 
-    /**
-     * 开始新会话（单人遭遇战/沙盒、多人加入/开房、任务、回放）。
-     * 若仍存在未完成的退房清理：挂起等待其完成（含延迟与断连拆除），随后才返回。
-     * 必须在协程中调用（Main 或 IO 均可；Main 上为挂起等待而非阻塞，不会卡 UI）。
-     */
-    suspend fun beginSession() {
-        closeJob?.join()
-        sessionPhase = SessionPhase.STARTING
+    suspend fun <T> beginSession(action: suspend () -> T): T? {
+        if (!startMutex.tryLock()) return null
+        try {
+            withContext(mainDispatcher) {
+                while (true) {
+                    val closing = closeJob ?: break
+                    // await 会传播取消/失败：未完成的清理不能被当成成功屏障。
+                    closing.await()
+                    if (closeJob === closing) {
+                        closeJob = null
+                        break
+                    }
+                }
+                sessionPhase = GameSessionController.SessionPhase.STARTING
+            }
+            return action()
+        } finally {
+            try {
+                withContext(NonCancellable + mainDispatcher) {
+                    if (sessionPhase == GameSessionController.SessionPhase.STARTING) {
+                        sessionPhase = GameSessionController.SessionPhase.IDLE
+                    }
+                }
+            } finally {
+                startMutex.unlock()
+            }
+        }
     }
 
-    /** 房间视图已打开（进房/开房成功）：标记会话活跃。 */
-    fun onRoomOpened() {
-        sessionPhase = SessionPhase.IN_ROOM
-    }
+    fun onRoomOpened() { sessionPhase = GameSessionController.SessionPhase.IN_ROOM }
+    fun onExternalSessionEnd() { sessionPhase = GameSessionController.SessionPhase.IDLE }
 
-    /**
-     * 会话被外部结束（被踢回列表、引擎断连、房内同步取消退房等未经 [scheduleClose] 的路径）：
-     * 仅同步阶段标记，引擎侧拆除由触发方自行负责。
-     */
-    fun onExternalSessionEnd() {
-        sessionPhase = SessionPhase.IDLE
-    }
-
-    /**
-     * 登记一次退房清理（房间退出回调专用）。
-     * [action]（延迟等待 + cancelJoinServer + onBanUnits + disconnect）在 [scope]
-     *（应为 Main 作用域）中执行；防御性地取消上一次未完成的登记。
-     */
-    fun scheduleClose(scope: CoroutineScope, action: suspend () -> Unit) {
-        closeJob?.cancel()
-        sessionPhase = SessionPhase.CLOSING
-        closeJob = scope.launch {
+    fun scheduleClose(action: suspend () -> Unit) {
+        // 重复退出共享同一次清理，不能 cancel 掉已进行中的拆除。
+        if (closeJob?.isCompleted == false) return
+        sessionPhase = GameSessionController.SessionPhase.CLOSING
+        closeJob = closeScope.async(start = CoroutineStart.LAZY) {
             try {
                 action()
             } finally {
-                // beginSession 的 join 在本 Job 完成后才返回，随后置 STARTING，不会互相覆盖
-                if (sessionPhase == SessionPhase.CLOSING) sessionPhase = SessionPhase.IDLE
+                if (sessionPhase == GameSessionController.SessionPhase.CLOSING) {
+                    sessionPhase = GameSessionController.SessionPhase.IDLE
+                }
             }
-        }
+        }.also { it.start() }
     }
 }

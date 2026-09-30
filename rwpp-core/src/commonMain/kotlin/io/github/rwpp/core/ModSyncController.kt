@@ -53,6 +53,7 @@ import io.github.rwpp.widget.loadingMessage
 import io.github.rwpp.widget.parseEngineLoadProgress
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -193,6 +194,7 @@ object ModSyncController {
     private var hostJob: Job? = null
     private var heartbeatJob: Job? = null
     private var peerPollJob: Job? = null
+    private var hostCleanupJob: Job? = null
     private var hostKey: String? = null
     private var hostSecret: String? = null
 
@@ -217,6 +219,7 @@ object ModSyncController {
     private var roomPresenceReporter: PeerProgressReporter? = null
     private val roomPresenceMutex = Mutex()
     private var peerViewPollJob: Job? = null
+    private var presenceCleanupJob: Job? = null
     private var eventsBound = false
 
     sealed interface HostSyncState {
@@ -230,8 +233,10 @@ object ModSyncController {
         if (eventsBound) return
         eventsBound = true
         GlobalEventChannel.filter(DisconnectEvent::class).subscribeAlways(priority = EventPriority.MONITOR) {
-            stopHostSession()
-            clearRoomPresence()
+            val hostCleanup = stopHostSession()
+            val presenceCleanup = clearRoomPresence()
+            hostCleanup.join()
+            presenceCleanup.join()
         }
         GlobalEventChannel.filter(StartGameEvent::class).subscribeAlways(priority = EventPriority.MONITOR) {
             // 开局后行内徽章失去意义；未广播该事件的端由 DisconnectEvent / relay TTL 兜底
@@ -257,11 +262,14 @@ object ModSyncController {
         if (!hostSyncRequested) return
         val key = CODE_PREFIX + roomCode.uppercase()
         if (hostKey == key && (hostJob?.isActive == true || hostSyncState is HostSyncState.Ready)) return
-        stopHostSession(clearRequest = false)
+        val cleanup = stopHostSession(clearRequest = false)
         hostKey = key
         val secret = UUID.randomUUID().toString().replace("-", "")
         hostSecret = secret
-        hostJob = scope.launch(Dispatchers.IO) { runHostSession(key, secret) }
+        hostJob = scope.launch(Dispatchers.IO) {
+            cleanup.join()
+            runHostSession(key, secret)
+        }
     }
 
     private suspend fun runHostSession(key: String, secret: String) {
@@ -390,26 +398,31 @@ object ModSyncController {
         }
     }
 
-    fun stopHostSession(clearRequest: Boolean = true) {
+    @Synchronized
+    fun stopHostSession(clearRequest: Boolean = true): Job {
         val key = hostKey
         val secret = hostSecret
-        hostJob?.cancel()
-        heartbeatJob?.cancel()
-        peerPollJob?.cancel()
+        val previousCleanup = hostCleanupJob
+        val stoppedJobs = listOfNotNull(hostJob, heartbeatJob, peerPollJob)
+        stoppedJobs.forEach { it.cancel() }
         hostJob = null
         heartbeatJob = null
         peerPollJob = null
         hostKey = null
         hostSecret = null
         if (clearRequest) hostSyncRequested = false
-        setHostState(HostSyncState.Off)
-        scope.launch(Dispatchers.Main.immediate) { hostPeerSnapshots = emptyList() }
-        if (key != null && secret != null) {
-            scope.launch(Dispatchers.IO) {
+        return scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
+            previousCleanup?.join()
+            stoppedJobs.forEach { it.join() }
+            withContext(Dispatchers.Main.immediate) {
+                hostSyncState = HostSyncState.Off
+                hostPeerSnapshots = emptyList()
+            }
+            if (key != null && secret != null) {
                 runCatching { newClient().unregister(key, secret) }
                     .onFailure { logger.warn("[MODSYNC-HOST] unregister failed: ${it.message}") }
             }
-        }
+        }.also { hostCleanupJob = it; it.start() }
     }
 
     // ---------------- 加入者侧 ----------------
@@ -524,28 +537,39 @@ object ModSyncController {
         val ctx = pendingPostJoin
         pendingPostJoin = null
         if (ctx == null) return
-        scope.launch(Dispatchers.IO) {
+        postJoinJob = scope.launch(Dispatchers.IO) {
             roomPresenceMutex.withLock { roomPresenceReporter = ctx.reporter }
             startPeerViewPolling(ctx.reporter)
+            runPostJoinSync(ctx)
         }
         // 被踢静默重试窗口：进房成功后再留一段宽限期（校验和踢人在注册后 ~1s 内异步到达）
         scope.launch { delay(ENTRY_GRACE_MS); syncEntryActive = false }
-        postJoinJob = scope.launch(Dispatchers.IO) { runPostJoinSync(ctx) }
     }
 
     /** 清理进房后保留的 Presence、同步任务与 peer 视角轮询（开局/断线/失败触发；幂等）。 */
-    fun clearRoomPresence() {
-        peerViewPollJob?.cancel()
+    @Synchronized
+    fun clearRoomPresence(): Job {
+        val previousCleanup = presenceCleanupJob
+        val stoppedPoll = peerViewPollJob
+        stoppedPoll?.cancel()
         peerViewPollJob = null
         // 应用阶段取消要先退房：DisconnectEvent 会走进这里，但不能掐掉原版回落。
         val keepReloadJob = cancellingReload || KeepConnectedReload.active || KeepConnectedReload.abortToVanilla
+        val stoppedSync = if (keepReloadJob) null else postJoinJob
         if (!keepReloadJob) {
-            postJoinJob?.cancel()
+            stoppedSync?.cancel()
             postJoinJob = null
         }
         inRoomJoinAddress = null
         inRoomJoinRelayUuid = null
-        scope.launch(Dispatchers.IO) {
+        return scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
+            previousCleanup?.join()
+            stoppedSync?.join()
+            stoppedPoll?.join()
+            // onJoinedRoom 的初始化也由 postJoinJob 持有，取消后不会迟到写入 reporter。
+            peerViewPollJob?.cancel()
+            peerViewPollJob?.join()
+            peerViewPollJob = null
             val reporter = roomPresenceMutex.withLock {
                 val current = roomPresenceReporter
                 roomPresenceReporter = null
@@ -558,7 +582,7 @@ object ModSyncController {
                 inRoomSyncPhase = null
                 resetReceivingStateOnMain()
             }
-        }
+        }.also { presenceCleanupJob = it; it.start() }
     }
 
     /** 房客视角：进房后用自己的 peer secret 轮询本房 peers 的脱敏进度，驱动行内徽章。 */

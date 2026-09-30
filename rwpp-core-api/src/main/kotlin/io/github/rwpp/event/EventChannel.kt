@@ -9,6 +9,8 @@ package io.github.rwpp.event
 
 import io.github.rwpp.logger
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -33,8 +35,11 @@ open class EventChannel <T : Event>(val coroutineScope: CoroutineScope): Corouti
     internal open val _events = MutableSharedFlow<T>().apply {
         onEach { event ->
             launch {
-                runListener(event)
-                event.job.complete()
+                try {
+                    runListener(event)
+                } finally {
+                    event.job.complete()
+                }
             }
         }.catch {
             errorHandler(it)
@@ -137,9 +142,19 @@ open class EventChannel <T : Event>(val coroutineScope: CoroutineScope): Corouti
             if(event.isIntercepted) break@loop
             val list = _listeners[priority]!!
             for(item in list.iterator()) {
-                if((event as AbstractEvent)._cancelled) break@loop
-                withContext(item.coroutineContext) {
-                    status = item.onEvent(event)
+                if(event.isIntercepted || (event as AbstractEvent)._cancelled) break@loop
+                if (!item.isActive) {
+                    list.remove(item)
+                    continue
+                }
+                try {
+                    status = withContext(item.coroutineContext) { item.onEvent(event) }
+                } catch (e: CancellationException) {
+                    coroutineContext.ensureActive()
+                    continue
+                } catch (e: Exception) {
+                    errorHandler(e)
+                    continue
                 }
                 if(!event.shouldBroadcast) {
                     (event as AbstractEvent)._cancelled = true

@@ -21,6 +21,7 @@ import io.github.rwpp.android.*
 import io.github.rwpp.core.Logic
 import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.event.GlobalEventChannel
+import io.github.rwpp.event.broadcast
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.DisconnectEvent
 import io.github.rwpp.event.events.MapChangedEvent
@@ -544,6 +545,14 @@ class GameRoomImpl(private val game: GameImpl) : GameRoom {
     }
 
     override fun disconnect(reason: String) {
+        disconnectRoom(reason).broadcastIn()
+    }
+
+    override suspend fun disconnectAndWait(reason: String) {
+        disconnectRoom(reason).broadcast()
+    }
+
+    private fun disconnectRoom(reason: String): DisconnectEvent {
         io.github.rwpp.android.isSinglePlayerGame = false
         // 断开后必定已不在对局中。isGaming 若滞留为 true，之后任何房间的开局都会被
         // MultiplayerRoomInject.onStartGame 的 !isGaming 守卫吞掉，导致玩家永远卡在战役室
@@ -565,7 +574,7 @@ class GameRoomImpl(private val game: GameImpl) : GameRoom {
             MainActivity.activityResume()
         }
 
-        DisconnectEvent(reason).broadcastIn()
+        return DisconnectEvent(reason)
     }
 
     override fun updateUI() {

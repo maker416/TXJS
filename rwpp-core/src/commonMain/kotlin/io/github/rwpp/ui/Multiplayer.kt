@@ -92,6 +92,7 @@ import io.github.rwpp.rwpp_core.generated.resources.*
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -338,6 +339,7 @@ fun MultiplayerView(
     var pendingHostSession by remember { mutableStateOf(false) }
     /** 本次开房是否勾选了「启动模组」；未勾选时 Loading 阶段会清空全部已加载模组。 */
     var pendingHostEnableMods by remember { mutableStateOf(false) }
+    var pendingHostTransferMods by remember { mutableStateOf(false) }
 
     var editingServerConfig by remember { mutableStateOf<ServerConfig?>(null) }
     var showServerInfoConfig by remember { mutableStateOf(false) }
@@ -393,70 +395,88 @@ fun MultiplayerView(
             game.cancelJoinServer()
             pendingHostSession = false
             pendingHostEnableMods = false
+            pendingHostTransferMods = false
             isConnecting = false
         },
         cancellable = true,
     ) {
         // 新的加入/开房会话开始：等待可能挂起的退房清理完成，保证旧会话先拆后建（GameSessionController）
-        GameSessionController.beginSession()
-        try {
-            if(serverAddress.isBlank()) {
-                message("That server no longer exists")
-                return@LoadingView false
-            }
+        GameSessionController.beginSession {
+            var joined = false
+            var opened = false
+            try {
+                if(serverAddress.isBlank()) {
+                    message("That server no longer exists")
+                    return@beginSession false
+                }
 
-            if (pendingHostSession) {
-                if (!pendingHostEnableMods) {
-                    val cleared = Logic.disableAllModsBeforeHosting()
-                    if (cleared) {
-                        message(readI18n("multiplayer.modsClearedForVanillaHost"))
+                if (pendingHostSession) {
+                    // 旧断线清理会清空 hostSyncRequested，必须在开始屏障之后提交本次选项。
+                    ModSyncController.hostSyncRequested = pendingHostTransferMods
+                    if (!pendingHostEnableMods) {
+                        val cleared = Logic.disableAllModsBeforeHosting()
+                        if (cleared) {
+                            message(readI18n("multiplayer.modsClearedForVanillaHost"))
+                        }
+                    } else {
+                        val disabled = Logic.disableNetworkModsBeforeHosting()
+                        if (disabled) {
+                            message(readI18n("multiplayer.networkModDisabledOnHost"))
+                        }
                     }
                 } else {
-                    val disabled = Logic.disableNetworkModsBeforeHosting()
-                    if (disabled) {
-                        message(readI18n("multiplayer.networkModDisabledOnHost"))
+                    // 加入者：连接前只跑带外同步轻量段（查清单/登记 Presence 供房主握手放行）；
+                    // 下载与重载在进房成功后由 ModSyncController 在房间内后台完成，期间可正常聊天
+                    if (!ModSyncController.preJoinSync(selectedRoomDescription, serverAddress, this)) {
+                        return@beginSession false
                     }
                 }
-            } else {
-                // 加入者：连接前只跑带外同步轻量段（查清单/登记 Presence 供房主握手放行）；
-                // 下载与重载在进房成功后由 ModSyncController 在房间内后台完成，期间可正常聊天
-                if (!ModSyncController.preJoinSync(selectedRoomDescription, serverAddress, this)) {
-                    return@LoadingView false
+
+                message("connecting...")
+
+                game.setUserName(userName)
+                configIO.setGameConfig("lastNetworkIP", serverAddress)
+
+                // selectedRoomDescription 随后即清空，先捕获供身份公示推导候选 key
+                val capturedRoomDescription = selectedRoomDescription
+                val result = game.directJoinServer(
+                    serverAddress,
+                    capturedRoomDescription?.joinRelayUuid(),
+                    this,
+                )
+                selectedRoomDescription = null
+                if(result.isSuccess) {
+                    // 房间身份公示（带外机制）：暂存候选 key 与玩家名快照；
+                    // 房主走 quickHost 指令串产不出 key，靠进房后 roomDetails 短码补充
+                    joined = true
+                    val accepted = withContext(Dispatchers.Main.immediate) {
+                        if (!UI.showMultiplayerView || !isConnecting) false else {
+                            RoomIdentityController.onJoiningRoom(serverAddress, capturedRoomDescription)
+                            onOpenRoomView()
+                            opened = true
+                            true
+                        }
+                    }
+                    if (!accepted) return@beginSession false
+                    // 进房成功：joining Presence 转为 synced 并保活，驱动行内徽章（无同步记录时为空操作）
+                    ModSyncController.onJoinedRoom()
+                    JoinGameEvent(serverAddress).broadcastIn()
+                    true
+                } else {
+                    message(result.exceptionOrNull()!!.message!!)
+                    false
                 }
+            } finally {
+                if (joined && !opened) {
+                    withContext(NonCancellable + Dispatchers.Main.immediate) {
+                        game.gameRoom.disconnectAndWait()
+                    }
+                }
+                // 进房尝试结束收尾：成功时为空操作；失败且被踢重试已排定时保留 Presence 供重试；
+                // 其余情况清理 joining Presence 与放行窗口（与 onLoaded 幂等）
+                ModSyncController.finishJoinerPresence()
             }
-
-            message("connecting...")
-
-            game.setUserName(userName)
-            configIO.setGameConfig("lastNetworkIP", serverAddress)
-
-            // selectedRoomDescription 随后即清空，先捕获供身份公示推导候选 key
-            val capturedRoomDescription = selectedRoomDescription
-            val result = game.directJoinServer(
-                serverAddress,
-                capturedRoomDescription?.joinRelayUuid(),
-                this,
-            )
-            selectedRoomDescription = null
-            if(result.isSuccess) {
-                // 房间身份公示（带外机制）：暂存候选 key 与玩家名快照；
-                // 房主走 quickHost 指令串产不出 key，靠进房后 roomDetails 短码补充
-                RoomIdentityController.onJoiningRoom(serverAddress, capturedRoomDescription)
-                // 不调 onExit()：多人列表留在返回栈中，退出房间时 navigateBack 能回到列表
-                onOpenRoomView()
-                // 进房成功：joining Presence 转为 synced 并保活，驱动行内徽章（无同步记录时为空操作）
-                ModSyncController.onJoinedRoom()
-                JoinGameEvent(serverAddress).broadcastIn()
-                true
-            } else {
-                message(result.exceptionOrNull()!!.message!!)
-                false
-            }
-        } finally {
-            // 进房尝试结束收尾：成功时为空操作；失败且被踢重试已排定时保留 Presence 供重试；
-            // 其余情况清理 joining Presence 与放行窗口（与 onLoaded 幂等）
-            ModSyncController.finishJoinerPresence()
-        }
+        } ?: false
     }
 
     @Composable
@@ -499,7 +519,7 @@ fun MultiplayerView(
 
             fun beginHost() {
                 dismiss()
-                ModSyncController.hostSyncRequested = transferMod && enableMods
+                pendingHostTransferMods = transferMod && enableMods
                 serverAddress = net.buildQuickHostCommand(
                     enableMods = enableMods,
                     roomId = if (hostPrefix == HostCommandPrefix.Q) roomId.ifBlank { null } else null,

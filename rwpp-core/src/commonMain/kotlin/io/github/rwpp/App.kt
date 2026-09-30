@@ -102,6 +102,7 @@ import io.github.rwpp.theme.LauncherMusicController
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.LineSpinFadeLoaderIndicator
 import io.github.rwpp.widget.v2.bounceClick
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -110,8 +111,6 @@ import kotlinx.coroutines.withContext
 import org.koin.compose.koinInject
 
 var LocalWindowManager = staticCompositionLocalOf { WindowManager.Large }
-
-private const val ROOM_EXIT_DISCONNECT_DELAY_MS = 120L
 
 @Suppress("UnusedBoxWithConstraintsScope", "UnusedMaterial3ScaffoldPaddingParameter")
 @Composable
@@ -178,20 +177,7 @@ fun App(
             .build()
     }
 
-    val showMainMenu = !(showMultiplayerView
-            || showMissionView
-            || showSettingsView
-            || showModsView
-            || showRoomView
-            || showExtensionView
-            || showReplayView
-            || showResourceBrowser
-            || showOpenSourceInfoView
-            || showSinglePlayerView
-            || showSurvivalView
-            || showThemesView
-            || showAccountView
-            || showFriendsView)
+    val showMainMenu = launcherPage == LauncherPage.MainMenu && !showAccountView && !showFriendsView
 
     // 主题美术包：进程内一次初始化（扫描 themes/ 并恢复上次启用的包）
     LaunchedEffect(Unit) {
@@ -203,10 +189,8 @@ fun App(
 
     // 房间状态快照的唯一采样入口：RefreshUIEvent 是引擎→UI 的既有刷新漏斗，
     // 在 Main 上重采样 RoomSnapshot，房间 UI 只采集不可变快照
-    LaunchedEffect(Unit) {
-        GlobalEventChannel.filter(RefreshUIEvent::class).subscribeAlways(Dispatchers.Main.immediate) {
-            RoomSnapshotStore.resample(game)
-        }
+    GlobalEventChannel.filter(RefreshUIEvent::class).onDispose {
+        subscribeAlways(Dispatchers.Main.immediate) { RoomSnapshotStore.resample(game) }
     }
 
     val globalFocusRequester = remember { FocusRequester() }
@@ -254,8 +238,9 @@ fun App(
                     },
                     floatingActionButtonPosition = FabPosition.End
                 ) {
-                    AnimatedVisibility(
-                        showMainMenu,
+                    LauncherOverlayHost(
+                        visible = showMainMenu,
+                        isInteractive = { launcherPage == LauncherPage.MainMenu && !showAccountView && !showFriendsView },
                         enter = if(enableAnimations) fadeIn() else EnterTransition.None,
                         exit = if(enableAnimations) fadeOut() else ExitTransition.None,
                     ) {
@@ -291,16 +276,16 @@ fun App(
                         )
                     }
 
-                    AnimatedVisibility(
-                        showMissionView,
+                    LauncherPageHost(
+                        LauncherPage.Mission,
                         enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
                         exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
                     ) {
                         MissionView { showMissionView = false }
                     }
 
-                    AnimatedVisibility(
-                        showSurvivalView,
+                    LauncherPageHost(
+                        LauncherPage.Survival,
                         enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
                         exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
                     ) {
@@ -308,8 +293,8 @@ fun App(
                     }
                 }
 
-                AnimatedVisibility(
-                    showSinglePlayerView,
+                LauncherPageHost(
+                    LauncherPage.SinglePlayer,
                     enter = if(enableAnimations) fadeIn() + slideInVertically() else EnterTransition.None,
                     exit = if(enableAnimations) fadeOut() + slideOutVertically() else ExitTransition.None,
                 ) {
@@ -323,27 +308,31 @@ fun App(
                         },
                         onSkirmish = {
                             appScope.launch {
-                                GameSessionController.beginSession()
-                                isSinglePlayerGame = true
-                                navigateTo(LauncherPage.Room)
-                                game.hostNewSinglePlayer(false)
-                                GameSessionController.onRoomOpened()
+                                GameSessionController.beginSession {
+                                    if (launcherPage != LauncherPage.SinglePlayer) return@beginSession
+                                    isSinglePlayerGame = true
+                                    game.hostNewSinglePlayer(false)
+                                    navigateTo(LauncherPage.Room)
+                                    GameSessionController.onRoomOpened()
+                                }
                             }
                         },
                         onSandbox = {
                             appScope.launch {
-                                GameSessionController.beginSession()
-                                isSinglePlayerGame = true
-                                navigateTo(LauncherPage.Room)
-                                game.hostNewSinglePlayer(sandbox = true)
-                                GameSessionController.onRoomOpened()
+                                GameSessionController.beginSession {
+                                    if (launcherPage != LauncherPage.SinglePlayer) return@beginSession
+                                    isSinglePlayerGame = true
+                                    game.hostNewSinglePlayer(sandbox = true)
+                                    navigateTo(LauncherPage.Room)
+                                    GameSessionController.onRoomOpened()
+                                }
                             }
                         },
                     )
                 }
 
-                AnimatedVisibility(
-                    showMultiplayerView,
+                LauncherPageHost(
+                    LauncherPage.Multiplayer,
                     enter = if(enableAnimations) fadeIn() + slideInVertically() else EnterTransition.None,
                     exit = if(enableAnimations) fadeOut() + slideOutVertically() else ExitTransition.None,
                 ) {
@@ -357,26 +346,8 @@ fun App(
                     )
                 }
 
-                AnimatedVisibility(
-                    showFriendsView,
-                    enter = if (enableAnimations) fadeIn() + slideInVertically() else EnterTransition.None,
-                    exit = if (enableAnimations) fadeOut() + slideOutVertically() else ExitTransition.None,
-                ) {
-                    FriendsView(
-                        onExit = {
-                            showFriendsView = false
-                            FriendsSession.closeChat()
-                        },
-                        onGoLogin = {
-                            showFriendsView = false
-                            FriendsSession.closeChat()
-                            showAccountView = true
-                        },
-                    )
-                }
-
-                AnimatedVisibility(
-                    showSettingsView,
+                LauncherPageHost(
+                    LauncherPage.Settings,
                     enter = if (enableAnimations) fadeIn() + slideInVertically() else EnterTransition.None,
                     exit = if (enableAnimations) fadeOut() + slideOutVertically() else ExitTransition.None,
                 ) {
@@ -396,24 +367,24 @@ fun App(
                     ) { showSettingsView = false }
                 }
 
-                AnimatedVisibility(
-                    showModsView,
+                LauncherPageHost(
+                    LauncherPage.Mods,
                     enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
                     exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
                 ) {
                     ModsAndMapsView { showModsView = false }
                 }
 
-                AnimatedVisibility(
-                    showResourceBrowser,
+                LauncherPageHost(
+                    LauncherPage.ResourceBrowser,
                     enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
                     exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
                 ) {
                     ResourceBrowser { showResourceBrowser = false }
                 }
 
-                AnimatedVisibility(
-                    showExtensionView,
+                LauncherPageHost(
+                    LauncherPage.Extensions,
                     enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
                     exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
                 ) {
@@ -422,8 +393,8 @@ fun App(
                     }
                 }
 
-                AnimatedVisibility(
-                    showThemesView,
+                LauncherPageHost(
+                    LauncherPage.Themes,
                     enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
                     exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
                 ) {
@@ -432,8 +403,8 @@ fun App(
                     }
                 }
 
-                AnimatedVisibility(
-                    showReplayView,
+                LauncherPageHost(
+                    LauncherPage.Replay,
                     enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
                     exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
                 ) {
@@ -442,8 +413,8 @@ fun App(
                     }
                 }
 
-                AnimatedVisibility(
-                    showOpenSourceInfoView,
+                LauncherPageHost(
+                    LauncherPage.OpenSourceInfo,
                     enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
                     exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
                 ) {
@@ -452,13 +423,17 @@ fun App(
                     }
                 }
 
-                AnimatedVisibility(
-                    showRoomView,
+                LauncherPageHost(
+                    LauncherPage.Room,
                     enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
                     exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
                 ) {
+                    val roomDisposed = remember { CompletableDeferred<Unit>() }
+                    DisposableEffect(Unit) {
+                        onDispose { roomDisposed.complete(Unit) }
+                    }
                     MultiplayerRoomView(isSinglePlayerGame) {
-                        if (roomExitInProgress) return@MultiplayerRoomView
+                        if (roomExitInProgress || launcherPage != LauncherPage.Room) return@MultiplayerRoomView
                         val syncPhase = ModSyncController.inRoomSyncPhase
                         if (syncPhase != null && syncPhase != SyncPeerPhase.SYNCED) {
                             ModSyncController.cancelInRoomSync()
@@ -471,21 +446,18 @@ fun App(
                         // 返回上一级：单人房回「单人游戏」子菜单，多人房回多人列表
                         navigateBack()
 
-                        // 退房延迟清理由 GameSessionController 持有：新会话 beginSession 会先
-                        // 等待其完成，保证旧会话先拆后建（不再有清理迟到误拆新会话的竞态）
-                        GameSessionController.scheduleClose(appScope) {
+                        // 等待旧页面 dispose 和断线订阅者清理；新会话独占开始请求并等待此屏障。
+                        GameSessionController.scheduleClose {
                             try {
-                                withFrameNanos { }
-                                if (settings.enableAnimations) {
-                                    delay(ROOM_EXIT_DISCONNECT_DELAY_MS)
-                                }
+                                // 等真实退出动画及页面 dispose，不能用固定延迟猜测 UI 生命周期。
+                                roomDisposed.await()
 
                                 if (returnToMultiplayerView) {
                                     game.cancelJoinServer()
                                 }
 
                                 game.onBanUnits(listOf())
-                                game.gameRoom.disconnect()
+                                game.gameRoom.disconnectAndWait()
                             } finally {
                                 roomExitInProgress = false
                             }
@@ -493,10 +465,39 @@ fun App(
                     }
                 }
 
+                // 叠加页空白区域也拦截点击，避免穿透到房间或底层页面。
+                if (showFriendsView || showAccountView) {
+                    Box(Modifier.fillMaxSize().clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {},
+                    ))
+                }
+
+                LauncherOverlayHost(
+                    showFriendsView,
+                    isInteractive = { showFriendsView && !showAccountView },
+                    enter = if (enableAnimations) fadeIn() + slideInVertically() else EnterTransition.None,
+                    exit = if (enableAnimations) fadeOut() + slideOutVertically() else ExitTransition.None,
+                ) {
+                    FriendsView(
+                        onExit = {
+                            showFriendsView = false
+                            FriendsSession.closeChat()
+                        },
+                        onGoLogin = {
+                            showFriendsView = false
+                            FriendsSession.closeChat()
+                            showAccountView = true
+                        },
+                    )
+                }
+
                 // 账号页必须渲染在房间页之后（上层）：房间内「邀请好友」未登录时会就地打开登录，
                 // 登录完成关闭后回到房间，不能与房间画面交叠。
-                AnimatedVisibility(
+                LauncherOverlayHost(
                     showAccountView,
+                    isInteractive = { showAccountView },
                     enter = if (enableAnimations) fadeIn() + slideInVertically() else EnterTransition.None,
                     exit = if (enableAnimations) fadeOut() + slideOutVertically() else ExitTransition.None,
                 ) {

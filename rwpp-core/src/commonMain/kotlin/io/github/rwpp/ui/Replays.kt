@@ -504,8 +504,10 @@ fun ReplaysViewDialog(
                                             },
                                             onClick = {
                                                 scope.launch {
-                                                    GameSessionController.beginSession()
-                                                    game.watchReplay(item.replay)
+                                                    GameSessionController.beginSession {
+                                                        game.watchReplay(item.replay)
+                                                        GameSessionController.onRoomOpened()
+                                                    }
                                                 }
                                             },
                                         )

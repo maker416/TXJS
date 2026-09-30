@@ -10,6 +10,7 @@ package io.github.rwpp.ui
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import io.github.rwpp.platform.checkUiThread
 import kotlin.properties.ReadWriteProperty
 import kotlin.reflect.KProperty
 
@@ -72,6 +73,7 @@ private val pageStack = ArrayDeque<LauncherPage>()
 
 /** 前进一步：当前页压栈，进入 [page]（与当前页相同则忽略，防止重复压栈）。 */
 fun navigateTo(page: LauncherPage) {
+    checkUiThread()
     if (launcherPage == page) return
     pageStack.addLast(launcherPage)
     launcherPage = page
@@ -79,6 +81,7 @@ fun navigateTo(page: LauncherPage) {
 
 /** 返回上一级：弹出栈顶；栈空（或栈顶即主菜单）时回主菜单。 */
 fun navigateBack() {
+    checkUiThread()
     launcherPage =
         if (pageStack.isEmpty()) LauncherPage.MainMenu
         else pageStack.removeLast()
@@ -89,12 +92,14 @@ fun navigateBack() {
  * 用于被踢回列表、接受房间邀请等「放弃当前导航上下文」的系统驱动转场。
  */
 fun resetNavigation(page: LauncherPage) {
+    checkUiThread()
     pageStack.clear()
     launcherPage = page
 }
 
 /** 仅当当前页面是 [page] 时返回上一级；否则视为过期调用，忽略。 */
 fun closePage(page: LauncherPage) {
+    checkUiThread()
     if (launcherPage == page) navigateBack()
 }
 

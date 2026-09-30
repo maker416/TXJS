@@ -52,11 +52,10 @@ abstract class Listener<in E : Event> : CompletableJob by Job() {
  * 在广播时, 事件监听器的调用顺序为 (从左到右):
  * [HIGHEST] -> [HIGH] -> [NORMAL] -> [LOW] -> [LOWEST] -> [MONITOR]
  *
- * - 使用 [MONITOR] 优先级的监听器将会被**并行**调用.
- * - 使用其他优先级的监听器都将会**按顺序**调用.
- *   因此一个监听器的挂起可以阻塞事件处理过程而导致低优先级的监听器较晚处理.
+ * 所有优先级的监听器均按顺序调用，广播完成前会等待监听器返回。
+ * 因此一个监听器的挂起会使后续监听器较晚处理。
  *
- * 当事件被 [拦截][Event.intercept] 后, 优先级较低 (靠右) 的监听器将不会被调用.
+ * 当事件被 [拦截][Event.intercept] 后，后续监听器（包括相同优先级）不会被调用。
  */
 enum class EventPriority {
 

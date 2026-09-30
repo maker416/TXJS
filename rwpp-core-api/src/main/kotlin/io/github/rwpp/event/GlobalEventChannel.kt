@@ -37,8 +37,17 @@ sealed class GlobalEventChannel(coroutineScope: CoroutineScope)
     override val _events: MutableSharedFlow<Event> = MutableSharedFlow<Event>().apply {
         onEach { event ->
             launch {
-                runListener(event)
-                channels[event::class.java]?._events?.emit(event) ?: event.job.complete()
+                try {
+                    runListener(event)
+                    val channel = channels[event::class.java]
+                    if (channel != null) channel._events.emit(event) else event.job.complete()
+                } catch (e: CancellationException) {
+                    event.job.complete()
+                    throw e
+                } catch (e: Exception) {
+                    event.job.complete()
+                    errorHandler(e)
+                }
             }
         }.catch {
             errorHandler(it)

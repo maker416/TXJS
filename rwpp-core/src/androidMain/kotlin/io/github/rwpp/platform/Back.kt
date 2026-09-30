@@ -8,8 +8,14 @@
 package io.github.rwpp.platform
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberUpdatedState
 
 @Composable
 actual fun BackHandler(enabled: Boolean, onBack: () -> Unit) {
-    androidx.activity.compose.BackHandler(enabled, onBack)
+    val currentEnabled = rememberUpdatedState(enabled)
+    val currentScope = rememberUpdatedState(LocalBackHandlerEnabled.current)
+    val currentOnBack = rememberUpdatedState(onBack)
+    androidx.activity.compose.BackHandler(enabled && currentScope.value()) {
+        if (currentEnabled.value && currentScope.value()) currentOnBack.value()
+    }
 }

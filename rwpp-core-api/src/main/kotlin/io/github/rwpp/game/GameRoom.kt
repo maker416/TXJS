@@ -181,6 +181,9 @@ interface GameRoom {
      */
     fun disconnect(reason: String = "excited")
 
+    /** 退房完成后再返回，包含 DisconnectEvent 的订阅者清理；用于开始下一会话前的屏障。 */
+    suspend fun disconnectAndWait(reason: String = "excited")
+
     /**
      * Update UI. Contains local refresh and sending info packet (if host)
      */
