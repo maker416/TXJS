@@ -93,6 +93,11 @@ class ArtThemeControllerTest {
                     [menu.layout]
                     orientation = "vertical"
                     columns = 3
+                    showBorder = false
+
+                    [menu.buttons.mods]
+                    widthPercent = 80
+                    showBorder = true
 
                     [fonts]
                     regular = "fonts/regular.ttf"
@@ -121,6 +126,9 @@ class ArtThemeControllerTest {
         assertNotNull(theme.fontRegularFile)
         assertNull(theme.fontBoldFile)
         assertEquals("vertical", theme.spec.menu.layout.orientation)
+        assertFalse(theme.spec.menu.layout.showBorder)
+        assertEquals(80, theme.spec.menu.buttons.getValue("mods").widthPercent)
+        assertEquals(true, theme.spec.menu.buttons.getValue("mods").showBorder)
         // v3：桌面端不支持 mp3，应选 ogg（按平台偏好顺序）
         assertEquals("music.ogg", theme.musicFile?.name)
         // v4：game/ 目录识别为游戏内贴图覆盖层

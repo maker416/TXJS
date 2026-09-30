@@ -156,7 +156,7 @@ class ArtThemeSpecTest {
     // ---- v2：布局 / 按钮槽位 / 字体 ----
 
     @Test
-    fun layoutSpecDefaultsReplicateBuiltIn() {
+    fun layoutSpecDefaultsAreValid() {
         val layout = MenuLayoutSpec()
         assertEquals("grid", layout.orientation)
         assertEquals(2, layout.columns)
@@ -204,10 +204,13 @@ class ArtThemeSpecTest {
             buttonHeight = 56
             buttonCorner = 8
             spacing = 12
+            showBorder = false
 
             [menu.buttons.mods]
             order = -1
             span = 2
+            widthPercent = 80
+            showBorder = true
 
             [menu.buttons.openSourceInfo]
             hidden = true
@@ -223,11 +226,49 @@ class ArtThemeSpecTest {
         assertEquals("vertical", spec.menu.layout.orientation)
         assertEquals(3, spec.menu.layout.columns)
         assertEquals("bottom", spec.menu.layout.align)
+        assertEquals(80, spec.menu.layout.widthPercent)
+        assertEquals(8, spec.menu.layout.buttonCorner)
+        assertFalse(spec.menu.layout.showBorder)
         assertEquals(-1, spec.menu.buttons.getValue("mods").order)
         assertEquals(2, spec.menu.buttons.getValue("mods").span)
+        assertEquals(80, spec.menu.buttons.getValue("mods").widthPercent)
+        assertEquals(true, spec.menu.buttons.getValue("mods").showBorder)
         assertTrue(spec.menu.buttons.getValue("openSourceInfo").hidden)
+        assertNull(spec.menu.buttons.getValue("openSourceInfo").showBorder)
         assertEquals("fonts/regular.ttf", spec.fonts.regular)
         assertEquals("fonts/bold.ttf", spec.fonts.bold)
+    }
+
+    @Test
+    fun buttonStyleDefaultsInheritAndClampWidths() {
+        val (spec, validation) = validateThemeToml(
+            """
+            [theme]
+            id = "button-styles"
+            name = "按钮外观"
+
+            [menu.buttons.singlePlayer]
+            showBorder = false
+
+            [menu.buttons.mods]
+            widthPercent = 0
+
+            [menu.buttons.settings]
+            widthPercent = 200
+            span = 99
+            """.trimIndent()
+        )
+        assertTrue(validation.isValid)
+        assertNotNull(spec)
+        assertTrue(spec.menu.layout.showBorder)
+        val singlePlayer = spec.menu.buttons.getValue("singlePlayer")
+        assertEquals(0, singlePlayer.span, "单独设置描边不应覆盖内置占列")
+        assertEquals(100, singlePlayer.widthPercent)
+        assertEquals(false, singlePlayer.showBorder)
+        assertEquals(1, spec.menu.buttons.getValue("mods").sanitized().widthPercent)
+        val settings = spec.menu.buttons.getValue("settings").sanitized()
+        assertEquals(100, settings.widthPercent)
+        assertEquals(4, settings.span)
     }
 
     @Test

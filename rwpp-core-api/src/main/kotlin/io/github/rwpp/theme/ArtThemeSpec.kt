@@ -37,7 +37,7 @@ data class ThemeMeta(
 data class MenuSpec(
     /** 是否显示主菜单标题图右下角的「极速版」角标。 */
     val showTitleBadge: Boolean = true,
-    /** 主菜单按钮区布局参数（v2）。缺省值精确复刻内置布局。 */
+    /** 主菜单按钮区布局参数（v2）。主题缺省值见 [MenuLayoutSpec]。 */
     val layout: MenuLayoutSpec = MenuLayoutSpec(),
     /** 按语义 id 的按钮槽位覆盖（v2），键必须是 [MENU_BUTTON_IDS] 之一。 */
     val buttons: Map<String, MenuButtonSpec> = emptyMap(),
@@ -65,6 +65,8 @@ data class MenuLayoutSpec(
     val buttonCorner: Int = 20,
     /** 按钮间距 dp（0-32）。 */
     val spacing: Int = 10,
+    /** 是否绘制主菜单按钮的默认描边；单个按钮可覆盖。 */
+    val showBorder: Boolean = true,
 ) {
     fun sanitized(): MenuLayoutSpec = copy(
         orientation = if (orientation in ORIENTATIONS) orientation else "grid",
@@ -90,11 +92,20 @@ data class MenuLayoutSpec(
 data class MenuButtonSpec(
     /** 排序权重，越小越靠前；默认 0 表示保持内置顺序。 */
     val order: Int = 0,
-    /** grid 模式下占用列数（1-4，自动钳制到列数内）。 */
-    val span: Int = 1,
+    /** grid 模式下占用列数（1-4）；0 / 省略时沿用该按钮的内置占列。 */
+    val span: Int = 0,
     /** 隐藏该按钮（仅视觉隐藏，功能仍可从其他入口到达）。 */
     val hidden: Boolean = false,
-)
+    /** 相对于 span 分配的格子宽度的百分比（1-100），缩窄后在格子内居中。 */
+    val widthPercent: Int = 100,
+    /** 是否绘制默认描边；省略时继承 [MenuLayoutSpec.showBorder]。 */
+    val showBorder: Boolean? = null,
+) {
+    fun sanitized(): MenuButtonSpec = copy(
+        span = span.coerceIn(0, 4),
+        widthPercent = widthPercent.coerceIn(1, 100),
+    )
+}
 
 /** 主菜单按钮的稳定语义 id，美术包据此覆盖排布与背景图（文档承诺不变）。 */
 val MENU_BUTTON_IDS: Set<String> = setOf(

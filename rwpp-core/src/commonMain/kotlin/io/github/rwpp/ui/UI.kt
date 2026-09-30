@@ -433,6 +433,7 @@ open class UIProvider {
 
                 // Menu buttons container
                 val buttonOverrides = artTheme?.spec?.menu?.buttons.orEmpty()
+                    .mapValues { (_, spec) -> spec.sanitized() }
                 val columns = if (menuLayout?.orientation == "vertical") 1 else (menuLayout?.columns ?: 2)
                 val rowSpacing = menuLayout?.spacing?.dp ?: buttonSpacing
                 val columnSpacing = menuLayout?.spacing?.dp ?: gridSpacing
@@ -484,14 +485,22 @@ open class UIProvider {
                             horizontalArrangement = Arrangement.spacedBy(columnSpacing)
                         ) {
                             rowItems.forEach { (item, span) ->
-                                MainMenuAction(
-                                    item.text,
-                                    onClick = item.onClick,
+                                val buttonSpec = buttonOverrides[item.slotId]
+                                // 占列决定格子大小，单按钮宽度只缩窄按钮，不挤动同排按钮。
+                                Box(
                                     modifier = Modifier.weight(span.toFloat()),
-                                    heightOverride = menuLayout?.buttonHeight?.dp,
-                                    cornerOverride = menuLayout?.buttonCorner?.dp,
-                                    backgroundImage = item.slotId?.let { artTheme?.buttonImages?.get(it) }
-                                )
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    MainMenuAction(
+                                        item.text,
+                                        onClick = item.onClick,
+                                        modifier = Modifier.fillMaxWidth((buttonSpec?.widthPercent ?: 100) / 100f),
+                                        heightOverride = menuLayout?.buttonHeight?.dp,
+                                        cornerOverride = menuLayout?.buttonCorner?.dp,
+                                        backgroundImage = item.slotId?.let { artTheme?.buttonImages?.get(it) },
+                                        showBorder = buttonSpec?.showBorder ?: menuLayout?.showBorder ?: true,
+                                    )
+                                }
                             }
                             // 补齐空列，保持网格对齐
                             val usedSpan = rowItems.sumOf { it.second }
@@ -894,6 +903,7 @@ open class UIProvider {
         heightOverride: Dp? = null,
         cornerOverride: Dp? = null,
         backgroundImage: File? = null,
+        showBorder: Boolean = true,
     ) {
         val windowManager = LocalWindowManager.current
         val buttonHeight = heightOverride ?: when (windowManager) {
@@ -921,11 +931,11 @@ open class UIProvider {
         val shape = RoundedCornerShape(cornerRadius)
 
         Surface(
-            // 有按钮背景图时底色透明，图片裁切填充，描边保留以保证可辨识度
+            // 有按钮背景图时底色透明；主题可关闭默认描边，图片仍按按钮圆角裁切。
             color = if (backgroundImage != null) Color.Transparent else backgroundColor,
             contentColor = Color.White,
             shape = shape,
-            border = BorderStroke(1.5.dp, borderColor),
+            border = if (showBorder) BorderStroke(1.5.dp, borderColor) else null,
             tonalElevation = 0.dp,
             shadowElevation = 0.dp,
             modifier = modifier,

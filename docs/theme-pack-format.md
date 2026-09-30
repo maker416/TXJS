@@ -1,123 +1,275 @@
-# RWJS 主题美术包（.rwtheme）制作指南
+# RWJS 主题美术包（.rwtheme）开发指南
 
-面向创作者的主题包格式文档。主题包可以自定义启动器外观与游戏内贴图，**仅本地生效**，不影响联机（不修改联机协议，贴图不参与单位校验和，不会导致无法进房或掉线）。
+主题包是一个包含配置、图片等资源的 ZIP 文件，后缀为 `.rwtheme`。它可以更换启动器的配色、背景、标题、主菜单按钮外观、文字、字体、音乐，以及部分游戏资源。主题仅在自己的客户端生效，不向房间内其他玩家传送，也不修改游戏联机协议。
 
-## 能自定义什么（总览）
+本文先给出能直接使用的例子，再解释每个参数。**本次新增的 `showBorder` 和单按钮 `widthPercent` 需要使用支持这些字段的新版客户端；旧版可能直接忽略它们。** `theme.version` 是作者填写的主题版本号，不会让旧客户端自动获得新功能。
 
-| 类别 | 内容 | 载体 |
-|---|---|---|
-| 主题配色 | 全局 ColorScheme（按钮/卡片/输入框/强调色等 20 个角色） | `theme.toml` 的 `[colors]` |
-| 启动器背景图 | 整个启动器底图 | `background.png` / `background.jpg` |
-| 主菜单标题图 | 主菜单顶部 LOGO 图，可隐藏「极速版」角标 | `title.png` + `[menu] showTitleBadge` |
-| 背景音乐 | 主菜单循环播放（进对局自动停） | `music.<扩展名>` |
-| 主菜单布局 | 按钮区方向/列数/对齐/偏移/宽度/高度/圆角/间距 | `[menu.layout]` |
-| 主菜单按钮 | 排序、占列宽、隐藏（按语义 id） | `[menu.buttons.<id>]` |
-| 按钮背景图 | 单个主菜单按钮的背景图片 | `buttons/<id>.png` |
-| 按钮/全局文字 | 任意启动器文案覆盖（含主菜单按钮文字） | `strings_zh.toml` / `strings_en.toml` |
-| 全局字体 | 正文/标题字体族 | `[fonts]` + `fonts/*.ttf` |
-| 原版单位贴图 | 覆盖 `assets/units/` 下的单位图像 | `game/units/...` |
-| 地块贴图 | 覆盖 `assets/tilesets/bitmaps/` 下的地块图像 | `game/tilesets/bitmaps/...` |
+## 1. 先做一个最小主题
 
-不支持：逐按钮自定义（设计决策，配色/文字/布局用上述机制组合实现）；地图 `.tmx` 本身；地图内嵌 base64 图像；模组（.rwmod）包内贴图。
+新建一个文件夹，在里面创建 UTF-8 编码的 `theme.toml`，注意不要被编辑器保存成 `theme.toml.txt`：
 
-## 打包方式
+```toml
+[theme]
+id = "my-first-theme"
+name = "我的第一个主题"
+author = "你的名字"
+version = "1.0"
 
-把下列文件打成 **zip**，后缀改为 `.rwtheme` 即可（zip 根目录直接放 `theme.toml`，不要再套一层文件夹）。玩家在游戏内「设置 → 主题 → 主题包管理 → 导入主题包」导入使用。
+[menu]
+showTitleBadge = false
 
+[menu.layout]
+showBorder = false
+buttonCorner = 0
+
+[menu.buttons.mods]
+span = 2
+widthPercent = 80
 ```
-我的主题.rwtheme（zip 内容）
-├── theme.toml            # 必需：元数据 + 配色 + 布局 + 字体声明
-├── strings_zh.toml       # 可选：中文文案覆盖
-├── strings_en.toml       # 可选：英文文案覆盖
-├── background.png        # 可选：启动器背景（也支持 background.jpg）
-├── title.png             # 可选：主菜单标题图
-├── icon.png              # 可选：管理列表里的包图标
-├── buttons/              # 可选：按钮背景图
+
+这个例子会隐藏主菜单按钮的默认白色描边，将按钮裁切形状改成直角，并让「模组与地图」独占一行、在行内居中显示为 80% 宽。未提供图片的按钮仍有内置半透明底色；隐藏描边并不会把底色或文字一起隐藏。
+
+然后按下面的步骤测试：
+
+1. 将文件夹**里面的文件**压缩成 ZIP，打开 ZIP 时应直接看到 `theme.toml`。
+2. 将 `my-first-theme.zip` 改名为 `my-first-theme.rwtheme`。不要用 RAR/7z 文件只改后缀。
+3. 打开「设置 → 主题 → 主题包管理 → 导入主题包」，选择该文件。
+4. 在列表中启用它，回到主菜单观察效果。导入和启用是两个步骤。
+5. 确认配置有效后，再逐项添加图片、字体和音乐，便于定位问题。
+
+`id` 只能包含英文字母、数字、下划线和连字符。同一个安装目录不能有两个相同 `id` 的主题；`name` 可以用中文，它只是展示名称。`version` 请写成字符串，例如 `"1.0"`。`description` 可选，用于填写主题说明。
+
+## 2. 文件放在哪里
+
+```text
+我的主题.rwtheme（ZIP 内容）
+├── theme.toml                 # 必需：配置与元数据
+├── strings_zh.toml            # 可选：中文文案覆盖
+├── strings_en.toml            # 可选：英文文案覆盖
+├── background.png             # 可选：启动器背景，也支持 background.jpg
+├── title.png                  # 可选：主菜单标题图
+├── icon.png                   # 可选：主题列表图标
+├── buttons/                   # 可选：主菜单按钮背景图
 │   ├── singlePlayer.png
-│   └── multiplayer.png
-├── fonts/                # 可选：字体文件
-│   └── myfont.ttf
-├── music.ogg             # 可选：背景音乐
-└── game/                 # 可选：游戏内贴图覆盖层（镜像游戏 assets 结构）
+│   ├── multiplayer.png
+│   └── mods.png
+├── fonts/                     # 可选：字体，文件名由配置指定
+│   ├── regular.ttf
+│   └── bold.ttf
+├── music.ogg                  # 可选：背景音乐
+└── game/                      # 可选：游戏资源覆盖，镜像 assets 内部结构
     ├── units/tanks/tank.png
     └── tilesets/bitmaps/sand.png
 ```
 
-## theme.toml 参考
+**不要多套一层文件夹。** `我的主题/theme.toml` 位于 ZIP 内时，导入器找不到根目录的配置。ZIP 内路径使用 `/`，不要使用 Windows 的反斜杠，也不能含 `..`、绝对路径或盘符。
+
+| 资源 | 当前识别方式 | 容易出错的地方 |
+|---|---|---|
+| 背景 | 根目录的 `background.png` 或 `background.jpg` | 两者都存在时优先 PNG；`background.jpeg` 不属于这个固定文件名 |
+| 标题、图标 | 根目录的 `title.png`、`icon.png` | 这里不是任意图片文件名，也不支持改成 .jpg 来自动识别 |
+| 按钮图 | `buttons/<按钮 id>.png`、.jpg、.jpeg | id 区分大小写；同一 id 只放一张图，避免多文件选择不明确 |
+| 字体 | `[fonts]` 指定的包内相对路径 | 不存在的文件会回落内置字体；只放文件但不配置不会启用 |
+| 音乐 | 根目录的 `music.<扩展名>` | 文件名必须是 music，格式支持取决于平台 |
+| 游戏资源 | `game/` 下与原资源相同的相对路径 | 应为 `game/units/...`，不是 `game/assets/units/...` |
+
+导入器检查配置和路径，但不会逐个解码图片、字体、音频。**导入成功不等于资源文件一定能显示或播放**；请使用真正的图片/音频文件，改后缀不会转换格式。
+
+## 3. TOML 的写法：先看表名，再看字段
+
+`[menu.layout]` 是整个按钮区的配置，`[menu.buttons.mods]` 只配置「模组与地图」。一个字段属于**它上方最近的表标题**，缩进不会改变这个规则。
 
 ```toml
-[theme]
-id = "my-theme"          # 必需。只能含字母/数字/下划线/连字符，作为安装目录名，全机唯一
-name = "我的主题"         # 必需。展示名
-author = "你的名字"
-version = "1.0"
-description = "一句话介绍"
-
-[colors]
-# 全部可选；缺省的角色回落内置 RWPP 主题。格式 #RRGGBB 或 #AARRGGBB，必须带 #
-primary = "#82B1FF"           # 主强调色（按钮高亮、标题、徽标）
-onPrimary = "#FF000000"       # 主色之上的文字色
-primaryContainer = "#FF297EA0"
-onPrimaryContainer = "#FFFFFFFF"
-secondary = "#FFA1E9DF"
-onSecondary = "#FF000000"
-secondaryContainer = "#FF005049"
-onSecondaryContainer = "#FFFFFFFF"
-tertiary = "#FFA0E5E5"
-onTertiary = "#FF000000"
-tertiaryContainer = "#FF004F50"
-onTertiaryContainer = "#FFFFFFFF"
-background = "#FF283238"      # 卡片底色的基色
-onBackground = "#FFFFFFFF"
-surface = "#FF1B1212"
-onSurface = "#FFFFFFFF"       # 正文文字主色
-surfaceContainer = "#FF3C464C" # 描边/分隔容器色
-error = "#FFCF6679"
-onError = "#FF000000"
-inversePrimary = "#FF2F515F"
-
-[menu]
-showTitleBadge = true    # 是否在标题图右下角显示「极速版」角标（自定义标题图通常建议 false）
-
-# ---- 主菜单按钮区布局（全部可选，缺省即内置布局）----
 [menu.layout]
-orientation  = "grid"    # grid（网格）| vertical（全部整行宽竖排）
-columns      = 2         # 1-4，grid 模式列数
-align        = "center"  # top | center | bottom，整块（标题+按钮）的垂直位置
-offsetY      = 0         # -400..400，整块垂直偏移（dp）
-widthPercent = 65        # 30-100，按钮区占屏宽百分比
-buttonHeight = 44        # 28-96，按钮最小高度（dp）
-buttonCorner = 20        # 0-32，按钮圆角（dp）
-spacing      = 10        # 0-32，按钮间距（dp）
+buttonCorner = 0        # 整个按钮区的圆角
+showBorder = false     # 整个按钮区的默认描边
+widthPercent = 65      # 整个按钮区相对于屏幕的宽度
 
-# ---- 按钮槽位：排序/占列/隐藏（按语义 id，全部可选）----
 [menu.buttons.mods]
-order  = -2              # 排序权重，越小越靠前；不写保持内置顺序
-span   = 2               # 占几列（grid 模式），占满列数即整行宽
-
-[menu.buttons.openSourceInfo]
-hidden = true            # 从主菜单隐藏该按钮
+widthPercent = 80      # mods 相对于自己格子的宽度
+showBorder = true      # 只让 mods 恢复描边
 ```
 
-**按钮语义 id**（固定不变，可放心引用）：
+如果把 `buttonCorner = 0` 写在 `[menu.buttons.mods]` 下面，它不会成为全局配置，也不会改变该按钮的圆角。当前没有单按钮圆角字段。
 
-| id | 内置按钮 |
+基本规则：
+
+- 字符串用英文双引号：`orientation = "vertical"`；开关写 `true` / `false`，不要加引号。
+- 本文的百分比、高度、圆角等数值都是整数：写 `80`，不要写 `"80%"` 或 `80.0`。
+- 字段名区分大小写：`buttonCorner` 和 `buttoncorner` 不一样。
+- 同一字段只能定义一次，同一个表也不要重复声明。合并例子时，把同表字段合并到一起。
+- 同一路径不能既当字符串又当表。例如定义了 `menu.singlePlayer = "文本"`，就不能再定义 `[menu.singlePlayer]`。
+
+**未知字段通常会被忽略，并不一定报错或警告。** 参数没效果时先核对表名、字段拼写和客户端版本，不要只凭「成功导入」判断它被读取了。
+
+## 4. 主菜单布局参数
+
+以下参数都写在 `[menu.layout]` 下。dp 是随系统密度缩放的逻辑尺寸，并不总等于图片像素。
+
+| 字段 | 主题包缺省值 | 范围 / 可用值 | 含义 |
+|---|---|---|---|
+| `orientation` | `"grid"` | `"grid"` / `"vertical"` | 网格排布 / 所有按钮每个独占一行 |
+| `columns` | 2 | 1–4 | 网格的列数；竖排时实际为一列 |
+| `align` | `"center"` | `"top"` / `"center"` / `"bottom"` | 标题与按钮整块的垂直位置 |
+| `offsetY` | 0 | -400–400 dp | 在对齐位置基础上上下移动；负数向上 |
+| `widthPercent` | 65 | 30–100 | 整个按钮区占屏幕宽度的百分比，最多 520dp |
+| `buttonHeight` | 44 | 28–96 dp | 按钮内容的最小高度；文字换行等可能使实际高度更大 |
+| `buttonCorner` | 20 | 0–32 dp | 整个按钮区的圆角，也是按钮图的裁切圆角；0 为直角 |
+| `spacing` | 10 | 0–32 dp | 行间距和列间距 |
+| `showBorder` | true | true / false | 是否显示默认白色描边，可以由单个按钮覆盖 |
+
+数值超出范围会被限制到最近的合法值。例如全局 `widthPercent = 10` 实际按 30 使用，`buttonCorner = 99` 实际按 32 使用。`orientation`、`align` 写错会警告并回落默认值。
+
+这里列的是**启用主题包时**的缺省值。停用所有主题后，内置界面会按屏幕大小调整宽度、高度、圆角和间距；一个只写元数据的主题包也会使用上表的主题布局缺省值，并非在所有屏幕上与停用主题完全相同。
+
+### 为什么全局宽度从 65 改成 80，界面可能不变
+
+整个按钮区的目标宽度大致为：
+
+```text
+按钮区宽度 = min(屏幕逻辑宽度 × 全局 widthPercent / 100, 520dp)
+```
+
+还要受外层左右各 16dp 留白约束。例如屏幕逻辑宽度为 1000dp 时，65% 是 650dp，80% 是 800dp，两者都超过 520dp，最终都显示为 520dp。**调大百分比不会突破这个上限。** 标题图宽度由独立的响应式布局控制，不随这个字段改变。
+
+### 为什么圆角 20 和 32 看起来很接近
+
+按钮比较矮时，实际圆角还受高度限制；很大的圆角最后都接近胶囊形状。要检查圆角是否读取成功，先使用 `buttonCorner = 0`，与默认圆角比较最容易看出区别。
+
+如果图片本身画了圆角或透明圆角，改成 0 不会补出图片里原本不存在的四角。关闭描边也不等于关闭圆角裁切。
+
+## 5. 单个按钮：占列、宽度、描边、排序与隐藏
+
+按钮的 id 固定如下。**id 与界面文字键不是同一回事**，不要把 modsAndMaps 用作按钮 id。
+
+| 按钮 id | 内置按钮 | 无 span 覆盖时的占列 |
+|---|---|---|
+| `singlePlayer` | 单人游戏 | 整行 |
+| `multiplayer` | 多人游戏 | 整行 |
+| `resourceBrowser` | 资源获取 | 一列 |
+| `mods` | 模组与地图 | 一列 |
+| `settings` | 设置 | 一列 |
+| `openSourceInfo` | 反馈与说明 | 一列 |
+
+每个按钮的参数写在 `[menu.buttons.<id>]` 下：
+
+| 字段 | 缺省值 | 范围 | 含义 |
+|---|---|---|---|
+| `order` | 0 | 整数，建议使用小整数 | 越小越靠前；相同值保持内置相对顺序 |
+| `span` | 0 | 0–4，使用时再限制到实际列数 | 0 或省略沿用内置占列；1 表示一列，2 表示两列 |
+| `hidden` | false | 开关 | 隐藏整个按钮，并让其他按钮重新排布 |
+| `widthPercent` | 100 | 1–100 | 按钮在自己格子内占用的宽度百分比，缩窄后居中 |
+| `showBorder` | 继承全局设置 | 开关 | 覆盖全局 showBorder，只影响这个按钮 |
+
+只有单按钮 `widthPercent` 的范围是 1–100；不要与全局的 30–100 混淆。很小的数值可能导致文字挤成多行，不建议为了隐藏按钮把宽度设为 0，应该用 `hidden = true`。
+
+### 两种 widthPercent 的区别
+
+全局百分比先确定按钮区宽度，`span` 再为按钮分配格子，最后单按钮百分比在格子内缩窄按钮。格子仍保留原来的空间，旁边的按钮不会因为它缩窄而变宽或移位。
+
+假设按钮区为 520dp、两列、间距 10dp：
+
+| 配置 | 格子宽度 | 实际按钮宽度 |
+|---|---|---|
+| mods 不写 span，单按钮宽度 100 | (520 − 10) ÷ 2 = 255dp | 255dp |
+| mods 不写 span，单按钮宽度 80 | 255dp | 204dp |
+| mods 写 span = 2，单按钮宽度 80 | 520dp | 416dp |
+| 竖排模式，单按钮宽度 80 | 520dp | 416dp |
+
+所以，**想让 Mods 达到整个按钮区的 80% 宽，要同时让它占满整行**：
+
+```toml
+[menu.buttons.mods]
+span = 2
+widthPercent = 80
+```
+
+此例假定全局 `columns = 2`。如果改为三列，应写 `span = 3`；或者使用 `orientation = "vertical"`。单按钮 `widthPercent` 不改变图片文件，也不影响其他按钮的宽度。
+
+### 隐藏默认描边，但保留某一个按钮的描边
+
+```toml
+[menu.layout]
+showBorder = false
+
+[menu.buttons.multiplayer]
+showBorder = true
+```
+
+反过来，全局默认保留描边时，也可以只给一个按钮写 `showBorder = false`。只写外观字段而不写 `span`，单人/多人按钮仍沿用整行宽度。
+
+这个开关只控制主菜单中央按钮区的**启动器默认白色描边**。它不影响左上角账号/好友框、退出按钮、其他页面的卡片，也不能擦掉按钮图片里已经画好的边框。图片有边框时，需要修改图片本身。
+
+### 网格如何换行
+
+按钮先按 `order` 排序，再依次放入每行。一个按钮的 `span` 超过剩余空列时，会放到下一行；未填满的一行保留空格，后面的按钮不会回头填补。`hidden = true` 会把整个按钮从排布中移除。
+
+```toml
+[menu.buttons.mods]
+order = -2
+span = 2
+
+[menu.buttons.openSourceInfo]
+hidden = true
+```
+
+## 6. 按钮背景图：尺寸、裁切与文字
+
+例如，将单人游戏图片命名为 `buttons/singlePlayer.png`。客户端会按 id 自动读取，不需要在 TOML 中另写图片路径。
+
+显示顺序是：按钮底色或图片 → 启动器文字，并按按钮形状裁切、按配置绘制默认描边。
+
+- 有背景图时，按钮底色透明；没有背景图时使用内置半透明底色。
+- 图片按比例放大到填满按钮，超过按钮比例的部分会被裁掉（Crop），不会自动完整显示整张图片。
+- 按钮宽高仍由布局和内容决定，图片本身的像素尺寸不会撑大按钮。
+- 对完整装饰图，先确定按钮比例再作图，关键装饰不要贴边。长条图放进半宽按钮时很容易裁掉两侧。
+- 想保留矩形装饰图四角，设置全局 `buttonCorner = 0`；想去掉额外白框，设置 `showBorder = false`。
+- PNG 的透明部分会露出启动器背景。关闭描边不会自动移除图片里的透明留白。
+- 启动器仍会绘制按钮文字。建议图片里不再重复绘制同一文字，文案通过 `strings_*.toml` 调整。
+
+主菜单按钮文字目前固定使用白色，默认底色与白色描边也不是由 `[colors]` 中的 onPrimary 或 surfaceContainer 控制。改全局配色并不能替代 showBorder。
+
+## 7. 配色与标题
+
+配色写在 `[colors]` 中，格式只能是带 `#` 的 `#RRGGBB` 或 `#AARRGGBB`。八位色值的**前两位是透明度**，不是最后两位；00 完全透明，FF 完全不透明。
+
+```toml
+[colors]
+primary = "#82B1FF"
+onPrimary = "#000000"
+background = "#CC283238"
+onBackground = "#FFFFFF"
+surfaceContainer = "#3C464C"
+```
+
+目前支持这 20 个颜色角色，未写的使用内置 RWPP 基础配色：
+
+| 角色 | 用途 |
 |---|---|
-| `singlePlayer` | 单人游戏 |
-| `multiplayer` | 多人游戏 |
-| `resourceBrowser` | 资源获取 |
-| `mods` | 模组与地图 |
-| `settings` | 设置 |
-| `openSourceInfo` | 反馈与说明 |
+| `primary` / `onPrimary` | 主强调色 / 主色区域上的文字 |
+| `primaryContainer` / `onPrimaryContainer` | 主色容器 / 容器文字 |
+| `secondary` / `onSecondary` | 次强调色 / 对应文字 |
+| `secondaryContainer` / `onSecondaryContainer` | 次色容器 / 容器文字 |
+| `tertiary` / `onTertiary` | 第三强调色 / 对应文字 |
+| `tertiaryContainer` / `onTertiaryContainer` | 第三色容器 / 容器文字 |
+| `background` / `onBackground` | 背景基色 / 对应文字 |
+| `surface` / `onSurface` | 表面基色 / 对应文字 |
+| `surfaceContainer` | 部分卡片描边与容器颜色 |
+| `error` / `onError` | 错误色 / 对应文字 |
+| `inversePrimary` | 反色区域中的主色 |
 
-## 文案覆盖（strings_zh.toml / strings_en.toml）
+这些是颜色角色，不是逐个控件的开关；某些组件有固定颜色，实际透明度还受启动器设置影响。
 
-与游戏内置语言文件同款的点分键，**只需写你想覆盖的键**，没写的键自动用内置文本。主菜单按钮文字对应键：
+根目录 `title.png` 替换主菜单标题图，按比例完整放入标题区域（Fit）。`[menu] showTitleBadge = false` 隐藏「极速版」角标，只放自定义标题图片不会自动隐藏角标。根目录背景图填满整个启动器，因此不同屏幕比例下可能裁掉边缘。
+
+## 8. 文案覆盖
+
+中文写入 `strings_zh.toml`，英文写入 `strings_en.toml`，**它们不是 theme.toml 的一部分**。只写要替换的键，其他文字自动回落内置语言文件。
 
 ```toml
 [menu]
-singlePlayerGame = "孤胆征程"   # 单人游戏按钮
-multiplayer = "联机大厅"        # 多人游戏按钮
+singlePlayerGame = "孤胆征程"
+multiplayer = "联机大厅"
 modsAndMaps = "模组与地图"
 settings = "设置"
 openSourceInfo = "反馈与说明"
@@ -128,59 +280,101 @@ friends = "好友"
 resourceBrowser = "资源获取"
 ```
 
-带 `{0}` 占位的键请保留占位符。键写错不会崩溃，只是不生效。
+按钮 id singlePlayer 对应文字键 `menu.singlePlayerGame`；按钮 id mods 对应 `menu.modsAndMaps`。不要把这些名称互换。其他可覆盖键可查阅仓库内的 `rwpp-core/src/commonMain/composeResources/files/bundle_zh.toml` 和 `bundle_en.toml`。
 
-## 背景音乐
+带 `{0}`、`{1}` 等占位符的文案请保留占位符。只有当前语言对应的覆盖文件会被加载；改中文文件不会更改英文界面。未知文字键通常不产生可见效果，非法 TOML 则会在导入时被拒绝。
 
-包根放 `music.<扩展名>`。格式按平台分：
+## 9. 字体与背景音乐
 
-| 平台 | 支持格式 |
-|---|---|
-| Android | mp3 / ogg / m4a / aac / wav / flac |
-| 桌面端 | **wav / ogg**（不支持 mp3） |
-
-建议放 ogg（双端通吃）。玩家可在「设置 → 主题 → 背景音乐音量」调节音量（0 即关闭）；进对局自动停，回主菜单续播。
-
-## 字体
+字体通过包内相对路径指定：
 
 ```toml
 [fonts]
-regular = "fonts/myfont.ttf"    # 常规字重（包内相对路径）
-bold = "fonts/bold.ttf"         # 可选；缺省时粗体由系统合成
+regular = "fonts/regular.ttf"
+bold = "fonts/bold.ttf"
 ```
 
-替换全局正文/标题字体族（含主菜单按钮）。字体文件较大时注意包体积；**请确认字体的分发许可**。
+regular 替换正文和主菜单按钮等使用的字体族；bold 可选，不提供时粗体由该字体族处理。并非所有装饰标题都使用正文同一字体族。请确认字体含有需要的中文字符，并允许随主题包分发。
 
-## 游戏内贴图（game/ 目录）
+音乐放在包根目录，命名为 `music.<扩展名>`：
 
-`game/` 内部镜像游戏 `assets/` 目录结构，同名文件覆盖原版：
+| 平台 | 当前支持的扩展名 |
+|---|---|
+| Android | mp3、ogg、m4a、aac、wav、flac |
+| 桌面 | wav、ogg；不支持 mp3 |
 
-- **单位贴图**：`game/units/<单位目录>/<图名>.png`——如 `game/units/tanks/tank.png`。游戏根目录的 `assets/units/` 下可查到全部单位目录与图名。启用/停用主题包时会自动重载单位，立即生效。
-- **地块贴图**：`game/tilesets/bitmaps/<图名>.png`——如 `game/tilesets/bitmaps/sand.png`。**注意**：引擎无论地图里写的什么子路径（`terrain/`、`ridges/` 等），实际都从 `tilesets/bitmaps/` 读图，所以覆盖文件一律放在 `game/tilesets/bitmaps/` 下。地块贴图在下次进图时生效。
+双端主题可使用 `music.ogg`。改文件扩展名不能转换音频编码。背景音乐在启用主题、有可播放音乐、音量大于 0、未进入对局时播放；进入对局停止，返回后恢复。音量位于「设置 → 主题 → 背景音乐音量」。
 
-其他游戏内资源（`gui/`、`music/`、`shaders/` 目录）也在同一覆盖层生效，按需放置。
+同一包放多个音乐文件时，客户端会按当前平台的格式优先级选取，不是轮播列表；只放一个需要使用的文件更容易测试。
 
-已知边界：地图 `.tmx` 文件不可覆盖；把图像内嵌进 tmx（base64）的地图拦截不到；模组包（.rwmod）内的贴图不受影响。
+## 10. 游戏资源覆盖
 
-**贴图尺寸**：不强制与原图同尺寸（引擎不校验），但强烈建议保持一致——原版 ini 里炮塔挂点是按原图像素坐标写的（如 `x: -2, y: 31` 表示距图中心的像素偏移），图变大会导致炮塔悬空错位；单位显示大小直接等于图像素大小，但碰撞体/选中圈/血条不跟随；阴影是独立图片（`*_shadow.png`），主体与阴影需等比一起改。只换色/重绘且保持尺寸是最安全的玩法；想做「更大的单位」属于改 ini 的模组范畴，超出美术包能力。
+`game/` 里面从原版 `assets/` 的内部路径开始：
 
-## 校验与常见错误
+| 原版资源路径 | 主题包路径 |
+|---|---|
+| `assets/units/tanks/tank.png` | `game/units/tanks/tank.png` |
+| `assets/tilesets/bitmaps/sand.png` | `game/tilesets/bitmaps/sand.png` |
 
-导入时客户端会完整校验，**不合法直接拒绝导入**并给出原因：
+单位目录和图名请以实际游戏资源为准，示例不代表任意版本里都有同名文件。启用/停用主题会重建资源覆盖层并重载单位；请等待完成。地块贴图在下次进入地图时读取。
 
-- 缺 `theme.toml` / 缺 `[theme]` 段 / `id` 或 `name` 为空 / `id` 含非法字符 / 与已安装包 id 重复
-- `strings_*.toml` 不是合法 TOML
-- 包内文件路径含 `..` 或以 `/`、盘符开头（安全限制）
-- 字体路径逃逸出包目录
+地块图应放在 `game/tilesets/bitmaps/`，即使地图里写了 terrain/、ridges/ 等其他子路径，引擎仍从上述位图目录读图。其他原版文件资源，如 gui/、music/、shaders/，也沿用相同覆盖机制。
 
-以下情况**不拒绝但会在导入结果里警告并忽略**：配色色值格式错（忘记带 `#`）、未知配色角色名（检查拼写）、未知按钮槽位 id、`orientation`/`align` 写错（回落默认值）。
+主题覆盖最后叠加，同一路径会覆盖前面的原版基线或 .rwres 资源。生成结果可在 `resource_generated/` 中查看：它是客户端输出目录，**不要拿它代替主题源码来修改**。
 
-数值越界（如 `columns = 99`）会自动钳制到安全范围，不警告。
+当前不能用主题包覆盖地图 .tmx 本身、TMX 内嵌 base64 图片或 .rwmod 包内部的贴图。主题包也不提供自定义游戏单位逻辑、按钮点击逻辑或任意页面布局。
 
-## 调试技巧
+单位贴图建议保持原尺寸与透明边距。原版炮塔挂点按原图像素坐标设置，放大图像可能造成炮塔错位；碰撞范围、选中圈和血条不会随图片自动同步。主体与独立阴影（如 `*_shadow.png`）需要一起检查。
 
-1. 改动后无需重启游戏：主题包管理页里停用再启用即可热切换（游戏内贴图会自动重建资源并重载单位）。
-2. 配色没变化 → 检查色值是否带了 `#`。
-3. 按钮文字没变 → 检查键名是否与内置语言文件一致（区分大小写）。
-4. 地块没变 → 确认图片放在 `game/tilesets/bitmaps/` 且文件名与 `assets/tilesets/bitmaps/` 里的完全一致。
-5. 游戏内贴图目录：`resource_generated/`（游戏根目录 / Android 的 `rustedWarfare/`）是叠加结果，可以进去确认你的文件是否被正确叠加。
+## 11. 开发时怎样让修改生效
+
+导入会把 ZIP 解压为安装目录中的 `themes/<id>/`。**编辑原始 .rwtheme 文件或打包前的源码文件夹，不会自动修改已经安装的副本。**
+
+### 方式 A：修改源码后重新导入
+
+1. 在主题包管理页停用旧主题。含 game/ 资源时，等待覆盖层恢复完成。
+2. 删除旧主题；同 id 直接再次导入会被拒绝，不会覆盖更新。
+3. 从源码文件夹重新打 ZIP、改后缀并导入，再启用。
+
+这是最终发布前最完整的检查方式，可以同时验证打包目录、配置和资源。
+
+### 方式 B：直接修改已安装目录，用于本地调试
+
+桌面端安装目录位于程序当前运行目录的 `themes/<id>/`；Android 位于共享存储的 `rustedWarfare/themes/<id>/`，访问权限取决于设备。
+
+1. 在主题包管理页停用主题。含游戏资源时，等待停用造成的重建/重载完成。
+2. 修改该目录里的 theme.toml 或资源；不要修改它的 id，避免配置 id 与目录名不一致。
+3. 点击主题包管理页的「刷新」，重新读取配置与文件列表。
+4. 再启用主题，回到主菜单观察效果。
+
+**只点击刷新不会替换当前启用主题的状态；只停用再启用也不能保证重新读到磁盘上的配置。** 请按“停用 → 修改 → 刷新 → 启用”操作。含游戏资源时不要快速连续切换，要等待每次异步重建完成。
+
+同一图片路径在当前进程里可能被图片加载器缓存。已经确认文件和配置正确、但仍显示旧图时，可重新导入后重启客户端核对。游戏覆盖层按主题 id 记录状态，直接改 game/ 文件后只重启也可能沿用旧生成资源，因此仍应完整停用并等待，再启用。
+
+## 12. 常见问题速查
+
+| 现象 | 优先检查 |
+|---|---|
+| 提示缺少 theme.toml | ZIP 是否多套了一层目录；是否实际上叫 .toml.txt |
+| 提示已存在相同 id | 先停用、删除已安装的旧主题，再重新导入 |
+| 导入成功，参数没有效果 | 是否已经启用；表名/字段名是否正确；新版字段是否被旧客户端忽略 |
+| Mods 的 widthPercent = 80 仍比整行小很多 | 单按钮百分比相对于格子；两列布局想占整行请加 span = 2 |
+| 全局宽度从 65 改成 80 没变化 | 是否两者都达到 520dp 上限；是否编辑了未安装的源码副本 |
+| 单人/多人按钮圆角没变化 | buttonCorner 要写在 [menu.layout]；先用 0 验证；检查图片是否自带圆角 |
+| 关闭描边后还是有边框 | 是否为图片里画好的边框；是否单按钮 showBorder = true 覆盖了全局；是否是账号/好友等其他框 |
+| hidden = true 后空位变化 | 隐藏会重新排布；缩窄宽度则保留原格子，两者行为不同 |
+| 按钮图被裁掉 | 图片比例是否匹配按钮；是否只占一列；是否被全局圆角裁切 |
+| 按钮图没有显示 | buttons/ 目录与按钮 id 是否正确；图片是否能解码；是否为 PNG/JPG/JPEG |
+| 改颜色却改不掉主菜单白框/白字 | 这些有固定颜色；白框使用 showBorder 控制，白字目前没有单独色值配置 |
+| 修改后仍用旧配置 | 是否编辑了安装副本；是否按“停用 → 刷新 → 启用”重新加载 |
+| 文字未改变 | 覆盖文件是否匹配当前语言；是否混淆按钮 id 与文字键 |
+| 标题还有「极速版」角标 | [menu] showTitleBadge = false 是否放在正确表下 |
+| 音乐不播放 | 桌面不支持 mp3；音量是否为 0；是否进入对局；音频是否能解码 |
+| 地块图不变 | 路径是否为 game/tilesets/bitmaps/；是否重新进入地图 |
+| 游戏贴图不变 | 是否为原版资源而非模组包资源；切换后是否等重建完成；检查 resource_generated/ |
+
+导入时会拒绝：缺配置、非法 TOML、缺/空 id 或 name、非法 id、重复 id、非法 ZIP 路径、非法字体路径、非法文案 TOML。
+
+导入时会警告但继续：未知配色角色、非法色值、未知按钮 id、未知 orientation 或 align。数值越界会限制范围，通常不警告。普通未知字段可能静默忽略。
+
+发布前建议至少检查：桌面与 Android 目标平台、较窄与较宽的屏幕、主题启用/停用、当前支持的语言，以及最后打出的 .rwtheme 能否从头导入。保存源码文件夹方便迭代，版本号和说明中写明需要新版客户端才能使用新增的按钮配置。
