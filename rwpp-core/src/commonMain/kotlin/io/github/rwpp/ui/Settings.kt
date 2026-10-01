@@ -499,6 +499,8 @@ fun SettingsView(
                                                 settings.autoCheckUpdate = it
                                             }
 
+                                            ResourceBrowserOrientationSetting(settings, configIO)
+
                                             var accountApiUrl by remember {
                                                 mutableStateOf(resolveAccountApiUrl(accountPrefs.apiUrl))
                                             }

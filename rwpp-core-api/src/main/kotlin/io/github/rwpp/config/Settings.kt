@@ -43,6 +43,8 @@ data class Settings(
     var boldText: Boolean = false,
     var forceEnglish: Boolean = false, // @Deprecated: 已由 language 字段替代，保留仅用于旧配置兼容
     var language: String = "zh", // "auto": 自动检测, "zh": 简体中文, "en": 英文
+    /** null 表示尚未选择，首次进入资源页面时询问。 */
+    var resourceBrowserOrientation: ResourceBrowserOrientation? = null,
     var enableOffscreenPanel: Boolean = false,
     var displayTimeInGame: Boolean = false,
     var effectLimitForAllEffects: String = "Keep", // Zero, Keep, Unlimited

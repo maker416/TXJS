@@ -8,6 +8,7 @@
 package io.github.rwpp.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,23 +29,46 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.rwpp.config.ConfigIO
+import io.github.rwpp.config.Settings
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.platform.EmbeddedBrowser
 import io.github.rwpp.platform.EmbeddedBrowserState
+import io.github.rwpp.platform.ResourceBrowserLayout
 import io.github.rwpp.widget.BorderCard
+import org.koin.compose.koinInject
 
 private const val RESOURCE_BROWSER_URL = "http://192.168.1.102:8080"
 
 @Composable
 fun ResourceBrowser(onExit: () -> Unit) {
+    val settings = koinInject<Settings>()
+    val configIO = koinInject<ConfigIO>()
+    var orientation by remember(settings) { mutableStateOf(settings.resourceBrowserOrientation) }
+    // 退出动画尚未 dispose 时也要立即恢复方向，以免其他页面暂时留在竖屏。
+    val active = launcherPage == LauncherPage.ResourceBrowser
+    if (orientation == null && active) {
+        ResourceBrowserOrientationDialog(
+            onSelected = {
+                settings.resourceBrowserOrientation = it
+                configIO.saveConfig(settings)
+                orientation = it
+            },
+            onDismissRequest = onExit,
+        )
+    }
+
     val browser = remember { EmbeddedBrowserState(RESOURCE_BROWSER_URL) }
     BackHandler(true) {
         if (!browser.goBack()) onExit()
@@ -53,62 +77,94 @@ fun ResourceBrowser(onExit: () -> Unit) {
         onDispose { CloseUIPanelEvent("browser").broadcastIn() }
     }
 
-    BorderCard(
+    ResourceBrowserLayout(
+        orientation = orientation.takeIf { active },
         modifier = Modifier.fillMaxSize().padding(10.dp),
-        backgroundColor = MaterialTheme.colorScheme.surface,
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        BorderCard(
+            modifier = Modifier.fillMaxSize(),
+            backgroundColor = MaterialTheme.colorScheme.surface,
         ) {
-            IconButton(onClick = { browser.goBack() }, enabled = browser.canGoBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, readI18n("browser.back"))
-            }
-            IconButton(onClick = browser::goForward, enabled = browser.canGoForward) {
-                Icon(Icons.AutoMirrored.Filled.ArrowForward, readI18n("browser.forward"))
-            }
-            IconButton(onClick = browser::goHome) {
-                Icon(Icons.Default.Home, readI18n("browser.home"))
-            }
-            Text(
-                browser.url,
-                modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            IconButton(onClick = browser::reload) {
-                Icon(Icons.Default.Refresh, readI18n("browser.refresh"))
-            }
-            IconButton(onClick = onExit) {
-                Icon(Icons.Default.Close, readI18n("common.close"))
-            }
-        }
+            ResourceBrowserToolbar(browser, onExit)
 
-        if (browser.isLoading) {
-            val progress = browser.progress
-            if (progress == null) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(3.dp))
+            if (browser.isLoading) {
+                val progress = browser.progress
+                if (progress == null) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(3.dp))
+                } else {
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.fillMaxWidth().height(3.dp),
+                    )
+                }
             } else {
-                LinearProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier.fillMaxWidth().height(3.dp),
-                )
+                Spacer(Modifier.height(3.dp))
             }
-        } else {
-            Spacer(Modifier.height(3.dp))
-        }
 
-        browser.error?.let { error ->
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(readI18n("browser.loadFailed"), color = MaterialTheme.colorScheme.error)
-                Text(error, style = MaterialTheme.typography.bodySmall)
+            browser.error?.let { error ->
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(readI18n("browser.loadFailed"), color = MaterialTheme.colorScheme.error)
+                    Text(error, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+
+            // 选择完成后才创建原生浏览器，让首次弹窗拥有完整的输入焦点。
+            if (orientation != null) {
+                EmbeddedBrowser(browser, Modifier.fillMaxWidth().weight(1f))
+            } else {
+                Spacer(Modifier.weight(1f))
             }
         }
-
-        EmbeddedBrowser(browser, Modifier.fillMaxWidth().weight(1f))
     }
+}
+
+@Composable
+internal fun ResourceBrowserToolbar(browser: EmbeddedBrowserState, onExit: () -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val compact = maxWidth < 480.dp
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = { browser.goBack() }, enabled = browser.canGoBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, readI18n("browser.back"))
+                }
+                IconButton(onClick = browser::goForward, enabled = browser.canGoForward) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, readI18n("browser.forward"))
+                }
+                IconButton(onClick = browser::goHome) {
+                    Icon(Icons.Default.Home, readI18n("browser.home"))
+                }
+                if (compact) {
+                    Spacer(Modifier.weight(1f))
+                } else {
+                    ResourceBrowserAddress(browser.url, Modifier.weight(1f).padding(horizontal = 8.dp))
+                }
+                IconButton(onClick = browser::reload) {
+                    Icon(Icons.Default.Refresh, readI18n("browser.refresh"))
+                }
+                IconButton(onClick = onExit) {
+                    Icon(Icons.Default.Close, readI18n("common.close"))
+                }
+            }
+            if (compact) {
+                ResourceBrowserAddress(browser.url, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ResourceBrowserAddress(url: String, modifier: Modifier) {
+    Text(
+        url,
+        modifier = modifier,
+        style = MaterialTheme.typography.bodyMedium,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
 }

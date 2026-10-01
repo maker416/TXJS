@@ -315,6 +315,12 @@ forward = "前进"
 home = "主页"
 refresh = "刷新"
 loadFailed = "网页加载失败，请检查网络后点击刷新重试。"
+orientationTitle = "选择资源页面的显示方向"
+orientationHint = "选择后会记住你的偏好，以后自动使用。可在“设置 → 客户端”中修改。"
+defaultOrientation = "资源页面默认显示方向"
+landscape = "横屏"
+portrait = "竖屏"
+askOrientation = "首次进入时询问"
 
 [menu]
 mission = "战役"

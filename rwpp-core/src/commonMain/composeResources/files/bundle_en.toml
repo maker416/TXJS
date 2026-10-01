@@ -314,6 +314,12 @@ forward = "Forward"
 home = "Home"
 refresh = "Refresh"
 loadFailed = "Unable to load this page. Check your connection and refresh to retry."
+orientationTitle = "Choose the resource page orientation"
+orientationHint = "Your choice will be remembered for future visits. Change it in Settings → Client."
+defaultOrientation = "Default resource page orientation"
+landscape = "Landscape"
+portrait = "Portrait"
+askOrientation = "Ask on first visit"
 
 [menu]
 mission = "Mission"
