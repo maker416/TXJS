@@ -41,7 +41,7 @@ import io.github.rwpp.platform.EmbeddedBrowser
 import io.github.rwpp.platform.EmbeddedBrowserState
 import io.github.rwpp.widget.BorderCard
 
-private const val RESOURCE_BROWSER_URL = "http://192.168.1.106:8080"
+private const val RESOURCE_BROWSER_URL = "http://192.168.1.102:8080"
 
 @Composable
 fun ResourceBrowser(onExit: () -> Unit) {
