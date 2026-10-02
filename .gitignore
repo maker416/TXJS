@@ -25,6 +25,7 @@ rwpp-core/build/
 rwpp-core-api/build/
 rwpp-desktop/build/
 rwpp-ksp/build/
+rwpp-mod-heap-tool/build/
 **/bin/
 out/
 
