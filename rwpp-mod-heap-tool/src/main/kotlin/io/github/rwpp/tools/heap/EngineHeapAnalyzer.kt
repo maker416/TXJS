@@ -61,11 +61,16 @@ internal object EngineHeapAnalyzer {
             val output = File(sandbox, "measurement.properties")
             val status = File(sandbox, "progress.txt")
             val log = File(sandbox, "engine.log")
+            val failure = File(sandbox, "failure.txt")
             val maxHeapMiB = System.getProperty("rwpp.heap.maxHeapMiB", "4096").toInt()
             require(maxHeapMiB in 128..65536) { "rwpp.heap.maxHeapMiB 必须在 128..65536 范围内" }
+            val stackMiB = System.getProperty("rwpp.heap.stackMiB", "16").toInt()
+            require(stackMiB in 1..256) { "rwpp.heap.stackMiB 必须在 1..256 范围内" }
             val java = File(System.getProperty("java.home"), "bin/java${if (isWindows()) ".exe" else ""}")
             val command = mutableListOf(
-                java.absolutePath, "-Xmx${maxHeapMiB}m", "-Dfile.encoding=UTF-8", "-XX:-DisableExplicitGC",
+                // 原版逻辑表达式解析会递归；线程栈独立于 Java 堆，重度嵌套 select 需要更大的栈。
+                java.absolutePath, "-Xmx${maxHeapMiB}m", "-Xss${stackMiB}m", "-Drwpp.heap.stackMiB=$stackMiB",
+                "-Dfile.encoding=UTF-8", "-XX:-DisableExplicitGC",
                 "-javaagent:${agent.absolutePath}", "-Djava.library.path=${gameRoot.absolutePath}",
                 "-Dorg.lwjgl.librarypath=${gameRoot.absolutePath}",
             )
@@ -86,7 +91,7 @@ internal object EngineHeapAnalyzer {
             }
             checkCancelled()
             check(process.exitValue() == 0 && output.isFile) {
-                val detail = if (log.isFile) readLogTail(log) else "未生成引擎日志"
+                val detail = EngineMeasurementFailure.read(failure) ?: EngineMeasurementFailure.readLogFailure(log)
                 "真实核心测量失败（退出码 ${process.exitValue()}）：\n$detail"
             }
             return MeasuredModHeap.readFrom(output)
@@ -104,7 +109,7 @@ internal object EngineHeapAnalyzer {
         val output = File(args[2])
         val status = File(args[3])
         fun progress(message: String) { status.writeText(message, Charsets.UTF_8) }
-        var measuringGraph = false
+        var phase = "初始化真实桌面核心与原版单位"
         try {
             // 仅独立诊断 JVM 显式打开其模块，覆盖 Locale/ZIP/图像等实现的私有字段。
             // Meter 仍严格拒绝任何不可访问字段，不会静默漏算。
@@ -114,6 +119,7 @@ internal object EngineHeapAnalyzer {
                 loader.loadBaseline()
                 val memory = ManagementFactory.getMemoryMXBean()
                 val baseline = gcHeapBytes()
+                phase = "真实核心加载模组"
                 progress("真实核心正在加载 ${File(args[1]).name}…")
                 val sampling = AtomicBoolean(true)
                 val peak = AtomicLong(baseline)
@@ -134,7 +140,7 @@ internal object EngineHeapAnalyzer {
                     sampler.join()
                 }
                 progress("测量实际单位对象并去重共享对象…")
-                measuringGraph = true
+                phase = "单位对象图诊断"
                 val graph = HeapGraphMeter().measure(loaded.units.map { HeapUnitRoot(it.name, it.fileName, it.root) },
                     com.corrodinggames.rts.game.units.custom.l::class.java) { value ->
                     // 音效持有音频工厂、unit type 持有实例缓存；这些反向引用不能算成单个定义的对象图。
@@ -153,13 +159,13 @@ internal object EngineHeapAnalyzer {
                     "${System.getProperty("java.vm.name")} ${System.getProperty("java.version")} / ${System.getProperty("os.name")} ${System.getProperty("os.arch")}",
                     graph.units.map { MeasuredUnitHeap(it.name, it.fileName, it.exclusiveBytes) }
                         .sortedByDescending { it.exclusiveBytes }, warnings,
+                    System.getProperty("rwpp.heap.stackMiB")?.toLong()?.times(1024L * 1024) ?: 0,
                 ).writeTo(output)
             }
             exitProcess(0) // 原版音频、Looper 等服务线程由独立测量进程统一结束。
         } catch (error: Throwable) {
-            if (error is OutOfMemoryError && measuringGraph) {
-                System.err.println("核心已完成加载，但对象图诊断阶段内存不足。请提高父进程的 -Drwpp.heap.maxHeapMiB；这不表示核心加载阶段发生 OOM。")
-            }
+            runCatching { EngineMeasurementFailure.write(File(output.parentFile, "failure.txt"), error, phase) }
+                .onFailure { System.err.println("测量异常摘要写入失败：${it.javaClass.name}: ${it.message}") }
             error.printStackTrace(System.err)
             exitProcess(1)
         }
@@ -232,11 +238,4 @@ internal object EngineHeapAnalyzer {
         }
     }
 
-    private fun readLogTail(file: File): String = java.io.RandomAccessFile(file, "r").use { log ->
-        val count = minOf(log.length(), 24L * 1024).toInt()
-        log.seek(log.length() - count)
-        val buffer = ByteArray(count)
-        log.readFully(buffer)
-        buffer.toString(Charsets.UTF_8).lines().takeLast(40).joinToString("\n")
-    }
 }

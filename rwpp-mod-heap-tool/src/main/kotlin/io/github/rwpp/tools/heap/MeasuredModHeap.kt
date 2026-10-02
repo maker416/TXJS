@@ -26,6 +26,7 @@ internal data class MeasuredModHeap(
     val runtimeDescription: String,
     val units: List<MeasuredUnitHeap>,
     val warnings: List<String> = emptyList(),
+    val configuredStackBytes: Long = 0,
 ) {
     val unitCount get() = units.size
     val incrementalHeapBytes get() = loadedHeapBytes - baselineHeapBytes
@@ -40,6 +41,9 @@ internal data class MeasuredModHeap(
         appendLine("加载完成后堆：${formatBytes(loadedHeapBytes)}")
         appendLine("加载期间采样堆峰值（10 ms）：${formatBytes(sampledPeakHeapBytes)}")
         appendLine("测量进程最大堆：${formatBytes(heapLimitBytes)}")
+        if (configuredStackBytes > 0) {
+            appendLine("测量线程栈配置（-Xss）：${formatBytes(configuredStackBytes)}，不计入 Java 堆")
+        }
         appendLine("实际加载单位：$unitCount")
         appendLine("单位对象图去重堆：${formatBytes(definitionHeapBytes)} ($definitionHeapBytes 字节)")
         appendLine("其中多单位共享对象：${formatBytes(sharedDefinitionHeapBytes)}")
@@ -76,6 +80,7 @@ internal data class MeasuredModHeap(
         p.setProperty("version", "1")
         p.setProperty("source", sourceName)
         p.setProperty("runtime", runtimeDescription)
+        p.setProperty("stack", configuredStackBytes.toString())
         listOf(
             "baseline" to baselineHeapBytes, "loaded" to loadedHeapBytes,
             "peak" to sampledPeakHeapBytes, "limit" to heapLimitBytes,
@@ -106,6 +111,7 @@ internal data class MeasuredModHeap(
                     MeasuredUnitHeap(value("unit.$i.name"), value("unit.$i.file"), bytes("unit.$i.bytes"))
                 },
                 List(value("warnings").toInt()) { value("warning.$it") },
+                p.getProperty("stack", "0").toLong(),
             )
         }
     }

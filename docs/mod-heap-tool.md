@@ -36,6 +36,10 @@ Gradle 命令：
 java -Drwpp.heap.maxHeapMiB=8192 -jar build\mod-heap-tool\RWJS-ModHeapTool.jar --analyze D:\Mods\large.rwmod --game-root "D:\Games\Rusted Warfare"
 ```
 
+测量子进程同时使用 `-Xss16m`，为原版核心递归解析深层 `select(...)` 等逻辑表达式提供 16 MiB 线程栈。线程栈和 Java 堆分别受限；`StackOverflowError` 表示线程栈溢出，提高 `-Xmx` 无法解决。可通过父进程属性 `-Drwpp.heap.stackMiB=32` 调整栈配置（1..256 MiB）。报告记录实际传入的栈配置，线程栈不计入 Java 堆占用。
+
+失败时界面保留异常类型、失败阶段和原因，包括线程栈溢出、核心加载内存不足与对象图诊断内存不足，避免长调用栈截掉异常标题。
+
 分发时复制 `RWJS-ModHeapTool.jar`，并让用户选择其完整游戏目录。JAR 包含核心、依赖和测量 agent；游戏运行资源与系统对应的原生库仍需要从原版安装提供。
 
 ## 结果含义
