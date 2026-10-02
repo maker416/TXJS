@@ -40,6 +40,20 @@ java -Drwpp.heap.maxHeapMiB=8192 -jar build\mod-heap-tool\RWJS-ModHeapTool.jar -
 
 失败时界面保留异常类型、失败阶段和原因，包括线程栈溢出、核心加载内存不足与对象图诊断内存不足，避免长调用栈截掉异常标题。
 
+## 客户端深层 Select 优化与对比
+
+安卓和桌面客户端在真实核心的 `LogicString$Select` 中注入迭代解析、求值及诊断输出。对完整的嵌套 `select(...)`，扫描器一次建立括号位置，用原字符串的范围拆分参数，避免每层重复复制、扫描整段剩余表达式；显式栈替代递归。叶子表达式仍交给原版解析器，构造的仍是原版 Select 节点，保留字段、类型校验顺序、条件执行顺序和分支惰性求值。
+
+优化没有修改模组内容，也没有用哈希查表改变重复条件的“首次匹配”规则。无法明确识别的语法继续使用原版解析入口；特别是引号内包含 ASCII 逗号或括号、运算符包裹及链式调用的情况。优化仅覆盖 Select，其他深层函数、资源解码和运行中单位实例仍可能消耗大量内存。
+
+工具默认继续测量原版桌面核心。对比客户端优化时，显式开启以下属性，报告的测量环境会标记 `RWJS Select 迭代解析与求值`：
+
+```powershell
+java -Drwpp.heap.selectOptimization=true -Drwpp.heap.maxHeapMiB=256 -Drwpp.heap.stackMiB=1 -jar build\mod-heap-tool\RWJS-ModHeapTool.jar --analyze D:\Mods\example.rwmod --game-root "D:\Games\Rusted Warfare"
+```
+
+客户端通过注入访问器直接读写原版字段；工具的可选对比模式通过 agent 修改同一核心类，并复用公共迭代算法。对比时应固定 Java 版本、最大堆和线程栈大小，较小的堆会促使 GC 更早运行，不能把不同堆上限下的采样峰值差全部归因于优化。桌面核心测量与安卓 ART 真机结果仍需分别验证。
+
 分发时复制 `RWJS-ModHeapTool.jar`，并让用户选择其完整游戏目录。JAR 包含核心、依赖和测量 agent；游戏运行资源与系统对应的原生库仍需要从原版安装提供。
 
 ## 结果含义

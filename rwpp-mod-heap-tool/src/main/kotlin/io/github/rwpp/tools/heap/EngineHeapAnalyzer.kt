@@ -71,6 +71,7 @@ internal object EngineHeapAnalyzer {
                 // 原版逻辑表达式解析会递归；线程栈独立于 Java 堆，重度嵌套 select 需要更大的栈。
                 java.absolutePath, "-Xmx${maxHeapMiB}m", "-Xss${stackMiB}m", "-Drwpp.heap.stackMiB=$stackMiB",
                 "-Dfile.encoding=UTF-8", "-XX:-DisableExplicitGC",
+                "-Drwpp.heap.selectOptimization=${System.getProperty("rwpp.heap.selectOptimization", "false")}",
                 "-javaagent:${agent.absolutePath}", "-Djava.library.path=${gameRoot.absolutePath}",
                 "-Dorg.lwjgl.librarypath=${gameRoot.absolutePath}",
             )
@@ -110,13 +111,16 @@ internal object EngineHeapAnalyzer {
         val status = File(args[3])
         fun progress(message: String) { status.writeText(message, Charsets.UTF_8) }
         var phase = "初始化真实桌面核心与原版单位"
+        val optimized = java.lang.Boolean.getBoolean("rwpp.heap.selectOptimization")
         try {
+            if (optimized) EngineSelectOptimization.install()
             // 仅独立诊断 JVM 显式打开其模块，覆盖 Locale/ZIP/图像等实现的私有字段。
             // Meter 仍严格拒绝任何不可访问字段，不会静默漏算。
             io.github.rwpp.tools.heap.agent.HeapAgent.openHeapPackages()
             progress("初始化真实桌面引擎与原版单位…")
             EngineModLoader(File(args[0])).use { loader ->
                 loader.loadBaseline()
+                if (optimized) EngineSelectOptimization.verifyApplied()
                 val memory = ManagementFactory.getMemoryMXBean()
                 val baseline = gcHeapBytes()
                 phase = "真实核心加载模组"
@@ -156,7 +160,8 @@ internal object EngineHeapAnalyzer {
                 MeasuredModHeap(
                     File(args[1]).name, baseline, after, peak.get(), memory.heapMemoryUsage.max,
                     graph.totalBytes, graph.sharedBytes, loaded.textureAccountedBytes, loaded.soundAccountedBytes,
-                    "${System.getProperty("java.vm.name")} ${System.getProperty("java.version")} / ${System.getProperty("os.name")} ${System.getProperty("os.arch")}",
+                    "${System.getProperty("java.vm.name")} ${System.getProperty("java.version")} / ${System.getProperty("os.name")} ${System.getProperty("os.arch")}" +
+                        if (optimized) " / RWJS Select 迭代解析与求值" else " / 原版 Select 解析与求值",
                     graph.units.map { MeasuredUnitHeap(it.name, it.fileName, it.exclusiveBytes) }
                         .sortedByDescending { it.exclusiveBytes }, warnings,
                     System.getProperty("rwpp.heap.stackMiB")?.toLong()?.times(1024L * 1024) ?: 0,

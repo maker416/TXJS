@@ -69,7 +69,7 @@ class MainProcessor(
         for (clazz in resolver.getSymbolsWithAnnotation(InjectClass::class.qualifiedName!!)) {
            processClass(clazz as KSClassDeclaration) {
                val injectClass = clazz.annotations.first { it.shortName.asString() == InjectClass::class.simpleName }.arguments.first().value as KSType
-               injectClass.declaration.qualifiedName?.asString()
+               requireJvmBinaryName(injectClass, "@InjectClass on ${clazz.qualifiedName?.asString()}")
            }
         }
 
@@ -83,7 +83,9 @@ class MainProcessor(
             clazz as KSClassDeclaration
             require(clazz.classKind == ClassKind.INTERFACE) {  "Only interfaces can be annotated with @SetInterfaceOn" }
             val annotation = clazz.annotations.first {  it.shortName.asString() == SetInterfaceOn::class.simpleName }
-            val classes = (annotation.arguments.first().value as ArrayList<KSType>).map { it.declaration.qualifiedName!!.asString() }
+            val classes = (annotation.arguments.first().value as ArrayList<KSType>).map {
+                requireJvmBinaryName(it, "@SetInterfaceOn on ${clazz.qualifiedName?.asString()}")
+            }
             classes.forEach { className ->
                 val hasSelfProperty = clazz.declarations.any {
                     it is KSPropertyDeclaration && it.simpleName.asString() == "self"
@@ -91,13 +93,15 @@ class MainProcessor(
 
                 setInterfaceOnInfos.add(
                     SetInterfaceOnInfo(
-                        clazz.qualifiedName!!.asString(),
+                        jvmBinaryName(clazz)!!,
                         className,
                         clazz.declarations.filter { anno ->
                             anno is KSPropertyDeclaration && anno.annotations.any { it.shortName.asString() == NewField::class.simpleName }
                         }.map { property ->
                             property as KSPropertyDeclaration
-                            property.simpleName.asString() to transformClass(property.type.resolve().declaration.qualifiedName!!.asString())
+                            property.simpleName.asString() to transformClass(
+                                requireJvmBinaryName(property.type.resolve(), "@NewField ${property.qualifiedName?.asString()}")
+                            )
                         }.toList(),
                         clazz.declarations.filter { anno ->
                             anno is KSPropertyDeclaration && anno.annotations.any { it.shortName.asString() == Accessor::class.simpleName }
@@ -165,10 +169,10 @@ class MainProcessor(
                         if (receiver.declaration is KSTypeAlias) receiver = (receiver.declaration as KSTypeAlias).type.resolve()
                     }
 
-                    val receiverType = receiver?.declaration?.qualifiedName?.asString() ?: ""
+                    val receiverType = receiver?.declaration?.let(::jvmBinaryName) ?: ""
                     if (receiver != null && receiverType != injectClassName && receiverType != "kotlin.Any")
                         throw IllegalArgumentException(
-                            "Receiver (${receiver.declaration.qualifiedName!!.asString()})" +
+                            "Receiver ($receiverType)" +
                                     " of ${declaration.simpleName.asString()} must be of type $injectClassName"
                         )
 
@@ -184,11 +188,10 @@ class MainProcessor(
                     val args by lazy {
                         declaration.parameters.map { param ->
                             val type = param.type.resolve()
-                            val paramDeclaration = type.declaration
-                            val qualifiedName = paramDeclaration.qualifiedName!!.asString()
-                            val className = if (qualifiedName == "kotlin.Array") {
-                                type.arguments.first().type!!.resolve().declaration.qualifiedName!!.asString() + "[]"
-                            } else transformClass(qualifiedName)
+                            val binaryName = requireJvmBinaryName(type, "parameter ${param.name?.asString()} of ${declaration.qualifiedName?.asString()}")
+                            val className = if (binaryName == "kotlin.Array") {
+                                requireJvmBinaryName(type.arguments.first().type!!.resolve(), "array element of ${param.name?.asString()}") + "[]"
+                            } else transformClass(binaryName)
                             classPool[className]
                         }
                     }
@@ -243,6 +246,22 @@ class MainProcessor(
     private var init = false
     private var finished = false
     private val injectClasses = mutableSetOf<String>()
+
+    private fun requireJvmBinaryName(type: KSType, location: String): String {
+        require(!type.isError) { "Cannot resolve JVM class for $location: $type" }
+        return requireNotNull(jvmBinaryName(type.declaration)) {
+            "Cannot resolve JVM class for $location: $type"
+        }
+    }
+
+    /** KSP uses source names for nested classes, while Javassist requires JVM binary names. */
+    private fun jvmBinaryName(declaration: KSDeclaration): String? {
+        if (declaration is KSTypeAlias) return jvmBinaryName(declaration.type.resolve().declaration)
+        val qualifiedName = declaration.qualifiedName?.asString() ?: return null
+        val enclosingClass = declaration.parentDeclaration as? KSClassDeclaration ?: return qualifiedName
+        val enclosingName = jvmBinaryName(enclosingClass) ?: return null
+        return "$enclosingName\$${declaration.simpleName.asString()}"
+    }
 
     private fun transformClass(className: String): String = when (className) {
         "kotlin.Any" -> "java.lang.Object"
