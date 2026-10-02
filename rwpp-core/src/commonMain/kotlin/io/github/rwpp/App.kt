@@ -59,6 +59,7 @@ import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
 import io.github.rwpp.core.GameSessionController
 import io.github.rwpp.core.ModSyncController
+import io.github.rwpp.core.ModPlaytimeController
 import io.github.rwpp.core.RoomSnapshotStore
 import io.github.rwpp.net.sync.SyncPeerPhase
 import io.github.rwpp.event.GlobalEventChannel
@@ -191,6 +192,8 @@ fun App(
     }
 
     val game = koinInject<Game>()
+
+    LaunchedEffect(game) { ModPlaytimeController.start(game) }
 
     // 房间状态快照的唯一采样入口：RefreshUIEvent 是引擎→UI 的既有刷新漏斗，
     // 在 Main 上重采样 RoomSnapshot，房间 UI 只采集不可变快照

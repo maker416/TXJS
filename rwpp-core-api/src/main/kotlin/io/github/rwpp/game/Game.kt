@@ -10,6 +10,7 @@ package io.github.rwpp.game
 import io.github.rwpp.core.LoadingContext
 import io.github.rwpp.game.base.Difficulty
 import io.github.rwpp.game.map.*
+import io.github.rwpp.game.mod.ModPlaytimeState
 import io.github.rwpp.game.ui.GUI
 import io.github.rwpp.game.units.UnitType
 import io.github.rwpp.game.world.World
@@ -138,6 +139,12 @@ interface Game : KoinComponent {
      * Get all the unit list.
      */
     fun getAllUnitTypes(): List<UnitType>
+
+    /**
+     * 只读采样当前对局与本局生效的模组。由 UI 线程定期调用；不得在这里启动、暂停或重载引擎。
+     * 菜单、战役室、回放与观战不构成可统计对局；暂停中的对局保留 hasMatch，但 active 为 false。
+     */
+    fun getModPlaytimeState(): ModPlaytimeState = ModPlaytimeState()
 
     /**
      * 返回当前全部启用单位的校验和（单位注册表实时重算）。

@@ -11,6 +11,7 @@ import android.content.Context
 import com.corrodinggames.rts.gameFramework.SettingsEngine
 import io.github.rwpp.config.Config
 import io.github.rwpp.config.ConfigIO
+import io.github.rwpp.config.ModPlaytimePreferences
 import io.github.rwpp.core.Initialization
 import kotlinx.serialization.InternalSerializationApi
 import kotlinx.serialization.KSerializer
@@ -24,10 +25,22 @@ import kotlin.reflect.KClass
 @Single(binds = [ConfigIO::class])
 class ConfigIOImpl : ConfigIO {
     private val fieldCache = mutableMapOf<String, Field>()
+    private val modPlaytimeSaveLock = Any()
 
     @Suppress("unchecked_cast")
     @OptIn(InternalSerializationApi::class)
     override fun saveConfig(config: Config) {
+        if (config is ModPlaytimePreferences) {
+            synchronized(modPlaytimeSaveLock) {
+                val live = get<ModPlaytimePreferences>()
+                val preferences = get<Context>().getSharedPreferences(live::class.qualifiedName, Context.MODE_PRIVATE)
+                val source = Toml.encodeToString(ModPlaytimePreferences.serializer(), live)
+                if (!preferences.edit().putString("src", source).commit()) {
+                    throw java.io.IOException("Cannot persist mod playtime preferences")
+                }
+            }
+            return
+        }
         val clazz = config::class
         val name = clazz.qualifiedName
         val preferences = get<Context>().getSharedPreferences(name, Context.MODE_PRIVATE)

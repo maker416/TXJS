@@ -15,6 +15,7 @@ import io.github.rwpp.config.AccountPreferences
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.resolveAccountApiUrl
 import io.github.rwpp.config.resolveAccountAppKey
+import io.github.rwpp.core.ModPlaytimeController
 import io.github.rwpp.game.Game
 import io.github.rwpp.logger
 import io.github.rwpp.net.Net
@@ -332,7 +333,8 @@ object AccountSession : KoinComponent {
         val attempt = synchronized(this) {
             // 登出开始就作废旧请求，迟到的登出响应也不能清掉随后登录的账号。
             sessionEpoch++
-            authenticationEpoch = null
+            ModPlaytimeController.onAccountInvalidated()
+            authenticationEpoch = sessionEpoch
             restoring = false
             AccountSessionSnapshot(token, sessionEpoch)
         }
@@ -377,6 +379,7 @@ object AccountSession : KoinComponent {
     @Synchronized
     private fun beginAuthentication(): Long {
         sessionEpoch++
+        ModPlaytimeController.onAccountInvalidated()
         restoring = false
         authenticationEpoch = sessionEpoch
         return sessionEpoch
@@ -398,6 +401,13 @@ object AccountSession : KoinComponent {
     @Synchronized
     internal fun sessionSnapshotOrNull(): AccountSessionSnapshot? =
         if (loggedIn && networkEnabled && token.isNotBlank()) AccountSessionSnapshot(token, sessionEpoch) else null
+
+    @Synchronized
+    internal fun playtimeIdentityOrNull(): Pair<AccountSessionSnapshot, Long>? {
+        val currentUser = user ?: return null
+        if (!loggedIn || !networkEnabled || token.isBlank() || authenticationEpoch != null) return null
+        return AccountSessionSnapshot(token, sessionEpoch) to currentUser.id
+    }
 
     @Synchronized
     internal fun isCurrentSession(session: AccountSessionSnapshot): Boolean =
@@ -443,6 +453,7 @@ object AccountSession : KoinComponent {
 
     @Synchronized
     private fun clearSession(persist: Boolean) {
+        ModPlaytimeController.onAccountInvalidated()
         sessionEpoch++
         authenticationEpoch = null
         restoring = false
