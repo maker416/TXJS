@@ -9,6 +9,7 @@ package io.github.rwpp.android.impl
 
 import android.content.Context
 import android.content.Intent
+import androidx.lifecycle.Lifecycle
 import com.corrodinggames.rts.appFramework.LevelGroupSelectActivity
 import com.corrodinggames.rts.appFramework.LevelSelectActivity
 import com.corrodinggames.rts.appFramework.LoadLevelActivity
@@ -25,6 +26,9 @@ import io.github.rwpp.game.Game
 import io.github.rwpp.game.GameRoom
 import io.github.rwpp.game.base.Difficulty
 import io.github.rwpp.game.map.*
+import io.github.rwpp.game.mod.KeepConnectedReload
+import io.github.rwpp.game.mod.ModManager
+import io.github.rwpp.game.mod.ModPlaytimeState
 import io.github.rwpp.game.ui.GUI
 import io.github.rwpp.game.units.UnitType
 import io.github.rwpp.game.world.World
@@ -49,6 +53,53 @@ class GameImpl : Game, CoroutineScope {
     private var _missions: List<Mission>? = null
     private var _allMaps: List<GameMap>? = null
     private var _maps = mutableMapOf<MapType, List<GameMap>>()
+    private var lastPlaytimeFrame: Int? = null
+    private var lastPlaytimeGameTime: Int? = null
+    private var lastPlaytimeMap: Any? = null
+    private var playtimeGeneration = 0L
+    private var lastPlaytimeState = ModPlaytimeState()
+
+    override fun getModPlaytimeState(): ModPlaytimeState = runCatching {
+        val engine = GameEngine.t()
+        val lifecycle = CustomInGameActivity.instance?.lifecycle?.currentState
+        val player = engine.bp ?: engine.bU.A
+        // 原版 bD 是关卡已加载，bE 是菜单演示，bF 是加载中；任务/存档不依赖 isGaming 标志。
+        val hasMatch = lifecycle?.isAtLeast(Lifecycle.State.STARTED) == true &&
+            engine.bD && !engine.bE && !engine.bF && !engine.bY.g() &&
+            player != null && player.s != -3
+        if (!hasMatch) {
+            lastPlaytimeFrame = null
+            lastPlaytimeGameTime = null
+            lastPlaytimeMap = null
+            return@runCatching ModPlaytimeState()
+        }
+        val frame = engine.bu
+        val gameTime = engine.bv
+        val previousFrame = lastPlaytimeFrame
+        val newMatch = previousFrame == null || frame < previousFrame || engine.bI !== lastPlaytimeMap
+        if (newMatch) playtimeGeneration++
+        val advancing = !newMatch && frame > previousFrame!! &&
+            lastPlaytimeGameTime?.let { gameTime != it } == true
+        lastPlaytimeFrame = frame
+        lastPlaytimeGameTime = gameTime
+        lastPlaytimeMap = engine.bI
+        // 私有 i.b(false) 的网络暂停检查会写标志。仅采样暂停事实与帧推进，不迁移任何引擎入口。
+        val active = advancing && lifecycle == Lifecycle.State.RESUMED &&
+            !engine.bP.u && !engine.bm &&
+            !engine.bU.al && !engine.bU.am &&
+            !gameOver && !player.I && !player.J && !KeepConnectedReload.active
+        val modIds = com.corrodinggames.rts.game.units.custom.l.d.toArray()
+            .filterIsInstance<com.corrodinggames.rts.game.units.custom.l>()
+            .mapNotNull { it.J?.a }.toMutableSet()
+        engine.di?.takeIf { "MOD|" in it }?.let { engine.bW.f(it)?.a }?.let(modIds::add)
+        // i() 是已注册、启用且无加载错误的模组，O 是 refreshData 成功扫描的音乐轨道表。
+        engine.bW.i().toArray().filterIsInstance<com.corrodinggames.rts.gameFramework.i.b>()
+            .filter { it.O.isNotEmpty() }.forEach { modIds.add(it.a) }
+        val mods = appKoin.get<ModManager>().getAllMods().filter { it.id in modIds }
+        ModPlaytimeState(hasMatch = true, active = active, mods = mods, generation = playtimeGeneration)
+    }.getOrElse {
+        lastPlaytimeState.copy(active = false, reliable = false)
+    }.also { lastPlaytimeState = it }
 
     override val gameRoom: GameRoom = GameRoomImpl(this)
     override val gui: GUI by lazy {

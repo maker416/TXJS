@@ -9,12 +9,15 @@ package io.github.rwpp.desktop.impl
 
 import io.github.rwpp.config.Config
 import io.github.rwpp.config.ConfigIO
+import io.github.rwpp.config.ModPlaytimePreferences
 import io.github.rwpp.desktop.AbstractConfigIO
+import io.github.rwpp.io.AtomicFileWrite
 import kotlinx.serialization.InternalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.serializer
 import net.peanuuutz.tomlkt.Toml
 import org.koin.core.annotation.Single
+import org.koin.core.component.get
 import java.io.File
 import java.util.*
 import kotlin.reflect.KClass
@@ -22,10 +25,20 @@ import kotlin.reflect.KClass
 @Single(binds = [ConfigIO::class])
 class ConfigIOImpl : AbstractConfigIO() {
     private val propertiesCache = mutableMapOf<String, Properties>()
+    private val modPlaytimeSaveLock = Any()
 
     @OptIn(InternalSerializationApi::class)
     @Suppress("UNCHECKED_CAST")
     override fun saveConfig(config: Config) {
+        if (config is ModPlaytimePreferences) {
+            synchronized(modPlaytimeSaveLock) {
+                // 设置页、saveAllConfig 与 IO 队列保存共用此锁，并在锁内读取同一个当前配置对象。
+                val live = get<ModPlaytimePreferences>()
+                val file = File(System.getProperty("user.dir"), "${live::class.qualifiedName}.toml")
+                AtomicFileWrite.text(file, Toml.encodeToString(ModPlaytimePreferences.serializer(), live))
+            }
+            return
+        }
         val clazz = config::class
         val name = clazz.qualifiedName
         val file = File(System.getProperty("user.dir") + "/$name.toml")

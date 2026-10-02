@@ -141,6 +141,8 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-test-junit:" + findProperty("kotlin.version") as String)
     // AccountPresenceHeartbeatTest 用本地 MockWebServer 验证账号心跳循环
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    // ModPlaytimeControllerTest 验证真实累计请求以及持久队列不保存原 token。
+    testImplementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     val koinAnnotationsVersion = findProperty("koin.annotations.version") as String
     ksp("io.insert-koin:koin-ksp-compiler:$koinAnnotationsVersion")
 }

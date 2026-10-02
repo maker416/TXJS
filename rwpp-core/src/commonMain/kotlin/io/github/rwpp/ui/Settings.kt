@@ -30,6 +30,7 @@ import io.github.rwpp.AppContext
 import io.github.rwpp.config.AccountPreferences
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.Settings
+import io.github.rwpp.config.ModPlaytimePreferences
 import io.github.rwpp.config.resolveAccountApiUrl
 import io.github.rwpp.config.resolveAccountAppKey
 import io.github.rwpp.event.broadcastIn
@@ -66,6 +67,7 @@ fun SettingsView(
     val appContext = koinInject<AppContext>()
     val settings = koinInject<Settings>()
     val accountPrefs = koinInject<AccountPreferences>()
+    val playtimePrefs = koinInject<ModPlaytimePreferences>()
     val i18nResolver = koinInject<GameI18nResolver>()
 
     BackHandler(true, onExit)
@@ -520,6 +522,15 @@ fun SettingsView(
                                             ) {
                                                 accountAppKey = it
                                                 accountPrefs.appKey = it
+                                            }
+                                            var playtimeApiUrl by remember { mutableStateOf(playtimePrefs.apiUrl) }
+                                            SettingsTextField(
+                                                readI18n("settings.modPlaytimeApiUrl", I18nType.RWPP),
+                                                playtimeApiUrl,
+                                            ) {
+                                                playtimeApiUrl = it
+                                                playtimePrefs.apiUrl = it.trim()
+                                                configIO.saveConfig(playtimePrefs)
                                             }
                                         }
                                     }
