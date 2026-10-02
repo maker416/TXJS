@@ -53,12 +53,12 @@ tasks.kotlinSourcesJar {
     archiveClassifier.set("sources")
 }
 
-tasks.register<JavaExec>("estimateModHeap") {
-    group = "rwpp"
-    description = "估算模组单位定义的保留堆，用法：-Pmod=<模组路径>"
-    classpath = sourceSets.main.get().runtimeClasspath
-    mainClass.set("io.github.rwpp.game.mod.heap.ModHeapToolKt")
-    findProperty("mod")?.toString()?.takeIf { it.isNotBlank() }?.let { args(it) }
+if (findProject(":rwpp-mod-heap-tool") != null) {
+    tasks.register("estimateModHeap") {
+        group = "rwpp"
+        description = "兼容旧命令：转交真实桌面核心内存测量，用法：-Pmod=<路径> [-PgameRoot=<游戏目录>]"
+        dependsOn(":rwpp-mod-heap-tool:measureModHeap")
+    }
 }
 
 afterEvaluate {

@@ -7,8 +7,6 @@
 
 package io.github.rwpp.tools.heap
 
-import io.github.rwpp.game.mod.heap.ModHeapEstimate
-import io.github.rwpp.game.mod.heap.ModHeapEstimator
 import io.github.rwpp.game.mod.heap.formatBytes
 import java.awt.*
 import java.awt.datatransfer.DataFlavor
@@ -33,66 +31,90 @@ private val teal = Color(0x087E8B)
 private val muted = Color(0x536775)
 
 fun main(args: Array<String>) {
+    // Windows 的 java/javaw 标准流编码可能独立于 file.encoding，统一日志与中文命令行报告。
+    System.setOut(java.io.PrintStream(System.out, true, Charsets.UTF_8))
+    System.setErr(java.io.PrintStream(System.err, true, Charsets.UTF_8))
+    // 测量子进程先分派，避免 Swing 初始化影响基线或依赖图形桌面。
+    if (args.firstOrNull() == "--measure-worker") {
+        EngineHeapAnalyzer.runWorker(args.drop(1))
+        return
+    }
+    val gameRootOption = args.indexOf("--game-root")
+    require(gameRootOption < 0 || gameRootOption + 1 < args.size) { "--game-root <完整桌面游戏目录>" }
+    val gameRoot = if (gameRootOption < 0) EngineHeapAnalyzer.findGameRoot() else File(args[gameRootOption + 1])
+    val inputs = args.filterIndexed { index, _ -> gameRootOption < 0 || (index != gameRootOption && index != gameRootOption + 1) }
+    if (inputs.firstOrNull() == "--analyze") {
+        require(inputs.size == 2) { "--analyze <模组路径> [--game-root <完整桌面游戏目录>]" }
+        val root = requireNotNull(gameRoot) { "未找到完整桌面游戏目录，请用 --game-root 指定。" }
+        val result = EngineHeapAnalyzer.measure(File(inputs[1]), root) { System.err.println(it) }
+        println(result.formatReport())
+        return
+    }
     UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
     val font = Font("Microsoft YaHei UI", Font.PLAIN, 13)
     UIManager.getDefaults().keys().toList().filter { it.toString().endsWith(".font") }
         .forEach { UIManager.put(it, font) }
-    if (args.firstOrNull() == "--render-preview") {
-        require(args.size == 3) { "--render-preview <模组路径> <PNG路径>" }
-        val file = File(args[1])
-        val estimate = ModHeapEstimator.estimate(file)
+    if (inputs.firstOrNull() == "--render-preview") {
+        require(inputs.size == 3) { "--render-preview <模组路径> <PNG路径> [--game-root <完整桌面游戏目录>]" }
+        val file = File(inputs[1])
+        val root = requireNotNull(gameRoot) { "未找到完整桌面游戏目录，请用 --game-root 指定。" }
+        val measurement = EngineHeapAnalyzer.measure(file, root) { System.err.println(it) }
         SwingUtilities.invokeAndWait {
-            val window = HeapWindow()
-            window.showEstimate(file, estimate)
+            val window = HeapWindow(initialGameRoot = root)
+            window.showMeasurement(file, measurement)
             window.pack()
             window.validate()
-            val output = File(args[2])
+            val output = File(inputs[2])
             output.parentFile?.mkdirs()
             val image = BufferedImage(window.contentPane.width, window.contentPane.height, BufferedImage.TYPE_INT_RGB)
             val graphics = image.createGraphics()
             window.contentPane.printAll(graphics)
             graphics.dispose()
             ImageIO.write(image, "png", output)
-            check(window.visibleUnitCount == estimate.unitCount)
+            check(window.visibleUnitCount == measurement.unitCount)
             window.dispose()
-            println("界面渲染验证通过: ${estimate.unitCount} 个单位；${output.absolutePath}")
+            println("界面渲染验证通过: ${measurement.unitCount} 个单位；${output.absolutePath}")
         }
         return
     }
     SwingUtilities.invokeLater {
-        val window = HeapWindow()
+        val window = HeapWindow(initialGameRoot = gameRoot)
         window.isVisible = true
-        if (args.isNotEmpty()) window.analyze(args.map(::File))
+        if (inputs.isNotEmpty()) window.analyze(inputs.map(::File))
     }
 }
 
-private data class Analysis(val file: File, val estimate: ModHeapEstimate? = null, val error: String? = null) {
+private data class Analysis(val file: File, val measurement: MeasuredModHeap? = null, val error: String? = null) {
     override fun toString(): String = file.name + when {
-        estimate == null -> "  ·  失败"
-        estimate.unitCount == 0 -> "  ·  未找到单位"
-        else -> "  ·  ${formatBytes(estimate.heapBytes)}"
+        measurement == null -> "  ·  失败"
+        measurement.unitCount == 0 -> "  ·  未加载单位"
+        else -> "  ·  ${formatBytes(measurement.incrementalHeapBytes)}"
     }
 }
 
 private data class Update(val status: String? = null, val analysis: Analysis? = null)
 
-internal class HeapWindow : JFrame("RWJS · 模组堆内存分析") {
+internal class HeapWindow(
+    private val analyzer: (File, File, (String) -> Unit) -> MeasuredModHeap = EngineHeapAnalyzer::measure,
+    initialGameRoot: File? = EngineHeapAnalyzer.findGameRoot(),
+) : JFrame("RWJS · 模组堆内存实测") {
     private val path = JTextField()
+    private val gameRootPath = JTextField(initialGameRoot?.absolutePath.orEmpty())
+    private val selectGameRoot = JButton("选择游戏目录…")
     private val status = JLabel("选择文件、目录，或将模组拖入窗口")
     private val progress = JProgressBar()
     private val results = DefaultListModel<Analysis>()
     private val list = JList(results)
     private val heading = JLabel("等待分析", SwingConstants.LEFT)
-    private val sourcePath = JLabel("支持 .rwmod / .zip / .ini 和模组目录")
-    private val metrics = listOf("单位定义保留堆", "单位定义", "逻辑节点", "包内贴图参考")
+    private val sourcePath = JLabel("支持 .rwmod / .zip 和完整模组目录")
+    private val metrics = listOf("GC 后堆净增", "实际加载单位", "单位对象图堆", "加载采样堆峰值")
         .map { title -> Metric(title) }
-    private val budget = JLabel("静态估算不包含进程其他开销")
-    private val columns = arrayOf("单位名称", "定义文件", "估算堆 (字节)", "逻辑节点", "小节", "memory 变量")
+    private val budget = JLabel("每个模组由独立 JVM 调用真实桌面核心加载")
+    private val columns = arrayOf("单位名称", "定义文件", "独占实测堆 (字节)")
     private val model = object : DefaultTableModel(columns, 0) {
         override fun isCellEditable(row: Int, column: Int) = false
         override fun getColumnClass(column: Int): Class<*> = when {
             column == 2 -> java.lang.Long::class.java
-            column >= 3 -> java.lang.Integer::class.java
             else -> String::class.java
         }
     }
@@ -122,11 +144,11 @@ internal class HeapWindow : JFrame("RWJS · 模组堆内存分析") {
         }
         val top = JPanel(BorderLayout(0, 14)).apply { isOpaque = false }
         val title = JPanel(BorderLayout()).apply { isOpaque = false }
-        title.add(JLabel("MOD HEAP / 模组堆内存分析").apply {
+        title.add(JLabel("MOD HEAP / 模组堆内存实测").apply {
             foreground = ink
             font = font.deriveFont(Font.BOLD, 25f)
         }, BorderLayout.NORTH)
-        title.add(JLabel("无需启动游戏 · 静态分析单位配置 · 找出占用较高的定义").apply {
+        title.add(JLabel("调用真实核心加载 · 独立进程测量 · 需要桌面游戏资源").apply {
             foreground = muted
             border = BorderFactory.createEmptyBorder(8, 0, 0, 0)
         }, BorderLayout.SOUTH)
@@ -139,7 +161,16 @@ internal class HeapWindow : JFrame("RWJS · 模组堆内存分析") {
         path.toolTipText = "粘贴模组文件或目录的完整路径，也可以直接拖入文件"
         inputs.add(path, BorderLayout.CENTER)
         inputs.add(run, BorderLayout.EAST)
-        top.add(inputs, BorderLayout.SOUTH)
+        val inputRows = JPanel(BorderLayout(0, 8)).apply { isOpaque = false }
+        inputRows.add(inputs, BorderLayout.NORTH)
+        gameRootPath.toolTipText = "完整桌面版铁锈战争目录，需要游戏资源和 LWJGL 原生库"
+        inputRows.add(JPanel(BorderLayout(8, 0)).apply {
+            isOpaque = false
+            add(selectGameRoot, BorderLayout.WEST)
+            add(gameRootPath, BorderLayout.CENTER)
+            add(JLabel("需要完整游戏资源与原生库").apply { foreground = muted }, BorderLayout.EAST)
+        }, BorderLayout.SOUTH)
+        top.add(inputRows, BorderLayout.SOUTH)
         contentPane.add(top, BorderLayout.NORTH)
 
         val resultPanel = JPanel(BorderLayout(0, 10)).apply {
@@ -190,7 +221,7 @@ internal class HeapWindow : JFrame("RWJS · 模组堆内存分析") {
         table.fillsViewportHeight = true
         table.autoResizeMode = JTable.AUTO_RESIZE_OFF
         table.gridColor = paper
-        intArrayOf(180, 260, 125, 90, 65, 115).forEachIndexed { i, width -> table.columnModel.getColumn(i).preferredWidth = width }
+        intArrayOf(200, 330, 190).forEachIndexed { i, width -> table.columnModel.getColumn(i).preferredWidth = width }
         table.columnModel.getColumn(2).cellRenderer = object : DefaultTableCellRenderer() {
             override fun setValue(value: Any?) {
                 horizontalAlignment = SwingConstants.RIGHT
@@ -220,7 +251,7 @@ internal class HeapWindow : JFrame("RWJS · 模组堆内存分析") {
             add(exportText)
             add(exportCsv)
         }, BorderLayout.NORTH)
-        footer.add(JLabel("估算单位定义的保留堆；不代表实测内存或重载峰值。").apply { foreground = muted }, BorderLayout.SOUTH)
+        footer.add(JLabel("测量当前桌面 JVM 堆；显存、原生内存和游戏中的单位实例不计入堆净增。").apply { foreground = muted }, BorderLayout.SOUTH)
         details.add(footer, BorderLayout.SOUTH)
         contentPane.add(JSplitPane(JSplitPane.HORIZONTAL_SPLIT, resultPanel, details).apply {
             resizeWeight = 0.0
@@ -248,6 +279,7 @@ internal class HeapWindow : JFrame("RWJS · 模组堆内存分析") {
         })
         selectFiles.addActionListener { choose(false) }
         selectDirectory.addActionListener { choose(true) }
+        selectGameRoot.addActionListener { chooseGameRoot() }
         run.addActionListener { analyzePath() }
         path.addActionListener { analyzePath() }
         cancel.addActionListener { worker?.cancel(true) }
@@ -279,7 +311,7 @@ internal class HeapWindow : JFrame("RWJS · 模组堆内存分析") {
             dialogTitle = if (directory) "选择模组目录" else "选择一个或多个模组"
             fileSelectionMode = if (directory) JFileChooser.DIRECTORIES_ONLY else JFileChooser.FILES_ONLY
             isMultiSelectionEnabled = !directory
-            if (!directory) fileFilter = FileNameExtensionFilter("模组 / ZIP / 单位配置", "rwmod", "zip", "ini")
+            if (!directory) fileFilter = FileNameExtensionFilter("完整模组 / ZIP", "rwmod", "zip")
         }
         if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
             chooserDirectory = chooser.currentDirectory
@@ -293,10 +325,30 @@ internal class HeapWindow : JFrame("RWJS · 模组堆内存分析") {
         analyze(listOf(File(text)))
     }
 
+    private fun chooseGameRoot() {
+        val chooser = JFileChooser(gameRootPath.text.takeIf { it.isNotBlank() }?.let(::File)).apply {
+            dialogTitle = "选择完整桌面版铁锈战争目录（包含游戏资源和原生库）"
+            fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
+        }
+        if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+            gameRootPath.text = chooser.selectedFile.absolutePath
+        }
+    }
+
     fun analyze(files: List<File>) {
         if (worker != null || files.isEmpty()) return
         val inputs = files.distinctBy { it.absolutePath }
         path.text = inputs.first().absolutePath
+        val rootText = gameRootPath.text.trim().removeSurrounding("\"")
+        if (rootText.isEmpty()) {
+            status.text = "请先选择完整桌面游戏目录，需要游戏资源与原生库"
+            return
+        }
+        val gameRoot = File(rootText)
+        if (!gameRoot.isDirectory) {
+            status.text = "游戏目录不存在：${gameRoot.absolutePath}"
+            return
+        }
         results.clear()
         display(null)
         setBusy(true)
@@ -307,7 +359,7 @@ internal class HeapWindow : JFrame("RWJS · 模组堆内存分析") {
                     publish(Update(status = "分析 ${index + 1}/${inputs.size}：${file.name}"))
                     var lastUpdate = 0L
                     val result = try {
-                        Analysis(file, ModHeapEstimator.estimate(file) { message ->
+                        Analysis(file, analyzer(file, gameRoot) { message ->
                             if (isCancelled) throw CancellationException()
                             val now = System.nanoTime()
                             if (now - lastUpdate > 120_000_000L) {
@@ -346,7 +398,7 @@ internal class HeapWindow : JFrame("RWJS · 模组堆内存分析") {
                 worker = null
                 setBusy(false)
                 status.text = error ?: if (isCancelled) "已取消；已完成的结果保留" else {
-                    val failures = (0 until results.size()).count { results.get(it).estimate == null }
+                    val failures = (0 until results.size()).count { results.get(it).measurement == null }
                     "分析完成：${results.size() - failures} 个成功，$failures 个失败"
                 }
             }
@@ -354,8 +406,8 @@ internal class HeapWindow : JFrame("RWJS · 模组堆内存分析") {
         worker!!.execute()
     }
 
-    fun showEstimate(file: File, estimate: ModHeapEstimate) {
-        results.addElement(Analysis(file, estimate))
+    fun showMeasurement(file: File, measurement: MeasuredModHeap) {
+        results.addElement(Analysis(file, measurement))
         list.selectedIndex = results.size() - 1
         status.text = "分析完成：1 个成功，0 个失败"
     }
@@ -364,38 +416,36 @@ internal class HeapWindow : JFrame("RWJS · 模组堆内存分析") {
         selected = value
         model.rowCount = 0
         filter.text = ""
-        val estimate = value?.estimate
+        val measurement = value?.measurement
         heading.text = value?.file?.name ?: "等待分析"
-        sourcePath.text = value?.file?.absolutePath ?: "支持 .rwmod / .zip / .ini 和模组目录"
+        sourcePath.text = value?.file?.absolutePath ?: "支持 .rwmod / .zip 和完整模组目录"
         sourcePath.toolTipText = value?.file?.absolutePath
         metrics.forEach { it.value.text = "—" }
         report.text = value?.error ?: "选择文件、目录或拖入模组，开始分析。\n\n支持多文件批量分析，点左侧列表查看各个模组的结果。"
         warnings.text = value?.error ?: "提示将在分析后显示。"
-        budget.text = "静态估算不包含进程其他开销"
-        setExportEnabled(estimate != null)
-        if (estimate == null) return
-        metrics[0].value.text = if (estimate.unitCount == 0) "无法确认" else formatBytes(estimate.heapBytes)
-        metrics[1].value.text = estimate.unitCount.toString()
-        metrics[2].value.text = estimate.logicNodes.toString()
-        metrics[3].value.text = formatBytes(estimate.imageAccountedBytes)
-        val percent = estimate.heapBytes * 100.0 / ModHeapEstimator.ANDROID_LARGE_HEAP_BYTES
-        budget.text = "512 MiB 参考预算占比：%.2f%% · 新旧同规模单位表并存：%s".format(
-            java.util.Locale.ROOT, percent, formatBytes(estimate.heapBytes * 2))
-        if (estimate.warnings.isNotEmpty()) budget.text = "${budget.text} · ${estimate.warnings.size} 项提示"
-        if (estimate.unitCount == 0) budget.text = "未找到可加载单位，不能当作零占用；请查看分析提示。"
+        budget.text = "每个模组由独立 JVM 调用真实桌面核心加载"
+        setExportEnabled(measurement != null)
+        if (measurement == null) return
+        metrics[0].value.text = formatBytes(measurement.incrementalHeapBytes)
+        metrics[1].value.text = measurement.unitCount.toString()
+        metrics[2].value.text = formatBytes(measurement.definitionHeapBytes)
+        metrics[3].value.text = formatBytes(measurement.sampledPeakHeapBytes)
+        budget.text = "单位间共享对象堆：${formatBytes(measurement.sharedDefinitionHeapBytes)} · 排行只列独占对象"
+        if (measurement.warnings.isNotEmpty()) budget.text = "${budget.text} · ${measurement.warnings.size} 项提示"
         // 一次通知排序器，避免大量单位逐行插入时重复排序。
-        estimate.units.forEach {
-            model.dataVector.add(java.util.Vector<Any>(listOf<Any>(it.name, it.fileName, it.heapBytes, it.logicNodes, it.childSections, it.memoryVariables)))
+        measurement.units.forEach {
+            model.dataVector.add(java.util.Vector<Any>(listOf<Any>(it.name, it.fileName, it.exclusiveBytes)))
         }
         model.fireTableDataChanged()
         sorter.sortKeys = listOf(RowSorter.SortKey(2, SortOrder.DESCENDING))
-        report.text = estimate.formatReport()
+        report.text = measurement.formatReport()
         report.caretPosition = 0
-        warnings.text = (estimate.warnings.ifEmpty { listOf("未发现读取或继承解析问题。") } + listOf(
-            "这是静态模型，尚未用实测堆快照校准；表达式、共享对象和运行平台会造成偏差。",
-            "单位表并存只是参考，不包含解析临时对象，不能当作真实峰值。",
-            "包内贴图按宽 × 高 × 8 计数，包含未引用的图片，不包含音频。",
-            "不执行游戏脚本；变量替换、小节继承及部分引擎语法未完整模拟。"
+        warnings.text = (measurement.warnings.ifEmpty { listOf("真实核心加载未返回额外提示。") } + listOf(
+            "测量环境：${measurement.runtimeDescription}",
+            "GC 后堆净增来自加载前后实际 JVM 堆用量；共享缓存和 GC 会影响结果。",
+            "单位对象图按实际对象大小去重；多单位共享对象单列，不重复分配给单位排行。",
+            "采样峰值可能漏掉采样间隔内的瞬时峰值；结果对应当前桌面 JVM。",
+            "引擎贴图与音频记账不等于 Java 堆，也不能直接相加得到进程总内存。"
         )).joinToString("\n\n")
         warnings.caretPosition = 0
     }
@@ -410,7 +460,7 @@ internal class HeapWindow : JFrame("RWJS · 模组堆内存分析") {
 
     private fun export(csv: Boolean) {
         val result = selected ?: return
-        val estimate = result.estimate ?: return
+        val measurement = result.measurement ?: return
         val extension = if (csv) "csv" else "txt"
         val chooser = JFileChooser(chooserDirectory).apply {
             dialogTitle = if (csv) "导出所有单位（不受筛选影响）" else "导出完整报告"
@@ -422,7 +472,7 @@ internal class HeapWindow : JFrame("RWJS · 模组堆内存分析") {
         if (!output.name.endsWith(".$extension", true)) output = File(output.path + ".$extension")
         if (output.exists() && JOptionPane.showConfirmDialog(this, "覆盖已有文件 ${output.name}？", "导出", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return
         try {
-            output.writeText(if (csv) "\uFEFF" + estimate.unitCsv() else "来源：${result.file.absolutePath}\n\n${estimate.formatReport()}\n", Charsets.UTF_8)
+            output.writeText(if (csv) "\uFEFF" + measurement.unitCsv() else "来源：${result.file.absolutePath}\n\n${measurement.formatReport()}\n", Charsets.UTF_8)
             status.text = "已导出：${output.absolutePath}"
         } catch (e: Exception) {
             JOptionPane.showMessageDialog(this, "导出失败：${e.message}", "导出失败", JOptionPane.ERROR_MESSAGE)
@@ -430,7 +480,7 @@ internal class HeapWindow : JFrame("RWJS · 模组堆内存分析") {
     }
 
     private fun setBusy(busy: Boolean) {
-        listOf<JComponent>(selectFiles, selectDirectory, run, path).forEach { it.isEnabled = !busy }
+        listOf<JComponent>(selectFiles, selectDirectory, selectGameRoot, run, path, gameRootPath).forEach { it.isEnabled = !busy }
         cancel.isEnabled = busy
         progress.isIndeterminate = busy
     }
@@ -454,13 +504,4 @@ private fun textArea() = JTextArea().apply {
     wrapStyleWord = true
     border = BorderFactory.createEmptyBorder(16, 16, 16, 16)
     foreground = ink
-}
-
-internal fun ModHeapEstimate.unitCsv(): String = buildString {
-    append("单位名称,定义文件,估算堆字节,逻辑节点,小节对象,memory变量\r\n")
-    for (unit in units) {
-        fun cell(value: String) = "\"" + value.replace("\"", "\"\"") + "\""
-        append(listOf(cell(unit.name), cell(unit.fileName), unit.heapBytes.toString(), unit.logicNodes.toString(), unit.childSections.toString(), unit.memoryVariables.toString()).joinToString(","))
-        append("\r\n")
-    }
 }

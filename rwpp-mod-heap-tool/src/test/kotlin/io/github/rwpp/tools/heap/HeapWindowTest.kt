@@ -7,7 +7,6 @@
 
 package io.github.rwpp.tools.heap
 
-import io.github.rwpp.game.mod.heap.ModHeapEstimator
 import java.awt.Component
 import java.awt.Container
 import java.awt.GraphicsEnvironment
@@ -24,17 +23,20 @@ class HeapWindowTest {
     fun filteringUsesLiteralTextAndMemorySortIsNumeric() {
         assumeFalse(GraphicsEnvironment.isHeadless())
         SwingUtilities.invokeAndWait {
-            val window = HeapWindow()
+            val window = HeapWindow(initialGameRoot = File("."), analyzer = { _, _, _ -> error("本测试直接展示实测结果") })
             try {
-                val estimate = ModHeapEstimator.estimateSources("pack", listOf(
-                    "small.ini" to "[core]\nname=Unit[1]",
-                    "large.ini" to "[core]\nname=Heavy\nif=select(self.hp > 10, memory.x, memory.y)",
+                val measurement = measured(listOf(
+                    MeasuredUnitHeap("Unit[1]", "small.ini", 9),
+                    MeasuredUnitHeap("Heavy", "large.ini", 100),
                 ))
-                window.showEstimate(File("pack.rwmod"), estimate)
+                window.showMeasurement(File("pack.rwmod"), measurement)
                 val components = descendants(window.contentPane)
                 val table = components.filterIsInstance<JTable>().single()
                 val filter = components.filterIsInstance<JTextField>().single { it.toolTipText == null }
+                assertEquals(3, table.columnCount)
                 assertEquals("Heavy", table.getValueAt(0, 0))
+                assertEquals(100L, table.getValueAt(0, 2))
+                assertTrue(components.filterIsInstance<JLabel>().any { it.text.startsWith("单位间共享对象堆：") })
                 filter.text = "[1]"
                 assertEquals(1, window.visibleUnitCount)
                 assertEquals("Unit[1]", table.getValueAt(0, 0))
@@ -52,8 +54,15 @@ class HeapWindowTest {
         var window: HeapWindow? = null
         try {
             val bad = File(directory, "bad.rwmod").apply { writeText("not a zip") }
-            val good = File(directory, "good.ini").apply { writeText("[core]\nname=Scout") }
-            SwingUtilities.invokeAndWait { window = HeapWindow().apply { analyze(listOf(bad, good)) } }
+            val good = File(directory, "good.rwmod").apply { writeText("测试测量由注入回调提供") }
+            SwingUtilities.invokeAndWait {
+                window = HeapWindow(initialGameRoot = directory, analyzer = { file, gameRoot, progress ->
+                    assertEquals(directory, gameRoot)
+                    progress("真实核心加载：${file.name}")
+                    if (file == bad) error("真实核心拒绝无效模组")
+                    measured(listOf(MeasuredUnitHeap("Scout", file.name, 2048)))
+                }).apply { analyze(listOf(bad, good)) }
+            }
             val deadline = System.nanoTime() + 10_000_000_000L
             var finished = false
             while (!finished && System.nanoTime() < deadline) {
@@ -81,4 +90,18 @@ class HeapWindowTest {
 
     private fun descendants(component: Component): List<Component> = listOf(component) +
         if (component is Container) component.components.flatMap(::descendants) else emptyList()
+
+    private fun measured(units: List<MeasuredUnitHeap>) = MeasuredModHeap(
+        sourceName = "pack",
+        baselineHeapBytes = 1_000_000,
+        loadedHeapBytes = 1_200_000,
+        sampledPeakHeapBytes = 1_500_000,
+        heapLimitBytes = 768 * 1024 * 1024,
+        definitionHeapBytes = units.sumOf { it.exclusiveBytes } + 128,
+        sharedDefinitionHeapBytes = 128,
+        textureAccountedBytes = 32_768,
+        soundAccountedBytes = 0,
+        runtimeDescription = "测试 JVM",
+        units = units,
+    )
 }

@@ -1,57 +1,58 @@
-# 模组堆内存分析工具
+# 模组堆内存实测工具
 
-独立桌面工具，无需启动游戏或准备游戏运行资源。要求 Java 21 或更高版本。
+工具调用本项目 lib/game-lib.jar 中的真实桌面核心，先加载原版资源，再通过原版模组重载入口加载指定模组。继承、变量替换、逻辑表达式、单位间引用、贴图和声音都由引擎处理，不再通过配置文本推算对象大小。
 
-## 打开界面
+需要 Java 21、完整桌面游戏目录及其原生库，电脑需支持 LWJGL2 的离屏 OpenGL Pbuffer。测量不会打开游戏窗口；每个模组在独立 JVM 中加载，工作目录、原版资源副本和配置均在临时目录中，退出或取消后清理，不改变正在运行的游戏或原有模组启用设置。
 
-在仓库根目录双击 `启动模组内存分析.bat`。首次运行会通过 Gradle 构建；后续直接打开已生成的 JAR。
+## 打开和使用
 
-也可以运行：
+双击仓库根目录的 `启动模组内存分析.bat`。首次运行会构建工具；修改代码后需重新执行 `packageTool`。
 
-```powershell
-.\gradlew.bat :rwpp-mod-heap-tool:run
-```
+界面自动尝试从 `packaging/game-root.local.txt` 或当前游戏目录定位资源。未找到时，点击“选择游戏目录”，选择包含 `assets/units`、`res` 及原生库的完整桌面游戏安装目录。
 
-选择一个或多个 `.rwmod` / `.zip` / `.ini` 文件，或选择模组目录。支持拖入文件、粘贴路径、批量分析、取消，以及按单位名或文件名筛选。点击左侧结果可切换模组；表头可排序。分析在后台运行，读取失败会在列表单独显示，其余模组继续分析。
+选择一个或多个 `.rwmod` / `.zip` 文件，或一个完整模组目录。支持拖入文件、粘贴路径、批量分析、取消、按单位名或定义文件筛选、表头排序，以及报告和单位 CSV 导出。单份 `.ini` 缺乏可靠的模组根和资源上下文，不再作为完整模组分析输入。
 
-“导出报告”保存当前模组的完整 TXT 报告；“导出单位 CSV”保存当前模组全部单位，不受界面筛选影响。CSV 带 UTF-8 BOM，方便 Excel 打开。
+核心加载错误、缺失资源、未加载任何单位或部分单位加载失败都会显示失败，不将不完整结果标成成功。一个模组失败后，批量分析继续处理其他模组。
 
-## 构建与分发
+## 构建和命令行
 
 ```powershell
-.\gradlew.bat :rwpp-mod-heap-tool:packageTool
-java -Xmx768m -jar build\mod-heap-tool\RWJS-ModHeapTool.jar
+.\gradlew.bat :rwpp-mod-heap-tool:test :rwpp-mod-heap-tool:packageTool
+java -jar build\mod-heap-tool\RWJS-ModHeapTool.jar
+java -jar build\mod-heap-tool\RWJS-ModHeapTool.jar --analyze D:\Mods\example.rwmod --game-root "D:\Games\Rusted Warfare"
 ```
 
-生成的 `build/mod-heap-tool/RWJS-ModHeapTool.jar` 可单独复制到其他安装了 Java 21 的机器。工具使用 JDK Swing，无需 Compose、OpenGL 或游戏运行环境。
-
-修改代码后重新执行 `packageTool`，让双击脚本使用最新产物。
-
-原命令行入口继续可用：
+Gradle 命令：
 
 ```powershell
-.\gradlew.bat :rwpp-core-api:estimateModHeap "-Pmod=D:\Mods\example.rwmod"
+.\gradlew.bat :rwpp-mod-heap-tool:measureModHeap "-Pmod=D:\Mods\example.rwmod" "-PgameRoot=D:\Games\Rusted Warfare"
 ```
 
-## 如何理解结果
+旧的 `:rwpp-core-api:estimateModHeap -Pmod=...` 命令会转交真实核心测量。API 中的 `ModHeapEstimator` 仅保留为静态模型兼容代码，不再用于工具界面或上述 Gradle 命令。
 
-- **单位定义保留堆**：根据配置、继承、逻辑表达式和单位对象结构静态估算 JVM/ART 堆。尚未用实测堆快照校准，不包含原版单位、单位实例、临时解析对象或进程其他开销。
-- **包内贴图参考**：只读取图片头，按宽 × 高 × 8 累加引擎记账参考；包括未引用图片，不包含音频。Android 的贴图 native 内存不加进单位定义堆。
-- **512 MiB 预算占比**：仅为参考，设备实际堆上限可能不同。
-- **新旧单位表并存**：估算值乘二，仅用于观察同规模定义并存的量级，不是重载峰值实测，也不能保证没有 OOM。
-
-继承解析支持相对文件路径、模组根 `ROOT:`、显式 `.template` 与最近一层 `all-units.template`，保留旧工具的无歧义名称查找兼容。模板及当前文件 `dont_load=true` 不单独计为单位。找不到模板、继承成环、空包、变量替换或尚未支持的小节继承会显示提示；遇到歧义名称不会随意挑一个文件。
-
-读取压缩包时跳过音频等无关文件，图片只读最多 256 KiB 的文件头，不解码像素。单份配置上限 8 MiB，总配置上限 128 MiB；超限停止并明确提示。损坏或加固压缩包无法读取时显示失败，不当作占用为零。
-
-## 验证
+测量子进程默认最大堆为 2048 MiB，可通过父进程 JVM 属性调整，例如：
 
 ```powershell
-.\gradlew.bat :rwpp-core-api:test :rwpp-mod-heap-tool:test :rwpp-mod-heap-tool:packageTool
+java -Drwpp.heap.maxHeapMiB=4096 -jar build\mod-heap-tool\RWJS-ModHeapTool.jar --analyze D:\Mods\large.rwmod --game-root "D:\Games\Rusted Warfare"
 ```
 
-界面可以离屏渲染用于布局检查：
+分发时复制 `RWJS-ModHeapTool.jar`，并让用户选择其完整游戏目录。JAR 包含核心、依赖和测量 agent；游戏运行资源与系统对应的原生库仍需要从原版安装提供。
+
+## 结果含义
+
+- **GC 后堆净增**：原版加载完成与模组加载完成后分别执行 GC，用 `MemoryMXBean` 读取 Java 堆，取后者减前者。包含解析缓存、单位和其他加载开销，可能受共享缓存释放及 GC 状态影响。
+- **单位对象图堆**：从引擎实际加载的单位定义出发，通过 `Instrumentation.getObjectSize` 测量真实 Java 对象大小，按对象身份全局去重。跨单位引用在单位定义边界截止；多个单位共享的对象单列，排行显示每个单位的独占对象。独占总和加共享部分等于对象图总量。
+- **加载采样堆峰值**：每 10 ms 读取一次加载期间的 Java 堆，包含解析临时对象。对象图遍历在采样结束后进行，因此测量工具自身的图遍历开销不混入加载峰值。采样可能漏掉瞬时峰值，不是重载峰值保证。
+- **贴图/音频记账**：来自引擎该模组的 G / H 字段。虽然资源实际加载，它们仍是引擎账面数据，不能当作精确显存或 native 内存，也不能与 Java 堆简单相加得到进程总占用。
+
+对象图是有边界的可达 Java 堆，不是堆快照支配关系分析得到的保留堆。类、类加载器、线程、弱引用和 direct buffer 的 native 管理对象不沿引用继续遍历；不可访问的字段会让测量失败，不静默漏算。该图不包括独立全局解析缓存，缓存由 GC 后堆净增反映。
+
+结果对应当前桌面 JVM 的对象布局，不换算为 Android ART 堆。工具没有启动对局，因此不包含运行中的单位实例；不再显示固定 Android 512 MiB 预算或将占用乘二冒充实测。
+
+## 界面验证
 
 ```powershell
-java -jar build\mod-heap-tool\RWJS-ModHeapTool.jar --render-preview D:\Mods\example.rwmod build\mod-heap-tool\preview.png
+java -jar build\mod-heap-tool\RWJS-ModHeapTool.jar --render-preview D:\Mods\example.rwmod build\mod-heap-tool\preview.png --game-root "D:\Games\Rusted Warfare"
 ```
+
+此命令先执行真实测量，再离屏渲染 Swing 界面。自动化测试另验证共享对象去重、循环和跨单位引用边界、真实 agent 对象大小、反射失败、结果导出及批量 UI 行为。

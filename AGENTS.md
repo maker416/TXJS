@@ -31,7 +31,7 @@
 
 ## 模块架构
 
-项目包含 6 个 Gradle 子模块，依赖流向为：`rwpp-core-api` ← `rwpp-core` ← `rwpp-android` / `rwpp-desktop`。`rwpp-ksp` 作为 KSP 插件被 android/desktop 使用。独立 Swing 工具 `rwpp-mod-heap-tool` 仅依赖 `rwpp-core-api`。
+项目包含 6 个 Gradle 子模块，依赖流向为：`rwpp-core-api` ← `rwpp-core` ← `rwpp-android` / `rwpp-desktop`。`rwpp-ksp` 作为 KSP 插件被 android/desktop 使用。独立 Swing 工具 `rwpp-mod-heap-tool` 依赖 `rwpp-core-api` 及桌面游戏库，在独立 JVM 中用真实核心和离屏 OpenGL 加载模组，测量堆净增及去重单位对象图；运行需完整桌面游戏资源和 native 库（见 `docs/mod-heap-tool.md`）。
 
 | 模块 | 类型 | 职责 | 源文件数（约） |
 |------|------|------|--------------|
@@ -40,7 +40,7 @@
 | `rwpp-android` | Android Application | Android 入口（`MainApplication`、`MainActivity`、`LoadingScreen`）+ `impl/` 平台实现 + `impl/inject/` 注入模块 | ~50 |
 | `rwpp-desktop` | Compose Desktop Application | 桌面入口（`Main.kt` — Swing `JFrame` + `ComposePanel` + OpenGL `Canvas`）+ `impl/` 平台实现 + `impl/inject/` 注入模块 | ~55 |
 | `rwpp-ksp` | KSP Processor | 编译期代码生成：扫描 `lib/` 中的游戏库 jar，为平台模块生成注入配置与元数据 | 2 |
-| `rwpp-mod-heap-tool` | JVM Desktop Tool | 独立模组堆内存静态分析界面，批量分析、单位排行与报告导出 | 1 |
+| `rwpp-mod-heap-tool` | JVM Desktop Tool | 独立模组堆内存实测工具，真实核心加载、共享对象去重、批量分析与报告导出 | — |
 
 当环境变量 `JITPACK` 被设置时，`settings.gradle.kts` 会排除 `rwpp-android`、`rwpp-desktop` 与 `rwpp-mod-heap-tool`，仅保留 library 模块，以支持 JitPack 发布。
 
