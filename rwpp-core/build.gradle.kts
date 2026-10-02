@@ -68,6 +68,8 @@ kotlin {
                     "include" to "lwjgl.jar"
                 ))
                 implementation(compose.desktop.common)
+                // 读取当前进程工作集 / RSS；与桌面应用已有 JNA 版本保持一致。
+                implementation("net.java.dev.jna:jna:5.15.0")
                 // Chromium runtime 随桌面包提供；每个构建只包含当前平台的 native 库。
                 val jcefVersion = "jcef-d3de827+cef-146.0.10+g8219561+chromium-146.0.7680.179"
                 val osName = System.getProperty("os.name").lowercase()

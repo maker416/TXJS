@@ -10,7 +10,9 @@ package io.github.rwpp.widget
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.Icon
@@ -110,6 +112,7 @@ fun LoadingView(
     enableAnimation: Boolean = true,
     cancellable: Boolean = false,
     showProtectedModHint: Boolean = false,
+    showMemoryUsage: Boolean = false,
     loadContent: suspend LoadingContext.() -> Boolean?
 ) {
     // 必须持有可取消的 Job：关闭对话框时立刻 cancel，避免退出动画期间后台仍跑完
@@ -178,6 +181,7 @@ fun LoadingView(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
                         .padding(horizontal = 22.dp, vertical = 18.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
                     horizontalAlignment = Alignment.Start
@@ -210,6 +214,10 @@ fun LoadingView(
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
+                    }
+
+                    if (showMemoryUsage) {
+                        MemoryUsagePanel(compact = true)
                     }
 
                     if (showProtectedModHint && !cancel) {

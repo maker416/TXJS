@@ -965,12 +965,14 @@ fun App(
                     reloadingModViewVisible && !inRoomSyncActive && !ModSyncController.cancellingReload,
                     onLoaded = {},
                     showProtectedModHint = true,
+                    showMemoryUsage = true,
                 ) { null }
 
                 LoadingView(
                     ModSyncController.cancellingReload,
                     onLoaded = {},
                     cancellable = false,
+                    showMemoryUsage = true,
                 ) {
                     message(readI18n("modSync.cancellingDetail", I18nType.RWPP))
                     null

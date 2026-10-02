@@ -1400,10 +1400,14 @@ fun ModsView(
     }
 
     @Composable
-    fun ModsBody(denseCards: Boolean, modifier: Modifier = Modifier) {
+    fun ModsBody(denseCards: Boolean, compactMemory: Boolean, modifier: Modifier = Modifier) {
         // 始终左右分栏：左=已启用，右=未启用；顶栏按内容高度，剩余全给列表
         Column(modifier = modifier.fillMaxSize()) {
             ModsTopBar()
+            MemoryUsagePanel(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                compact = compactMemory,
+            )
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1445,12 +1449,13 @@ fun ModsView(
                 .padding(paddingValues)
         ) {
             val denseCards = maxWidth < 840.dp
+            val compactMemory = maxHeight < 560.dp
             if (embedded) {
-                ModsBody(denseCards = denseCards, modifier = Modifier.fillMaxSize())
+                ModsBody(denseCards = denseCards, compactMemory = compactMemory, modifier = Modifier.fillMaxSize())
             } else {
                 ExpandedCard {
                     Box(modifier = Modifier.fillMaxSize()) {
-                        ModsBody(denseCards = denseCards, modifier = Modifier.fillMaxSize())
+                        ModsBody(denseCards = denseCards, compactMemory = compactMemory, modifier = Modifier.fillMaxSize())
                         ExitButton { exit() }
                     }
                 }

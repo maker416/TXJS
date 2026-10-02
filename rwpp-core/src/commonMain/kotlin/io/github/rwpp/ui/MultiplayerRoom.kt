@@ -3619,60 +3619,68 @@ private fun RoomSelfSyncBar(compact: Boolean, modifier: Modifier = Modifier) {
         else -> readI18n("modSync.phaseJoining", I18nType.RWPP)
     }
 
-    Row(
+    Column(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        if (isSynced) {
-            Text(
-                "✓",
-                style = MaterialTheme.typography.labelMedium,
-                color = Color(0xFF4CAF50),
-            )
-        } else {
-            CircularProgressIndicator(
-                modifier = Modifier.size(12.dp),
-                strokeWidth = 1.5.dp,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-        val speedBps = UI.receivingModSpeedBps
-        val speedText = if (isDownloading && speedBps > 0L) " ${fmtSpeed(speedBps)}" else ""
-        val detailText = if (isDownloading && UI.receivingModName.isNotBlank()) {
-            "$phaseLabel: ${UI.receivingModName} " +
-                "(${fmtMB(UI.receivingModReceivedBytes)}/${fmtMB(UI.receivingModTotalBytes)}MB)$speedText"
-        } else {
-            phaseLabel
-        }
-        Text(
-            detailText,
-            style = MaterialTheme.typography.bodySmall,
-            color = if (isSynced) Color(0xFF4CAF50) else MaterialTheme.colorScheme.primary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        if (isApplying && applyProgress != null) {
-            ApplyingUnitCountBadge(count = applyProgress.count, compact = compact)
-        }
-        if (isDownloading) {
-            LinearProgressIndicator(
-                progress = { UI.receivingModProgress },
-                modifier = Modifier
-                    .width(if (compact) 64.dp else 96.dp)
-                    .height(4.dp),
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.surfaceContainer,
-            )
-        }
-        if (!isSynced) {
-            RWTextButton(
-                readI18n("modSync.cancelSync"),
-                modifier = Modifier.defaultMinSize(minHeight = 28.dp),
-            ) {
-                ModSyncController.cancelInRoomSync()
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (isSynced) {
+                Text(
+                    "✓",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color(0xFF4CAF50),
+                )
+            } else {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(12.dp),
+                    strokeWidth = 1.5.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
             }
+            val speedBps = UI.receivingModSpeedBps
+            val speedText = if (isDownloading && speedBps > 0L) " ${fmtSpeed(speedBps)}" else ""
+            val detailText = if (isDownloading && UI.receivingModName.isNotBlank()) {
+                "$phaseLabel: ${UI.receivingModName} " +
+                    "(${fmtMB(UI.receivingModReceivedBytes)}/${fmtMB(UI.receivingModTotalBytes)}MB)$speedText"
+            } else {
+                phaseLabel
+            }
+            Text(
+                detailText,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (isSynced) Color(0xFF4CAF50) else MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (isApplying && applyProgress != null) {
+                ApplyingUnitCountBadge(count = applyProgress.count, compact = compact)
+            }
+            if (isDownloading) {
+                LinearProgressIndicator(
+                    progress = { UI.receivingModProgress },
+                    modifier = Modifier
+                        .width(if (compact) 64.dp else 96.dp)
+                        .height(4.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.surfaceContainer,
+                )
+            }
+            if (!isSynced) {
+                RWTextButton(
+                    readI18n("modSync.cancelSync"),
+                    modifier = Modifier.defaultMinSize(minHeight = 28.dp),
+                ) {
+                    ModSyncController.cancelInRoomSync()
+                }
+            }
+        }
+        if (isApplying || isDownloading) {
+            MemoryUsagePanel(compact = true)
         }
     }
 }

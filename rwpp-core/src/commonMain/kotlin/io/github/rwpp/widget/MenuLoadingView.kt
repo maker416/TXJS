@@ -10,7 +10,9 @@ package io.github.rwpp.widget
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -129,7 +131,9 @@ private fun SplashLoadingStatus(
         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f))
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            modifier = Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             if (structuredMessage != null) {
@@ -154,6 +158,8 @@ private fun SplashLoadingStatus(
                 color = MaterialTheme.colorScheme.primary,
                 trackColor = Color.White.copy(alpha = 0.12f)
             )
+
+            MemoryUsagePanel(compact = true, darkBackground = true)
 
             ProtectedModLoadNotice(
                 loadingText = message,

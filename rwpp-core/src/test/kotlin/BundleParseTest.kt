@@ -298,4 +298,27 @@ class BundleParseTest {
             }
         }
     }
+
+    @Test
+    fun memoryKeysExistInAllBundles() {
+        bundleNames.forEach { name ->
+            val table = Toml.parseToTomlTable(File(bundleDir, name).readText())
+            val memory = table["memory"] as? TomlTable
+            assertNotNull(memory, "[memory] table missing in $name")
+            listOf(
+                "title",
+                "sampling",
+                "javaHeap",
+                "processResident",
+                "nativeHeap",
+                "unavailable",
+                "headroom",
+                "explanation",
+                "elevated",
+                "critical",
+            ).forEach { key ->
+                assertTrue(memory.containsKey(key), "memory.$key missing in $name")
+            }
+        }
+    }
 }
