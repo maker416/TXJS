@@ -47,11 +47,6 @@ object ProtectedRwmodDetector {
         enabledByFileName: Map<String, Boolean>?,
         searchDirs: List<File>,
     ): List<String> {
-        val enabledKeys = enabledByFileName
-            ?.filterValues { it }
-            ?.keys
-            ?.map { it.lowercase(Locale.ROOT) }
-            ?.toSet()
         val engineFileNames = engineMods
             .map { File(it.path).name.lowercase(Locale.ROOT) }
             .toSet()
@@ -69,7 +64,7 @@ object ProtectedRwmodDetector {
 
         for (mod in engineMods) {
             val file = File(mod.path)
-            val enabled = enabledKeys?.contains(file.name.lowercase(Locale.ROOT)) ?: mod.isEnabled
+            val enabled = enabledByFileName?.let { resolveModEnabledByFileName(listOf(file.path), it) } ?: mod.isEnabled
             if (enabled) consider(file, mod.name)
         }
 
@@ -78,7 +73,7 @@ object ProtectedRwmodDetector {
                 if (!file.isFile || !file.extension.equals("rwmod", ignoreCase = true)) return@forEach
                 val key = file.name.lowercase(Locale.ROOT)
                 val enabled = when {
-                    enabledKeys != null -> key in enabledKeys
+                    enabledByFileName != null -> resolveModEnabledByFileName(listOf(file.path), enabledByFileName)
                     // 引擎已认识的文件以 isEnabled 为准，避免把已禁用项再扫进来
                     key in engineFileNames -> false
                     // 尚未进入引擎列表的新文件（进房同步落盘后的常见情况）

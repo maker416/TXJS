@@ -16,10 +16,19 @@ import kotlin.test.assertTrue
 class ThemePackDocumentationTest {
     @Test
     fun publishedTomlExamplesParseAndThemeExamplesAreValid() {
-        val document = File("../docs/theme-pack-format.md").readText()
+        // 文档中文改名及 v2 指南均需校验；兼容尚未改名的检出。
+        val documents = listOf("theme-pack-format.md", "主题包开发文档.md", "主题包开发文档v2.md")
+            .map { File("../docs", it) }
+            .filter { it.isFile }
+        assertTrue(documents.isNotEmpty(), "找不到主题包开发文档")
+        documents.forEach { validateExamples(it) }
+    }
+
+    private fun validateExamples(file: File) {
+        val document = file.readText()
         val snippets = Regex("```toml\\r?\\n([\\s\\S]*?)\\r?\\n```")
             .findAll(document).map { it.groupValues[1] }.toList()
-        assertTrue(snippets.isNotEmpty())
+        assertTrue(snippets.isNotEmpty(), "${file.name} 缺少 TOML 示例")
         snippets.forEachIndexed { index, snippet ->
             Toml.parseToTomlTable(snippet)
             // 文案文件与主题配置使用不同模型；配置片段补元数据后走真实导入校验。
@@ -29,8 +38,8 @@ class ThemePackDocumentationTest {
                 val fullConfig = if ("[theme]" in snippet) snippet else
                     "[theme]\nid = \"documentation-test\"\nname = \"文档示例\"\n\n$snippet"
                 val (spec, validation) = validateThemeToml(fullConfig)
-                assertNotNull(spec, "文档例子 ${index + 1}: ${validation.errors}")
-                assertTrue(validation.warnings.isEmpty(), "文档例子 ${index + 1}: ${validation.warnings}")
+                assertNotNull(spec, "${file.name} 例子 ${index + 1}: ${validation.errors}")
+                assertTrue(validation.warnings.isEmpty(), "${file.name} 例子 ${index + 1}: ${validation.warnings}")
             }
         }
     }

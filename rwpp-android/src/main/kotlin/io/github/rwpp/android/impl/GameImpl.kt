@@ -20,6 +20,7 @@ import io.github.rwpp.appKoin
 import io.github.rwpp.core.LoadingContext
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.*
+import io.github.rwpp.game.BlockingJoinController
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.GameRoom
 import io.github.rwpp.game.base.Difficulty
@@ -37,7 +38,6 @@ import org.koin.core.annotation.Single
 import org.koin.core.component.get
 import java.io.IOException
 import java.io.InputStream
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -45,8 +45,7 @@ import kotlin.coroutines.resumeWithException
 @Single
 class GameImpl : Game, CoroutineScope {
 
-    private var isCancellingJob = AtomicBoolean(false)
-    private var connectingJob: Deferred<String?>? = null
+    private val joinController = BlockingJoinController()
     private var _missions: List<Mission>? = null
     private var _allMaps: List<GameMap>? = null
     private var _maps = mutableMapOf<MapType, List<GameMap>>()
@@ -112,24 +111,28 @@ class GameImpl : Game, CoroutineScope {
     }
 
     override suspend fun directJoinServer(address: String, uuid: String?, context: LoadingContext): Result<String> {
-        GameEngine.t().a(appKoin.get(), gameView)
-
-        isCancellingJob.set(false)
-        isSinglePlayerGame = false
-
-        initMap()
-
-        GameEngine.t().bU.by = sanitizeJoinRelayUuid(uuid)
-        connectingJob = withContext(Dispatchers.IO) {
-            async { GameEngine.t().bU.c(address, false) }
-        }
-
-        val result = runCatching {
-            connectingJob?.await()
+        val result = try {
+            Result.success(joinController.connect(
+                prepare = {
+                    GameEngine.t().a(appKoin.get(), gameView)
+                    isSinglePlayerGame = false
+                    initMap()
+                    GameEngine.t().bU.by = sanitizeJoinRelayUuid(uuid)
+                },
+                blockingConnect = { GameEngine.t().bU.c(address, false) },
+                cleanupCancelled = {
+                    withContext(Dispatchers.Main.immediate) { gameRoom.disconnectAndWait("Join cancelled") }
+                },
+            ))
+        } catch (e: CancellationException) {
+            // 清理已在 joinController 内完整等待，才能释放 beginSession 的开始屏障。
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
         }
 
         return when {
-            result.isSuccess && !isCancellingJob.get() -> {
+            result.isSuccess && result.getOrNull() == null -> {
                 if (GameEngine.t().G()) {
                     logger.warn("Join reported success but engine is still in local skirmish mode: $address")
                     GameEngine.t().bU.b("Connection failed")
@@ -140,22 +143,17 @@ class GameImpl : Game, CoroutineScope {
                 }
             }
             ae.u() -> {
-                isCancellingJob.set(false)
                 Result.failure(IOException("Connection failed: Target server may not be open to the internet."))
             }
             else -> {
-                isCancellingJob.set(false)
-                Result.failure(IOException("Connection failed."))
+                Result.failure(IOException(result.getOrNull() ?: "Connection failed.", result.exceptionOrNull()))
             }
         }
     }
 
     override fun cancelJoinServer() {
-        isCancellingJob.set(true)
-        connectingJob?.cancel()
-        connectingJob = null
+        joinController.cancel()
     }
-
     override fun onQuestionCallback(option: String) {
         questionOption = option
     }

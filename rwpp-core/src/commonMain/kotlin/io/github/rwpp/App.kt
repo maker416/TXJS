@@ -104,7 +104,11 @@ import io.github.rwpp.widget.v2.LineSpinFadeLoaderIndicator
 import io.github.rwpp.widget.v2.bounceClick
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -127,6 +131,7 @@ fun App(
     val appScope = rememberCoroutineScope()
 
     var checkUpdateDialogVisible by remember { mutableStateOf(false) }
+    var updateDownloadJob by remember { mutableStateOf<Job?>(null) }
     var profile by remember { mutableStateOf<LatestVersionProfile?>(null) }
 
     LaunchedEffect(Unit) {
@@ -561,6 +566,7 @@ fun App(
                 AnimatedAlertDialog(
                     checkUpdateDialogVisible,
                     onDismissRequest = {
+                        updateDownloadJob?.cancel()
                         appKoin.getOrNull<AutoUpdater>()?.cancelPendingUpdate()
                         checkUpdateDialogVisible = false
                     }
@@ -660,8 +666,10 @@ fun App(
                                         shape = RoundedCornerShape(8.dp),
                                         modifier = Modifier.fillMaxWidth().bounceClick {
                                             updating = true
-                                            scopeInner.launch(Dispatchers.IO) {
+                                            updateDownloadJob = scopeInner.launch(Dispatchers.IO) {
+                                                val downloadContext = currentCoroutineContext()
                                                 autoUpdater.downloadAndInstall(updatePlan!!.partUrls, updatePlan!!.sha256Url) { progress ->
+                                                    if (downloadContext.job.isCancelled) downloadContext.ensureActive()
                                                     scopeInner.launch(Dispatchers.Main) {
                                                         downloadProgress = progress
                                                     }
@@ -716,8 +724,10 @@ fun App(
                                                 shape = RoundedCornerShape(8.dp),
                                                 modifier = Modifier.bounceClick {
                                                     downloadProgress = 0f
-                                                    scopeInner.launch(Dispatchers.IO) {
+                                                    updateDownloadJob = scopeInner.launch(Dispatchers.IO) {
+                                                        val downloadContext = currentCoroutineContext()
                                                         autoUpdater!!.downloadAndInstall(updatePlan!!.partUrls, updatePlan!!.sha256Url) { progress ->
+                                                            if (downloadContext.job.isCancelled) downloadContext.ensureActive()
                                                             scopeInner.launch(Dispatchers.Main) {
                                                                 downloadProgress = progress
                                                             }

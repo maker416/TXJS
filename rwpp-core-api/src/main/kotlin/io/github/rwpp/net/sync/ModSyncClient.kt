@@ -8,6 +8,7 @@
 package io.github.rwpp.net.sync
 
 import io.github.rwpp.logger
+import io.github.rwpp.net.useCancellable
 import kotlinx.coroutines.*
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -406,7 +407,7 @@ class ModSyncClient(
                     .apply(customize)
                     .build()
                 try {
-                    blobClient.executeCancellable(request).use { response ->
+                    blobClient.useCancellable(request) { response ->
                         when {
                             response.isSuccessful -> {
                                 startedBody = true
@@ -454,7 +455,7 @@ class ModSyncClient(
                 .apply(customize)
                 .build()
             try {
-                http.executeCancellable(request).use { response ->
+                http.useCancellable(request) { response ->
                     when {
                         response.isSuccessful -> return@withContext onSuccess(response)
                         response.code in 500..599 -> {
@@ -491,31 +492,5 @@ class ModSyncClient(
         const val BLOB_BUFFER_SIZE = 256 * 1024
         const val PROGRESS_THROTTLE_MS = 200L
         const val DOWNLOAD_LOG_MS = 5_000L
-    }
-}
-
-/**
- * 执行请求并支持协程取消（取消时中断底层 OkHttp 调用）。
- * 与 `io.github.rwpp.net.Net.kt` 中的同名私有实现等价（该实现文件内私有不可复用）。
- */
-private suspend fun OkHttpClient.executeCancellable(request: Request): Response {
-    val call = newCall(request)
-    val cancelHandle = currentCoroutineContext().job.invokeOnCompletion { cause ->
-        if (cause is CancellationException) {
-            call.cancel()
-        }
-    }
-    return try {
-        currentCoroutineContext().ensureActive()
-        val response = call.execute()
-        try {
-            currentCoroutineContext().ensureActive()
-            response
-        } catch (e: Throwable) {
-            response.close()
-            throw e
-        }
-    } finally {
-        cancelHandle.dispose()
     }
 }

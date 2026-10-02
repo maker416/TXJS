@@ -23,6 +23,7 @@ import io.github.rwpp.net.account.AccountApiException
 import io.github.rwpp.net.account.AccountErrorCode
 import io.github.rwpp.net.account.AccountUser
 import io.github.rwpp.net.account.EmailCodePurpose
+import io.github.rwpp.net.account.LoginResponse
 import io.github.rwpp.net.account.PointBalance
 import io.github.rwpp.net.account.PointLedgersResponse
 import io.github.rwpp.net.account.PresenceSettings
@@ -35,11 +36,15 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.get
 import java.util.UUID
+
+internal data class AccountSessionSnapshot(val token: String, val epoch: Long)
 
 /**
  * RWJS 统一账号会话，对接 `/api/v1` 用户通道。
@@ -70,7 +75,7 @@ object AccountSession : KoinComponent {
     var restoring: Boolean by mutableStateOf(false)
         private set
 
-    /** 自己的在线状态可见性设置（文档 6.23），登录后由账号页拉取。 */
+    /** 自己的在线状态可见性设置；账号页和房间身份公示按需拉取，未知时不公示。 */
     var presenceSettings: PresenceSettings? by mutableStateOf(null)
         private set
 
@@ -84,6 +89,11 @@ object AccountSession : KoinComponent {
 
     /** 截图 / 组合测试关闭真请求。 */
     var networkEnabled: Boolean = true
+
+    // 所有异步响应按发起时的会话代次回写；切号/登出先作废旧请求。
+    private var sessionEpoch = 0L
+    private var authenticationEpoch: Long? = null
+    private val presenceSettingsMutex = Mutex()
 
     @Volatile
     internal var clientOverride: AccountApiClient? = null
@@ -133,54 +143,72 @@ object AccountSession : KoinComponent {
     }
 
     suspend fun restoreIfNeeded() {
-        if (!networkEnabled || loggedIn) return
-        val prefs = prefsOrNull() ?: return
-        lastUsername = prefs.lastUsername
-        val saved = prefs.token
-        if (saved.isBlank()) return
-        restoring = true
-        profileError = ""
+        val attempt = synchronized(this) {
+            if (!networkEnabled || loggedIn || restoring || authenticationEpoch != null) return
+            val prefs = prefsOrNull() ?: return
+            lastUsername = prefs.lastUsername
+            if (prefs.token.isBlank()) return
+            restoring = true
+            profileError = ""
+            AccountSessionSnapshot(prefs.token, sessionEpoch)
+        }
         try {
-            val me = withContext(Dispatchers.IO) { client().me(saved) }
-            applySession(saved, me, persist = false)
+            val me = withContext(Dispatchers.IO) { client().me(attempt.token) }
+            applySessionIfCurrent(attempt.epoch, attempt.token, me, persist = false)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: AccountApiException) {
-            if (e.code == AccountErrorCode.UNAUTHORIZED ||
-                e.code == AccountErrorCode.USER_DISABLED ||
-                e.code == AccountErrorCode.NOT_FOUND
-            ) {
-                clearSession(persist = true)
-            } else {
-                logger.warn("恢复账号会话失败：{} {}", e.code, e.message)
+            synchronized(this) {
+                if (sessionEpoch != attempt.epoch) return
+                if (e.code == AccountErrorCode.UNAUTHORIZED ||
+                    e.code == AccountErrorCode.USER_DISABLED ||
+                    e.code == AccountErrorCode.NOT_FOUND
+                ) {
+                    clearSession(persist = true)
+                } else {
+                    logger.warn("恢复账号会话失败：{} {}", e.code, e.message)
+                }
             }
         } catch (e: Exception) {
             logger.warn("恢复账号会话失败：{}", e.message)
         } finally {
-            restoring = false
+            synchronized(this) {
+                if (sessionEpoch == attempt.epoch) restoring = false
+            }
         }
     }
 
-    suspend fun login(username: String, password: String) {
-        val resp = withContext(Dispatchers.IO) { client().login(username, password) }
-        applySession(resp.token, resp.user, persist = true)
-    }
+    suspend fun login(username: String, password: String) =
+        authenticate { client().login(username, password) }
 
     /** 邮箱 + 密码登录（文档 6.3.1）。 */
-    suspend fun loginWithEmail(email: String, password: String) {
-        val resp = withContext(Dispatchers.IO) { client().loginWithEmail(email, password) }
-        applySession(resp.token, resp.user, persist = true)
-    }
+    suspend fun loginWithEmail(email: String, password: String) =
+        authenticate { client().loginWithEmail(email, password) }
 
     /** 邮箱 + 验证码登录（文档 6.3.2），须先 [sendLoginCode]。 */
-    suspend fun loginWithEmailCode(email: String, code: String) {
-        val resp = withContext(Dispatchers.IO) { client().loginWithEmailCode(email, code) }
-        applySession(resp.token, resp.user, persist = true)
+    suspend fun loginWithEmailCode(email: String, code: String) =
+        authenticate { client().loginWithEmailCode(email, code) }
+
+    private suspend fun authenticate(request: suspend () -> LoginResponse) {
+        val epoch = beginAuthentication()
+        try {
+            val resp = withContext(Dispatchers.IO) { request() }
+            applySessionIfCurrent(epoch, resp.token, resp.user, persist = true)
+        } finally {
+            finishAuthentication(epoch)
+        }
     }
 
     suspend fun register(req: RegisterRequest, password: String) {
-        withContext(Dispatchers.IO) {
-            client().register(req)
-            val resp = client().login(req.username, password)
-            applySession(resp.token, resp.user, persist = true)
+        val epoch = beginAuthentication()
+        try {
+            withContext(Dispatchers.IO) {
+                client().register(req)
+                val resp = client().login(req.username, password)
+                applySessionIfCurrent(epoch, resp.token, resp.user, persist = true)
+            }
+        } finally {
+            finishAuthentication(epoch)
         }
     }
 
@@ -210,30 +238,46 @@ object AccountSession : KoinComponent {
     }
 
     suspend fun refreshProfile() {
-        val me = withContext(Dispatchers.IO) { client().me(requireToken()) }
-        applySession(token, me, persist = true)
-        profileError = ""
+        val session = requireSessionSnapshot()
+        val me = withContext(Dispatchers.IO) { client().me(session.token) }
+        updateCurrentSession(session) {
+            applySession(session.token, me, persist = true)
+        }
     }
 
     suspend fun changeNickname(nickname: String) {
-        val me = withContext(Dispatchers.IO) { client().changeNickname(requireToken(), nickname) }
-        applySession(token, me, persist = true)
+        val session = requireSessionSnapshot()
+        val me = withContext(Dispatchers.IO) { client().changeNickname(session.token, nickname) }
+        updateCurrentSession(session) {
+            applySession(session.token, me, persist = true)
+        }
     }
 
     suspend fun refreshPresenceSettings() {
-        val settings = withContext(Dispatchers.IO) { client().getPresenceSettings(requireToken()) }
-        presenceSettings = settings
+        val session = requireSessionSnapshot()
+        presenceSettingsMutex.withLock {
+            if (!isCurrentSession(session)) return
+            val settings = withContext(Dispatchers.IO) { client().getPresenceSettings(session.token) }
+            updateCurrentSession(session) { presenceSettings = settings }
+        }
     }
 
     suspend fun updatePresenceSettings(hideFromStrangers: Boolean?, hideFromFriends: Boolean?) {
-        val settings = withContext(Dispatchers.IO) {
-            client().updatePresenceSettings(requireToken(), hideFromStrangers, hideFromFriends)
+        val session = requireSessionSnapshot()
+        val updated = presenceSettingsMutex.withLock {
+            if (!isCurrentSession(session)) return
+            val settings = withContext(Dispatchers.IO) {
+                client().updatePresenceSettings(session.token, hideFromStrangers, hideFromFriends)
+            }
+            updateCurrentSession(session) { presenceSettings = settings }
         }
-        presenceSettings = settings
+        if (updated) RoomIdentityController.onPresenceSettingsChanged()
     }
 
     suspend fun refreshPoints() {
-        points = withContext(Dispatchers.IO) { client().listPoints(requireToken()) }
+        val session = requireSessionSnapshot()
+        val balances = withContext(Dispatchers.IO) { client().listPoints(session.token) }
+        updateCurrentSession(session) { points = balances }
     }
 
     /** 积分流水按需分页拉取（文档 6.10），不常驻会话状态。 */
@@ -256,44 +300,62 @@ object AccountSession : KoinComponent {
      * 本地同步清会话，调用方应引导重新登录。
      */
     suspend fun changeEmail(email: String, code: String) {
+        val session = requireSessionSnapshot()
         withContext(Dispatchers.IO) {
-            client().changeEmail(requireToken(), email, code)
+            client().changeEmail(session.token, email, code)
         }
-        clearSession(persist = true)
-        FriendsSession.clear()
+        updateCurrentSession(session) { clearSession(persist = true) }
     }
 
     /** 上传头像（≤1MiB 的 JPEG/PNG），成功后刷新 hasAvatar 并抬 [avatarVersion] 使缓存失效。 */
     suspend fun uploadAvatar(bytes: ByteArray, fileName: String, contentType: String) {
+        val session = requireSessionSnapshot()
         val hasAvatar = withContext(Dispatchers.IO) {
-            client().uploadAvatar(requireToken(), bytes, fileName, contentType)
+            client().uploadAvatar(session.token, bytes, fileName, contentType)
         }
-        user = user?.copy(hasAvatar = hasAvatar)
-        avatarVersion++
+        updateCurrentSession(session) {
+            user = user?.copy(hasAvatar = hasAvatar)
+            avatarVersion++
+        }
     }
 
     suspend fun deleteAvatar() {
-        val hasAvatar = withContext(Dispatchers.IO) { client().deleteAvatar(requireToken()) }
-        user = user?.copy(hasAvatar = hasAvatar)
-        avatarVersion++
+        val session = requireSessionSnapshot()
+        val hasAvatar = withContext(Dispatchers.IO) { client().deleteAvatar(session.token) }
+        updateCurrentSession(session) {
+            user = user?.copy(hasAvatar = hasAvatar)
+            avatarVersion++
+        }
     }
 
     suspend fun logout() {
-        val current = token
+        val attempt = synchronized(this) {
+            // 登出开始就作废旧请求，迟到的登出响应也不能清掉随后登录的账号。
+            sessionEpoch++
+            authenticationEpoch = null
+            restoring = false
+            AccountSessionSnapshot(token, sessionEpoch)
+        }
         try {
-            if (networkEnabled && current.isNotBlank()) {
-                withContext(Dispatchers.IO) { client().logout(current) }
+            if (networkEnabled && attempt.token.isNotBlank()) {
+                withContext(Dispatchers.IO) { client().logout(attempt.token) }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             logger.warn("登出请求失败，仍清除本机会话：{}", e.message)
+        } finally {
+            synchronized(this) {
+                if (sessionEpoch == attempt.epoch) clearSession(persist = true)
+            }
         }
-        clearSession(persist = true)
-        FriendsSession.clear()
     }
 
     fun applyPreview(account: AccountUser, previewToken: String = "preview") {
         networkEnabled = false
-        applySession(previewToken, account, persist = false)
+        val epoch = beginAuthentication()
+        applySessionIfCurrent(epoch, previewToken, account, persist = false)
+        finishAuthentication(epoch)
     }
 
     fun applyLoggedOutPreview() {
@@ -312,8 +374,49 @@ object AccountSession : KoinComponent {
         heartbeatIntervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS
     }
 
+    @Synchronized
+    private fun beginAuthentication(): Long {
+        sessionEpoch++
+        restoring = false
+        authenticationEpoch = sessionEpoch
+        return sessionEpoch
+    }
+
+    @Synchronized
+    private fun finishAuthentication(epoch: Long) {
+        if (authenticationEpoch == epoch) authenticationEpoch = null
+    }
+
+    @Synchronized
+    private fun applySessionIfCurrent(epoch: Long, newToken: String, newUser: AccountUser, persist: Boolean) {
+        if (sessionEpoch == epoch) applySession(newToken, newUser, persist)
+    }
+
+    @Synchronized
+    private fun requireSessionSnapshot(): AccountSessionSnapshot = AccountSessionSnapshot(requireToken(), sessionEpoch)
+
+    @Synchronized
+    internal fun sessionSnapshotOrNull(): AccountSessionSnapshot? =
+        if (loggedIn && networkEnabled && token.isNotBlank()) AccountSessionSnapshot(token, sessionEpoch) else null
+
+    @Synchronized
+    internal fun isCurrentSession(session: AccountSessionSnapshot): Boolean =
+        sessionEpoch == session.epoch && loggedIn && token == session.token
+
+    @Synchronized
+    private fun updateCurrentSession(session: AccountSessionSnapshot, update: () -> Unit): Boolean {
+        if (!isCurrentSession(session)) return false
+        update()
+        return true
+    }
+
     private fun applySession(newToken: String, newUser: AccountUser, persist: Boolean) {
-        if (token != newToken || user?.id != newUser.id) FriendsSession.clear()
+        if (token != newToken || user?.id != newUser.id) {
+            stopPresenceHeartbeat()
+            FriendsSession.clear()
+            presenceSettings = null
+            points = emptyList()
+        }
         token = newToken
         user = newUser
         loggedIn = true
@@ -338,7 +441,11 @@ object AccountSession : KoinComponent {
         runCatching { get<Game>().setUserName(name) }
     }
 
+    @Synchronized
     private fun clearSession(persist: Boolean) {
+        sessionEpoch++
+        authenticationEpoch = null
+        restoring = false
         stopPresenceHeartbeat()
         token = ""
         user = null
@@ -346,6 +453,7 @@ object AccountSession : KoinComponent {
         profileError = ""
         presenceSettings = null
         points = emptyList()
+        FriendsSession.clear()
         if (persist) {
             prefsOrNull()?.let { prefs ->
                 prefs.token = ""

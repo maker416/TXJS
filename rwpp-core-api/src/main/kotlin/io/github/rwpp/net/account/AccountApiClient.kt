@@ -7,11 +7,9 @@
 
 package io.github.rwpp.net.account
 
+import io.github.rwpp.net.useCancellable
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -327,18 +325,18 @@ class AccountApiClient(
         }
         val request = builder.build()
         try {
-            http.executeCancellable(request).use { response ->
+            http.useCancellable(request) { response ->
                 val text = response.body?.string().orEmpty()
                 if (!response.isSuccessful || (expectedCode != null && response.code != expectedCode)) {
                     throw response.toAccountException(text)
                 }
                 if (Res::class == Unit::class) {
                     @Suppress("UNCHECKED_CAST")
-                    return@use Unit as Res
+                    return@useCancellable Unit as Res
                 }
                 if (text.isBlank() && Res::class == OkResponse::class) {
                     @Suppress("UNCHECKED_CAST")
-                    return@use OkResponse(true) as Res
+                    return@useCancellable OkResponse(true) as Res
                 }
                 json.decodeFromString(text)
             }
@@ -364,8 +362,8 @@ class AccountApiClient(
         }
         val request = builder.get().build()
         try {
-            http.executeCancellable(request).use { response ->
-                if (response.code == 404) return@use null
+            http.useCancellable(request) { response ->
+                if (response.code == 404) return@useCancellable null
                 if (!response.isSuccessful) {
                     throw response.toAccountException(response.body?.string().orEmpty())
                 }
@@ -392,26 +390,4 @@ class AccountApiClient(
     }
 
     private fun enc(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.name())
-}
-
-private suspend fun OkHttpClient.executeCancellable(request: Request): Response {
-    val call = newCall(request)
-    val cancelHandle = currentCoroutineContext().job.invokeOnCompletion { cause ->
-        if (cause is CancellationException) {
-            call.cancel()
-        }
-    }
-    return try {
-        currentCoroutineContext().ensureActive()
-        val response = call.execute()
-        try {
-            currentCoroutineContext().ensureActive()
-            response
-        } catch (e: Throwable) {
-            response.close()
-            throw e
-        }
-    } finally {
-        cancelHandle.dispose()
-    }
 }

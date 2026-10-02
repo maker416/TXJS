@@ -25,6 +25,7 @@ import io.github.rwpp.game.mod.Mod
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.game.mod.NetworkModCache
 import io.github.rwpp.game.mod.NetworkModDescriptor
+import io.github.rwpp.game.mod.selectModSyncFiles
 import io.github.rwpp.gameVersion
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
@@ -68,6 +69,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
@@ -85,6 +87,7 @@ import java.util.concurrent.atomic.AtomicReference
  */
 object ModSyncController {
     private val scope = CoroutineScope(SupervisorJob())
+    private val syncEntryJobs = JoinEntryJobs(scope)
 
     /** 开房对话框「传输模组」开关的选择，由 HostGameDialog 在点击开房时写入。 */
     var hostSyncRequested by mutableStateOf(false)
@@ -435,6 +438,8 @@ object ModSyncController {
      * @return true 表示可以继续加入（无需同步或已登记放行）；false 表示中止加入。
      */
     suspend fun preJoinSync(desc: RoomDescription?, address: String, loadingContext: LoadingContext): Boolean {
+        val entryEpoch = syncEntryJobs.invalidate()
+        syncEntryJobs.awaitCleanup()
         val keys = if (desc != null) forRoomDescription(desc) else forAddress(address)
         if (keys.isEmpty()) return true
         preJoinJob = currentCoroutineContext().job
@@ -463,15 +468,27 @@ object ModSyncController {
                 phase = SyncPeerPhase.JOINING,
                 modCount = descriptors.size,
             )
-            reporter.report(joiningRequest, force = true)
-            reporter.startPhaseHeartbeat(joiningRequest)
-            pendingPostJoin = PostJoinContext(reporter, usedKey, response)
-            syncEntryActive = true
-            syncEntryRetriesLeft = SYNC_ENTRY_MAX_RETRY
-            syncEntryAddress = address
-            syncEntryRelayUuid = desc?.joinRelayUuid()
-            inRoomJoinAddress = address
-            inRoomJoinRelayUuid = syncEntryRelayUuid
+            currentCoroutineContext().ensureActive()
+            val accepted = synchronized(this) {
+                if (!syncEntryJobs.isCurrent(entryEpoch)) false else {
+                    pendingPostJoin = PostJoinContext(reporter, usedKey, response, entryEpoch)
+                    syncEntryActive = true
+                    syncEntryRetriesLeft = SYNC_ENTRY_MAX_RETRY
+                    syncEntryAddress = address
+                    syncEntryRelayUuid = desc?.joinRelayUuid()
+                    inRoomJoinAddress = address
+                    inRoomJoinRelayUuid = syncEntryRelayUuid
+                    // report/heartbeat 都在独立 scope 启动：先交给 ctx 持有，并在取消同一把锁内启动，
+                    // 避免 ensureActive 抛出或取消拿到空 ctx 后留下无人清理的 joining 心跳。
+                    reporter.report(joiningRequest, force = true)
+                    reporter.startPhaseHeartbeat(joiningRequest)
+                    true
+                }
+            }
+            if (!accepted) {
+                reporter.clear()
+                return false
+            }
             loadingContext.message(readI18n("modSync.phaseJoining", I18nType.RWPP))
             delay(JOIN_SETTLE_MS)
             return true
@@ -492,6 +509,7 @@ object ModSyncController {
         val reporter: PeerProgressReporter,
         val roomKey: String,
         val manifest: RoomManifestResponse,
+        val entryEpoch: Int,
     )
 
     /**
@@ -500,32 +518,40 @@ object ModSyncController {
      * 进房成功（ctx 已被 [onJoinedRoom] 消费）或被踢重试已排定时为空操作——
      * 后者必须保留 ctx/Presence/放行窗口，否则重试连接时房主轮询看不到 peer 会再次被踢。
      */
+    @Synchronized
     fun finishJoinerPresence() {
-        scope.launch(Dispatchers.IO) {
-            val ctx = pendingPostJoin ?: return@launch
-            if (syncEntryRetryScheduled) return@launch
-            pendingPostJoin = null
-            syncEntryActive = false
-            ctx.reporter.clear()
-        }
+        if (syncEntryRetryScheduled || syncEntryJobs.hasRunningRetry()) return
+        val ctx = pendingPostJoin ?: return
+        pendingPostJoin = null
+        syncEntryActive = false
+        syncEntryJobs.invalidate()
+        scope.launch(Dispatchers.IO) { ctx.reporter.clear() }
+    }
+
+    /** 新的加入或开房必须等被取消的静默重试彻底清理旧连接。 */
+    suspend fun awaitJoinEntryCleanup() {
+        syncEntryJobs.awaitCleanup()
     }
 
     /**
      * 用户主动取消加入（LoadingView 关闭/取消）：取消轻量段、解除被踢重试武装并清理 Presence。
      * 与 [finishJoinerPresence] 的区别：取消语义下绝不保留重试。
      */
+    @Synchronized
     fun cancelJoinEntry() {
         preJoinJob?.cancel()
+        syncEntryJobs.invalidate()
         syncEntryRetriesLeft = 0
         syncEntryRetryScheduled = false
         syncEntryActive = false
+        syncEntryAddress = null
+        syncEntryRelayUuid = null
         inRoomJoinAddress = null
         inRoomJoinRelayUuid = null
-        scope.launch(Dispatchers.IO) {
-            val ctx = pendingPostJoin
-            pendingPostJoin = null
-            ctx?.reporter?.clear()
-        }
+        // 在调用线程捕获旧 ctx，不能等清理协程启动后再读全局字段。
+        val ctx = pendingPostJoin
+        pendingPostJoin = null
+        scope.launch(Dispatchers.IO) { ctx?.reporter?.clear() }
     }
 
     /**
@@ -533,17 +559,22 @@ object ModSyncController {
      * 供房主/房客在玩家列表行内展示同步徽章；开局或断线时由 [clearRoomPresence] 清理。
      * 无待同步上下文（无需同步的原版加入）时为空操作。
      */
+    @Synchronized
     fun onJoinedRoom() {
         val ctx = pendingPostJoin
         pendingPostJoin = null
         if (ctx == null) return
+        if (!syncEntryJobs.isCurrent(ctx.entryEpoch)) {
+            scope.launch(Dispatchers.IO) { ctx.reporter.clear() }
+            return
+        }
         postJoinJob = scope.launch(Dispatchers.IO) {
             roomPresenceMutex.withLock { roomPresenceReporter = ctx.reporter }
             startPeerViewPolling(ctx.reporter)
             runPostJoinSync(ctx)
         }
         // 被踢静默重试窗口：进房成功后再留一段宽限期（校验和踢人在注册后 ~1s 内异步到达）
-        scope.launch { delay(ENTRY_GRACE_MS); syncEntryActive = false }
+        syncEntryJobs.scheduleExpiry(syncEntryJobs.currentEpoch(), ENTRY_GRACE_MS) { syncEntryActive = false }
     }
 
     /** 清理进房后保留的 Presence、同步任务与 peer 视角轮询（开局/断线/失败触发；幂等）。 */
@@ -730,8 +761,7 @@ object ModSyncController {
                         return
                     }
                     cache.storeVerified(descriptor, bytes)
-                    cache.activate(descriptor)
-                    logger.info("[MODSYNC] mod cached and activated OK: ${descriptor.name}")
+                    logger.info("[MODSYNC] mod cached OK: ${descriptor.name}")
                 }
             }
 
@@ -825,7 +855,10 @@ object ModSyncController {
         withContext(Dispatchers.Main.immediate) {
             UI.showWarning(readI18n("modSync.reconnecting"), false)
         }
+        val entryEpoch = syncEntryJobs.invalidate()
+        syncEntryJobs.awaitCleanup()
         syncEntryActive = true
+        syncEntryRetryScheduled = false
         syncEntryRetriesLeft = SYNC_ENTRY_MAX_RETRY
         syncEntryAddress = address
         syncEntryRelayUuid = inRoomJoinRelayUuid
@@ -833,11 +866,12 @@ object ModSyncController {
         val result = runCatching {
             game.directJoinServer(address, inRoomJoinRelayUuid, LoadingContext {})
         }.getOrElse { Result.failure(it) }
+        if (!syncEntryJobs.isCurrent(entryEpoch)) return false
         if (result.isSuccess && waitUntilConnecting(REJOIN_CONNECT_TIMEOUT_MS)) {
             logger.info("[MODSYNC] rejoin after apply succeeded")
             withContext(Dispatchers.Main.immediate) { UI.showRoomView = true }
             JoinGameEvent(address).broadcastIn()
-            scope.launch { delay(ENTRY_GRACE_MS); syncEntryActive = false }
+            syncEntryJobs.scheduleExpiry(syncEntryJobs.currentEpoch(), ENTRY_GRACE_MS) { syncEntryActive = false }
             return true
         }
         logger.warn("[MODSYNC] rejoin after apply failed: ${result.exceptionOrNull()?.message}")
@@ -888,9 +922,13 @@ object ModSyncController {
     }
 
     /** 房间内取消进行中的模组同步（RoomSelfSyncBar 取消按钮）：取消任务、提示并退房。 */
+    @Synchronized
     fun cancelInRoomSync() {
         if (cancellingReload) return
         if (postJoinJob?.isActive != true && !KeepConnectedReload.active) return
+        syncEntryJobs.invalidate()
+        syncEntryActive = false
+        syncEntryRetryScheduled = false
         val applyCancel = KeepConnectedReload.active ||
             inRoomSyncPhase == SyncPeerPhase.APPLYING ||
             KeepConnectedReload.abortToVanilla
@@ -945,57 +983,88 @@ object ModSyncController {
      * 重试成功时直接打开房间视图并走 [onJoinedRoom] 启动进房后同步——
      * 此时 LoadingView 的首次加入已失败返回，房间视图不会由正常流程打开。
      */
+    @Synchronized
     fun onKickedDuringSyncEntry(kickMessage: String): Boolean {
-        // 只抑制校验和踢人（握手放行窗口期）；密码/满员/封禁等其他原因立即走正常提示
+        // 只抑制校验和踢人（握手放行窗口期）；密码/满员/封禁等其他原因立即走正常提示。
         if (!kickMessage.contains("core units are different", ignoreCase = true)) return false
         if (!syncEntryActive) return false
+        if (syncEntryRetryScheduled) return true
         val address = syncEntryAddress
         if (address == null || syncEntryRetriesLeft <= 0) {
-            // 重试耗尽：按同步失败清理（Presence/任务），让用户看到原版踢人提示
             syncEntryActive = false
-            scope.launch(Dispatchers.IO) {
-                val ctx = pendingPostJoin
-                pendingPostJoin = null
-                ctx?.reporter?.clear()
-            }
+            syncEntryJobs.invalidate()
+            val ctx = pendingPostJoin
+            pendingPostJoin = null
+            scope.launch(Dispatchers.IO) { ctx?.reporter?.clear() }
             clearRoomPresence()
             return false
         }
-        syncEntryRetriesLeft--
+        val entryEpoch = syncEntryJobs.currentEpoch()
         val relayUuid = syncEntryRelayUuid
-        logger.warn("[MODSYNC] kicked during sync entry, retry in 1s ($syncEntryRetriesLeft left)")
         syncEntryRetryScheduled = true
-        scope.launch(Dispatchers.IO) {
-            delay(1_000L)
-            syncEntryRetryScheduled = false
-            runCatching {
+        val scheduled = syncEntryJobs.scheduleRetry(entryEpoch, 1_000L) {
+            try {
+                val allowed = synchronized(this) {
+                    if (!syncEntryJobs.isCurrent(entryEpoch) || !syncEntryActive) false else {
+                        syncEntryRetryScheduled = false
+                        true
+                    }
+                }
+                if (!allowed) return@scheduleRetry
                 val game = appKoin.get<Game>()
                 game.cancelJoinServer()
                 val result = game.directJoinServer(address, relayUuid, LoadingContext {})
+                currentCoroutineContext().ensureActive()
+                if (!syncEntryJobs.isCurrent(entryEpoch)) return@scheduleRetry
                 if (result.isSuccess) {
-                    logger.info("[MODSYNC] sync entry retry connected")
-                    withContext(Dispatchers.Main.immediate) { UI.showRoomView = true }
-                    onJoinedRoom()
-                    JoinGameEvent(address).broadcastIn()
+                    val accepted = withContext(Dispatchers.Main.immediate) {
+                        synchronized(this@ModSyncController) {
+                            if (!syncEntryJobs.isCurrent(entryEpoch) || !syncEntryActive) false else {
+                                UI.showRoomView = true
+                                onJoinedRoom()
+                                true
+                            }
+                        }
+                    }
+                    if (accepted) {
+                        logger.info("[MODSYNC] sync entry retry connected")
+                        JoinGameEvent(address).broadcastIn()
+                        syncEntryJobs.scheduleExpiry(entryEpoch, ENTRY_GRACE_MS) { syncEntryActive = false }
+                    }
                 } else {
-                    // 连接级失败（非踢人，踢人会再走本回调）：放弃重试，按同步失败收尾
                     logger.warn("[MODSYNC] sync entry retry failed: ${result.exceptionOrNull()?.message}")
-                    syncEntryActive = false
-                    val ctx = pendingPostJoin
-                    pendingPostJoin = null
+                    val ctx = synchronized(this) {
+                        if (!syncEntryJobs.isCurrent(entryEpoch)) null else {
+                            pendingPostJoin.also { pendingPostJoin = null }
+                        }
+                    }
                     ctx?.reporter?.clear()
                     withContext(Dispatchers.Main.immediate) {
-                        UI.showWarning(readI18n("modSync.syncFailed"), true)
+                        if (syncEntryJobs.isCurrent(entryEpoch)) {
+                            syncEntryActive = false
+                            UI.showWarning(readI18n("modSync.syncFailed"), true)
+                        }
                     }
                 }
-            }.onFailure {
-                logger.error("[MODSYNC] sync entry retry threw: ${it.stackTraceToString()}")
-                syncEntryActive = false
-                val ctx = pendingPostJoin
-                pendingPostJoin = null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logger.error("[MODSYNC] sync entry retry threw: ${e.stackTraceToString()}")
+                val ctx = synchronized(this) {
+                    if (!syncEntryJobs.isCurrent(entryEpoch)) null else {
+                        syncEntryActive = false
+                        pendingPostJoin.also { pendingPostJoin = null }
+                    }
+                }
                 ctx?.reporter?.clear()
             }
         }
+        if (!scheduled) {
+            syncEntryRetryScheduled = false
+            return false
+        }
+        syncEntryRetriesLeft--
+        logger.warn("[MODSYNC] kicked during sync entry, retry in 1s ($syncEntryRetriesLeft left)")
         return true
     }
 
@@ -1030,19 +1099,19 @@ object ModSyncController {
         manager: ModManager,
     ): Boolean {
         withContext(Dispatchers.Main.immediate) { UI.showNetworkDialog = false }
-        val activated = descriptors.mapNotNull { descriptor ->
-            cache.find(descriptor)?.let { cache.activate(descriptor) }
-        }
-        val exactNames = descriptors.map { it.name }.toSet()
         val allMods = manager.getAllMods()
-        allMods.forEach { mod -> mod.isEnabled = mod.name in exactNames }
-        // 完整状态表随重载传入：磁盘上未登记的游离文件（陈旧 .network.rwmod、导入后从未
-        // 重载的模组）扫描后按 ModReloadSelection 语义默认禁用，保证引擎启用集合与房主
-        // 清单严格一致；本次新激活的同步文件尚未登记进引擎，必须显式标记启用。
+        val selectedFiles = selectModSyncFiles(allMods, descriptors, cache) { mod, error ->
+            logger.warn("[MODSYNC] failed to hash local mod '${mod.name}': ${error.message}")
+        }
+        allMods.forEach { mod ->
+            mod.isEnabled = java.io.File(mod.path).canonicalFile in selectedFiles
+        }
+        // 只启用内容匹配的唯一副本；完整路径避免同名旧版本/不同目录的同文件名误开。
+        // 新激活缓存尚未登记进引擎，扫描后由此表启用；其它游离文件默认禁用。
         val enabledByFileName = allMods.associate { mod ->
-            java.io.File(mod.path).name.lowercase() to (mod.name in exactNames)
+            java.io.File(mod.path).canonicalPath to mod.isEnabled
         }.toMutableMap()
-        activated.forEach { entry -> enabledByFileName[entry.payloadFile.name.lowercase()] = true }
+        selectedFiles.forEach { file -> enabledByFileName[file.path] = true }
         // 保连接重载：不停止引擎线程/不重建菜单场景（t.f() 会停主循环使网络保活泵停摆、
         // 连接被超时断开；t.q() 会清空玩家数组摧毁房间状态；k.bo 置位会被网络 tick 直接断连）。
         // 单位表重建后连接与房间不受影响，可继续聊天。
@@ -1293,7 +1362,7 @@ object ModSyncController {
      * [report] 可在任意线程调用（下载进度回调非 suspend）；失败仅记日志。
      * applying / joining / downloading 阶段通过 [startPhaseHeartbeat] 周期刷新，避免超过 relaymod PeerTTL。
      */
-    private class PeerProgressReporter(
+    internal class PeerProgressReporter(
         private val client: ModSyncClient,
         /** 房间 key（peer 视角轮询 listPeersAsPeer 用）。 */
         val roomKey: String,
@@ -1302,6 +1371,7 @@ object ModSyncController {
         private val peerId: String = "p" + UUID.randomUUID().toString().replace("-", "")
         private val peerSecret = AtomicReference<String?>(null)
         private val upsertMutex = Mutex()
+        private val cleared = AtomicBoolean(false)
         private val lastReportAt = AtomicLong(0L)
         private val heartbeatRequest = AtomicReference<SyncPeerUpsertRequest?>(null)
         private var heartbeatJob: Job? = null
@@ -1313,6 +1383,7 @@ object ModSyncController {
         fun currentPeerSecret(): String? = peerSecret.get()
 
         fun report(request: SyncPeerUpsertRequest, force: Boolean = false) {
+            if (cleared.get()) return
             heartbeatRequest.set(request)
             val now = System.currentTimeMillis()
             if (now < nextRetryAt.get()) return
@@ -1321,6 +1392,8 @@ object ModSyncController {
             scope.launch(Dispatchers.IO) {
                 runCatching {
                     upsertMutex.withLock {
+                        // 排队的上报在 clear 接管后不得再 PUT，避免 DELETE 后复活旧 Presence。
+                        if (cleared.get()) return@withLock
                         val issued = client.upsertPeer(roomKey, peerId, request, peerSecret.get())
                         if (!issued.isNullOrBlank()) peerSecret.set(issued)
                     }
@@ -1357,10 +1430,11 @@ object ModSyncController {
 
         /** 启动/切换 phase 心跳：每 [PEER_PHASE_HEARTBEAT_MS] force upsert 一次。 */
         fun startPhaseHeartbeat(request: SyncPeerUpsertRequest) {
+            if (cleared.get()) return
             heartbeatRequest.set(request)
             heartbeatJob?.cancel()
             heartbeatJob = scope.launch(Dispatchers.IO) {
-                while (isActive) {
+                while (isActive && !cleared.get()) {
                     delay(PEER_PHASE_HEARTBEAT_MS)
                     val current = heartbeatRequest.get() ?: continue
                     report(current, force = true)
@@ -1375,10 +1449,14 @@ object ModSyncController {
 
         /** 停止心跳并 DELETE peer；使用 NonCancellable，保证取消路径也能清掉 Presence。 */
         suspend fun clear() {
+            cleared.set(true)
             stopHeartbeat()
             withContext(NonCancellable) {
-                runCatching { client.deletePeer(roomKey, peerId, peerSecret = peerSecret.get()) }
-                    .onFailure { logger.warn("[MODSYNC] deletePeer failed: ${it.message}") }
+                upsertMutex.withLock {
+                    // 等已开始的 PUT 返回并写入 peerSecret，再 DELETE；后续排队 PUT 由 cleared 阻断。
+                    runCatching { client.deletePeer(roomKey, peerId, peerSecret = peerSecret.get()) }
+                        .onFailure { logger.warn("[MODSYNC] deletePeer failed: ${it.message}") }
+                }
             }
         }
     }

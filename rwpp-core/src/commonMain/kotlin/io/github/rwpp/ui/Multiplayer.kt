@@ -402,6 +402,7 @@ fun MultiplayerView(
     ) {
         // 新的加入/开房会话开始：等待可能挂起的退房清理完成，保证旧会话先拆后建（GameSessionController）
         GameSessionController.beginSession {
+            ModSyncController.awaitJoinEntryCleanup()
             var joined = false
             var opened = false
             try {

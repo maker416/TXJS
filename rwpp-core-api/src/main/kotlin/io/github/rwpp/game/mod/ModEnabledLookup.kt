@@ -11,7 +11,7 @@ import java.io.File
 import java.util.Locale
 
 /**
- * 按磁盘文件名在 [enabledByFileName] 中解析期望启用状态。
+ * 按完整路径或磁盘文件名在 [enabledByFileName] 中解析期望启用状态；完整路径优先。
  * 仅做文件名精确匹配（忽略大小写），避免 `pack.rwmod` 误匹配 `SuperWeaponPack.rwmod`。
  * 传入 map 时：未匹配到的模组默认禁用。
  */
@@ -19,9 +19,15 @@ fun resolveModEnabledByFileName(
     pathCandidates: Iterable<String>,
     enabledByFileName: Map<String, Boolean>,
 ): Boolean {
-    val normalizedMap = enabledByFileName.mapKeys { it.key.lowercase(Locale.ROOT) }
+    val candidates = pathCandidates.filter { it.isNotBlank() }.toList()
+    val normalizedMap = enabledByFileName.mapKeys { normalizeModSelectionKey(it.key) }
+    // 同步状态表使用完整路径，避免不同目录的同名文件被同时启用。
+    for (rawPath in candidates) {
+        val pathKey = normalizeModSelectionKey(File(rawPath.replace('\\', '/')).absolutePath)
+        if (normalizedMap.containsKey(pathKey)) return normalizedMap.getValue(pathKey)
+    }
 
-    for (rawPath in pathCandidates) {
+    for (rawPath in candidates) {
         if (rawPath.isBlank()) continue
         val fileName = File(rawPath.replace('\\', '/')).name.lowercase(Locale.ROOT)
         if (fileName.isNotEmpty() && normalizedMap.containsKey(fileName)) {
@@ -29,6 +35,14 @@ fun resolveModEnabledByFileName(
         }
     }
     return false
+}
+
+private fun normalizeModSelectionKey(key: String): String {
+    val normalized = key.replace('\\', '/')
+    if ('/' !in normalized) return normalized.lowercase(Locale.ROOT)
+    val canonical = File(normalized).canonicalPath.replace('\\', '/')
+    // Android/Linux 的不同大小写文件可以并存；仅 Windows 完整路径忽略大小写。
+    return if (File.separatorChar == '\\') canonical.lowercase(Locale.ROOT) else canonical
 }
 
 /**

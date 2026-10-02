@@ -33,13 +33,14 @@ fun File.zipFolderToByte(): ByteArray {
 
 private fun zipRecursive(sourceFile: File, base: Path, zip: ZipOutputStream) {
     if(sourceFile.isDirectory) {
-        val fileList = sourceFile.listFiles() ?: return
+        val fileList = sourceFile.listFiles()?.sortedBy { it.name } ?: return
         for(file in fileList) {
             zipRecursive(file, base, zip)
         }
     } else {
         val entryName = base.relativize(Paths.get(sourceFile.absolutePath)).toString()
-        zip.putNextEntry(ZipEntry(entryName.replace("\\", "/")))
+        // 固定条目时间并稳定枚举顺序，使相同文件夹内容在不同机器/开房时间生成同一 SHA-256。
+        zip.putNextEntry(ZipEntry(entryName.replace("\\", "/")).apply { time = 0L })
         sourceFile.inputStream().use { it.copyTo(zip) }
         zip.closeEntry()
     }

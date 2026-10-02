@@ -41,6 +41,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** 房间内成员名片解析结果（点击成员 → 个人名片的数据源）。 */
 sealed interface RoomIdentityResult {
@@ -78,7 +80,7 @@ sealed interface RoomIdentityResult {
  *   再调 UAS 公开接口（lookup / presence）补齐名片数据；加好友走 [FriendsSession.sendRequest]。
  * - 与模组同步共用 `MultiplayerPreferences.modSyncApiUrls` 多镜像配置；
  *   404/503（旧版 relay / 未配置该功能）会话内降级为 [featureUnavailable]，不影响其它功能。
- * - 游戏联机协议零改动；不修改 [AccountSession]。
+ * - 游戏联机协议零改动；账号隐私沿用 [AccountSession] 的设置。
  */
 object RoomIdentityController {
     /** 公示周期（服务端 TTL 90s，25s 心跳留有充足余量）。 */
@@ -98,6 +100,18 @@ object RoomIdentityController {
     @Volatile
     var featureUnavailable: Boolean = false
         private set
+
+    private val publishMutex = Mutex()
+
+    private data class PublishedIdentity(
+        val session: AccountSessionSnapshot,
+        val client: RoomIdentityClient,
+        val appKey: String,
+    )
+    private var publishedIdentity: PublishedIdentity? = null
+
+    @Volatile
+    internal var clientOverride: RoomIdentityClient? = null
 
     private var publishJob: Job? = null
     private var stopJob: Job? = null
@@ -197,10 +211,7 @@ object RoomIdentityController {
             previousStop?.join()
             stoppedPublish?.join()
             runCatching {
-                if (keys.isNotEmpty() && AccountSession.loggedIn && AccountSession.networkEnabled && !featureUnavailable) {
-                    newClient().delete(resolveAppKey(), AccountSession.requireToken())
-                    logger.info("[ROOMID] 已撤销房间身份公示")
-                }
+                publishMutex.withLock { revokePublishedIdentity() }
             }.onFailure {
                 logger.debug("[ROOMID] 撤销公示失败：${it.message}")
             }
@@ -298,17 +309,61 @@ object RoomIdentityController {
             AccountSession.client().lookup(AccountSession.requireToken(), username)
         }.getOrNull()
 
+    /** 隐身设置保存后立即撤销；与正在进行的公示串行，避免撤销后旧 PUT 又写回记录。 */
+    internal suspend fun onPresenceSettingsChanged() {
+        try {
+            publishMutex.withLock {
+                if (AccountSession.presenceSettings?.hideFromStrangers != false) revokePublishedIdentity()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // 隐私设置已保存；保留撤销凭据，下次公示周期继续重试删除。
+            logger.warn("[ROOMID] 隐身后的公示撤销失败：${e.message}")
+        }
+    }
+
+    private suspend fun revokePublishedIdentity() {
+        val published = publishedIdentity ?: return
+        try {
+            published.client.delete(published.appKey, published.session.token)
+        } catch (e: RoomIdUnauthorizedException) {
+            // 旧账号 Token 已失效，撤销无法重试；由服务端 90s TTL 清理，不能阻断新账号公示。
+            publishedIdentity = null
+            logger.warn("[ROOMID] 旧公示撤销凭据已失效，等待服务端 TTL 清理")
+            return
+        }
+        publishedIdentity = null
+        logger.info("[ROOMID] 已撤销房间身份公示")
+    }
+
     /** 单次公示；返回 false 表示循环应终止（401 / FeatureUnavailable）。 */
-    private suspend fun publishOnce(): Boolean {
-        if (!AccountSession.loggedIn || !AccountSession.networkEnabled) return true
-        // 隐私：对陌生人隐身时不公示自己的房间身份
-        if (AccountSession.presenceSettings?.hideFromStrangers == true) return true
-        if (featureUnavailable) return false
-        val keys = roomKeys
-        val name = playerName
-        if (keys.isEmpty() || name.isBlank()) return true
-        return try {
-            newClient().publish(keys, name, resolveAppKey(), AccountSession.requireToken())
+    internal suspend fun publishOnce(): Boolean = publishMutex.withLock {
+        if (featureUnavailable) return@withLock false
+        try {
+            val session = AccountSession.sessionSnapshotOrNull()
+            if (session == null) {
+                if (AccountSession.networkEnabled) revokePublishedIdentity()
+                return@withLock true
+            }
+            if (publishedIdentity?.session?.let { it != session } == true) revokePublishedIdentity()
+            val keys = roomKeys
+            val name = playerName
+            if (keys.isEmpty() || name.isBlank()) return@withLock true
+            // 自动恢复登录不会打开账号页；未知隐私先加载，加载失败不得当作允许公示。
+            if (AccountSession.presenceSettings == null) AccountSession.refreshPresenceSettings()
+            if (!AccountSession.isCurrentSession(session)) return@withLock true
+            if (AccountSession.presenceSettings?.hideFromStrangers != false) {
+                revokePublishedIdentity()
+                return@withLock true
+            }
+            val published = PublishedIdentity(session, newClient(), resolveAppKey())
+            // 先登记撤销凭据，覆盖服务端已写入但响应丢失/请求取消的情况。
+            publishedIdentity = published
+            published.client.publish(keys, name, published.appKey, session.token)
+            if (!AccountSession.isCurrentSession(session) ||
+                AccountSession.presenceSettings?.hideFromStrangers != false
+            ) revokePublishedIdentity()
             true
         } catch (e: RoomIdUnauthorizedException) {
             logger.warn("[ROOMID] 公示鉴权失败（token 无效），停止发布")
@@ -325,12 +380,22 @@ object RoomIdentityController {
         }
     }
 
+    internal suspend fun resetForTests() {
+        stopPublishing()?.join()
+        publishMutex.withLock {
+            publishedIdentity = null
+            clientOverride = null
+            featureUnavailable = false
+        }
+    }
+
     private fun resolveAppKey(): String {
         val prefs = runCatching { appKoin.get<AccountPreferences>() }.getOrNull()
         return resolveAccountAppKey(prefs?.appKey.orEmpty())
     }
 
     private fun newClient(): RoomIdentityClient {
+        clientOverride?.let { return it }
         val prefs = runCatching { appKoin.get<MultiplayerPreferences>() }.getOrNull()
         val baseUrls = (prefs?.modSyncApiUrls ?: DEFAULT_MOD_SYNC_API_URLS)
             .split(';')

@@ -23,28 +23,6 @@ import java.util.*
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.reflect.full.createInstance
 
-private suspend fun OkHttpClient.executeCancellable(request: Request): Response {
-    val call = newCall(request)
-    val cancelHandle = currentCoroutineContext().job.invokeOnCompletion { cause ->
-        if (cause is CancellationException) {
-            call.cancel()
-        }
-    }
-    return try {
-        currentCoroutineContext().ensureActive()
-        val response = call.execute()
-        try {
-            currentCoroutineContext().ensureActive()
-            response
-        } catch (e: Throwable) {
-            response.close()
-            throw e
-        }
-    } finally {
-        cancelHandle.dispose()
-    }
-}
-
 interface Net : KoinComponent, Initialization {
     /**
      * The map of packet decoders, key is the packet type, value is a lambda that takes a DataInputStream and returns a Packet.
@@ -296,7 +274,7 @@ interface Net : KoinComponent, Initialization {
                         .url("$base/servers/room-types")
                         .get()
                         .build()
-                    client.executeCancellable(request).use { response ->
+                    client.useCancellable(request) { response ->
                         if (!response.isSuccessful) return@runCatching
                         val body = response.body?.string() ?: return@runCatching
                         merged.addAll(parseRwListRoomTypes(body))
@@ -324,7 +302,7 @@ interface Net : KoinComponent, Initialization {
                         .url("$base/health")
                         .get()
                         .build()
-                    client.executeCancellable(request).use { response ->
+                    client.useCancellable(request) { response ->
                         if (!response.isSuccessful) return@runCatching null
                         val body = response.body?.string() ?: return@runCatching null
                         parseRwListHealth(body)

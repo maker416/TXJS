@@ -9,8 +9,10 @@ package io.github.rwpp.desktop.impl
 
 import io.github.rwpp.app.AutoUpdater
 import io.github.rwpp.app.AutoUpdater.Companion.PROGRESS_FAILED
+import io.github.rwpp.app.UpdateDownloadSession
 import io.github.rwpp.logger
 import io.github.rwpp.net.Net
+import kotlinx.coroutines.CancellationException
 import okhttp3.Request
 import org.koin.core.annotation.Single
 import org.koin.core.component.KoinComponent
@@ -18,7 +20,9 @@ import org.koin.core.component.inject
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.io.SequenceInputStream
+import java.nio.file.Files
 import java.security.MessageDigest
 import java.util.Collections
 import java.util.zip.ZipInputStream
@@ -27,263 +31,260 @@ import kotlin.system.exitProcess
 @Single
 class AutoUpdaterImpl : AutoUpdater, KoinComponent {
     private val net: Net by inject()
+    private val updateLock = Any()
+    private var activeUpdate: UpdateDownloadSession? = null
 
     override fun isSupported(): Boolean = true
+
+    override fun cancelPendingUpdate() {
+        synchronized(updateLock) { activeUpdate?.cancel() }
+    }
 
     override fun downloadAndInstall(downloadUrls: List<String>, sha256Url: String?, onProgress: (Float) -> Unit) {
         if (downloadUrls.isEmpty()) {
             onProgress(PROGRESS_FAILED)
             return
         }
-
-        val tempDir = System.getenv("TEMP") ?: System.getProperty("java.io.tmpdir")
-        val outputFile = File(tempDir, "RWJS-Setup-update.exe")
-
-        val installer = if (downloadUrls.size == 1) {
-            // 旧的单 exe 安装包
-            downloadSingle(downloadUrls[0], outputFile, onProgress)
-        } else {
-            // zip 分卷：顺序下载 -> sha256 校验 -> 流式拼接解出 exe
-            downloadSplitVolumes(downloadUrls, sha256Url, outputFile, onProgress)
-        }
-
-        if (installer == null) {
+        val session = synchronized(updateLock) {
+            if (activeUpdate != null) null else UpdateDownloadSession().also { activeUpdate = it }
+        } ?: run {
             onProgress(PROGRESS_FAILED)
             return
         }
 
-        logger.info("Download completed: ${installer.absolutePath}")
-
-        val processBuilder = ProcessBuilder(
-            installer.absolutePath,
-            "RWPP_UPDATE_MODE=1"
-        )
-        processBuilder.start()
-        exitProcess(0)
-    }
-
-    /** 下载单文件安装包，成功返回安装包文件 */
-    private fun downloadSingle(downloadUrl: String, outputFile: File, onProgress: (Float) -> Unit): File? {
-        val request = Request.Builder().url(downloadUrl).build()
-        return runCatching {
-            net.client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return null
-
-                val body = response.body ?: return null
-                val contentLength = body.contentLength()
-
-                body.byteStream().use { input ->
-                    FileOutputStream(outputFile).use { output ->
-                        val buffer = ByteArray(8192)
-                        var downloaded: Long = 0
-                        var read: Int
-
-                        while (input.read(buffer).also { read = it } != -1) {
-                            output.write(buffer, 0, read)
-                            downloaded += read
-                            if (contentLength > 0) {
-                                onProgress(downloaded.toFloat() / contentLength.toFloat())
-                            }
-                        }
-                    }
-                }
-                outputFile
+        var workDir: File? = null
+        var installerStarted = false
+        try {
+            onProgress(0f)
+            session.checkActive()
+            // 每轮独立目录：旧下载取消与新请求不会写同一个 exe 或分卷文件。
+            val tempRoot = File(System.getenv("TEMP") ?: System.getProperty("java.io.tmpdir"))
+            val directory = Files.createTempDirectory(tempRoot.toPath(), "RWJS-update-").toFile()
+            workDir = directory
+            val outputFile = File(directory, "RWJS-Setup-update.exe")
+            val progress: (Float) -> Unit = { value ->
+                session.checkActive()
+                onProgress(value)
             }
-        }.onFailure {
-            logger.error("Failed to download update: ${it.stackTraceToString()}")
-        }.getOrNull()
+            val installer = if (downloadUrls.size == 1) {
+                downloadSingle(session, downloadUrls[0], outputFile, progress)
+            } else {
+                downloadSplitVolumes(session, downloadUrls, sha256Url, outputFile, directory, progress)
+            }
+            session.checkActive()
+            logger.info("Download completed: ${installer.absolutePath}")
+
+            // 与 cancelPendingUpdate 线性化：取消先取得锁时不再启动安装/退出游戏。
+            installerStarted = session.startInstallation {
+                ProcessBuilder(installer.absolutePath, "RWPP_UPDATE_MODE=1").start()
+            }
+        } catch (e: CancellationException) {
+            session.cancel()
+            logger.info("Update download cancelled")
+        } catch (e: Exception) {
+            if (session.isCancelled) {
+                logger.info("Update download cancelled")
+            } else {
+                logger.error("Failed to download update: ${e.stackTraceToString()}")
+                onProgress(PROGRESS_FAILED)
+            }
+        } finally {
+            // 清理失败只留下临时文件，绝不能改变取消结果或触发安装。
+            val directory = workDir
+            if (directory != null) {
+                runCatching {
+                    directory.walkBottomUp().forEach { file ->
+                        if (!installerStarted || file.name != "RWJS-Setup-update.exe") file.delete()
+                    }
+                }.onFailure { logger.warn("Failed to clean update temporary files", it) }
+            }
+            synchronized(updateLock) { if (activeUpdate === session) activeUpdate = null }
+        }
+        if (installerStarted) exitProcess(0)
     }
 
-    /**
-     * 下载 zip 分卷并流式合并解出安装包。
-     *
-     * 分卷是「一个 zip 按字节切段」，按序号拼接即为合法 zip；因此下载后用
-     * [SequenceInputStream] 串起所有分卷直接喂给 [ZipInputStream]，
-     * 无需在磁盘上生成合并后的完整 zip。zip 条目自带 CRC，配合可选的 sha256 强校验。
-     *
-     * 进度映射：下载 0.0~0.9，解压 0.9~1.0。
-     */
-    private fun downloadSplitVolumes(
-        downloadUrls: List<String>,
-        sha256Url: String?,
+    private fun downloadSingle(
+        session: UpdateDownloadSession,
+        downloadUrl: String,
         outputFile: File,
         onProgress: (Float) -> Unit,
-    ): File? {
-        val tempDir = System.getenv("TEMP") ?: System.getProperty("java.io.tmpdir")
-        val workDir = File(tempDir, "RWJS-update-${System.currentTimeMillis()}")
-        val partFiles = mutableListOf<File>()
-
-        try {
-            // 1) 预取各分卷大小以计算总进度（HEAD 失败则退化为按分卷个数估算）
-            var totalBytes = 0L
-            var totalKnown = true
-            for (url in downloadUrls) {
-                val length = headContentLength(url)
-                if (length <= 0) {
-                    totalKnown = false
-                    break
-                }
-                totalBytes += length
-            }
-
-            // 2) 顺序下载所有分卷，同时累积 SHA-256
-            workDir.mkdirs()
-            val digest = MessageDigest.getInstance("SHA-256")
-            val buffer = ByteArray(64 * 1024)
-            var downloadedTotal = 0L
-
-            for ((index, url) in downloadUrls.withIndex()) {
-                val partFile = File(workDir, "part-$index.zip")
-                val ok = downloadPart(url, partFile, digest, buffer) { partDownloaded, partLength ->
-                    val progress = when {
-                        totalKnown && totalBytes > 0 ->
-                            (downloadedTotal + partDownloaded).toFloat() / totalBytes.toFloat()
-                        partLength > 0 ->
-                            (index + partDownloaded.toFloat() / partLength.toFloat()) / downloadUrls.size
-                        else -> index.toFloat() / downloadUrls.size
+    ): File {
+        val request = Request.Builder().url(downloadUrl).build()
+        return session.execute(net.client.newCall(request)) { response ->
+            if (!response.isSuccessful) throw IOException("Update download returned HTTP ${response.code}")
+            val body = response.body ?: throw IOException("Empty update response")
+            val contentLength = body.contentLength()
+            body.byteStream().use { input ->
+                FileOutputStream(outputFile).use { output ->
+                    val buffer = ByteArray(8192)
+                    var downloaded = 0L
+                    while (true) {
+                        session.checkActive()
+                        val read = input.read(buffer)
+                        if (read == -1) break
+                        session.checkActive()
+                        output.write(buffer, 0, read)
+                        downloaded += read
+                        if (contentLength > 0) onProgress(downloaded.toFloat() / contentLength)
                     }
-                    onProgress(progress * DOWNLOAD_PROGRESS_WEIGHT)
-                }
-                if (!ok) return null
-                downloadedTotal += partFile.length()
-                partFiles += partFile
-            }
-
-            // 3) sha256 强校验（发布侧提供了校验文件时）
-            val expectedSha256 = fetchExpectedSha256(sha256Url)
-            if (sha256Url != null) {
-                if (expectedSha256 == null) {
-                    logger.error("Failed to fetch update sha256 file: $sha256Url")
-                    return null
-                }
-                val actual = digest.digest().joinToString("") { "%02x".format(it) }
-                if (!actual.equals(expectedSha256, ignoreCase = true)) {
-                    logger.error("Update sha256 mismatch: expected=$expectedSha256 actual=$actual")
-                    return null
                 }
             }
-
-            // 4) 流式拼接所有分卷，解出其中的 exe
-            extractExeFromVolumes(partFiles, outputFile, buffer) { extracted, total ->
-                val fraction = if (total > 0) extracted.toFloat() / total.toFloat() else 0f
-                onProgress(DOWNLOAD_PROGRESS_WEIGHT + fraction * (1f - DOWNLOAD_PROGRESS_WEIGHT))
-            } ?: return null
-
-            return outputFile
-        } catch (e: Exception) {
-            logger.error("Failed to download split update: ${e.stackTraceToString()}")
-            return null
-        } finally {
-            // 分卷只在合并解压期间需要，结束后清理；失败时也尽力清理，避免残留大文件
-            partFiles.forEach { it.delete() }
-            workDir.delete()
+            outputFile
         }
     }
 
-    private fun headContentLength(url: String): Long {
-        return runCatching {
-            val request = Request.Builder().url(url).head().build()
-            net.client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return -1L
-                response.header("Content-Length")?.toLongOrNull() ?: -1L
+    /** zip 按字节分卷：顺序下载并校验后流式拼接解压，不生成合并后的大 zip。 */
+    private fun downloadSplitVolumes(
+        session: UpdateDownloadSession,
+        downloadUrls: List<String>,
+        sha256Url: String?,
+        outputFile: File,
+        workDir: File,
+        onProgress: (Float) -> Unit,
+    ): File {
+        val partFiles = mutableListOf<File>()
+        var totalBytes = 0L
+        var totalKnown = true
+        for (url in downloadUrls) {
+            session.checkActive()
+            val length = headContentLength(session, url)
+            if (length <= 0) {
+                totalKnown = false
+                break
             }
-        }.getOrDefault(-1L)
+            totalBytes += length
+        }
+
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(64 * 1024)
+        var downloadedTotal = 0L
+        for ((index, url) in downloadUrls.withIndex()) {
+            session.checkActive()
+            val partFile = File(workDir, "part-$index.zip")
+            downloadPart(session, url, partFile, digest, buffer) { partDownloaded, partLength ->
+                val progress = when {
+                    totalKnown && totalBytes > 0 ->
+                        (downloadedTotal + partDownloaded).toFloat() / totalBytes
+                    partLength > 0 ->
+                        (index + partDownloaded.toFloat() / partLength) / downloadUrls.size
+                    else -> index.toFloat() / downloadUrls.size
+                }
+                onProgress(progress * DOWNLOAD_PROGRESS_WEIGHT)
+            }
+            downloadedTotal += partFile.length()
+            partFiles += partFile
+        }
+
+        session.checkActive()
+        if (sha256Url != null) {
+            val expected = fetchExpectedSha256(session, sha256Url)
+                ?: throw IOException("Failed to fetch update sha256 file")
+            val actual = digest.digest().joinToString("") { "%02x".format(it) }
+            if (!actual.equals(expected, ignoreCase = true)) throw IOException("Update sha256 mismatch")
+        }
+        return extractExeFromVolumes(session, partFiles, outputFile, buffer) { extracted, total ->
+            val fraction = if (total > 0) extracted.toFloat() / total else 0f
+            onProgress(DOWNLOAD_PROGRESS_WEIGHT + fraction * (1f - DOWNLOAD_PROGRESS_WEIGHT))
+        }
+    }
+
+    private fun headContentLength(session: UpdateDownloadSession, url: String): Long {
+        return try {
+            val request = Request.Builder().url(url).head().build()
+            session.execute(net.client.newCall(request)) { response ->
+                if (!response.isSuccessful) -1L else response.header("Content-Length")?.toLongOrNull() ?: -1L
+            }
+        } catch (e: IOException) {
+            session.checkActive()
+            -1L
+        }
     }
 
     private fun downloadPart(
+        session: UpdateDownloadSession,
         url: String,
         outputFile: File,
         digest: MessageDigest,
         buffer: ByteArray,
         onProgress: (downloaded: Long, contentLength: Long) -> Unit,
-    ): Boolean {
+    ) {
         val request = Request.Builder().url(url).build()
-        return runCatching {
-            net.client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return false
-                val body = response.body ?: return false
-                val contentLength = body.contentLength()
-
-                body.byteStream().use { input ->
-                    FileOutputStream(outputFile).use { output ->
-                        var downloaded: Long = 0
-                        var read: Int
-                        while (input.read(buffer).also { read = it } != -1) {
-                            output.write(buffer, 0, read)
-                            digest.update(buffer, 0, read)
-                            downloaded += read
-                            onProgress(downloaded, contentLength)
-                        }
+        session.execute(net.client.newCall(request)) { response ->
+            if (!response.isSuccessful) throw IOException("Update part returned HTTP ${response.code}")
+            val body = response.body ?: throw IOException("Empty update part")
+            val contentLength = body.contentLength()
+            body.byteStream().use { input ->
+                FileOutputStream(outputFile).use { output ->
+                    var downloaded = 0L
+                    while (true) {
+                        session.checkActive()
+                        val read = input.read(buffer)
+                        if (read == -1) break
+                        session.checkActive()
+                        output.write(buffer, 0, read)
+                        digest.update(buffer, 0, read)
+                        downloaded += read
+                        onProgress(downloaded, contentLength)
                     }
                 }
-                true
             }
-        }.onFailure {
-            logger.error("Failed to download update part $url: ${it.stackTraceToString()}")
-        }.getOrDefault(false)
+        }
     }
 
-    /** 读取 sha256 校验文件内容（格式：`"<hash>  <文件名>"` 或纯 hash），取首个 token */
-    private fun fetchExpectedSha256(sha256Url: String?): String? {
-        if (sha256Url == null) return null
+    /** 校验文件首个 token 为 SHA-256，可后跟文件名。 */
+    private fun fetchExpectedSha256(session: UpdateDownloadSession, sha256Url: String): String? {
         val request = Request.Builder().url(sha256Url).build()
-        return runCatching {
-            net.client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return null
-                response.body?.string()
-                    ?.lineSequence()?.firstOrNull()
-                    ?.trim()?.split(Regex("\\s+"))?.firstOrNull()
-                    ?.takeIf { it.length == 64 }
-            }
-        }.getOrNull()
+        return session.execute(net.client.newCall(request)) { response ->
+            if (!response.isSuccessful) throw IOException("Update checksum returned HTTP ${response.code}")
+            response.body?.string()
+                ?.lineSequence()?.firstOrNull()
+                ?.trim()?.split(Regex("\\s+"))?.firstOrNull()
+                ?.takeIf { it.length == 64 }
+        }
     }
 
-    /**
-     * 将分卷按顺序拼接为 zip 流，解出其中第一个 `.exe` 条目（无 exe 条目时取首个文件条目）。
-     * 返回 exe 文件；找不到条目或流损坏（CRC 校验失败抛异常）时返回 null。
-     */
     private fun extractExeFromVolumes(
+        session: UpdateDownloadSession,
         partFiles: List<File>,
         outputFile: File,
         buffer: ByteArray,
         onProgress: (extracted: Long, entrySize: Long) -> Unit,
-    ): File? {
-        return runCatching {
-            val streams = partFiles.map { BufferedInputStream(it.inputStream()) }
-            ZipInputStream(SequenceInputStream(Collections.enumeration(streams))).use { zipIn ->
-                var exeEntry: java.util.zip.ZipEntry? = null
-                var firstFileEntry: java.util.zip.ZipEntry? = null
-                while (true) {
-                    val entry = zipIn.nextEntry ?: break
-                    if (entry.isDirectory) continue
-                    if (firstFileEntry == null) firstFileEntry = entry
-                    if (entry.name.endsWith(".exe", ignoreCase = true)) {
-                        exeEntry = entry
-                        break
-                    }
+    ): File {
+        session.checkActive()
+        val streams = partFiles.map { BufferedInputStream(it.inputStream()) }
+        ZipInputStream(SequenceInputStream(Collections.enumeration(streams))).use { zipIn ->
+            var exeEntry: java.util.zip.ZipEntry? = null
+            var firstFileEntry: java.util.zip.ZipEntry? = null
+            while (true) {
+                session.checkActive()
+                val entry = zipIn.nextEntry ?: break
+                if (entry.isDirectory) continue
+                if (firstFileEntry == null) firstFileEntry = entry
+                if (entry.name.endsWith(".exe", ignoreCase = true)) {
+                    exeEntry = entry
+                    break
                 }
-                val target = exeEntry ?: firstFileEntry
-                    ?: error("No file entry found in update zip volumes")
-
-                FileOutputStream(outputFile).use { output ->
-                    var extracted: Long = 0
-                    var read: Int
-                    while (zipIn.read(buffer).also { read = it } != -1) {
-                        output.write(buffer, 0, read)
-                        extracted += read
-                        onProgress(extracted, target.size)
-                    }
-                }
-                logger.info("Extracted installer '${target.name}' from ${partFiles.size} zip volumes")
-                outputFile
             }
-        }.onFailure {
-            logger.error("Failed to extract installer from zip volumes: ${it.stackTraceToString()}")
-        }.getOrNull()
+            val target = exeEntry ?: firstFileEntry
+                ?: throw IOException("No file entry found in update zip volumes")
+            FileOutputStream(outputFile).use { output ->
+                var extracted = 0L
+                while (true) {
+                    session.checkActive()
+                    val read = zipIn.read(buffer)
+                    if (read == -1) break
+                    session.checkActive()
+                    output.write(buffer, 0, read)
+                    extracted += read
+                    onProgress(extracted, target.size)
+                }
+            }
+            logger.info("Extracted installer '${target.name}' from ${partFiles.size} zip volumes")
+            return outputFile
+        }
     }
 
     private companion object {
-        /** 下载阶段占总进度的权重，剩余部分为解压阶段 */
         const val DOWNLOAD_PROGRESS_WEIGHT = 0.9f
     }
 }

@@ -22,7 +22,7 @@ interface ModManager : KoinComponent {
      *        传 true：直接在当前协程线程同步执行引擎重载方法，绕过主循环依赖。
      *        用于 mod 同步：下载完成时加入者仍处于加载阶段、游戏主循环 [com.corrodinggames.rts.game.i.b] 尚未启动，
      *        此时投递到主线程的 action 永远不会被消费。
-     * @param enabledByFileName 按磁盘文件名指定期望启用状态。在引擎扫完目录、加载单位定义之前应用。
+     * @param enabledByFileName 按完整路径或磁盘文件名指定期望启用状态，完整路径优先。在引擎扫完目录、加载单位定义之前应用。
      *        传入时：map 中有的按指定值启用/禁用；不在 map 中的新模组默认禁用。
      *        未启用的模组只登记元数据，不解析其单位定义。
      *        为 null 时保持引擎默认（仅按 modSettings 恢复；全新模组默认启用），供联机 MOD 同步等场景使用。
