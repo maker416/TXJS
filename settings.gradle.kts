@@ -14,6 +14,7 @@ include(":rwpp-core-api")
 if (System.getenv("JITPACK") == null) {
     include(":rwpp-android")
     include(":rwpp-desktop")
+    include(":rwpp-mod-heap-tool")
 }
 
 pluginManagement {

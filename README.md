@@ -56,6 +56,10 @@
 - 构建 MSI 一体包：执行任务 `rwpp-desktop:packageWixDistribution`（需 .NET SDK + 本机原版游戏目录；见 `packaging/README.md`）
 - Android 端若缺少部分 assets/res，可从本机已安装的铁锈战争客户端中对照补齐。
 
+## 模组堆内存分析工具
+
+安装 Java 21 后，双击仓库根目录的 `启动模组内存分析.bat` 即可打开独立桌面界面，支持选择或拖入模组、批量分析、单位占用排行及 TXT / CSV 导出。结果为静态估算。构建、命令行用法与估算范围见 [工具说明](docs/mod-heap-tool.md)。
+
 <h1 align="center">参与贡献</h1>
 
 若发现缺陷或有功能建议，欢迎提交 Issue；也欢迎通过 Pull Request 参与改进。
