@@ -61,7 +61,7 @@ internal object EngineHeapAnalyzer {
             val output = File(sandbox, "measurement.properties")
             val status = File(sandbox, "progress.txt")
             val log = File(sandbox, "engine.log")
-            val maxHeapMiB = System.getProperty("rwpp.heap.maxHeapMiB", "2048").toInt()
+            val maxHeapMiB = System.getProperty("rwpp.heap.maxHeapMiB", "4096").toInt()
             require(maxHeapMiB in 128..65536) { "rwpp.heap.maxHeapMiB 必须在 128..65536 范围内" }
             val java = File(System.getProperty("java.home"), "bin/java${if (isWindows()) ".exe" else ""}")
             val command = mutableListOf(

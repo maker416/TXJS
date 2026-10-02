@@ -30,10 +30,10 @@ Gradle 命令：
 
 旧的 `:rwpp-core-api:estimateModHeap -Pmod=...` 命令会转交真实核心测量。API 中的 `ModHeapEstimator` 仅保留为静态模型兼容代码，不再用于工具界面或上述 Gradle 命令。
 
-测量子进程默认最大堆为 2048 MiB，可通过父进程 JVM 属性调整，例如：
+测量子进程默认最大堆为 4096 MiB（4 GiB），双击启动脚本即可使用此上限。可通过父进程 JVM 属性调整，例如设为 8 GiB：
 
 ```powershell
-java -Drwpp.heap.maxHeapMiB=4096 -jar build\mod-heap-tool\RWJS-ModHeapTool.jar --analyze D:\Mods\large.rwmod --game-root "D:\Games\Rusted Warfare"
+java -Drwpp.heap.maxHeapMiB=8192 -jar build\mod-heap-tool\RWJS-ModHeapTool.jar --analyze D:\Mods\large.rwmod --game-root "D:\Games\Rusted Warfare"
 ```
 
 分发时复制 `RWJS-ModHeapTool.jar`，并让用户选择其完整游戏目录。JAR 包含核心、依赖和测量 agent；游戏运行资源与系统对应的原生库仍需要从原版安装提供。
