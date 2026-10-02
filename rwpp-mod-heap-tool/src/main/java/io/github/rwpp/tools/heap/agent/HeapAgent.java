@@ -8,7 +8,6 @@
 package io.github.rwpp.tools.heap.agent;
 
 import java.lang.instrument.Instrumentation;
-import java.lang.instrument.ClassFileTransformer;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -27,11 +26,6 @@ public final class HeapAgent {
 
     public static boolean isAvailable() {
         return instrumentation != null;
-    }
-
-    /** Worker-only diagnostic optimization; the caller installs it before loading the core. */
-    public static void addTransformer(ClassFileTransformer transformer) {
-        requireInstrumentation().addTransformer(Objects.requireNonNull(transformer));
     }
 
     private static Instrumentation requireInstrumentation() {

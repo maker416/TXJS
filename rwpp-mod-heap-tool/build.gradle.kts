@@ -19,7 +19,6 @@ dependencies {
         exclude("game-lib.jar", "android-game-lib.jar", "android-platform-lib.jar", "natives-*.jar")
     })
     testImplementation(kotlin("test-junit"))
-    implementation("org.javassist:javassist:3.30.2-GA")
 }
 
 application {
