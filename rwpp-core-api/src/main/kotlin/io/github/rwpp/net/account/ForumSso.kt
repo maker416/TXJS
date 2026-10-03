@@ -61,6 +61,19 @@ data class ForumProof(val verifier: String, val challenge: String) {
 
 class ForumSsoRequiresHttpsException : IllegalArgumentException("Forum SSO requires HTTPS for the forum")
 
+/** Diagnostic metadata only. Never expose response bodies, request credentials or exception messages. */
+class ForumSsoHttpException(val statusCode: Int) : IllegalStateException("Forum SSO HTTP $statusCode")
+
+enum class ForumSsoStep { REVOKE, CONFIG, TICKET, PREPARE, SAVE }
+
+class ForumSsoStepException(val step: ForumSsoStep, cause: Exception) : IllegalStateException("Forum SSO step $step failed", cause) {
+    val statusCode: Int? = when (cause) {
+        is AccountApiException -> cause.statusCode
+        is ForumSsoHttpException -> cause.statusCode
+        else -> null
+    }
+}
+
 object ForumSsoUrls {
     fun base(value: String): String {
         val url = value.trim().toHttpUrl()
@@ -93,14 +106,14 @@ class ForumSsoClient(value: String, http: OkHttpClient) {
 
     suspend fun config(): ForumClientConfig = withContext(Dispatchers.IO) {
         client.useCancellable(Request.Builder().url("$bootstrapUrl/config").build()) { response ->
-            check(response.code == 200) { "Forum SSO is unavailable (HTTP ${response.code})" }
+            if (response.code != 200) throw ForumSsoHttpException(response.code)
             json.decodeFromString<ForumClientConfig>(response.body!!.string()).also { require(it.protocol == 1 && it.targetAppCode.matches(Regex("[A-Za-z0-9_-]{1,64}"))) }
         }
     }
 
     private suspend fun csrf(): String = withContext(Dispatchers.IO) {
         client.useCancellable(Request.Builder().url(bootstrapUrl).build()) { response ->
-            check(response.code == 200) { "Forum SSO is unavailable (HTTP ${response.code})" }
+            if (response.code != 200) throw ForumSsoHttpException(response.code)
             response.header("X-CSRF-Token")?.takeIf { it.isNotBlank() } ?: error("Missing forum CSRF token")
         }
     }
@@ -111,7 +124,7 @@ class ForumSsoClient(value: String, http: OkHttpClient) {
             val request = Request.Builder().url("$bootstrapUrl/$action").header("X-CSRF-Token", csrf)
                 .post(body.toRequestBody("application/json; charset=utf-8".toMediaType())).build()
             client.useCancellable(request) { response ->
-                check(response.code == 200) { "Forum SSO $action failed (HTTP ${response.code})" }
+                if (response.code != 200) throw ForumSsoHttpException(response.code)
                 response.body!!.string()
             }
         }

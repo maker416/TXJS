@@ -31,6 +31,7 @@ class ForumSsoSessionTest {
     private var prepareGate: CountDownLatch? = null
     private var entered: CountDownLatch? = null
     private var revokeFails = false
+    private var ticketDenied = false
 
     @BeforeTest fun setup() {
         logger = LoggerFactory.getLogger("ForumSsoSessionTest")
@@ -53,7 +54,7 @@ class ForumSsoSessionTest {
                 return when (request.path) {
                     "/sso/client/config" -> MockResponse().setBody("""{"protocol":1,"target_app_code":"forum"}""")
                     "/sso/client" -> MockResponse().setHeader("X-CSRF-Token", "csrf").setBody("bootstrap")
-                    "/api/v1/sso/forum/tickets" -> MockResponse().setBody("""{"ticket":"${"a".repeat(64)}","expires_in":60}""")
+                    "/api/v1/sso/forum/tickets" -> if (ticketDenied) MockResponse().setResponseCode(401).setBody("""{"code":"unauthorized","message":"authentication failed"}""") else MockResponse().setBody("""{"ticket":"${"a".repeat(64)}","expires_in":60}""")
                     "/sso/client/prepare" -> {
                         entered?.countDown()
                         prepareGate?.let { check(it.await(5, TimeUnit.SECONDS)) }
@@ -87,6 +88,15 @@ class ForumSsoSessionTest {
         withTimeout(3000) { while (prefs.forumRevocations.isNotEmpty()) delay(10) }
         assertTrue(requests.any { it.path == "/sso/client/revoke" })
         assertFalse(AccountSession.loggedIn)
+    }
+
+    @Test fun ticketDenialKeepsFailedStepAndStatusWithoutSubmittingToForum() = runBlocking {
+        ticketDenied = true
+        val failure = assertFailsWith<ForumSsoStepException> { ForumSsoSession.prepare(server.url("/").toString(), AccountSession.sessionSnapshotOrNull()) }
+        assertEquals(ForumSsoStep.TICKET, failure.step)
+        assertEquals(401, failure.statusCode)
+        assertTrue(requests.none { it.path == "/sso/client/prepare" })
+        assertTrue(prefs.forumRevocations.isEmpty())
     }
 
     @Test fun lateNativePrepareAfterLogoutIsRevokedAndCannotReachBrowser() = runBlocking {

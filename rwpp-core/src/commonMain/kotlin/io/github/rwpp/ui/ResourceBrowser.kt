@@ -55,7 +55,6 @@ import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.platform.EmbeddedBrowser
 import io.github.rwpp.platform.EmbeddedBrowserState
-import io.github.rwpp.net.account.ForumSsoRequiresHttpsException
 import io.github.rwpp.platform.ResourceBrowserLayout
 import io.github.rwpp.widget.BorderCard
 import org.koin.compose.koinInject
@@ -98,7 +97,7 @@ fun ResourceBrowser(onExit: () -> Unit) {
             browser.submitClientLogin(bootstrapUrl, prepared?.handoff)
         } catch (e: CancellationException) { throw e }
         catch (e: Exception) {
-            browser.failClientLogin(readI18n(if (e is ForumSsoRequiresHttpsException) "browser.httpsRequired" else "browser.autoLoginFailed"))
+            browser.failClientLogin(forumSsoErrorText(e))
         }
     }
     BackHandler(true) {
@@ -141,7 +140,7 @@ fun ResourceBrowser(onExit: () -> Unit) {
                     modifier = Modifier.fillMaxWidth().padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Text(readI18n("browser.loadFailed"), color = MaterialTheme.colorScheme.error)
+                    Text(readI18n(if (browser.clientLoginError != null) "browser.loginFailedTitle" else "browser.loadFailed"), color = MaterialTheme.colorScheme.error)
                     Text(error, style = MaterialTheme.typography.bodySmall)
                     Row {
                         TextButton(onClick = { attempt++ }) { Text(readI18n("browser.retryLogin")) }

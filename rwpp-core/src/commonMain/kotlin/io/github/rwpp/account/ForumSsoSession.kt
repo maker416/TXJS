@@ -17,6 +17,9 @@ import io.github.rwpp.net.account.ForumClientRevocation
 import io.github.rwpp.net.account.ForumPreparedLogin
 import io.github.rwpp.net.account.ForumProof
 import io.github.rwpp.net.account.ForumSsoClient
+import io.github.rwpp.net.account.ForumSsoStep
+import io.github.rwpp.net.account.ForumSsoStepException
+import io.github.rwpp.net.account.ForumSsoRequiresHttpsException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -44,6 +47,12 @@ object ForumSsoSession : KoinComponent {
 
     private fun persist() { prefs()?.let { get<ConfigIO>().saveConfig(it) } }
 
+    private suspend fun <T> atStep(step: ForumSsoStep, action: suspend () -> T): T = try {
+        action()
+    } catch (e: CancellationException) { throw e }
+    catch (e: ForumSsoRequiresHttpsException) { throw e }
+    catch (e: Exception) { throw ForumSsoStepException(step, e) }
+
     private suspend fun revoke(pending: List<ForumClientRevocation>) {
         for (record in pending) {
             try {
@@ -59,20 +68,22 @@ object ForumSsoSession : KoinComponent {
         val pending = prefs()?.forumRevocations.orEmpty().toList()
         revoke(pending)
         // 未成功撤销的同站旧会话不允许被新账号覆盖并遗忘。
-        check(prefs()?.forumRevocations.orEmpty().none { it.url == client(url).baseUrl }) { "Previous forum session could not be revoked" }
+        atStep(ForumSsoStep.REVOKE) {
+            check(prefs()?.forumRevocations.orEmpty().none { it.url == client(url).baseUrl }) { "Previous forum session could not be revoked" }
+        }
         if (session == null) return@withLock null
         check(AccountSession.isCurrentSession(session)) { "Account session changed" }
         val forum = client(url)
-        val config = forum.config()
+        val config = atStep(ForumSsoStep.CONFIG) { forum.config() }
         val proof = ForumProof.create()
-        val ticket = AccountSession.client().issueForumTicket(session.token, config.targetAppCode, proof.challenge)
+        val ticket = atStep(ForumSsoStep.TICKET) { AccountSession.client().issueForumTicket(session.token, config.targetAppCode, proof.challenge) }
         check(AccountSession.isCurrentSession(session)) { "Account session changed" }
-        val prepared = forum.prepare(ticket.ticket, proof.verifier)
+        val prepared = atStep(ForumSsoStep.PREPARE) { forum.prepare(ticket.ticket, proof.verifier) }
         val record = ForumClientRevocation(forum.baseUrl, prepared.logoutKey)
-        val prefs = prefs() ?: error("Forum login requires persistent account preferences")
+        val prefs = atStep(ForumSsoStep.SAVE) { prefs() ?: error("Forum login requires persistent account preferences") }
         prefs.forumRevocations = prefs.forumRevocations + record
         try {
-            persist()
+            atStep(ForumSsoStep.SAVE) { persist() }
             if (!AccountSession.isCurrentSession(session)) {
                 revoke(listOf(record))
                 error("Account session changed")

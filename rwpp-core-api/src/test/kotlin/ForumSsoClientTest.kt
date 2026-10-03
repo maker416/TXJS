@@ -113,6 +113,22 @@ class ForumSsoClientTest {
         assertEquals(prefs.forumRevocations, Toml.decodeFromString(AccountPreferences.serializer(), encoded).forumRevocations)
     }
 
+    @Test fun forumHttpFailureRetainsStatusWithoutResponseBody() = runBlocking {
+        val server = MockWebServer()
+        server.start()
+        try {
+            server.enqueue(MockResponse().setResponseCode(503).setBody("secret-token secret-key"))
+            val client = ForumSsoClient(server.url("/").toString(), OkHttpClient())
+            val failure = assertFailsWith<ForumSsoHttpException> { client.config() }
+            assertEquals(503, failure.statusCode)
+            assertFalse(failure.message.orEmpty().contains("secret"))
+            server.enqueue(MockResponse().setHeader("X-CSRF-Token", "csrf"))
+            server.enqueue(MockResponse().setResponseCode(419).setBody("secret-token"))
+            val csrfFailure = assertFailsWith<ForumSsoHttpException> { client.prepare("a".repeat(64), "b".repeat(43)) }
+            assertEquals(419, csrfFailure.statusCode)
+        } finally { server.shutdown() }
+    }
+
     private fun httpWithLocalDns() = OkHttpClient.Builder().proxy(Proxy.NO_PROXY)
         .dns(object : okhttp3.Dns {
             override fun lookup(hostname: String): List<InetAddress> = listOf(InetAddress.getByName("127.0.0.1"))
