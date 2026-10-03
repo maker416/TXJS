@@ -77,7 +77,8 @@ fun ResourceBrowser(onExit: () -> Unit) {
     val browser = remember(normalizedUrl, AccountSession.token, AccountSession.loggedIn, ForumSsoSession.generation) {
         EmbeddedBrowserState(bootstrapUrl, normalizedUrl).also { it.clientAuthenticating = true }
     }
-    val overlaysAvailable = active && !UI.showFriendsView && !UI.showAccountView && browser.modDownload == null
+    val overlaysAvailable = active && !UI.showFriendsView && !UI.showAccountView &&
+        browser.modDownload == null && browser.fileUpload == null
     var attempt by remember { mutableIntStateOf(0) }
     browser.retryClientLogin = { attempt++ }
     LaunchedEffect(browser, attempt, orientation, active) {
