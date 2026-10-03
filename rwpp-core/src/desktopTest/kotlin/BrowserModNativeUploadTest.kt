@@ -34,6 +34,7 @@ class BrowserModNativeUploadTest {
         assumeTrue(System.getenv("RWJS_BROWSER_NATIVE_TEST") == "1")
         val directory = Files.createTempDirectory("browser-native-upload-").toFile()
         val file = File(directory, "native-test.rwmod").apply { writeBytes(ByteArray(4096) { (it % 251).toByte() }) }
+        val title = "破境边缘 V0.33（烛烬华章：革新）"
         val received = CompletableFuture<ByteArray>()
         val ready = CompletableFuture<Unit>()
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
@@ -91,12 +92,12 @@ class BrowserModNativeUploadTest {
                 clickInput()
                 withTimeout(10_000) { while (state.fileUpload == null) delay(50) }
                 val pending = state.fileUpload!!
-                val snapshot = pending.cache.prepare(file)
+                val snapshot = pending.cache.prepare(file, checkNotNull(pending.uploadName(file, title)))
                 SwingUtilities.invokeAndWait { pending.selectFiles(listOf(snapshot)) }
                 withTimeout(10_000) { while (!received.isDone) delay(50) }
                 val body = received.get()
                 val text = body.toString(Charsets.ISO_8859_1)
-                assertTrue(text.contains("filename=\"native-test.rwmod\""))
+                assertTrue(body.toString(Charsets.UTF_8).contains("filename=\"$title.rwmod\""))
                 val start = text.indexOf("\r\n\r\n") + 4
                 assertContentEquals(file.readBytes(), body.copyOfRange(start, start + file.length().toInt()))
                 assertTrue(snapshot.exists(), "Keep snapshot alive while Chromium reads it")

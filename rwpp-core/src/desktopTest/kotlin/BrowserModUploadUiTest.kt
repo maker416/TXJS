@@ -11,6 +11,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.isRoot
@@ -32,6 +33,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.test.assertContentEquals
 
 @OptIn(ExperimentalTestApi::class)
 class BrowserModUploadUiTest {
@@ -85,13 +87,14 @@ class BrowserModUploadUiTest {
         onNodeWithText("从模组管理器选择").performClick()
         waitUntil(timeoutMillis = 5000) { settings.browserUploadSource == BrowserUploadSource.Mods }
         waitForIdle()
+        onNodeWithText("测试模组.rwmod").assertIsDisplayed()
         val roots = onAllNodes(isRoot()).fetchSemanticsNodes()
         val screenshot = File("build/reports/browser-upload/mods-landscape.png").apply { parentFile.mkdirs() }
         ImageIO.write(onAllNodes(isRoot())[roots.lastIndex].captureToImage().toAwtImage(), "png", screenshot)
         onNodeWithText("测试模组").performClick()
         onNodeWithText("上传所选模组").performClick()
         waitUntil(timeoutMillis = 5000) { delivered == 1 }
-        assertEquals("folder.rwmod", received!!.single().name)
+        assertEquals("测试模组.rwmod", received!!.single().name)
         assertTrue(received!!.single().isFile)
         runOnIdle { request.cancel(); browser.pageStarted() }
         assertEquals(1, delivered)
@@ -106,6 +109,42 @@ class BrowserModUploadUiTest {
         waitForIdle()
         assertEquals(1, browsed)
         assertEquals(BrowserUploadSource.Mods, settings.browserUploadSource)
+    }
+
+    @Test fun archiveUploadsShowTitleInPortraitAndUseItForZipOnlyWebInputs() = runDesktopComposeUiTest(width = 360, height = 720) {
+        val settings = Settings()
+        val source = File(directory, "v033.rwmod").apply { writeBytes(byteArrayOf(1, 2, 3, 4)) }
+        val title = "破境边缘 V0.33（烛烬华章：革新）"
+        var received: List<File>? = null
+        val request = BrowserFileUploadRequest(listOf(".zip"), false, cache, {}, { received = it })
+        setContent { MaterialTheme {
+            BrowserFileUploadDialog(request, settings, {}) { listOf(BrowserUploadMod(title, source)) }
+        } }
+        onNodeWithText("从模组管理器选择").performClick()
+        waitForIdle()
+        waitUntil(timeoutMillis = 5000) {
+            onAllNodesWithText("$title.zip").fetchSemanticsNodes().isNotEmpty()
+        }
+        onNodeWithText("$title.zip").assertIsDisplayed()
+        val roots = onAllNodes(isRoot()).fetchSemanticsNodes()
+        val screenshot = File("build/reports/browser-upload/title-portrait.png").apply { parentFile.mkdirs() }
+        ImageIO.write(onAllNodes(isRoot())[roots.lastIndex].captureToImage().toAwtImage(), "png", screenshot)
+        onNodeWithText(title).performClick()
+        onNodeWithText("上传所选模组").performClick()
+        waitUntil(timeoutMillis = 5000) {
+            received != null
+        }
+        assertEquals("$title.zip", received!!.single().name)
+        assertContentEquals(source.readBytes(), received!!.single().readBytes())
+        assertEquals("v033.rwmod", source.name)
+    }
+
+    @Test fun emptyModTitleFallsBackToSourceNameAndUnacceptedFilesRemainExcluded() {
+        val source = File(directory, "v033.rwmod").apply { writeText("archive") }
+        val request = BrowserFileUploadRequest(listOf(".rwmod"), false, cache, {}, {})
+        assertEquals("v033.rwmod", request.uploadName(source, ""))
+        assertEquals("中文 V0.33.rwmod", request.uploadName(source, "中文 V0.33"))
+        assertNull(request.uploadName(File(directory, "info.txt"), "中文"))
     }
 
     @Test fun navigationAndLateNativeResultCompleteCallbackOnlyOnce() {

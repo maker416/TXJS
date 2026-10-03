@@ -58,6 +58,10 @@ import org.koin.compose.koinInject
 import java.io.File
 
 internal data class BrowserUploadMod(val name: String, val file: File)
+private data class BrowserUploadChoice(val mod: BrowserUploadMod, val uploadName: String) {
+    val name: String get() = mod.name
+    val file: File get() = mod.file
+}
 private enum class UploadStage { Source, Mods, Browsing, Packing }
 
 @Composable
@@ -87,8 +91,8 @@ internal fun BrowserFileUploadDialog(
         settings.browserUploadSource == BrowserUploadSource.Mods -> UploadStage.Mods
         else -> UploadStage.Source
     }) }
-    var mods by remember { mutableStateOf<List<BrowserUploadMod>?>(null) }
-    var selected by remember { mutableStateOf(emptySet<File>()) }
+    var mods by remember { mutableStateOf<List<BrowserUploadChoice>?>(null) }
+    var selected by remember { mutableStateOf(emptySet<BrowserUploadChoice>()) }
     var search by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
 
@@ -106,7 +110,10 @@ internal fun BrowserFileUploadDialog(
         if (currentStage == UploadStage.Mods && mods == null) {
             try {
                 mods = withContext(Dispatchers.IO) {
-                    listMods().filter { it.file.exists() && request.uploadName(it.file) != null }
+                    listMods().mapNotNull { mod ->
+                        if (!mod.file.exists()) null
+                        else request.uploadName(mod.file, mod.name)?.let { BrowserUploadChoice(mod, it) }
+                    }
                         .distinctBy { it.file.canonicalPath }.sortedBy { it.name.lowercase() }
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -117,9 +124,9 @@ internal fun BrowserFileUploadDialog(
     BackHandler(stage != UploadStage.Browsing) { request.cancel() }
     if (stage == UploadStage.Browsing) return
 
-    fun toggle(file: File) {
-        selected = if (file in selected) selected - file
-        else if (request.multiple) selected + file else setOf(file)
+    fun toggle(mod: BrowserUploadChoice) {
+        selected = if (mod in selected) selected - mod
+        else if (request.multiple) selected + mod else setOf(mod)
     }
 
     fun upload() {
@@ -129,7 +136,9 @@ internal fun BrowserFileUploadDialog(
         scope.launch {
             try {
                 val files = withContext(NonCancellable + Dispatchers.IO) {
-                    selected.map { request.cache.prepare(it, checkNotNull(request.uploadName(it)), request::checkActive) }
+                    selected.map { mod ->
+                        request.cache.prepare(mod.file, mod.uploadName, request::checkActive)
+                    }
                 }
                 request.selectFiles(files)
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -165,12 +174,12 @@ internal fun BrowserFileUploadDialog(
                         else if (visible.isEmpty()) Text(readI18n("browser.uploadNoMods"))
                         else LazyColumn(Modifier.fillMaxWidth().heightIn(max = 260.dp)) {
                             items(visible, key = { it.file.path }) { mod ->
-                                Row(Modifier.fillMaxWidth().clickable { toggle(mod.file) }.padding(vertical = 4.dp),
+                                Row(Modifier.fillMaxWidth().clickable { toggle(mod) }.padding(vertical = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically) {
-                                    Checkbox(mod.file in selected, { toggle(mod.file) })
+                                    Checkbox(mod in selected, { toggle(mod) })
                                     Column(Modifier.weight(1f)) {
                                         Text(mod.name)
-                                        Text(mod.file.name, style = MaterialTheme.typography.bodySmall)
+                                        Text(mod.uploadName, style = MaterialTheme.typography.bodySmall)
                                     }
                                 }
                             }

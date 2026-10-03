@@ -9,6 +9,7 @@ package io.github.rwpp.platform
 
 import io.github.rwpp.net.browser.BrowserModUploadCache
 import io.github.rwpp.net.browser.BrowserUploadAccept
+import io.github.rwpp.net.browser.browserModUploadName
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
@@ -24,8 +25,8 @@ internal class BrowserFileUploadRequest(
     private val completed = AtomicBoolean(false)
     private val browsing = AtomicBoolean(false)
     internal var onFinished: () -> Unit = {}
-    fun uploadName(source: File): String? {
-        val name = if (source.isDirectory) source.name + ".rwmod" else source.name
+    fun uploadName(source: File, modTitle: String? = null): String? {
+        val name = browserModUploadName(source, modTitle)
         if (accept.accepts(name)) return name
         if (source.isDirectory || source.extension.equals("rwmod", true)) {
             val zipName = name.substringBeforeLast('.') + ".zip"

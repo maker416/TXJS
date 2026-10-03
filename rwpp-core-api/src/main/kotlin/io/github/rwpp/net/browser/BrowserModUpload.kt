@@ -12,6 +12,36 @@ import java.io.IOException
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
+/** 模组管理器上传使用显示标题；浏览文件或无标题时仍使用原文件名。 */
+fun browserModUploadName(source: File, modTitle: String? = null): String {
+    val suffix = if (source.isDirectory) ".rwmod" else source.extension.let { if (it.isEmpty()) "" else ".$it" }
+    val original = if (source.isDirectory) source.name + suffix else source.name
+    if (modTitle.isNullOrBlank()) return original
+
+    var title = modTitle.trim()
+    // 只移除压缩包后缀，不把标题里的 V0.33 等版本号当作后缀。
+    if (title.endsWith(".rwmod", true) || title.endsWith(".zip", true)) title = title.substringBeforeLast('.')
+    title = title.replace(Regex("[\\p{Cc}\\p{Cf}]"), "")
+        .replace(Regex("[<>:\"/\\\\|?*]+"), "_").trim().trimEnd('.', ' ')
+    if (title.isBlank() || title.all { it == '_' || it == '.' }) return original
+    // Windows 的设备保留名即使带后缀也不能作为临时文件名。
+    if (title.substringBefore('.').matches(Regex("(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])"))) title = "_$title"
+
+    // 文件名控制在 240 UTF-8 字节内，截断时保留完整 Unicode 码点和后缀。
+    val budget = 240 - suffix.toByteArray(Charsets.UTF_8).size
+    var end = 0
+    var bytes = 0
+    while (end < title.length) {
+        val next = title.offsetByCodePoints(end, 1)
+        val count = title.substring(end, next).toByteArray(Charsets.UTF_8).size
+        if (bytes + count > budget) break
+        bytes += count
+        end = next
+    }
+    val stem = title.substring(0, end).trimEnd('.', ' ')
+    return if (stem.isBlank()) original else stem + suffix
+}
+
 /** HTML accept 是逗号分隔的扩展名/MIME；图片选择不能被模组默认来源接管。 */
 class BrowserUploadAccept(types: List<String>) {
     private val filters = types.flatMap { it.split(',') }.map { it.trim().lowercase() }.filter { it.isNotEmpty() }
