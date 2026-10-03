@@ -105,6 +105,7 @@ fun ResourceBrowser(onExit: () -> Unit) {
     }
     DisposableEffect(browser) {
         onDispose {
+            browser.fileUpload?.cancel()
             browser.modDownload?.transfer?.cancel()
             browser.modDownload = null
             CloseUIPanelEvent("browser").broadcastIn()
@@ -158,6 +159,7 @@ fun ResourceBrowser(onExit: () -> Unit) {
         }
     }
     BrowserModDownloadDialog(browser)
+    BrowserModUploadDialog(browser)
 }
 
 @Composable

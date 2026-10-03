@@ -20,6 +20,8 @@ import org.cef.CefClient
 import org.cef.browser.CefBrowser
 import org.cef.browser.CefFrame
 import org.cef.handler.CefDisplayHandlerAdapter
+import org.cef.handler.CefDialogHandler
+import org.cef.callback.CefFileDialogCallback
 import org.cef.handler.CefDownloadHandlerAdapter
 import org.cef.handler.CefRequestHandlerAdapter
 import org.cef.callback.CefBeforeDownloadCallback
@@ -44,6 +46,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
+import javax.swing.JFileChooser
+import javax.swing.filechooser.FileNameExtensionFilter
+import java.util.Vector
+import io.github.rwpp.net.browser.BrowserModUploadCache
 
 @Composable
 actual fun EmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifier) {
@@ -93,6 +99,8 @@ private class DesktopBrowserController(
     private var browser: CefBrowser? = null
     private val downloads = ConcurrentHashMap<Int, CefModTransfer>()
     private val downloadCallbacks = ConcurrentHashMap<Int, CefDownloadItemCallback>()
+    private val uploads = ConcurrentHashMap.newKeySet<BrowserFileUploadRequest>()
+    private val uploadCache = BrowserModUploadCache(File(System.getProperty("java.io.tmpdir")))
 
     fun createPanel(): JPanel = JPanel(BorderLayout()).also {
         container = it
@@ -134,6 +142,43 @@ private class DesktopBrowserController(
     private fun attachBrowser(app: CefApp) {
         val cefClient = app.createClient()
         client = cefClient
+        cefClient.addDialogHandler(object : CefDialogHandler {
+            override fun onFileDialog(browser: CefBrowser, mode: CefDialogHandler.FileDialogMode,
+                title: String?, defaultFilePath: String?, acceptFilters: Vector<String>,
+                acceptExtensions: Vector<String>, acceptDescriptions: Vector<String>, callback: CefFileDialogCallback,
+            ): Boolean {
+                if (mode != CefDialogHandler.FileDialogMode.FILE_DIALOG_OPEN &&
+                    mode != CefDialogHandler.FileDialogMode.FILE_DIALOG_OPEN_MULTIPLE) return false
+                val request = BrowserFileUploadRequest(
+                    acceptFilters.toList(), mode == CefDialogHandler.FileDialogMode.FILE_DIALOG_OPEN_MULTIPLE,
+                    uploadCache,
+                    browse = { pending ->
+                        val chooser = JFileChooser().apply {
+                            if (!title.isNullOrBlank()) dialogTitle = title
+                            isMultiSelectionEnabled = pending.multiple
+                            val extensions = acceptExtensions.flatMap { it.split(';', ',') }
+                                .map { it.trim().removePrefix("*.").removePrefix(".") }
+                                .filter { it.matches(Regex("[a-zA-Z0-9]+")) }.distinct()
+                            if (extensions.isNotEmpty()) fileFilter = FileNameExtensionFilter(
+                                acceptDescriptions.joinToString().ifBlank { acceptFilters.joinToString() }, *extensions.toTypedArray())
+                        }
+                        if (chooser.showOpenDialog(container) == JFileChooser.APPROVE_OPTION) {
+                            pending.selectFiles(if (pending.multiple) chooser.selectedFiles.toList() else listOf(chooser.selectedFile))
+                        } else pending.cancel()
+                    },
+                    deliver = { files ->
+                        if (files.isNullOrEmpty()) callback.Cancel()
+                        else callback.Continue(Vector(files.map { it.absolutePath }))
+                    },
+                )
+                request.onFinished = { uploads.remove(request) }
+                uploads.add(request)
+                SwingUtilities.invokeLater {
+                    if (disposed) request.cancel() else state.offerFileUpload(request)
+                }
+                return true
+            }
+        })
         cefClient.addRequestHandler(object : CefRequestHandlerAdapter() {
             override fun onBeforeBrowse(browser: CefBrowser, frame: CefFrame, request: CefRequest,
                 userGesture: Boolean, isRedirect: Boolean,
@@ -261,6 +306,8 @@ private class DesktopBrowserController(
 
     fun dispose() {
         disposed = true
+        uploads.toList().forEach { it.cancel() }
+        Thread({ uploadCache.close() }, "browser-upload-cleanup").apply { isDaemon = true; start() }
         downloads.values.forEach { it.cancel() }
         browser?.close(true)
         client?.dispose()

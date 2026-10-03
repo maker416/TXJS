@@ -23,6 +23,18 @@ class BundleParseTest {
     private val bundleNames = listOf("bundle_zh.toml", "bundle_en.toml")
 
     @Test
+    fun browserUploadKeysExistInAllBundles() {
+        bundleNames.forEach { name ->
+            val browser = Toml.parseToTomlTable(File(bundleDir, name).readText())["browser"] as TomlTable
+            listOf("uploadSourceTitle", "uploadSourceHint", "uploadFiles", "uploadMods", "uploadModsTitle",
+                "uploadModsHint", "uploadPreparing", "uploadNoMods", "uploadSwitchToFiles", "uploadSelected",
+                "defaultUploadSource", "uploadAsk", "filePickerUnavailable").forEach {
+                assertTrue(browser.containsKey(it), "browser.$it missing in $name")
+            }
+        }
+    }
+
+    @Test
     fun bundlesAreValidToml() {
         bundleNames.forEach { name ->
             val file = File(bundleDir, name)

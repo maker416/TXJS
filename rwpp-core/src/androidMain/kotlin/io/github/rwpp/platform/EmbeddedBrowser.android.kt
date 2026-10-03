@@ -9,6 +9,8 @@ package io.github.rwpp.platform
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
+import android.net.Uri
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.CookieManager
 import android.webkit.WebResourceError
@@ -19,6 +21,12 @@ import android.webkit.WebViewClient
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -30,12 +38,27 @@ import io.github.rwpp.net.Net
 import io.github.rwpp.net.BrowserModHttpTransfer
 import io.github.rwpp.net.browser.BrowserModDownload
 import io.github.rwpp.net.browser.browserModFileName
+import io.github.rwpp.net.browser.BrowserModUploadCache
+import java.io.File
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 actual fun EmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifier) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val uploadCache = remember(context, state) { BrowserModUploadCache(context.cacheDir) }
+    var pickerRequest by remember(state) { mutableStateOf<BrowserFileUploadRequest?>(null) }
+    var pickerCallback by remember(state) { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val pending = pickerRequest
+        val callback = pickerCallback
+        pickerRequest = null
+        pickerCallback = null
+        val uris = WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
+            ?.filter { it.scheme == "content" && it.authority != "${context.packageName}.fileprovider" }
+            ?.toTypedArray()?.takeIf { it.isNotEmpty() }
+        pending?.finishNative { callback?.onReceiveValue(uris) }
+    }
     val webView = remember(context, state) {
         WebView(context).apply {
             settings.javaScriptEnabled = true
@@ -123,6 +146,37 @@ actual fun EmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifier) {
             }
             // 不启用多窗口：普通链接和 target=_blank 链接均留在当前浏览器中。
             webChromeClient = object : WebChromeClient() {
+                override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>,
+                    params: FileChooserParams,
+                ): Boolean {
+                    if (pickerRequest != null || params.mode == FileChooserParams.MODE_SAVE) {
+                        callback.onReceiveValue(null)
+                        return true
+                    }
+                    val request = BrowserFileUploadRequest(
+                        params.acceptTypes.toList(), params.mode == FileChooserParams.MODE_OPEN_MULTIPLE,
+                        uploadCache,
+                        browse = { pending ->
+                            pickerRequest = pending
+                            pickerCallback = callback
+                            try { filePicker.launch(params.createIntent()) }
+                            catch (_: android.content.ActivityNotFoundException) {
+                                pickerRequest = null
+                                pickerCallback = null
+                                pending.cancel()
+                                state.error = io.github.rwpp.i18n.readI18n("browser.filePickerUnavailable")
+                            }
+                        },
+                        deliver = { files ->
+                            callback.onReceiveValue(files?.map {
+                                FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", it)
+                            }?.toTypedArray())
+                        },
+                    )
+                    state.offerFileUpload(request)
+                    return true
+                }
+
                 override fun onProgressChanged(view: WebView, newProgress: Int) {
                     state.progress = newProgress / 100f
                 }
@@ -141,6 +195,11 @@ actual fun EmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifier) {
         }
         webView.loadUrl(state.initialUrl)
         onDispose {
+            state.fileUpload?.cancel()
+            pickerRequest?.cancel()
+            pickerRequest = null
+            pickerCallback = null
+            Thread({ uploadCache.close() }, "browser-upload-cleanup").apply { isDaemon = true; start() }
             state.controller = null
             webView.stopLoading()
             webView.setDownloadListener(null)

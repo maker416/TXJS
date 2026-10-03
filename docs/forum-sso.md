@@ -33,12 +33,31 @@ go run ./cmd/forum-bridge --mode allow-sso --source-app-code TXJS_APP_CODE --app
 
 启用 HTTPS 后仍停在引导页时，检查论坛 `app/config.php` 的 `url` 已改为 HTTPS，并确认 UAS 新接口及应用授权已配置。论坛扩展新版使用同源表单及重定向，避免旧 HTTP 配置阻断登录；论坛其它页面的资源 URL 仍需要正确配置。UAS 票据请求不跟随跳转，不接受携带账号密码、查询或 fragment 的服务地址。HTTP 通信仍为明文；本次兼容保留已有部署方式。
 
+## 论坛模组上传
+
+点击论坛编辑器的文件上传按钮，首次选择“浏览文件”或“从模组管理器选择”。选择保存在客户端设置中，后续直接打开对应选择器；可在“设置 → 客户端 → 资源页面默认模组上传来源”修改或重置为首次询问。模组选择器也提供“改用浏览文件”。
+
+模组选择器列出符合网页文件类型要求的已安装模组（包括未启用的模组），支持搜索，并按网页的单选/多选要求返回文件。文件夹模组在后台流式打包成 `.rwmod`（网页仅接受 `.zip` 时使用 `.zip`）；上传读取私有临时快照，关闭资源浏览器后清理。此操作不启用模组、不重载游戏。图片/视频等专用文件输入直接打开文件选择器，不修改模组上传偏好。
+
+Android 使用 WebView `onShowFileChooser`、系统文件选择器和缓存目录的 FileProvider；桌面使用 Chromium `CefDialogHandler` 和文件选择回调。上传仍由论坛网页处理，保留浏览器登录 Cookie，无需新增论坛接口。取消选择、页面导航和关闭浏览器会结束未完成的选择回调，迟到的选择结果自动忽略。
+
 ## 验证
 
 ```powershell
 .\gradlew.bat :rwpp-core-api:test --console=plain
 .\gradlew.bat :rwpp-core:testDebugUnitTest --tests ForumSsoSessionTest --tests '*ForumBrowserHandoffTest' --tests '*AccountSession*' --tests BundleParseTest :rwpp-core:compileKotlinDesktop --console=plain
+.\gradlew.bat :rwpp-core:desktopTest --tests '*BrowserModUploadUiTest' --console=plain
 ```
+
+真实桌面 Chromium 上传回归需可用的桌面会话，单独运行（避免其它 native 测试提前销毁全局 Chromium runtime）：
+
+```powershell
+$env:RWJS_BROWSER_NATIVE_TEST = '1'
+$env:JAVA_TOOL_OPTIONS = '--add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.desktop/sun.awt=ALL-UNNAMED'
+.\gradlew.bat :rwpp-core:desktopTest --tests '*BrowserModNativeUploadTest' --console=plain
+```
+
+上传测试覆盖首次偏好保存与重启恢复、图片输入直通文件选择器、目录打包内容、临时文件清理、取消与迟到回调，以及真实 Chromium 文件输入取消后再次选择、multipart 上传文件名及字节完整性。Android 还需真机验收系统选择器返回与 FileProvider 文件上传。
 
 测试覆盖真实 HTTP 请求形状、PKCE、独立 CSRF Cookie、跳转阻断、URL 安全校验、TOML 配置读写、网页注入边界、单次注入、退出及迟到响应撤销、离线撤销队列与真实双语 bundle 解析。服务端另有真实 MySQL 和 Flarum 中间件集成测试。
 
