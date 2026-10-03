@@ -102,6 +102,13 @@ kotlin {
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${findProperty("kotlin.coroutines.version")}")
             }
         }
+        val androidInstrumentedTest by getting {
+            dependencies {
+                implementation("androidx.test.ext:junit:1.2.1")
+                implementation("androidx.test:runner:1.6.2")
+                implementation("androidx.test:core:1.6.1")
+            }
+        }
     }
 }
 
@@ -122,7 +129,11 @@ afterEvaluate {
 android {
     compileSdk = (findProperty("android.compileSdk") as String).toInt()
     compileSdkMinor = 1
-    namespace = "io.github.rwpp"
+    namespace = "io.github.rwpp.core"
+    defaultConfig {
+        minSdk = (findProperty("android.minSdk") as String).toInt()
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
 
     sourceSets["main"].res.srcDirs("src/androidMain/res")
     sourceSets["main"].assets.srcDir("src/androidMain/assets")

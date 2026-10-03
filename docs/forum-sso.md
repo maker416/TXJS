@@ -61,7 +61,7 @@ $env:JAVA_TOOL_OPTIONS = '--add-opens=java.base/java.net=ALL-UNNAMED --add-opens
 .\gradlew.bat :rwpp-core:desktopTest --tests '*BrowserModNativeUploadTest' --console=plain
 ```
 
-上传测试覆盖首次偏好保存与重启恢复、图片输入直通文件选择器、目录打包内容、临时文件清理、取消与迟到回调，以及真实 Chromium 文件输入取消后再次选择、multipart 上传文件名及字节完整性。Android 还需真机验收系统选择器返回与 FileProvider 文件上传。
+上传测试覆盖首次偏好保存与重启恢复、图片输入直通文件选择器、目录打包内容、临时文件清理、取消与迟到回调，以及真实 Chromium 文件输入取消后再次选择、multipart 上传文件名及字节完整性。Android 还需真机验收系统选择器返回、SAF 缓存快照及 Gecko 文件上传。
 
 测试覆盖真实 HTTP 请求形状、PKCE、独立 CSRF Cookie、跳转阻断、URL 安全校验、TOML 配置读写、网页注入边界、单次注入、退出及迟到响应撤销、离线撤销队列与真实双语 bundle 解析。服务端另有真实 MySQL 和 Flarum 中间件集成测试。
 

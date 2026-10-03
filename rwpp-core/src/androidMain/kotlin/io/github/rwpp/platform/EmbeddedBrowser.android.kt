@@ -11,6 +11,11 @@ import android.content.Context
 import android.content.Intent
 import android.app.Activity
 import android.net.Uri
+import android.provider.OpenableColumns
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
@@ -51,6 +56,7 @@ private object BrowserGeckoRuntime {
 actual fun EmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifier) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
     val browser = remember(context, state) { AndroidGeckoBrowser(context, state) }
     var pickerRequest by remember(browser) { mutableStateOf<BrowserFileUploadRequest?>(null) }
     var pickerCallback by remember(browser) { mutableStateOf<((Array<Uri>?) -> Unit)?>(null) }
@@ -67,18 +73,34 @@ actual fun EmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifier) {
                 .filter { it.scheme == "content" && it.authority != "${context.packageName}.fileprovider" }
                 .toTypedArray().takeIf { it.isNotEmpty() }
         } else null
-        pending?.finishNative { callback?.invoke(uris) }
+        if (pending != null) scope.launch {
+            try {
+                val files = withContext(Dispatchers.IO) {
+                    uris?.map { uri ->
+                        pending.checkActive()
+                        val name = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                            if (it.moveToFirst()) it.getString(0) else null
+                        } ?: "upload.bin"
+                        pending.cache.prepareStream(name, {
+                            context.contentResolver.openInputStream(uri) ?: throw java.io.IOException("Cannot open selected file")
+                        }, pending::checkActive)
+                    }
+                }
+                pending.finishNative { callback?.invoke(files?.map { Uri.fromFile(it) }?.toTypedArray()) }
+            } catch (failure: Exception) {
+                pending.cancel()
+                if (failure !is kotlinx.coroutines.CancellationException) state.error = readI18n("browser.filePickerUnavailable")
+            }
+        }
     }
     DisposableEffect(browser) {
         browser.browseFiles = { request, callback ->
             pickerRequest = request
             pickerCallback = callback
-            val mimeTypes = request.accept.mimeTypes
             val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
                 type = "*/*"
                 putExtra(Intent.EXTRA_ALLOW_MULTIPLE, request.multiple)
-                if (mimeTypes.isNotEmpty()) putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes.toTypedArray())
             }
             try { filePicker.launch(intent) }
             catch (_: android.content.ActivityNotFoundException) {
@@ -119,7 +141,7 @@ private class AndroidGeckoBrowser(context: Context, private val state: EmbeddedB
     val view = GeckoView(context).apply {
         // TextureView 参与 Compose 裁剪/动画合成，避免 SurfaceView 覆盖工具栏或对话框。
         setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW)
-        setSession(session)
+        setSession(this@AndroidGeckoBrowser.session)
     }
     private var disposed = false
     private var initialized = false
@@ -247,6 +269,10 @@ private class AndroidGeckoBrowser(context: Context, private val state: EmbeddedB
         runtime.webExtensionController.ensureBuiltIn("resource://android/assets/rwpp-forum-bridge/", "forum-bridge@rwpp").accept({ addon ->
             initializing = false
             if (disposed) return@accept
+            if (addon == null) {
+                state.failClientLogin(readI18n("browser.engineInitFailed"))
+                return@accept
+            }
             extension = addon
             session.webExtensionController.setMessageDelegate(addon, object : WebExtension.MessageDelegate {
                 override fun onConnect(candidate: WebExtension.Port) {

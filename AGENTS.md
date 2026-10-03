@@ -15,8 +15,8 @@
 | Kotlin | 2.4.20 | 主语言，使用 KMP（Kotlin Multiplatform） |
 | Compose Multiplatform | 1.10.1 | 跨平台 UI 框架 |
 | Android Gradle Plugin | 9.1.1 | Android 构建，Gradle 9.3.1，compileSdk 37.1 |
-| Koin | 4.0.1 | 依赖注入，编译期注解 + KSP 生成 DI 代码 |
-| Koin Annotations | 1.4.0 | Koin 的 KSP 注解处理器 |
+| Koin | 4.1.0 | 依赖注入，编译期注解 + KSP 生成 DI 代码 |
+| Koin Annotations | 2.3.1 | Koin 的 KSP2 注解处理器 |
 | KSP | 2.3.12 | Kotlin Symbol Processing，KMP 按 Android/Desktop 目标配置 |
 | Coil3 | 3.2.0 | 图片加载（`coil-compose` + `coil-network-okhttp`） |
 | LuaJ | 4.0.2 | Lua 脚本支持（`luajava` + `lua54`） |

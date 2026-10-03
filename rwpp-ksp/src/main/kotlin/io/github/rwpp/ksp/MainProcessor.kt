@@ -69,7 +69,7 @@ class MainProcessor(
         for (clazz in resolver.getSymbolsWithAnnotation(InjectClass::class.qualifiedName!!)) {
            processClass(clazz as KSClassDeclaration) {
                val injectClass = clazz.annotations.first { it.shortName.asString() == InjectClass::class.simpleName }.arguments.first().value as KSType
-               injectClass.declaration.qualifiedName?.asString()
+               injectClass.expanded().declaration.qualifiedName?.asString()
            }
         }
 
@@ -83,7 +83,7 @@ class MainProcessor(
             clazz as KSClassDeclaration
             require(clazz.classKind == ClassKind.INTERFACE) {  "Only interfaces can be annotated with @SetInterfaceOn" }
             val annotation = clazz.annotations.first {  it.shortName.asString() == SetInterfaceOn::class.simpleName }
-            val classes = (annotation.arguments.first().value as ArrayList<KSType>).map { it.declaration.qualifiedName!!.asString() }
+            val classes = (annotation.arguments.first().value as List<*>).map { (it as KSType).expanded().declaration.qualifiedName!!.asString() }
             classes.forEach { className ->
                 val hasSelfProperty = clazz.declarations.any {
                     it is KSPropertyDeclaration && it.simpleName.asString() == "self"
@@ -97,7 +97,7 @@ class MainProcessor(
                             anno is KSPropertyDeclaration && anno.annotations.any { it.shortName.asString() == NewField::class.simpleName }
                         }.map { property ->
                             property as KSPropertyDeclaration
-                            property.simpleName.asString() to transformClass(property.type.resolve().declaration.qualifiedName!!.asString())
+                            property.simpleName.asString() to transformClass(property.type.resolve().expanded().declaration.qualifiedName!!.asString())
                         }.toList(),
                         clazz.declarations.filter { anno ->
                             anno is KSPropertyDeclaration && anno.annotations.any { it.shortName.asString() == Accessor::class.simpleName }
@@ -126,6 +126,12 @@ class MainProcessor(
             )
             Builder.saveConfig(Builder.rootInfo!!, Builder.configFile)
         }
+    }
+
+    // KSP2 preserves source typealiases; Javassist requires the actual JVM class name.
+    private fun KSType.expanded(): KSType {
+        val alias = declaration as? KSTypeAlias ?: return this
+        return alias.type.resolve().expanded()
     }
 
     private fun processClass(
@@ -162,7 +168,7 @@ class MainProcessor(
                         resolve()
 
                     if (receiver != null) {
-                        if (receiver.declaration is KSTypeAlias) receiver = (receiver.declaration as KSTypeAlias).type.resolve()
+                        receiver = receiver.expanded()
                     }
 
                     val receiverType = receiver?.declaration?.qualifiedName?.asString() ?: ""
@@ -183,11 +189,11 @@ class MainProcessor(
 
                     val args by lazy {
                         declaration.parameters.map { param ->
-                            val type = param.type.resolve()
+                            val type = param.type.resolve().expanded()
                             val paramDeclaration = type.declaration
                             val qualifiedName = paramDeclaration.qualifiedName!!.asString()
                             val className = if (qualifiedName == "kotlin.Array") {
-                                type.arguments.first().type!!.resolve().declaration.qualifiedName!!.asString() + "[]"
+                                type.arguments.first().type!!.resolve().expanded().declaration.qualifiedName!!.asString() + "[]"
                             } else transformClass(qualifiedName)
                             classPool[className]
                         }
@@ -230,7 +236,11 @@ class MainProcessor(
                                     injectFunctionPath,
                                     requiredPathType,
                                     declaration.returnType!!.resolve().declaration.qualifiedName!!.asString() == Unit::class.qualifiedName!!,
-                                    InjectMode.valueOf((annotation.arguments[1].value as KSType).declaration.simpleName.asString())
+                                    InjectMode.valueOf(when (val mode = annotation.arguments[1].value) {
+                                        is KSDeclaration -> mode.simpleName.asString() // KSP2 enum entry
+                                        is KSType -> mode.declaration.simpleName.asString()
+                                        else -> error("Unsupported InjectMode annotation value: $mode")
+                                    })
                                 )
                             )
                         }

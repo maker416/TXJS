@@ -96,6 +96,8 @@ android {
 
     packaging {
         resources.excludes.add("META-INF/*")
+        // Gecko ships a large native engine; compress it in the APK and extract on install.
+        jniLibs.useLegacyPackaging = true
     }
 
     signingConfigs {
@@ -146,6 +148,7 @@ android {
         applicationId = "io.github.rwjs"
         minSdk = (findProperty("android.minSdk") as String).toInt()
         targetSdk = (findProperty("android.targetSdk") as String).toInt()
+        ndk { abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86_64")) }
         versionCode = (System.currentTimeMillis() / 60000).toInt()
         versionName = rootProject.version.toString()
     }
