@@ -146,6 +146,8 @@ private fun resolveLauncherExePath(): String {
 }
 
 fun main(array: Array<String>) {
+    // 独立窗口浮层才能覆盖 Chromium 原生子窗口，资源页悬浮球不会被网页遮挡。
+    System.setProperty("compose.layers.type", "WINDOW")
     if (array.contains("-localgl") && File("opengl32.dll").exists()) { // for only debug
         System.loadLibrary("opengl32")
     }

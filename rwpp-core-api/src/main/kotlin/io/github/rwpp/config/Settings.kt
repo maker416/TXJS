@@ -45,6 +45,8 @@ data class Settings(
     var language: String = "zh", // "auto": 自动检测, "zh": 简体中文, "en": 英文
     /** null 表示尚未选择，首次进入资源页面时询问。 */
     var resourceBrowserOrientation: ResourceBrowserOrientation? = null,
+    /** null 表示尚未选择，首次上传模组时询问。 */
+    var browserUploadSource: BrowserUploadSource? = null,
     var enableOffscreenPanel: Boolean = false,
     var displayTimeInGame: Boolean = false,
     var effectLimitForAllEffects: String = "Keep", // Zero, Keep, Unlimited

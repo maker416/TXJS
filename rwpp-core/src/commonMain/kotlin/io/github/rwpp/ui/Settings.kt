@@ -502,6 +502,7 @@ fun SettingsView(
                                             }
 
                                             ResourceBrowserOrientationSetting(settings, configIO)
+                                            BrowserUploadSourceSetting(settings, configIO)
 
                                             var forumUrl by remember { mutableStateOf(accountPrefs.forumUrl) }
                                             SettingsTextField(readI18n("settings.forumUrl"), forumUrl) {

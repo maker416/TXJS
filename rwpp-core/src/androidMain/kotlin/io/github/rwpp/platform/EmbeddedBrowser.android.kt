@@ -8,9 +8,17 @@
 package io.github.rwpp.platform
 
 import android.content.Context
+import android.content.Intent
+import android.app.Activity
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -19,6 +27,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.github.rwpp.net.browser.BrowserModDownload
 import io.github.rwpp.net.browser.BrowserModStreamTransfer
+import io.github.rwpp.net.browser.BrowserModUploadCache
 import io.github.rwpp.net.browser.browserModFileName
 import io.github.rwpp.i18n.readI18n
 import org.json.JSONObject
@@ -43,10 +52,48 @@ actual fun EmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifier) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val browser = remember(context, state) { AndroidGeckoBrowser(context, state) }
+    var pickerRequest by remember(browser) { mutableStateOf<BrowserFileUploadRequest?>(null) }
+    var pickerCallback by remember(browser) { mutableStateOf<((Array<Uri>?) -> Unit)?>(null) }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val pending = pickerRequest
+        val callback = pickerCallback
+        pickerRequest = null
+        pickerCallback = null
+        val data = result.data
+        val uris = if (result.resultCode == Activity.RESULT_OK) {
+            val clip = data?.clipData
+            (if (clip != null) (0 until clip.itemCount).map { clip.getItemAt(it).uri }
+            else listOfNotNull(data?.data))
+                .filter { it.scheme == "content" && it.authority != "${context.packageName}.fileprovider" }
+                .toTypedArray().takeIf { it.isNotEmpty() }
+        } else null
+        pending?.finishNative { callback?.invoke(uris) }
+    }
     DisposableEffect(browser) {
+        browser.browseFiles = { request, callback ->
+            pickerRequest = request
+            pickerCallback = callback
+            val mimeTypes = request.accept.mimeTypes
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "*/*"
+                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, request.multiple)
+                if (mimeTypes.isNotEmpty()) putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes.toTypedArray())
+            }
+            try { filePicker.launch(intent) }
+            catch (_: android.content.ActivityNotFoundException) {
+                pickerRequest = null
+                pickerCallback = null
+                request.cancel()
+                state.error = readI18n("browser.filePickerUnavailable")
+            }
+        }
         state.controller = browser
         browser.initialize()
         onDispose {
+            pickerRequest?.cancel()
+            pickerRequest = null
+            pickerCallback = null
             state.controller = null
             browser.dispose()
         }
@@ -82,6 +129,8 @@ private class AndroidGeckoBrowser(context: Context, private val state: EmbeddedB
     private var bridgeReady = false
     private var pageFinished = false
     private var currentUrl: String? = null
+    private val uploadCache = BrowserModUploadCache(context.cacheDir)
+    var browseFiles: ((BrowserFileUploadRequest, (Array<Uri>?) -> Unit) -> Unit)? = null
 
     init {
         session.navigationDelegate = object : GeckoSession.NavigationDelegate {
@@ -166,6 +215,29 @@ private class AndroidGeckoBrowser(context: Context, private val state: EmbeddedB
                 }
             }
         }
+        session.promptDelegate = object : GeckoSession.PromptDelegate {
+            override fun onFilePrompt(session: GeckoSession, prompt: GeckoSession.PromptDelegate.FilePrompt): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                if (disposed || prompt.type == GeckoSession.PromptDelegate.FilePrompt.Type.FOLDER) {
+                    return GeckoResult.fromValue(prompt.dismiss())
+                }
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                fun deliver(uris: Array<Uri>?) {
+                    if (!prompt.isComplete) result.complete(if (uris.isNullOrEmpty()) prompt.dismiss() else prompt.confirm(context, uris))
+                }
+                val request = BrowserFileUploadRequest(
+                    prompt.mimeTypes?.toList().orEmpty(),
+                    prompt.type == GeckoSession.PromptDelegate.FilePrompt.Type.MULTIPLE,
+                    uploadCache,
+                    browse = { pending -> browseFiles?.invoke(pending, ::deliver) ?: pending.cancel() },
+                    deliver = { files -> deliver(files?.map { Uri.fromFile(it) }?.toTypedArray()) },
+                )
+                prompt.setDelegate(object : GeckoSession.PromptDelegate.PromptInstanceDelegate {
+                    override fun onPromptDismiss(prompt: GeckoSession.PromptDelegate.BasePrompt) { request.cancel() }
+                })
+                state.offerFileUpload(request)
+                return result
+            }
+        }
         session.open(runtime)
     }
 
@@ -248,6 +320,9 @@ private class AndroidGeckoBrowser(context: Context, private val state: EmbeddedB
     }
     fun dispose() {
         disposed = true
+        state.fileUpload?.cancel()
+        browseFiles = null
+        Thread({ uploadCache.close() }, "browser-upload-cleanup").apply { isDaemon = true; start() }
         clearBridge()
         extension?.let { session.webExtensionController.setMessageDelegate(it, null, "rwppForum") }
         state.modDownload?.transfer?.cancel()

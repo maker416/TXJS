@@ -45,7 +45,7 @@ class EmbeddedBrowserState(val initialUrl: String, private val homeUrl: String =
     private var pendingClientLogin: Pair<String, String?>? = null
     private var submittedClientPage: String? = null
 
-    internal fun pageStarted() { loadedUrl = null; submittedClientPage = null }
+    internal fun pageStarted() { loadedUrl = null; submittedClientPage = null; fileUpload?.cancel() }
 
     internal fun beginClientLogin() {
         clientLoginError = null
@@ -90,6 +90,16 @@ class EmbeddedBrowserState(val initialUrl: String, private val homeUrl: String =
 
     internal fun offerModDownload(download: BrowserModDownload) {
         if (modDownload != null) download.transfer.cancel() else modDownload = download
+    }
+
+    internal var fileUpload by mutableStateOf<BrowserFileUploadRequest?>(null)
+        private set
+
+    internal fun offerFileUpload(request: BrowserFileUploadRequest) {
+        fileUpload?.cancel()
+        val previous = request.onFinished
+        request.onFinished = { previous(); if (fileUpload === request) fileUpload = null }
+        fileUpload = request
     }
 
     fun goBack(): Boolean {
