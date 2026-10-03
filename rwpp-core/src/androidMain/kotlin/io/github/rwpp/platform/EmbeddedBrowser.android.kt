@@ -34,6 +34,7 @@ import io.github.rwpp.net.browser.BrowserModDownload
 import io.github.rwpp.net.browser.BrowserModStreamTransfer
 import io.github.rwpp.net.browser.BrowserModUploadCache
 import io.github.rwpp.net.browser.browserModFileName
+import io.github.rwpp.net.browser.browserCanonicalDisplayUrl
 import io.github.rwpp.i18n.readI18n
 import org.json.JSONObject
 import org.mozilla.geckoview.AllowOrDeny
@@ -163,9 +164,10 @@ private class AndroidGeckoBrowser(context: Context, private val state: EmbeddedB
                 hasUserGesture: Boolean,
             ) {
                 if (disposed) return
-                currentUrl = url
-                state.url = url ?: state.initialUrl
-                if (url != state.initialUrl) clearBridge()
+                val canonical = url?.let { browserCanonicalDisplayUrl(it, state.initialUrl) }
+                currentUrl = canonical
+                state.url = canonical ?: state.initialUrl
+                if (canonical != state.initialUrl) clearBridge()
             }
             override fun onCanGoBack(session: GeckoSession, canGoBack: Boolean) {
                 if (!disposed) state.canGoBack = canGoBack
@@ -195,8 +197,8 @@ private class AndroidGeckoBrowser(context: Context, private val state: EmbeddedB
                 if (disposed) return
                 clearBridge()
                 pageFinished = false
-                currentUrl = url
-                state.url = url
+                currentUrl = browserCanonicalDisplayUrl(url, state.initialUrl)
+                state.url = currentUrl!!
                 state.pageStarted()
                 state.error = null
                 state.isLoading = true
@@ -279,7 +281,7 @@ private class AndroidGeckoBrowser(context: Context, private val state: EmbeddedB
                     val sender = candidate.sender
                     if (disposed || sender.session !== session || !sender.isTopLevel ||
                         sender.environmentType != WebExtension.MessageSender.ENV_TYPE_CONTENT_SCRIPT ||
-                        sender.url != state.initialUrl || currentUrl != state.initialUrl) {
+                        browserCanonicalDisplayUrl(sender.url, state.initialUrl) != state.initialUrl || currentUrl != state.initialUrl) {
                         candidate.disconnect()
                         return
                     }

@@ -4,7 +4,7 @@
 
 一个应用进程共用一个 `GeckoRuntime`；每次打开资源站新建 `GeckoSession`，关闭时释放 View/session、消息端口及待确认下载流。Gecko 的子进程通过 `MainApplication` 的进程检查跳过游戏核心和 Koin 初始化。View 使用 TextureView 后端，以参与 Compose 动画、裁剪和弹窗合成。
 
-登录仍使用一次性 handoff，内置 WebExtension 等待引导页就绪后调用网页既有的 `rwForumClient`。原生端和扩展均检查完整 URL 和主文档来源；票据不放入 URL，也不向网页发送长期账号 token。旧 WebView Cookie 不迁移，首次打开重新执行客户端登录或游客流程。细节见 [forum-sso.md](forum-sso.md)。
+登录仍使用一次性 handoff，内置 WebExtension 等待引导页就绪后调用网页既有的 `rwForumClient`。原生端和扩展均检查完整 URL 和主文档来源；票据不放入 URL，也不向网页发送长期账号 token。Gecko 导航回调的 `displaySpec` 会显示中文域名，客户端只将已配置 authority 的对应 Unicode 表示恢复为其 Punycode 表示，再执行原有的完整地址校验；路径、查询、fragment、协议和端口均不丢弃，其它域名和带用户信息的 authority 不转换。旧 WebView Cookie 不迁移，首次打开重新执行客户端登录或游客流程。细节见 [forum-sso.md](forum-sso.md)。
 
 模组下载直接复制 Gecko 返回的已认证响应流，不导出浏览器 Cookie。下载前仍需用户确认；取消、关闭资源站及协程取消均释放响应流；已知 Content-Length 时验证接收长度。上传继续提供游戏模组和系统文件两种来源；SAF 的 content URI 通过 ContentResolver 在 IO 线程复制到私有缓存，再以文件 URI 交给 Gecko，支持只提供流的云盘/文档提供器，不依赖 `_data` 字段或 FileProvider 路径解析。
 
