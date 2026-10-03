@@ -74,7 +74,11 @@ fun ResourceBrowser(onExit: () -> Unit) {
         if (!browser.goBack()) onExit()
     }
     DisposableEffect(Unit) {
-        onDispose { CloseUIPanelEvent("browser").broadcastIn() }
+        onDispose {
+            browser.modDownload?.transfer?.cancel()
+            browser.modDownload = null
+            CloseUIPanelEvent("browser").broadcastIn()
+        }
     }
 
     ResourceBrowserLayout(
@@ -119,6 +123,7 @@ fun ResourceBrowser(onExit: () -> Unit) {
             }
         }
     }
+    BrowserModDownloadDialog(browser)
 }
 
 @Composable
