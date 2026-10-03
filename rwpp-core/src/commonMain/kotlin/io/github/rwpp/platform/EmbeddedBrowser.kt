@@ -13,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import io.github.rwpp.net.browser.BrowserModDownload
 
 @Stable
 class EmbeddedBrowserState(val initialUrl: String) {
@@ -30,6 +31,12 @@ class EmbeddedBrowserState(val initialUrl: String) {
         internal set
 
     internal var controller: EmbeddedBrowserController? = null
+    var modDownload by mutableStateOf<BrowserModDownload?>(null)
+        internal set
+
+    internal fun offerModDownload(download: BrowserModDownload) {
+        if (modDownload != null) download.transfer.cancel() else modDownload = download
+    }
 
     fun goBack(): Boolean {
         val activeController = controller ?: return false

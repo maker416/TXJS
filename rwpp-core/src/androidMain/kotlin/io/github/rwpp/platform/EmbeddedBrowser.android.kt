@@ -10,6 +10,7 @@ package io.github.rwpp.platform
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.webkit.WebChromeClient
+import android.webkit.CookieManager
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -24,6 +25,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import io.github.rwpp.appKoin
+import io.github.rwpp.net.Net
+import io.github.rwpp.net.BrowserModHttpTransfer
+import io.github.rwpp.net.browser.BrowserModDownload
+import io.github.rwpp.net.browser.browserModFileName
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -39,6 +45,18 @@ actual fun EmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifier) {
             settings.builtInZoomControls = true
             settings.displayZoomControls = false
             settings.setSupportMultipleWindows(false)
+            fun offerMod(downloadUrl: String, name: String, agent: String?, length: Long?) {
+                state.isLoading = false
+                state.offerModDownload(BrowserModDownload(name, length,
+                    BrowserModHttpTransfer(appKoin.get<Net>().client, downloadUrl, agent, url) { target ->
+                        CookieManager.getInstance().getCookie(target)
+                    }))
+            }
+            setDownloadListener { downloadUrl, userAgent, disposition, _, length ->
+                browserModFileName(downloadUrl, disposition)?.let { name ->
+                    offerMod(downloadUrl, name, userAgent, length.takeIf { it > 0 })
+                }
+            }
 
             fun updateNavigation() {
                 state.url = url ?: state.initialUrl
@@ -47,6 +65,21 @@ actual fun EmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifier) {
             }
 
             webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                    if (!request.isForMainFrame || request.method != "GET") return false
+                    val downloadUrl = request.url.toString()
+                    val name = browserModFileName(downloadUrl) ?: return false
+                    offerMod(downloadUrl, name, settings.userAgentString, null)
+                    return true
+                }
+
+                @Suppress("DEPRECATION")
+                override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
+                    val name = browserModFileName(url) ?: return false
+                    offerMod(url, name, settings.userAgentString, null)
+                    return true
+                }
+
                 override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
                     state.error = null
                     state.isLoading = true
@@ -105,6 +138,7 @@ actual fun EmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifier) {
         onDispose {
             state.controller = null
             webView.stopLoading()
+            webView.setDownloadListener(null)
             webView.webChromeClient = null
             webView.webViewClient = WebViewClient()
             webView.removeAllViews()
