@@ -49,7 +49,7 @@ import io.github.rwpp.platform.ResourceBrowserLayout
 import io.github.rwpp.widget.BorderCard
 import org.koin.compose.koinInject
 
-private const val RESOURCE_BROWSER_URL = "http://192.168.1.102:8080"
+private const val RESOURCE_BROWSER_URL = "http://zyz.xn--rhqr8xvr4ahqsgka.com/"
 
 @Composable
 fun ResourceBrowser(onExit: () -> Unit) {

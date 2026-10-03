@@ -12,11 +12,14 @@ import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.koin.core.annotation.Single
 
+/** 模组云端游玩时长服务基址；设置、环境变量或系统属性可以覆盖。 */
+const val DEFAULT_MOD_PLAYTIME_API_URL = "http://210.16.170.71:11456"
+
 @Single
 @Serializable
 data class ModPlaytimePreferences(
-    /** 部署后填写服务基址；空值关闭云端统计。 */
-    @Volatile var apiUrl: String = "",
+    /** 默认连接云端统计服务；显式空值关闭云端统计。 */
+    @Volatile var apiUrl: String = DEFAULT_MOD_PLAYTIME_API_URL,
     @Volatile var pendingReports: List<PendingModPlaytimeReport> = emptyList(),
 ) : Config
 
