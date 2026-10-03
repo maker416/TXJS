@@ -72,7 +72,18 @@ class BrowserModUploadCache(private val parent: File) : AutoCloseable {
         checkCancelled: () -> Unit = {},
     ): File {
         require(uploadName.isNotBlank() && File(uploadName).name == uploadName && '/' !in uploadName && '\\' !in uploadName)
-        val directory = createSnapshotDirectory()
+        val directory = synchronized(this) {
+            checkOpen()
+            val cache = root ?: run {
+                if (!parent.isDirectory && !parent.mkdirs()) throw IOException("Cannot create upload cache")
+                File.createTempFile("rwjs-browser-upload-", "", parent).apply {
+                    if (!delete() || !mkdir()) throw IOException("Cannot create upload cache")
+                }.also { root = it }
+            }
+            File.createTempFile("mod-", "", cache).apply {
+                if (!delete() || !mkdir()) throw IOException("Cannot create upload snapshot")
+            }
+        }
         try {
             val input = source.canonicalFile
             val target = File(directory, uploadName)
@@ -105,46 +116,6 @@ class BrowserModUploadCache(private val parent: File) : AutoCloseable {
                 if (!input.isFile) throw IOException("Mod file no longer exists")
                 target.outputStream().use { copy(input, it, checkCancelled) }
             }
-            checkOpen()
-            checkCancelled()
-            return target
-        } catch (failure: Throwable) {
-            directory.deleteRecursively()
-            throw failure
-        }
-    }
-
-    private fun createSnapshotDirectory(): File = synchronized(this) {
-            checkOpen()
-            val cache = root ?: run {
-                if (!parent.isDirectory && !parent.mkdirs()) throw IOException("Cannot create upload cache")
-                File.createTempFile("rwjs-browser-upload-", "", parent).apply {
-                    if (!delete() || !mkdir()) throw IOException("Cannot create upload cache")
-                }.also { root = it }
-            }
-            File.createTempFile("mod-", "", cache).apply {
-                if (!delete() || !mkdir()) throw IOException("Cannot create upload snapshot")
-            }
-    }
-
-    /** SAF/cloud providers may expose only a content URI, never a readable filesystem path. */
-    fun prepareStream(uploadName: String, openInput: () -> java.io.InputStream, checkCancelled: () -> Unit = {}): File {
-        require(uploadName.isNotBlank() && uploadName !in setOf(".", "..") && File(uploadName).name == uploadName && '/' !in uploadName && '\\' !in uploadName)
-        val directory = createSnapshotDirectory()
-        try {
-            val target = File(directory, uploadName)
-            checkOpen()
-            checkCancelled()
-            openInput().use { input -> target.outputStream().use { output ->
-                val buffer = ByteArray(64 * 1024)
-                while (true) {
-                    checkOpen()
-                    checkCancelled()
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    output.write(buffer, 0, count)
-                }
-            } }
             checkOpen()
             checkCancelled()
             return target

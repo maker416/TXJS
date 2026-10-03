@@ -18,7 +18,7 @@ class ForumBrowserHandoffTest {
         override fun goForward() = Unit
         override fun reload() = Unit
         override fun loadUrl(url: String) { loaded = url }
-        override fun submitForumHandoff(trustedUrl: String, handoff: String?) { scripts += forumHandoffScript(trustedUrl, handoff) to trustedUrl }
+        override fun executeJavaScript(script: String, trustedUrl: String) { scripts += script to trustedUrl }
     }
 
     @Test fun handoffWaitsForExactTrustedPageAndIsSentOnce() {

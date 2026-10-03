@@ -67,7 +67,9 @@ class EmbeddedBrowserState(val initialUrl: String, private val homeUrl: String =
         if (pending != null && currentUrl == pending.first && error == null) {
             val activeController = controller ?: return
             // Both native platforms recheck the current main-frame URL before executing.
-            activeController.submitForumHandoff(pending.first, pending.second)
+            val page = Json.value(pending.first).toString()
+            val handoff = pending.second?.let { Json.value(it).toString() } ?: "null"
+            activeController.executeJavaScript("if(location.href===$page&&typeof window.rwForumClient==='function'){window.rwForumClient($handoff);}", pending.first)
             pendingClientLogin = null
             submittedClientPage = currentUrl
         } else if (pending == null && currentUrl.trimEnd('/') == homeUrl.trimEnd('/')) {
@@ -131,13 +133,7 @@ internal interface EmbeddedBrowserController {
     fun goForward()
     fun loadUrl(url: String)
     fun reload()
-    fun submitForumHandoff(trustedUrl: String, handoff: String?)
-}
-
-internal fun forumHandoffScript(trustedUrl: String, handoff: String?): String {
-    val page = Json.value(trustedUrl).toString()
-    val ticket = handoff?.let { Json.value(it).toString() } ?: "null"
-    return "if(location.href===$page&&typeof window.rwForumClient==='function'){window.rwForumClient($ticket);}"
+    fun executeJavaScript(script: String, trustedUrl: String)
 }
 
 @Composable

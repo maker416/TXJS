@@ -89,15 +89,17 @@ val releaseSigning = runCatching { requireReleaseSigningConfigured() }.getOrNull
 
 android {
     compileSdk = (findProperty("android.compileSdk") as String).toInt()
-    compileSdkMinor = 1
+    buildToolsVersion = "34.0.0"
     namespace = "io.github.rwpp"
 
     useLibrary("org.apache.http.legacy")
 
     packaging {
         resources.excludes.add("META-INF/*")
-        // Gecko ships a large native engine; compress it in the APK and extract on install.
-        jniLibs.useLegacyPackaging = true
+    }
+
+    dexOptions {
+        javaMaxHeapSize = "2G"
     }
 
     signingConfigs {
@@ -125,8 +127,9 @@ android {
     sourceSets["main"].manifest.srcFile("src/main/AndroidManifest.xml")
     sourceSets["main"].res.srcDirs("src/main/res")
     sourceSets["main"].resources.srcDir(project.buildDir.absolutePath + "/generated")
+    sourceSets["main"].resources.include("config.toml")
     sourceSets["main"].resources.srcDir(rootDir.absolutePath + "/lib")
-    sourceSets["main"].resources.filter.setIncludes(setOf("config.toml", "android-game-lib.jar"))
+    sourceSets["main"].resources.include("android-game-lib.jar")
 
     // For KSP
 //    applicationVariants.configureEach {
@@ -148,7 +151,6 @@ android {
         applicationId = "io.github.rwjs"
         minSdk = (findProperty("android.minSdk") as String).toInt()
         targetSdk = (findProperty("android.targetSdk") as String).toInt()
-        ndk { abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86_64")) }
         versionCode = (System.currentTimeMillis() / 60000).toInt()
         versionName = rootProject.version.toString()
     }
