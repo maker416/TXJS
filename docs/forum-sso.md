@@ -25,6 +25,10 @@ go run ./cmd/forum-bridge --mode allow-sso --source-app-code TXJS_APP_CODE --app
 
 登录失败提供重试与游客入口。浏览器历史、刷新、资源下载沿用既有功能；论坛自动登录过程中导航受到限制，避免向其它页面注入 handoff。
 
+原生登录错误独立于网页导航错误保存，不会被 Chromium/WebView 的初始化或加载开始事件清掉。公网 HTTP 服务地址会显示明确的 HTTPS 配置提示。引导页已经使用一次后，重试或游客入口会重新加载引导页，重新获取 CSRF；浏览器控制器尚未就绪时保留待发送 handoff。
+
+启用 HTTPS 后仍停在引导页时，检查论坛 `app/config.php` 的 `url` 已改为 HTTPS，且账号服务地址也使用 HTTPS。论坛扩展新版使用同源表单及重定向，避免旧 HTTP 配置阻断登录；论坛其它页面的资源 URL 仍需要正确配置。
+
 ## 验证
 
 ```powershell

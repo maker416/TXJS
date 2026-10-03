@@ -55,6 +55,7 @@ import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.platform.EmbeddedBrowser
 import io.github.rwpp.platform.EmbeddedBrowserState
+import io.github.rwpp.net.account.ForumSsoRequiresHttpsException
 import io.github.rwpp.platform.ResourceBrowserLayout
 import io.github.rwpp.widget.BorderCard
 import org.koin.compose.koinInject
@@ -88,6 +89,7 @@ fun ResourceBrowser(onExit: () -> Unit) {
     browser.retryClientLogin = { attempt++ }
     LaunchedEffect(browser, attempt, orientation, active) {
         if (!active || orientation == null) return@LaunchedEffect
+        browser.beginClientLogin()
         try {
             AccountSession.restoreIfNeeded()
             val session = AccountSession.playtimeIdentityOrNull()?.first
@@ -95,9 +97,8 @@ fun ResourceBrowser(onExit: () -> Unit) {
             browser.error = null
             browser.submitClientLogin(bootstrapUrl, prepared?.handoff)
         } catch (e: CancellationException) { throw e }
-        catch (_: Exception) {
-            browser.error = readI18n("browser.autoLoginFailed")
-            browser.isLoading = false
+        catch (e: Exception) {
+            browser.failClientLogin(readI18n(if (e is ForumSsoRequiresHttpsException) "browser.httpsRequired" else "browser.autoLoginFailed"))
         }
     }
     BackHandler(true) {
@@ -135,7 +136,7 @@ fun ResourceBrowser(onExit: () -> Unit) {
                 Spacer(Modifier.height(3.dp))
             }
 
-            browser.error?.let { error ->
+            (browser.clientLoginError ?: browser.error)?.let { error ->
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),

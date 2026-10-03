@@ -59,6 +59,8 @@ data class ForumProof(val verifier: String, val challenge: String) {
     }
 }
 
+class ForumSsoRequiresHttpsException : IllegalArgumentException("Forum SSO requires HTTPS for the forum and account service")
+
 object ForumSsoUrls {
     fun base(value: String): String {
         val url = value.trim().toHttpUrl()
@@ -68,7 +70,7 @@ object ForumSsoUrls {
 
     fun requireSecure(value: String) {
         val url = base(value).toHttpUrl()
-        require(url.isHttps || url.host in setOf("localhost", "127.0.0.1", "::1")) { "Forum SSO requires HTTPS for the forum and account service" }
+        if (!url.isHttps && url.host !in setOf("localhost", "127.0.0.1", "::1")) throw ForumSsoRequiresHttpsException()
     }
 
     fun bootstrap(value: String): String = base(value) + "/sso/client"

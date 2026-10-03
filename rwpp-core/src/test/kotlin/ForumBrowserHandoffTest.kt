@@ -56,4 +56,42 @@ class ForumBrowserHandoffTest {
         state.pageLoaded(bootstrap)
         assertTrue(controller.scripts.isEmpty())
     }
+
+    @Test fun pageInitializationCannotEraseNativeLoginFailure() {
+        val state = EmbeddedBrowserState(bootstrap)
+        val controller = Controller(); state.controller = controller
+        state.failClientLogin("HTTPS required")
+        state.pageStarted()
+        state.error = null
+        state.pageLoaded(bootstrap)
+        assertEquals("HTTPS required", state.clientLoginError)
+        var retries = 0
+        state.retryClientLogin = { retries++ }
+        state.reload()
+        assertEquals(1, retries)
+        state.beginClientLogin()
+        assertNull(state.clientLoginError)
+    }
+
+    @Test fun missingControllerDoesNotConsumeHandoff() {
+        val state = EmbeddedBrowserState(bootstrap)
+        state.submitClientLogin(bootstrap, "a".repeat(64))
+        state.pageLoaded(bootstrap)
+        val controller = Controller(); state.controller = controller
+        assertEquals(1, controller.scripts.size)
+    }
+
+    @Test fun retryOrGuestReloadsAnAlreadyUsedBootstrap() {
+        val state = EmbeddedBrowserState(bootstrap)
+        val controller = Controller(); state.controller = controller
+        state.pageLoaded(bootstrap)
+        state.submitClientLogin(bootstrap, "a".repeat(64))
+        state.openAsGuest()
+        assertEquals(bootstrap, controller.loaded)
+        assertEquals(1, controller.scripts.size)
+        state.pageStarted()
+        state.pageLoaded(bootstrap)
+        assertEquals(2, controller.scripts.size)
+        assertTrue(controller.scripts.last().first.contains("rwForumClient(null)"))
+    }
 }

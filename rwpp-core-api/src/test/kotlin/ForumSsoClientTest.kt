@@ -76,7 +76,7 @@ class ForumSsoClientTest {
     }
 
     @Test fun publicCleartextAndUrlCredentialsAreRejected() {
-        assertFailsWith<IllegalArgumentException> { ForumSsoClient("http://example.com", OkHttpClient()) }
+        assertFailsWith<ForumSsoRequiresHttpsException> { ForumSsoClient("http://example.com", OkHttpClient()) }
         assertFailsWith<IllegalArgumentException> { ForumSsoUrls.base("https://user:password@example.com") }
         assertFailsWith<IllegalArgumentException> { ForumSsoUrls.base("https://example.com/?ticket=secret") }
         assertFailsWith<IllegalArgumentException> { ForumSsoUrls.base("https://example.com/#secret") }

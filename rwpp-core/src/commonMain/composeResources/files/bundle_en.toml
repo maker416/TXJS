@@ -302,6 +302,7 @@ reconnectFailed = "Connection was lost after applying mods, and rejoining the ro
 
 [browser]
 autoLoginFailed = "Forum sign-in failed. Check that both services are updated, application access is allowed, and HTTPS is configured. Retry or continue as a guest."
+httpsRequired = "The forum or account service still uses HTTP. Set valid HTTPS addresses in Settings and retry, or continue as a guest."
 retryLogin = "Retry sign-in"
 guest = "Continue as guest"
 user = "User"

@@ -32,23 +32,46 @@ class EmbeddedBrowserState(val initialUrl: String, private val homeUrl: String =
         internal set
 
     internal var controller: EmbeddedBrowserController? = null
+        set(value) {
+            field = value
+            if (value != null) loadedUrl?.let(::pageLoaded)
+        }
+    var clientLoginError by mutableStateOf<String?>(null)
+        private set
     var clientAuthenticating by mutableStateOf(false)
         internal set
     internal var retryClientLogin: (() -> Unit)? = null
     private var loadedUrl: String? = null
     private var pendingClientLogin: Pair<String, String?>? = null
+    private var submittedClientPage: String? = null
 
-    internal fun pageStarted() { loadedUrl = null }
+    internal fun pageStarted() { loadedUrl = null; submittedClientPage = null }
+
+    internal fun beginClientLogin() {
+        clientLoginError = null
+        error = null
+        pendingClientLogin = null
+        clientAuthenticating = true
+        isLoading = true
+    }
+
+    internal fun failClientLogin(message: String) {
+        // Page initialization/loading may clear navigation errors after native preparation failed.
+        clientLoginError = message
+        isLoading = false
+    }
 
     internal fun pageLoaded(currentUrl: String) {
         loadedUrl = currentUrl
         val pending = pendingClientLogin
         if (pending != null && currentUrl == pending.first && error == null) {
+            val activeController = controller ?: return
             // Both native platforms recheck the current main-frame URL before executing.
             val page = Json.value(pending.first).toString()
             val handoff = pending.second?.let { Json.value(it).toString() } ?: "null"
-            controller?.executeJavaScript("if(location.href===$page&&typeof window.rwForumClient==='function'){window.rwForumClient($handoff);}", pending.first)
+            activeController.executeJavaScript("if(location.href===$page&&typeof window.rwForumClient==='function'){window.rwForumClient($handoff);}", pending.first)
             pendingClientLogin = null
+            submittedClientPage = currentUrl
         } else if (pending == null && currentUrl.trimEnd('/') == homeUrl.trimEnd('/')) {
             clientAuthenticating = false
         }
@@ -58,7 +81,10 @@ class EmbeddedBrowserState(val initialUrl: String, private val homeUrl: String =
         require(handoff == null || handoff.matches(Regex("[a-f0-9]{64}")))
         clientAuthenticating = true
         pendingClientLogin = bootstrap to handoff
-        if (loadedUrl == bootstrap) pageLoaded(bootstrap)
+        if (submittedClientPage == bootstrap) {
+            loadedUrl = null
+            controller?.loadUrl(bootstrap)
+        } else if (loadedUrl == bootstrap) pageLoaded(bootstrap)
         else if (url != bootstrap) controller?.loadUrl(bootstrap)
     }
     var modDownload by mutableStateOf<BrowserModDownload?>(null)
@@ -85,11 +111,11 @@ class EmbeddedBrowserState(val initialUrl: String, private val homeUrl: String =
     }
 
     fun reload() {
-        if (error != null && retryClientLogin != null) retryClientLogin?.invoke()
+        if ((error != null || clientLoginError != null) && retryClientLogin != null) retryClientLogin?.invoke()
         else if (!clientAuthenticating) controller?.reload()
     }
 
-    internal fun openAsGuest() { error = null; submitClientLogin(initialUrl, null) }
+    internal fun openAsGuest() { clientLoginError = null; error = null; submitClientLogin(initialUrl, null) }
 }
 
 internal interface EmbeddedBrowserController {

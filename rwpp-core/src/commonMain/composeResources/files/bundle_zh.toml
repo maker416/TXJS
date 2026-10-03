@@ -303,6 +303,7 @@ reconnectFailed = "应用模组后连接已断开，无法重新进入房间。"
 
 [browser]
 autoLoginFailed = "论坛自动登录失败，请确认论坛和账号服务已更新、允许应用互通，并使用 HTTPS；也可重试或以游客身份访问。"
+httpsRequired = "论坛或账号服务仍使用 HTTP。请在设置中填写有效的 HTTPS 地址后重试，也可选择游客访问。"
 retryLogin = "重试登录"
 guest = "游客访问"
 user = "用户"
