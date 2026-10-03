@@ -302,6 +302,9 @@ reconnecting = "应用模组时连接中断，正在重新进入房间…"
 reconnectFailed = "应用模组后连接已断开，无法重新进入房间。"
 
 [browser]
+autoLoginFailed = "论坛自动登录失败，请确认论坛和账号服务已更新、允许应用互通，并使用 HTTPS；也可重试或以游客身份访问。"
+retryLogin = "重试登录"
+guest = "游客访问"
 user = "用户"
 username = "手机/邮箱"
 password = "密码"
@@ -393,6 +396,7 @@ basicFog = "基础迷雾"
 losFog = "视野迷雾"
 
 [settings]
+forumUrl = "论坛网址"
 setExternalFolder = "设置外部文件权限"
 manageAllFiles = "设置管理所有文件"
 language = "界面语言"

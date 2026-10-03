@@ -195,12 +195,15 @@ private class DesktopBrowserController(
                 frame: CefFrame,
                 transitionType: CefRequest.TransitionType,
             ) {
-                if (frame.isMain) publish { state.error = null }
+                if (frame.isMain) publish { state.error = null; state.pageStarted() }
             }
 
             override fun onLoadEnd(browser: CefBrowser, frame: CefFrame, httpStatusCode: Int) {
                 if (frame.isMain && httpStatusCode >= 400) {
                     publish { state.error = "HTTP $httpStatusCode" }
+                } else if (frame.isMain && httpStatusCode in 200..299) {
+                    val loadedUrl = frame.url
+                    publish { state.pageLoaded(loadedUrl) }
                 }
             }
 
@@ -248,6 +251,9 @@ private class DesktopBrowserController(
     override fun goBack() { browser?.goBack() }
     override fun goForward() { browser?.goForward() }
     override fun loadUrl(url: String) { browser?.loadURL(url) }
+    override fun executeJavaScript(script: String, trustedUrl: String) {
+        browser?.takeIf { it.url == trustedUrl }?.executeJavaScript(script, trustedUrl, 0)
+    }
 
     override fun reload() {
         browser?.reload() ?: initialize()

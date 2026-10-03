@@ -27,8 +27,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,6 +43,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.Settings
+import io.github.rwpp.config.AccountPreferences
+import io.github.rwpp.config.resolveForumUrl
+import io.github.rwpp.account.AccountSession
+import io.github.rwpp.account.ForumSsoSession
+import io.github.rwpp.net.account.ForumSsoUrls
+import kotlinx.coroutines.CancellationException
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.i18n.readI18n
@@ -49,12 +59,11 @@ import io.github.rwpp.platform.ResourceBrowserLayout
 import io.github.rwpp.widget.BorderCard
 import org.koin.compose.koinInject
 
-private const val RESOURCE_BROWSER_URL = "http://zyz.xn--rhqr8xvr4ahqsgka.com/"
-
 @Composable
 fun ResourceBrowser(onExit: () -> Unit) {
     val settings = koinInject<Settings>()
     val configIO = koinInject<ConfigIO>()
+    val accountPrefs = koinInject<AccountPreferences>()
     var orientation by remember(settings) { mutableStateOf(settings.resourceBrowserOrientation) }
     // 退出动画尚未 dispose 时也要立即恢复方向，以免其他页面暂时留在竖屏。
     val active = launcherPage == LauncherPage.ResourceBrowser
@@ -69,11 +78,32 @@ fun ResourceBrowser(onExit: () -> Unit) {
         )
     }
 
-    val browser = remember { EmbeddedBrowserState(RESOURCE_BROWSER_URL) }
+    val forumUrl = resolveForumUrl(accountPrefs.forumUrl)
+    val normalizedUrl = remember(forumUrl) { runCatching { ForumSsoUrls.base(forumUrl) }.getOrDefault(forumUrl) }
+    val bootstrapUrl = remember(normalizedUrl) { runCatching { ForumSsoUrls.bootstrap(normalizedUrl) }.getOrDefault(normalizedUrl) }
+    val browser = remember(normalizedUrl, AccountSession.token, AccountSession.loggedIn, ForumSsoSession.generation) {
+        EmbeddedBrowserState(bootstrapUrl, normalizedUrl).also { it.clientAuthenticating = true }
+    }
+    var attempt by remember { mutableIntStateOf(0) }
+    browser.retryClientLogin = { attempt++ }
+    LaunchedEffect(browser, attempt, orientation, active) {
+        if (!active || orientation == null) return@LaunchedEffect
+        try {
+            AccountSession.restoreIfNeeded()
+            val session = AccountSession.playtimeIdentityOrNull()?.first
+            val prepared = ForumSsoSession.prepare(normalizedUrl, session)
+            browser.error = null
+            browser.submitClientLogin(bootstrapUrl, prepared?.handoff)
+        } catch (e: CancellationException) { throw e }
+        catch (_: Exception) {
+            browser.error = readI18n("browser.autoLoginFailed")
+            browser.isLoading = false
+        }
+    }
     BackHandler(true) {
         if (!browser.goBack()) onExit()
     }
-    DisposableEffect(Unit) {
+    DisposableEffect(browser) {
         onDispose {
             browser.modDownload?.transfer?.cancel()
             browser.modDownload = null
@@ -112,12 +142,16 @@ fun ResourceBrowser(onExit: () -> Unit) {
                 ) {
                     Text(readI18n("browser.loadFailed"), color = MaterialTheme.colorScheme.error)
                     Text(error, style = MaterialTheme.typography.bodySmall)
+                    Row {
+                        TextButton(onClick = { attempt++ }) { Text(readI18n("browser.retryLogin")) }
+                        TextButton(onClick = browser::openAsGuest) { Text(readI18n("browser.guest")) }
+                    }
                 }
             }
 
             // 选择完成后才创建原生浏览器，让首次弹窗拥有完整的输入焦点。
             if (orientation != null) {
-                EmbeddedBrowser(browser, Modifier.fillMaxWidth().weight(1f))
+                key(browser) { EmbeddedBrowser(browser, Modifier.fillMaxWidth().weight(1f)) }
             } else {
                 Spacer(Modifier.weight(1f))
             }

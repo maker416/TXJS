@@ -81,6 +81,7 @@ actual fun EmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifier) {
                 }
 
                 override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+                    state.pageStarted()
                     state.error = null
                     state.isLoading = true
                     state.progress = 0f
@@ -91,6 +92,7 @@ actual fun EmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifier) {
                     state.isLoading = false
                     state.progress = 1f
                     updateNavigation()
+                    state.pageLoaded(view.url.orEmpty())
                 }
 
                 override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
@@ -133,6 +135,9 @@ actual fun EmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifier) {
             override fun goForward() { webView.goForward() }
             override fun loadUrl(url: String) { webView.loadUrl(url) }
             override fun reload() { webView.reload() }
+            override fun executeJavaScript(script: String, trustedUrl: String) {
+                if (webView.url == trustedUrl) webView.evaluateJavascript(script, null)
+            }
         }
         webView.loadUrl(state.initialUrl)
         onDispose {

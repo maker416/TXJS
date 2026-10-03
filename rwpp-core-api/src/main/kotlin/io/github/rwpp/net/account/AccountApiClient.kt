@@ -75,6 +75,12 @@ class AccountApiClient(
     suspend fun me(token: String): AccountUser =
         getJson<UserResponse>("/users/me", token).user
 
+    suspend fun issueForumTicket(token: String, targetAppCode: String, codeChallenge: String): ForumTicketResponse {
+        ForumSsoUrls.requireSecure(baseUrl)
+        return postJson<ForumTicketRequest, ForumTicketResponse>("/sso/forum/tickets", ForumTicketRequest(targetAppCode, codeChallenge), token)
+            .also { require(it.ticket.matches(Regex("[a-f0-9]{64}")) && it.expiresIn in 1..60) }
+    }
+
     suspend fun logout(token: String): OkResponse =
         postEmpty("/users/logout", token)
 
@@ -325,7 +331,8 @@ class AccountApiClient(
         }
         val request = builder.build()
         try {
-            http.useCancellable(request) { response ->
+            val transport = if (path == "/sso/forum/tickets") http.newBuilder().followRedirects(false).followSslRedirects(false).build() else http
+            transport.useCancellable(request) { response ->
                 val text = response.body?.string().orEmpty()
                 if (!response.isSuccessful || (expectedCode != null && response.code != expectedCode)) {
                     throw response.toAccountException(text)

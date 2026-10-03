@@ -9,6 +9,9 @@ package io.github.rwpp.config
 
 import kotlinx.serialization.Serializable
 import org.koin.core.annotation.Single
+import io.github.rwpp.net.account.ForumClientRevocation
+
+const val DEFAULT_FORUM_URL = "https://zyz.xn--rhqr8xvr4ahqsgka.com/"
 
 /** 统一账号 JSON API 默认基址（不含路径）。可用 [AccountPreferences.apiUrl] 或环境变量 `RWJS_ACCOUNT_API_URL` 覆盖。 */
 const val DEFAULT_ACCOUNT_API_URL = "http://210.16.170.71:11455"
@@ -29,7 +32,13 @@ data class AccountPreferences(
     var lastUsername: String = "",
     /** 消息变更确认的稳定设备标识，首次同步时生成并保存，不随登出清除。 */
     var chatClientId: String = "",
+    var forumUrl: String = DEFAULT_FORUM_URL,
+    /** 仅用于撤销本客户端创建的论坛会话；离线退出时保留队列，下次联网重试。 */
+    var forumRevocations: List<ForumClientRevocation> = emptyList(),
 ) : Config
+
+fun resolveForumUrl(stored: String): String =
+    (System.getProperty("rwjs.forum.url") ?: System.getenv("RWJS_FORUM_URL") ?: stored).trim().ifBlank { DEFAULT_FORUM_URL }
 
 /**
  * 出厂默认 AppKey，保证未改配置也能连上默认服务器。

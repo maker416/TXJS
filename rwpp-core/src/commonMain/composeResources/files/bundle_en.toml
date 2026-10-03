@@ -301,6 +301,9 @@ reconnecting = "Connection lost while applying mods. Rejoining the room…"
 reconnectFailed = "Connection was lost after applying mods, and rejoining the room failed."
 
 [browser]
+autoLoginFailed = "Forum sign-in failed. Check that both services are updated, application access is allowed, and HTTPS is configured. Retry or continue as a guest."
+retryLogin = "Retry sign-in"
+guest = "Continue as guest"
 user = "User"
 username = "Phone Number or Email"
 password = "Password"
@@ -392,6 +395,7 @@ basicFog = "Basic Fog"
 losFog = "LOS Fog"
 
 [settings]
+forumUrl = "Forum URL"
 setExternalFolder = "Set External Folder"
 manageAllFiles = "Manage All Files"
 language = "Interface Language"

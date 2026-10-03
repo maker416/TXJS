@@ -14,9 +14,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import io.github.rwpp.net.browser.BrowserModDownload
+import com.eclipsesource.json.Json
 
 @Stable
-class EmbeddedBrowserState(val initialUrl: String) {
+class EmbeddedBrowserState(val initialUrl: String, private val homeUrl: String = initialUrl) {
     var url by mutableStateOf(initialUrl)
         internal set
     var canGoBack by mutableStateOf(false)
@@ -31,6 +32,35 @@ class EmbeddedBrowserState(val initialUrl: String) {
         internal set
 
     internal var controller: EmbeddedBrowserController? = null
+    var clientAuthenticating by mutableStateOf(false)
+        internal set
+    internal var retryClientLogin: (() -> Unit)? = null
+    private var loadedUrl: String? = null
+    private var pendingClientLogin: Pair<String, String?>? = null
+
+    internal fun pageStarted() { loadedUrl = null }
+
+    internal fun pageLoaded(currentUrl: String) {
+        loadedUrl = currentUrl
+        val pending = pendingClientLogin
+        if (pending != null && currentUrl == pending.first && error == null) {
+            // Both native platforms recheck the current main-frame URL before executing.
+            val page = Json.value(pending.first).toString()
+            val handoff = pending.second?.let { Json.value(it).toString() } ?: "null"
+            controller?.executeJavaScript("if(location.href===$page&&typeof window.rwForumClient==='function'){window.rwForumClient($handoff);}", pending.first)
+            pendingClientLogin = null
+        } else if (pending == null && currentUrl.trimEnd('/') == homeUrl.trimEnd('/')) {
+            clientAuthenticating = false
+        }
+    }
+
+    internal fun submitClientLogin(bootstrap: String, handoff: String?) {
+        require(handoff == null || handoff.matches(Regex("[a-f0-9]{64}")))
+        clientAuthenticating = true
+        pendingClientLogin = bootstrap to handoff
+        if (loadedUrl == bootstrap) pageLoaded(bootstrap)
+        else if (url != bootstrap) controller?.loadUrl(bootstrap)
+    }
     var modDownload by mutableStateOf<BrowserModDownload?>(null)
         internal set
 
@@ -39,6 +69,7 @@ class EmbeddedBrowserState(val initialUrl: String) {
     }
 
     fun goBack(): Boolean {
+        if (clientAuthenticating) return false
         val activeController = controller ?: return false
         if (!canGoBack) return false
         activeController.goBack()
@@ -46,16 +77,19 @@ class EmbeddedBrowserState(val initialUrl: String) {
     }
 
     fun goForward() {
-        if (canGoForward) controller?.goForward()
+        if (!clientAuthenticating && canGoForward) controller?.goForward()
     }
 
     fun goHome() {
-        controller?.loadUrl(initialUrl)
+        if (!clientAuthenticating) controller?.loadUrl(homeUrl)
     }
 
     fun reload() {
-        controller?.reload()
+        if (error != null && retryClientLogin != null) retryClientLogin?.invoke()
+        else if (!clientAuthenticating) controller?.reload()
     }
+
+    internal fun openAsGuest() { error = null; submitClientLogin(initialUrl, null) }
 }
 
 internal interface EmbeddedBrowserController {
@@ -63,6 +97,7 @@ internal interface EmbeddedBrowserController {
     fun goForward()
     fun loadUrl(url: String)
     fun reload()
+    fun executeJavaScript(script: String, trustedUrl: String)
 }
 
 @Composable

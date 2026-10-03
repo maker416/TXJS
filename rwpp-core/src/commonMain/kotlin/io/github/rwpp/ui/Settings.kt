@@ -503,6 +503,13 @@ fun SettingsView(
 
                                             ResourceBrowserOrientationSetting(settings, configIO)
 
+                                            var forumUrl by remember { mutableStateOf(accountPrefs.forumUrl) }
+                                            SettingsTextField(readI18n("settings.forumUrl"), forumUrl) {
+                                                forumUrl = it
+                                                accountPrefs.forumUrl = it.trim()
+                                                configIO.saveConfig(accountPrefs)
+                                            }
+
                                             var accountApiUrl by remember {
                                                 mutableStateOf(resolveAccountApiUrl(accountPrefs.apiUrl))
                                             }

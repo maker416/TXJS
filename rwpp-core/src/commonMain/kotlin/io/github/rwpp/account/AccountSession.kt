@@ -334,6 +334,7 @@ object AccountSession : KoinComponent {
             // 登出开始就作废旧请求，迟到的登出响应也不能清掉随后登录的账号。
             sessionEpoch++
             ModPlaytimeController.onAccountInvalidated()
+            ForumSsoSession.onAccountInvalidated()
             authenticationEpoch = sessionEpoch
             restoring = false
             AccountSessionSnapshot(token, sessionEpoch)
@@ -380,6 +381,7 @@ object AccountSession : KoinComponent {
     private fun beginAuthentication(): Long {
         sessionEpoch++
         ModPlaytimeController.onAccountInvalidated()
+        ForumSsoSession.onAccountInvalidated()
         restoring = false
         authenticationEpoch = sessionEpoch
         return sessionEpoch
@@ -422,6 +424,7 @@ object AccountSession : KoinComponent {
 
     private fun applySession(newToken: String, newUser: AccountUser, persist: Boolean) {
         if (token != newToken || user?.id != newUser.id) {
+            ForumSsoSession.onAccountInvalidated()
             stopPresenceHeartbeat()
             FriendsSession.clear()
             presenceSettings = null
@@ -453,6 +456,7 @@ object AccountSession : KoinComponent {
 
     @Synchronized
     private fun clearSession(persist: Boolean) {
+        ForumSsoSession.onAccountInvalidated()
         ModPlaytimeController.onAccountInvalidated()
         sessionEpoch++
         authenticationEpoch = null
