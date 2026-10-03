@@ -9,6 +9,7 @@ package io.github.rwpp.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -16,6 +17,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.ExperimentalTestApi
@@ -26,6 +29,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipe
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
@@ -33,7 +38,6 @@ import io.github.rwpp.config.ResourceBrowserOrientation
 import io.github.rwpp.config.Settings
 import io.github.rwpp.i18n.i18nTable
 import io.github.rwpp.koinInit
-import io.github.rwpp.platform.EmbeddedBrowserState
 import io.github.rwpp.platform.ResourceBrowserLayout
 import net.peanuuutz.tomlkt.Toml
 import org.koin.compose.KoinContext
@@ -136,13 +140,13 @@ class ResourceBrowserOrientationUiTest {
     }
 
     @Test
-    fun desktopPortraitViewportAndCompactToolbarRemainUsable() = runDesktopComposeUiTest(width = 1280, height = 720) {
+    fun desktopPortraitViewportAndFloatingExitRemainUsable() = runDesktopComposeUiTest(width = 1280, height = 720) {
         var closed = false
         setContent {
             TestTheme {
                 ResourceBrowserLayout(ResourceBrowserOrientation.Portrait, Modifier.fillMaxSize()) {
                     Box(Modifier.fillMaxSize().testTag("viewport")) {
-                        ResourceBrowserToolbar(EmbeddedBrowserState("http://192.168.1.102:8080")) { closed = true }
+                        ResourceBrowserFloatingExit { closed = true }
                     }
                 }
             }
@@ -151,9 +155,55 @@ class ResourceBrowserOrientationUiTest {
         val bounds = onNodeWithTag("viewport").fetchSemanticsNode().boundsInRoot
         assertTrue(kotlin.math.abs(bounds.width / bounds.height - 9f / 16f) < 0.01f)
         assertTrue(bounds.left > 0f)
-        onNodeWithText("http://192.168.1.102:8080").assertIsDisplayed()
         onNodeWithContentDescription("关闭").assertIsDisplayed().performClick()
         runOnIdle { assertTrue(closed) }
+    }
+
+    @Test
+    fun floatingExitDragsToBothEdgesWithoutClosing() = runDesktopComposeUiTest(width = 720, height = 360) {
+        var closed = false
+        setContent { TestTheme { ResourceBrowserFloatingExit { closed = true } } }
+        val ball = onNodeWithTag("browser-floating-exit")
+        waitForIdle()
+        val initial = ball.fetchSemanticsNode().boundsInRoot
+        ball.performTouchInput { swipe(center, center + Offset(-620f, 90f), durationMillis = 500) }
+        waitForIdle()
+        val left = ball.fetchSemanticsNode().boundsInRoot
+        runOnIdle { assertTrue(!closed, "Dragging must not trigger exit") }
+        assertTrue(left.left < initial.left / 2, "Release should dock on the left")
+        assertTrue(left.top > initial.top, "Vertical dragging should move the ball")
+
+        ball.performTouchInput { swipe(center, center + Offset(620f, -90f), durationMillis = 500) }
+        waitForIdle()
+        val right = ball.fetchSemanticsNode().boundsInRoot
+        assertTrue(kotlin.math.abs(right.left - initial.left) < 2f, "Release should dock on the right")
+        ball.performClick()
+        runOnIdle { assertTrue(closed) }
+    }
+
+    @Test
+    fun floatingExitStaysInsideViewportAfterResize() = runDesktopComposeUiTest(width = 720, height = 720) {
+        var portrait by mutableStateOf(false)
+        setContent {
+            TestTheme {
+                Box(Modifier.fillMaxSize()) {
+                    Box(Modifier.size(if (portrait) 360.dp else 720.dp, if (portrait) 720.dp else 360.dp).testTag("viewport")) {
+                        ResourceBrowserFloatingExit {}
+                    }
+                }
+            }
+        }
+        waitForIdle()
+        onNodeWithTag("browser-floating-exit").performTouchInput {
+            swipe(center, center + Offset(0f, 500f), durationMillis = 500)
+        }
+        runOnIdle { portrait = true }
+        waitForIdle()
+        val viewport = onNodeWithTag("viewport").fetchSemanticsNode().boundsInRoot
+        val ball = onNodeWithTag("browser-floating-exit").fetchSemanticsNode().boundsInRoot
+        assertTrue(viewport.width < viewport.height, "Viewport should resize to portrait")
+        assertTrue(ball.left >= viewport.left && ball.right <= viewport.right)
+        assertTrue(ball.top >= viewport.top && ball.bottom <= viewport.bottom)
     }
 
     @Composable
