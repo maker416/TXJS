@@ -76,7 +76,9 @@ class AccountApiClient(
         getJson<UserResponse>("/users/me", token).user
 
     suspend fun issueForumTicket(token: String, targetAppCode: String, codeChallenge: String): ForumTicketResponse {
-        ForumSsoUrls.requireSecure(baseUrl)
+        // Preserve deployed HTTP UAS clients. This request runs in native OkHttp, not in the web page.
+        // Continue rejecting URL credentials, query strings and fragments; redirects remain disabled.
+        ForumSsoUrls.base(baseUrl)
         return postJson<ForumTicketRequest, ForumTicketResponse>("/sso/forum/tickets", ForumTicketRequest(targetAppCode, codeChallenge), token)
             .also { require(it.ticket.matches(Regex("[a-f0-9]{64}")) && it.expiresIn in 1..60) }
     }

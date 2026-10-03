@@ -15,7 +15,7 @@ UAS 地址、AppKey 仍使用账号设置；也支持 `RWJS_ACCOUNT_API_URL` / `
 go run ./cmd/forum-bridge --mode allow-sso --source-app-code TXJS_APP_CODE --app-code FORUM_APP_CODE
 ```
 
-论坛升级统一账号扩展并执行 `php flarum migrate`。目标应用 code 从论坛 `/sso/client/config` 读取，无需客户端硬编码。当前仓库原有 UAS 默认值是公网 HTTP 地址，部署前必须将账号地址改为可用的 HTTPS 地址；免密接口拒绝公网 HTTP。仅 `localhost`、`127.0.0.1` 和 `::1` 允许 HTTP 本机联调。
+论坛升级统一账号扩展并执行 `php flarum migrate`。目标应用 code 从论坛 `/sso/client/config` 读取，无需客户端硬编码。UAS 账号服务兼容现有 HTTP 与 HTTPS 地址，默认 HTTP 地址及旧客户端无需迁移。票据申请由原生 OkHttp 执行，不受网页混合内容限制。论坛页面和准备/撤销接口仍要求 HTTPS；论坛 HTTP 仅允许 `localhost`、`127.0.0.1` 和 `::1` 本机联调。
 
 ## 会话处理
 
@@ -25,9 +25,9 @@ go run ./cmd/forum-bridge --mode allow-sso --source-app-code TXJS_APP_CODE --app
 
 登录失败提供重试与游客入口。浏览器历史、刷新、资源下载沿用既有功能；论坛自动登录过程中导航受到限制，避免向其它页面注入 handoff。
 
-原生登录错误独立于网页导航错误保存，不会被 Chromium/WebView 的初始化或加载开始事件清掉。公网 HTTP 服务地址会显示明确的 HTTPS 配置提示。引导页已经使用一次后，重试或游客入口会重新加载引导页，重新获取 CSRF；浏览器控制器尚未就绪时保留待发送 handoff。
+原生登录错误独立于网页导航错误保存，不会被 Chromium/WebView 的初始化或加载开始事件清掉。公网 HTTP 论坛地址会显示明确的 HTTPS 配置提示；HTTP UAS 地址正常申请票据。引导页已经使用一次后，重试或游客入口会重新加载引导页，重新获取 CSRF；浏览器控制器尚未就绪时保留待发送 handoff。
 
-启用 HTTPS 后仍停在引导页时，检查论坛 `app/config.php` 的 `url` 已改为 HTTPS，且账号服务地址也使用 HTTPS。论坛扩展新版使用同源表单及重定向，避免旧 HTTP 配置阻断登录；论坛其它页面的资源 URL 仍需要正确配置。
+启用 HTTPS 后仍停在引导页时，检查论坛 `app/config.php` 的 `url` 已改为 HTTPS，并确认 UAS 新接口及应用授权已配置。论坛扩展新版使用同源表单及重定向，避免旧 HTTP 配置阻断登录；论坛其它页面的资源 URL 仍需要正确配置。UAS 票据请求不跟随跳转，不接受携带账号密码、查询或 fragment 的服务地址。HTTP 通信仍为明文；本次兼容保留已有部署方式。
 
 ## 验证
 

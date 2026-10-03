@@ -59,7 +59,7 @@ data class ForumProof(val verifier: String, val challenge: String) {
     }
 }
 
-class ForumSsoRequiresHttpsException : IllegalArgumentException("Forum SSO requires HTTPS for the forum and account service")
+class ForumSsoRequiresHttpsException : IllegalArgumentException("Forum SSO requires HTTPS for the forum")
 
 object ForumSsoUrls {
     fun base(value: String): String {

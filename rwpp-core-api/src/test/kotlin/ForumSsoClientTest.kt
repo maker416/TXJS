@@ -15,6 +15,8 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import java.security.MessageDigest
+import java.net.InetAddress
+import java.net.Proxy
 import java.util.Base64
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.*
@@ -45,15 +47,19 @@ class ForumSsoClientTest {
         }
         server.start()
         try {
-            val http = OkHttpClient()
+            // A non-loopback hostname exercises production HTTP compatibility, not the localhost exception.
+            val http = httpWithLocalDns()
             val forum = ForumSsoClient(server.url("/").toString(), http)
             val config = forum.config()
             val proof = ForumProof.create()
-            val ticket = AccountApiClient(server.url("/").toString(), "source-app", http).issueForumTicket("source-token", config.targetAppCode, proof.challenge)
+            val sourceUrl = server.url("/").newBuilder().host("uas.example.test").build().toString()
+            val ticket = AccountApiClient(sourceUrl, "source-app", http).issueForumTicket("source-token", config.targetAppCode, proof.challenge)
             val prepared = forum.prepare(ticket.ticket, proof.verifier)
             forum.revoke(prepared.logoutKey)
             val uasRequest = requests.single { it.path == "/api/v1/sso/forum/tickets" }
             assertEquals("Bearer source-token", uasRequest.getHeader("Authorization"))
+            assertEquals("uas.example.test:${server.port}", uasRequest.getHeader("Host"))
+            assertEquals("http", uasRequest.requestUrl!!.scheme)
             assertTrue(uasRequest.body.readUtf8().contains(proof.challenge))
             val forumRequests = requests.filter { it.path!!.startsWith("/sso/client") }
             assertTrue(forumRequests.all { it.getHeader("Authorization") == null && it.getHeader("X-App-Secret") == null })
@@ -84,9 +90,31 @@ class ForumSsoClientTest {
         ForumSsoUrls.requireSecure("https://example.com/forum")
     }
 
+    @Test fun httpUasRedirectCannotForwardBearerAndUrlCredentialsRemainInvalid() = runBlocking {
+        val uas = MockWebServer(); val other = MockWebServer()
+        uas.start(); other.start()
+        try {
+            val http = httpWithLocalDns()
+            val sourceUrl = uas.url("/").newBuilder().host("uas.example.test").build().toString()
+            uas.enqueue(MockResponse().setResponseCode(302).addHeader("Location", other.url("/stolen")))
+            assertFailsWith<AccountApiException> { AccountApiClient(sourceUrl, "source-app", http).issueForumTicket("source-token", "forum", ForumProof.create().challenge) }
+            assertEquals(0, other.requestCount)
+            assertEquals("Bearer source-token", uas.takeRequest().getHeader("Authorization"))
+            for (invalid in listOf("http://user:password@uas.example.test", "http://uas.example.test/?token=secret", "http://uas.example.test/#token")) {
+                assertFailsWith<IllegalArgumentException> { AccountApiClient(invalid, "source-app", http).issueForumTicket("source-token", "forum", ForumProof.create().challenge) }
+            }
+            assertEquals(1, uas.requestCount)
+        } finally { uas.shutdown(); other.shutdown() }
+    }
+
     @Test fun revocationQueueSurvivesAccountConfigurationPersistence() {
         val prefs = AccountPreferences(forumRevocations = listOf(ForumClientRevocation("https://forum.example.com", "a".repeat(64))))
         val encoded = Toml.encodeToString(AccountPreferences.serializer(), prefs)
         assertEquals(prefs.forumRevocations, Toml.decodeFromString(AccountPreferences.serializer(), encoded).forumRevocations)
     }
+
+    private fun httpWithLocalDns() = OkHttpClient.Builder().proxy(Proxy.NO_PROXY)
+        .dns(object : okhttp3.Dns {
+            override fun lookup(hostname: String): List<InetAddress> = listOf(InetAddress.getByName("127.0.0.1"))
+        }).build()
 }
