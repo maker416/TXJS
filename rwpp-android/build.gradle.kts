@@ -89,17 +89,13 @@ val releaseSigning = runCatching { requireReleaseSigningConfigured() }.getOrNull
 
 android {
     compileSdk = (findProperty("android.compileSdk") as String).toInt()
-    buildToolsVersion = "34.0.0"
+    compileSdkMinor = 1
     namespace = "io.github.rwpp"
 
     useLibrary("org.apache.http.legacy")
 
     packaging {
         resources.excludes.add("META-INF/*")
-    }
-
-    dexOptions {
-        javaMaxHeapSize = "2G"
     }
 
     signingConfigs {
@@ -127,9 +123,8 @@ android {
     sourceSets["main"].manifest.srcFile("src/main/AndroidManifest.xml")
     sourceSets["main"].res.srcDirs("src/main/res")
     sourceSets["main"].resources.srcDir(project.buildDir.absolutePath + "/generated")
-    sourceSets["main"].resources.include("config.toml")
     sourceSets["main"].resources.srcDir(rootDir.absolutePath + "/lib")
-    sourceSets["main"].resources.include("android-game-lib.jar")
+    sourceSets["main"].resources.filter.setIncludes(setOf("config.toml", "android-game-lib.jar"))
 
     // For KSP
 //    applicationVariants.configureEach {

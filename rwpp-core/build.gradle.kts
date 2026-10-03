@@ -51,13 +51,13 @@ kotlin {
             }
         }
 
-        commonMain.kotlin.srcDirs("build/generated/ksp/main/kotlin")
 
         val androidMain by getting {
             dependencies {
                 api("androidx.activity:activity-compose:1.10.1")
                 api("androidx.appcompat:appcompat:1.7.1")
                 api("androidx.core:core-ktx:1.16.0")
+                implementation("org.mozilla.geckoview:geckoview:157.0.20260924084938")
             }
         }
 
@@ -121,10 +121,11 @@ afterEvaluate {
 
 android {
     compileSdk = (findProperty("android.compileSdk") as String).toInt()
-    buildToolsVersion = "34.0.0"
+    compileSdkMinor = 1
     namespace = "io.github.rwpp"
 
     sourceSets["main"].res.srcDirs("src/androidMain/res")
+    sourceSets["main"].assets.srcDir("src/androidMain/assets")
     sourceSets["main"].resources.srcDirs("src/commonMain/resources")
 
     compileOptions {
@@ -144,5 +145,6 @@ dependencies {
     // ModPlaytimeControllerTest 验证真实累计请求以及持久队列不保存原 token。
     testImplementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     val koinAnnotationsVersion = findProperty("koin.annotations.version") as String
-    ksp("io.insert-koin:koin-ksp-compiler:$koinAnnotationsVersion")
+    add("kspAndroid", "io.insert-koin:koin-ksp-compiler:$koinAnnotationsVersion")
+    add("kspDesktop", "io.insert-koin:koin-ksp-compiler:$koinAnnotationsVersion")
 }

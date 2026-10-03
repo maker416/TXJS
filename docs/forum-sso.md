@@ -1,6 +1,6 @@
 # 客户端内打开论坛自动登录
 
-在资源浏览器中打开论坛时，已登录的账号通过 UAS 一次性票据自动创建对应 Flarum 会话；未登录时先清理浏览器旧论坛会话，再以游客打开。Android WebView 和桌面 JCEF 共用此流程。普通外部浏览器不会自动获得客户端身份。
+在资源浏览器中打开论坛时，已登录的账号通过 UAS 一次性票据自动创建对应 Flarum 会话；未登录时先清理浏览器旧论坛会话，再以游客打开。Android 内置 GeckoView 和桌面 JCEF 共用此流程。普通外部浏览器不会自动获得客户端身份。
 
 ## 配置
 
@@ -29,7 +29,9 @@ go run ./cmd/forum-bridge --mode allow-sso --source-app-code TXJS_APP_CODE --app
 
 新版 UAS 也可直接通过 `.env` 配置 `FORUM_SSO_ALLOWED_PAIRS=txjs:test_1` 后重启完成授权，来源 `txjs` 必须替换为实际客户端应用 Code。该变量设置后在启动时替换完整授权列表，显式留空并重启会清空授权；不设置时沿用命令管理的数据库授权。
 
-原生登录错误独立于网页导航错误保存，不会被 Chromium/WebView 的初始化或加载开始事件清掉。公网 HTTP 论坛地址会显示明确的 HTTPS 配置提示；HTTP UAS 地址正常申请票据。引导页已经使用一次后，重试或游客入口会重新加载引导页，重新获取 CSRF；浏览器控制器尚未就绪时保留待发送 handoff。
+原生登录错误独立于网页导航错误保存，不会被 Chromium/Gecko 的初始化或加载开始事件清掉。公网 HTTP 论坛地址会显示明确的 HTTPS 配置提示；HTTP UAS 地址正常申请票据。引导页已经使用一次后，重试或游客入口会重新加载引导页，重新获取 CSRF；浏览器控制器尚未就绪时保留待发送 handoff。
+
+Android 的 handoff 由随 APK 打包的 WebExtension 传递：原生端验证当前 session、主文档、完整引导页 URL 和 content-script 来源；扩展再次验证完整 URL、票据格式和单次提交。原生端等待页面加载完成及扩展就绪后发送，扩展仅调用引导页既有的 `rwForumClient`，不提供任意 JavaScript 执行接口。`.rwmod` 下载直接接收 Gecko 已认证的响应流，保留确认、进度、取消及安装流程，不将 Gecko 的 Cookie 导出给其它 HTTP 客户端。
 
 启用 HTTPS 后仍停在引导页时，检查论坛 `app/config.php` 的 `url` 已改为 HTTPS，并确认 UAS 新接口及应用授权已配置。论坛扩展新版使用同源表单及重定向，避免旧 HTTP 配置阻断登录；论坛其它页面的资源 URL 仍需要正确配置。UAS 票据请求不跟随跳转，不接受携带账号密码、查询或 fragment 的服务地址。HTTP 通信仍为明文；本次兼容保留已有部署方式。
 

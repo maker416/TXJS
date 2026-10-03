@@ -8,7 +8,10 @@
 package io.github.rwpp.android
 
 import android.app.Application
+import android.app.ActivityManager
 import android.content.Context
+import android.os.Build
+import android.os.Process
 import android.content.pm.ApplicationInfo
 import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.LoggerContext
@@ -40,6 +43,12 @@ import kotlin.system.exitProcess
 class MainApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        // Gecko 的内容/网络/媒体子进程也会创建本 Application；只在启动器主进程初始化游戏和 DI。
+        val processName = if (Build.VERSION.SDK_INT >= 28) getProcessName() else {
+            (getSystemService(ACTIVITY_SERVICE) as ActivityManager).runningAppProcesses
+                ?.firstOrNull { it.pid == Process.myPid() }?.processName
+        }
+        if (processName != null && processName != packageName) return
         koinApplication = startKoin {
             androidLogger()
             modules(ConfigModule().module, CoreImplModule().module, AndroidModule().module)

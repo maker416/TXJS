@@ -23,6 +23,9 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        maven("https://maven.mozilla.org/maven2/") {
+            content { includeGroup("org.mozilla.geckoview") }
+        }
         maven("https://jitpack.io")
         maven("https://maven.pkg.jetbrains.space/public/p/compose/dev")
     }
