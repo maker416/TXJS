@@ -108,10 +108,6 @@ rwpp-android/src/main/res/raw/*
 *-Setup.pdb
 * Setup.exe
 * Setup.pdb
-WixSharp*.dll
-CustomAction.config
-EmbeddedUI.config
-*.wxs
 
 # 云同步冲突副本（坚果云 / OneDrive 等）
 *冲突副本*

@@ -36,11 +36,11 @@
 
 <h1 align="center">运行</h1>
 
-## Windows（MSI）
+## Windows（Inno Setup）
 
-- 将铁锈战争极速版安装到游戏根目录，例如：  
-  `SteamLibrary\steamapps\common\Rusted Warfare\`
-- 运行安装后的启动器可执行文件（名称以实际发布包为准，例如 `铁锈战争极速版.exe` 或与 Release 中一致）。
+- 运行 `RWJS-Setup.exe`，默认安装到 `C:\Program Files\RWJS`，也可选择独立目录。
+- 安装包自带游戏运行资源和 Java 运行时；通过桌面/开始菜单快捷方式或 `RWJS.exe` 启动。
+- 此安装器采用全新的 RWJS 身份，不迁移旧 MSI 安装。
 
 ## Jar 版本
 
@@ -53,7 +53,7 @@
 
 - 使用 **OpenJDK 17** 或以上。
 - 桌面端可执行任务：`rwpp-desktop:packageReleaseUberJarForCurrentOS`
-- 构建 MSI 一体包：执行任务 `rwpp-desktop:packageWixDistribution`（需 .NET SDK + 本机原版游戏目录；见 `packaging/README.md`）
+- 构建 Windows 一体包：执行 `./gradlew :rwpp-desktop:packageInnoDistribution`，或 `powershell -File packaging/build.ps1 installer`（需 Inno Setup 6.5+ 和本机原版游戏目录；见 [打包说明](packaging/README.md)）。
 - Android 端若缺少部分 assets/res，可从本机已安装的铁锈战争客户端中对照补齐。
 
 ## 模组堆内存分析工具

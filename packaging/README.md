@@ -1,31 +1,69 @@
-# PC 一体包：原版游戏本体
+# RWJS Windows 安装包
 
-安装包会把原版铁锈战争运行时与 RWJS 启动器打在一起，安装到独立目录（默认 `%ProgramFiles%\Minxyzgo\RWJS`）。
+PC 安装器完全使用 Inno Setup，产物为 `RWJS-Setup.exe`。默认安装到 `%ProgramFiles%\RWJS`，支持中文向导、桌面/开始菜单快捷方式、覆盖更新与 Windows 应用卸载。
 
-## 配置游戏根目录
+## 构建
 
-**不要把游戏本体提交进 Git。** 构建时从本机原版安装目录读取。
+在 Windows 上准备 JDK 21、Inno Setup **6.5+**（推荐 6.x）、原版游戏目录（包含 `game-lib.jar` 和 `assets/`）。安装包始终自带 Java 运行时，用户无需安装 Java。编译器从 `INNO_SETUP_COMPILER`、PATH、常见全局/用户安装目录依次查找；自定义位置请指定 `ISCC.exe` 的完整路径。
 
-优先级：
-
-1. 环境变量 `RW_GAME_ROOT`
-2. `packaging/game-root.local.txt`（单行路径，可被 gitignore）
-3. 默认：`D:\APP\Steam\steamapps\common\Rusted Warfare`
-
-示例：
-
-```text
-set RW_GAME_ROOT=D:\APP\Steam\steamapps\common\Rusted Warfare
-.\build\build.ps1 msi
+```powershell
+$env:RW_GAME_ROOT = 'D:\APP\Steam\steamapps\common\Rusted Warfare'
+# 可选：编译器安装在自定义目录时指定
+$env:INNO_SETUP_COMPILER = 'C:\Tools\Inno Setup 6\ISCC.exe'
+.\gradlew.bat :rwpp-desktop:packageInnoDistribution
 ```
 
-## 会打进安装包的内容
+游戏目录优先级：`RW_GAME_ROOT` → `packaging/game-root.local.txt` → 上例默认 Steam 目录。不要将游戏资源、本机路径或生成安装包提交进 Git。
 
-- `assets/`、`font/`、`libs/`、`res/`、`mods/`
-- `game-lib.jar`、原版 exe、原生 DLL、Steam 相关文件等
+仓库跟踪的发布脚本在构建后收集产物并生成 Gitee 分卷：
 
-## 不会打进安装包的内容
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File packaging/build.ps1 installer
+powershell -NoProfile -ExecutionPolicy Bypass -File packaging/build.ps1 installer -Channel official
+```
 
-- `jvm/`、`jvm64/`（启动器自带 `runtime/`）
-- `cache/`、`saves/`、`replays/`、`generated_lib/`
-- RWPP/RWJS 用户配置、日志、`launcher.bat` 等
+- 原始安装包：`build/installer/RWJS-Setup.exe`
+- 发布目录：`build/artifacts/installer-<渠道>/`（默认 `installer-official/`）
+- 发布文件：`RWJS-Setup.exe`、带版本号的 exe、`RWJS-Setup.zip.001/.002/…`（每卷最多 95 MiB）、`RWJS-Setup.zip.sha256`
+- 单卷时发布 exe；多卷时发布全部分卷与校验文件。客户端只在至少两卷连续时采用分卷更新。
+
+已有桌面分发可直接打包：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File packaging/inno/package.ps1 -Version 1.19.363
+```
+
+## 包内容
+
+`RWJS.exe`、`app/`（过滤非 Windows Skiko）、`runtime/`、图标、AGPL 许可证，以及原版目录的 `game-lib.jar`、根目录原生库、`steam_appid.txt`、`assets/`、`font/`、`libs/`、`res/`。
+
+只包含 RWJS 入口，不附带原版 exe、启动脚本、原版 JVM、用户模组/地图、用户配置、缓存、存档、回放、日志、备份或注入生成库。安装时创建空 `mods/units` 和 `mods/maps`。资源暂存到 `build/tmp/game-payload/`，跳过符号链接/junction。
+
+## 注册表、更新和卸载
+
+全新且固定的 AppId：`{C9F7D3ED-E974-4C19-9291-9D5460608316}`。Inno Setup 自动登记 Windows 卸载项；发布后不能更换此 AppId。
+
+64 位 `HKLM\SOFTWARE\RWJS` 登记 `InstallDir` 与 `InstalledVersion`。安装需要管理员权限；引擎仍向根目录写配置和资源，安装器为普通用户设置该目录的修改权限。不会读取、修改或迁移旧 RWPP 注册表、MSI 或旧安装目录。
+
+```powershell
+# 自动更新显示进度，锁定新 RWJS 注册表指向的目录
+.\RWJS-Setup.exe /RWJS_UPDATE=1 /SILENT /SP- /NORESTART /LOG
+# 正常静默安装可指定独立目录
+.\RWJS-Setup.exe /VERYSILENT /SP- /NORESTART /DIR="D:\Games\RWJS"
+```
+
+缺少有效 RWJS 安装记录时，更新模式中止并提示正常安装。客户端只调用新参数。覆盖更新清理安装器管理的 `app/*.jar`，避免版本改名后依赖冲突；保留用户配置和模组。更换已安装的 RWJS 目录前须先卸载。
+
+卸载仅移除安装器登记的文件、快捷方式、注册表值及空目录，不通配删除游戏根目录；用户自行添加的模组、存档、回放和配置保留。包内附带的资源属于安装文件，会随卸载删除。
+
+## 验证
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File packaging/inno/tests/payload-test.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File packaging/inno/tests/installer-test.ps1
+.\gradlew.bat :rwpp-core-api:test :rwpp-desktop:packageInnoDistribution
+```
+
+安装器测试使用同一生产脚本，以独立 AppId、HKCU、临时目录和测试快捷方式隔离真实安装，覆盖注册表、更新、旧 jar 清理和卸载数据保留。发布前还需在 Windows 实际验证中文向导、普通用户启动游戏和占用文件提示。
+
+简体中文消息文件来自 [Inno Setup 官方源码](https://github.com/jrsoftware/issrc/blob/2f452efbbba794d8329592c386576361ad611e6c/Files/Languages/ChineseSimplified.isl)，保留其维护者信息，随仓库固定以避免编译器安装缺少翻译文件。参数与身份规则见[官方文档](https://jrsoftware.org/ishelp/topic_setupcmdline.htm)和 [AppId 文档](https://jrsoftware.org/ishelp/topic_setup_appid.htm)。

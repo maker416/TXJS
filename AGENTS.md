@@ -148,8 +148,8 @@ Android 端有大量资源需要从原版铁锈战争客户端提取（assets、
 # 桌面端 fat jar（当前 OS）
 ./gradlew :rwpp-desktop:packageReleaseUberJarForCurrentOS
 
-# Windows MSI 安装包（需要 .NET SDK）
-./gradlew :rwpp-desktop:packageWixDistribution
+# Windows Inno Setup 安装包（需要 Inno Setup 6.5+）
+./gradlew :rwpp-desktop:packageInnoDistribution
 
 # 运行测试（rwpp-core-api 与 rwpp-core 中的测试）
 ./gradlew :rwpp-core-api:test
@@ -171,7 +171,7 @@ Gradle JVM 参数在根目录 `gradle.properties` 中定义（`-Xmx2048M`）。
    - Android 端需要 `lib/android-game-lib.jar`
 2. Android 若缺少 assets/res，需从本地已安装的铁锈战争客户端对照补齐。
 3. Android Release 签名：`build/key/release.keystore` + `build/key/keystore.properties`（`gradlew clean` 不会删除 `build/key/`）。
-4. 桌面端运行/构建 MSI 需要 `.NET SDK`（用于 `wix/Program.cs` 的 WiX 打包）。
+4. Windows 安装包需要 Inno Setup 6.5+（`ISCC.exe`），可通过 `INNO_SETUP_COMPILER` 指定编译器路径；构建入口为 `packaging/build.ps1 installer`。
 5. 若首次运行或注入配置变更，`rwpp-desktop` 会在启动时进入「应用注入配置」模式，完成后自动重启。
 
 ### Git 工作树（worktree）规范（重要）
@@ -210,14 +210,14 @@ git ls-files --others --ignored --exclude-standard -z \
 
 ### 发布产物
 
-- 桌面端：`build/desktop-jar/` 下生成 `.jar`，配合 `launcher.bat` 等脚本使用；MSI 通过 `wix/` 下的 .NET 项目生成
+- 桌面端：fat jar 配合 `launcher.bat` 使用；Windows 安装器由 `packaging/inno/` 生成到 `build/installer/RWJS-Setup.exe`，`packaging/build.ps1 installer` 收集到 `build/artifacts/installer-<渠道>/` 并生成发布分卷。
 - Android：`rwpp-android/build/outputs/apk/` 下生成 APK
 
 ### 自动更新（Gitee release）
 
 - 版本检查：`Net.getLatestVersionProfile()` 拉取 `gitee.com/maker416/TXJS` 的最新 release 资产列表。
-- **Gitee 单文件限制 100MB**，桌面安装包（`RWJS-Setup.exe` 超 100MB）以 **zip 分卷**发布：`build.ps1` 的 `msi` 目标收集产物时自动生成 `RWJS-Setup.zip.001/.002/…`（7-Zip/WinRAR 分卷命名约定，用户可直接解压）与 `RWJS-Setup.zip.sha256`（合并 zip 的 SHA-256）。
-- 客户端：`LatestVersionProfile.resolveDesktopUpdatePlan()`（`rwpp-core-api` 的 `net/UpdateDownloadPlan.kt`）识别分卷组（≥2 卷且序号连续，否则回退旧版单 `.exe` 资产）；桌面端 `AutoUpdaterImpl` 顺序下载分卷、sha256 强校验（无校验资产时降级为 zip CRC）、`SequenceInputStream` + `ZipInputStream` 流式合并解出 exe（不落合并后的大 zip），随后以 `RWPP_UPDATE_MODE=1` 启动安装并退出进程。Android 仍为单 `.apk` 资产走系统安装器。
+- **Gitee 单文件限制 100MB**，桌面安装包（`RWJS-Setup.exe` 超 100MB）以 **zip 分卷**发布：`packaging/build.ps1` 的 `installer` 目标收集产物时自动生成 `RWJS-Setup.zip.001/.002/…`（7-Zip/WinRAR 分卷命名约定，用户可直接解压）与 `RWJS-Setup.zip.sha256`（合并 zip 的 SHA-256）。
+- 客户端：`LatestVersionProfile.resolveDesktopUpdatePlan()`（`rwpp-core-api` 的 `net/UpdateDownloadPlan.kt`）识别分卷组（≥2 卷且序号连续，否则回退旧版单 `.exe` 资产）；桌面端 `AutoUpdaterImpl` 顺序下载分卷、sha256 强校验（无校验资产时降级为 zip CRC）、`SequenceInputStream` + `ZipInputStream` 流式合并解出 exe（不落合并后的大 zip），随后以 `/RWJS_UPDATE=1 /SILENT /SP- /NORESTART /LOG` 启动安装并退出进程。Android 仍为单 `.apk` 资产走系统安装器。
 
 ## 平台抽象模式
 
@@ -437,18 +437,12 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 2. **游戏库依赖**：`lib/game-lib.jar` 与 `lib/android-game-lib.jar` 是原版铁锈战争的反编译/提取库，**不**包含在本仓库的纯源码发布中；构建前需自行准备。
 3. **Android 权限**：需要 `INTERNET`、`READ_EXTERNAL_STORAGE`、`WRITE_EXTERNAL_STORAGE`、`MANAGE_EXTERNAL_STORAGE` 等广泛存储与网络权限。
 4. **桌面端运行**：`.jar` 或 `.exe` 必须放置在游戏根目录（与原版游戏同级），以便加载 `mods/`、`maps/` 等资源。
-5. **MSI 打包**：`wix/` 是一个独立的 .NET 控制台项目，通过 Gradle 自定义 task `packageWixDistribution` 调用 `dotnet run` 生成 MSI；依赖 .NET SDK。
-   - 构建产出两个文件：`RWPP.msi`（纯 MSI）与 `RWPP-Setup.exe`（自托管安装器，内部嵌入 MSI）。
-   - **首次安装**：双击 `RWPP-Setup.exe`，走完整向导（Welcome → License → Features → InstallDir → Progress → Exit）。
-   - **更新模式**：`RWPP-Setup.exe` 支持将命令行参数透传给 `msiexec`，实现自动更新：
-     - `RWPP_UPDATE_MODE=1` — 跳过 Welcome/License/Features/InstallDir，直接显示 Progress 进度条；安装路径使用 MSI 注册表中记录的 `INSTALLDIR`，不再重新检测 Rusted Warfare 目录。
-     - `/quiet` — 完全静默，不加载任何 UI。
-     - `/norestart` — 安装完成后不重启系统。
-     - 示例：`RWPP-Setup.exe /quiet /norestart RWPP_UPDATE_MODE=1`
-   - **升级实现细节**：
-     - `UpgradeCode` 固定为 `abc38343-cdb8-4e3f-aa7f-0ead99385de1`，确保跨版本可被 Windows Installer 识别为同一产品系列。
-     - `ProductCode` 基于 `UpgradeCode + Version` 动态生成（确定性 GUID），每次版本号变化都会改变，满足 Major Upgrade 要求。
-     - 更新模式若无法通过 `WIX_UPGRADE_DETECTED` 获取旧路径，会 fallback 扫描注册表 `Uninstall` 键，覆盖 `HKLM/HKCU × Registry64/Registry32`（含 WOW 重定向），以支持 perUser 安装和 32-bit 卸载项。
+5. **Windows 安装包**：完全采用 `packaging/inno/RWJS.iss` 与 PowerShell，Gradle 任务 `packageInnoDistribution` 调用 `packaging/inno/package.ps1`；需要 Inno Setup 6.5+，不依赖 .NET/WiX。
+   - 全新 RWJS 身份，固定 AppId 为 `{C9F7D3ED-E974-4C19-9291-9D5460608316}`；不迁移旧 MSI 或旧 RWPP 注册表。
+   - 单 exe `RWJS-Setup.exe`，默认 `%ProgramFiles%\RWJS`，自带 Java 与游戏运行资源，仅保留 RWJS 入口。
+   - 安装在 64 位 `HKLM\SOFTWARE\RWJS` 写入 `InstallDir` / `InstalledVersion`；Inno Setup 自动登记卸载项。
+   - 更新参数 `/RWJS_UPDATE=1 /SILENT /SP- /NORESTART /LOG`：只允许覆盖有效的新 RWJS 安装路径，缺少记录则中止并要求正常安装。
+   - 仅清理安装器管理的旧 app jar；卸载保留用户添加的配置、存档、回放与模组。详见 `packaging/README.md`。
 6. **网络配置**：桌面与 Android 的 `jvmArgs` / manifest 中都设置了 `preferIPv4Stack=true` 与 `usesCleartextTraffic="true"`。
 
 ## 常见问题

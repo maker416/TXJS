@@ -76,7 +76,10 @@ class AutoUpdaterImpl : AutoUpdater, KoinComponent {
 
             // 与 cancelPendingUpdate 线性化：取消先取得锁时不再启动安装/退出游戏。
             installerStarted = session.startInstallation {
-                ProcessBuilder(installer.absolutePath, "RWPP_UPDATE_MODE=1").start()
+                ProcessBuilder(
+                    installer.absolutePath,
+                    "/RWJS_UPDATE=1", "/SILENT", "/SP-", "/NORESTART", "/LOG"
+                ).start()
             }
         } catch (e: CancellationException) {
             session.cancel()

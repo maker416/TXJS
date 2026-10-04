@@ -52,8 +52,6 @@ sourceSets.main {
     resources.include("config.toml")
 }
 
-val guid = "abc38343-cdb8-4e3f-aa7f-0ead99385de1"
-
 kotlin {
     compilerOptions {
         freeCompilerArgs.add("-Xjvm-default=all")
@@ -96,7 +94,6 @@ compose.desktop {
 
             windows {
                 iconFile.set(project.file("logo.ico"))
-                upgradeUuid = guid
             }
 
             linux {
@@ -108,70 +105,21 @@ compose.desktop {
     }
 }
 
-task("packageWixDistribution") {
+tasks.register<Exec>("packageInnoDistribution") {
+    group = "distribution"
+    description = "Build the standalone RWJS Windows installer with Inno Setup"
     dependsOn("createReleaseDistributable")
-
-    doLast {
-        val extPath = listOf(
-            "C:\\Program Files\\dotnet",
-            "${System.getProperty("user.home")}\\.dotnet\\tools"
-        ).joinToString(";")
-
-        // 一体包游戏根：RW_GAME_ROOT > packaging/game-root.local.txt > 默认 Steam 路径
-        val gameRoot = resolveRwGameRoot(rootProject.rootDir)
-        val gameLib = File(gameRoot, "game-lib.jar")
-        if (!gameLib.isFile) {
-            throw GradleException(
-                "一体包需要原版游戏目录（缺少 game-lib.jar）: $gameRoot\n" +
-                    "请设置环境变量 RW_GAME_ROOT，或在 packaging/game-root.local.txt 写入路径。"
-            )
-        }
-        logger.lifecycle("RW game root for MSI: $gameRoot")
-
-        val pb = ProcessBuilder(
-            "cmd", "/c",
-            "dotnet run --project=\"${rootProject.rootDir.absolutePath}\\wix\" $guid ${rootProject.version}"
-        )
-        pb.directory(rootProject.rootDir)
-        pb.environment()["PATH"] = "${pb.environment()["PATH"]};$extPath"
-        pb.environment()["WIXTOOLS_ACCEPT_OSMF_EULA"] = "true"
-        pb.environment()["RW_GAME_ROOT"] = gameRoot
-        val process = pb.start()
-
-        val stdout = Thread {
-            process.inputReader().forEachLine { logger.lifecycle(it) }
-        }
-        val stderr = Thread {
-            process.errorReader().forEachLine { logger.error(it) }
-        }
-        stdout.start()
-        stderr.start()
-
-        val exitCode = process.waitFor()
-        stdout.join()
-        stderr.join()
-
-        if (exitCode != 0) {
-            throw GradleException("dotnet run exited with code $exitCode")
+    workingDir(rootProject.rootDir)
+    commandLine(
+        "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+        rootProject.file("packaging/inno/package.ps1").absolutePath,
+        "-Version", rootProject.version.toString()
+    )
+    doFirst {
+        if (!System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+            throw GradleException("RWJS Inno Setup installer must be built on Windows.")
         }
     }
-}
-
-fun resolveRwGameRoot(rootDir: File): String {
-    val fromEnv = System.getenv("RW_GAME_ROOT")?.trim()?.trim('"')
-    if (!fromEnv.isNullOrEmpty()) {
-        return File(fromEnv).canonicalPath
-    }
-    val localFile = File(rootDir, "packaging/game-root.local.txt")
-    if (localFile.isFile) {
-        val line = localFile.readLines()
-            .map { it.trim() }
-            .firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
-        if (!line.isNullOrEmpty()) {
-            return File(line.trim('"')).canonicalPath
-        }
-    }
-    return File("""D:\APP\Steam\steamapps\common\Rusted Warfare""").canonicalPath
 }
 
 
