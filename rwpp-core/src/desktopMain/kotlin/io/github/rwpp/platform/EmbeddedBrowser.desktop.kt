@@ -296,8 +296,8 @@ private class DesktopBrowserController(
     override fun goBack() { browser?.goBack() }
     override fun goForward() { browser?.goForward() }
     override fun loadUrl(url: String) { browser?.loadURL(url) }
-    override fun executeJavaScript(script: String, trustedUrl: String) {
-        browser?.takeIf { it.url == trustedUrl }?.executeJavaScript(script, trustedUrl, 0)
+    override fun submitForumHandoff(trustedUrl: String, handoff: String?) {
+        browser?.takeIf { it.url == trustedUrl }?.executeJavaScript(forumHandoffScript(trustedUrl, handoff), trustedUrl, 0)
     }
 
     override fun reload() {

@@ -24,6 +24,27 @@ import java.io.IOException
 import kotlinx.coroutines.CancellationException
 
 class BrowserModUploadTest {
+    @Test fun contentProviderStreamsPreserveNamesAndCancelWithoutPartialFiles() {
+        val directory = Files.createTempDirectory("browser-saf-upload-").toFile()
+        val cache = BrowserModUploadCache(directory)
+        try {
+            val bytes = ByteArray(150_000) { it.toByte() }
+            val file = cache.prepareStream("模组.zip", { bytes.inputStream() })
+            assertEquals("模组.zip", file.name)
+            assertContentEquals(bytes, file.readBytes())
+            var checks = 0
+            assertFailsWith<CancellationException> {
+                cache.prepareStream("cancelled.zip", { bytes.inputStream() }) {
+                    if (++checks == 3) throw CancellationException()
+                }
+            }
+            assertTrue(directory.walkTopDown().none { it.name == "cancelled.zip" })
+            assertFailsWith<IllegalArgumentException> { cache.prepareStream("../escape", { bytes.inputStream() }) }
+            cache.close()
+            assertFalse(file.exists())
+            assertFailsWith<IOException> { cache.prepareStream("closed.zip", { bytes.inputStream() }) }
+        } finally { cache.close(); directory.deleteRecursively() }
+    }
     @Test fun managedUploadsUseTitleWithoutChangingOriginalArchiveOrSameTitleSnapshots() {
         val directory = Files.createTempDirectory("browser-upload-names-").toFile()
         val cache = BrowserModUploadCache(File(directory, "cache"))

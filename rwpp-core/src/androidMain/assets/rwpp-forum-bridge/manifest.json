@@ -1,0 +1,13 @@
+{
+  "manifest_version": 2,
+  "name": "RWPP Forum Login Bridge",
+  "version": "1.0",
+  "browser_specific_settings": { "gecko": { "id": "forum-bridge@rwpp" } },
+  "permissions": ["nativeMessaging", "nativeMessagingFromContent", "geckoViewAddons"],
+  "content_scripts": [{
+    "matches": ["https://*/sso/client", "http://*/sso/client", "https://*/*/sso/client", "http://*/*/sso/client"],
+    "js": ["bridge.js"],
+    "all_frames": false,
+    "run_at": "document_end"
+  }]
+}

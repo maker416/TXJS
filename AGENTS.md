@@ -12,17 +12,18 @@
 
 | 技术 | 版本 | 说明 |
 |------|------|------|
-| Kotlin | 2.1.20 | 主语言，使用 KMP（Kotlin Multiplatform） |
+| Kotlin | 2.4.20 | 主语言，使用 KMP（Kotlin Multiplatform） |
 | Compose Multiplatform | 1.10.1 | 跨平台 UI 框架 |
-| Android Gradle Plugin | 8.7.3 | Android 构建 |
-| Koin | 4.0.1 | 依赖注入，编译期注解 + KSP 生成 DI 代码 |
-| Koin Annotations | 1.4.0 | Koin 的 KSP 注解处理器 |
-| KSP | 2.1.20-1.0.32 | Kotlin Symbol Processing |
+| Android Gradle Plugin | 9.1.1 | Android 构建，Gradle 9.3.1，compileSdk 37.1 |
+| Koin | 4.1.0 | 依赖注入，编译期注解 + KSP 生成 DI 代码 |
+| Koin Annotations | 2.3.1 | Koin 的 KSP2 注解处理器 |
+| KSP | 2.3.12 | Kotlin Symbol Processing，KMP 按 Android/Desktop 目标配置 |
 | Coil3 | 3.2.0 | 图片加载（`coil-compose` + `coil-network-okhttp`） |
 | LuaJ | 4.0.2 | Lua 脚本支持（`luajava` + `lua54`） |
 | LWJGL | — | 桌面端 OpenGL 渲染（`lib/lwjgl.jar` 等） |
 | Javassist | 3.30.2-GA | 运行时字节码操作与注入 |
 | OkHttp | 4.12.0 | 网络请求 |
+| GeckoView | 157.0.20260924084938 | Android 内置浏览器内核，不依赖系统 WebView；详见 `docs/android-browser.md` |
 | kotlinx.serialization | — | 序列化（通过 Gradle plugin 引入） |
 | markdown renderer | 0.29.0 | `multiplatform-markdown-renderer` 用于渲染更新日志 |
 | reorderable | 2.4.3 | Compose 拖拽排序 |
