@@ -243,6 +243,10 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 ## 导航与 UI 架构
 
+### 局内辅助渲染
+
+攻击范围圈、目标线、改进血条、快速选择、局内时间/延迟、范围快捷按钮和保护/巡逻放大按键走两端 `UnitAssistInject` / `InGameHudInject` 的**原生引擎渲染与输入回调**，默认关闭，可在设置「游戏玩法 → 局内辅助」独立开启。共享规则在 `rwpp-core-api/game/ui/InGameAssistRules.kt`，共享绘制在 `rwpp-core/game/InGameAssistRenderer.kt`。禁止恢复旧 `OffscreenSurfaceView`、离屏 Compose 整屏纹理上传、忙等线程与逐单位组件列表。保连接重载期间跳过绘制/选择；迷雾按原版可见性过滤，选择在引擎 HUD 回调内完成并消费按钮抬起事件。`GameUnit.attackRangeHighlighted` 仅为本地显示字段。详情及验收清单见 `docs/in-game-assists.md`。
+
 项目**未使用**任何第三方导航库。页面级导航的单一事实来源是 `rwpp-core` 的 `ui/LauncherPage.kt`：密封类 `LauncherPage`（`MainMenu`/`SinglePlayer`/`Mission`/`Survival`/`Multiplayer`/`Room`/`Replay`/`Settings`/`Mods`/`Extensions`/`ResourceBrowser`/`OpenSourceInfo`）+ 全局 `launcherPage` 状态 + **页面返回栈**。
 
 - `navigateTo(page)`：**压栈前进**（当前页入栈，与当前页相同则忽略）；`navigateBack()`：**返回上一级**（弹出栈顶，栈空回主菜单）；`closePage(page)`：仅当当前页匹配时才 `navigateBack()`（过期调用自动忽略）。子页面退出应回到父页面——如「单人游戏 → 遭遇战/沙盒 → 房间，退出房间回单人游戏」。

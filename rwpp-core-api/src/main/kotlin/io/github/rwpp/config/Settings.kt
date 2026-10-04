@@ -28,16 +28,16 @@ data class Settings(
     var backgroundImageTransparency: Float = 1f,
     /** 主题美术包背景音乐音量（0-1），0 为静音。 */
     var launcherMusicVolume: Float = 0.5f,
-    var showBuildingAttackRange: Boolean = false,
-    var showExtraButton: Boolean = false,
+    @Volatile var showBuildingAttackRange: Boolean = false,
+    @Volatile var showExtraButton: Boolean = false,
     /** @see unitAttackRangeTypes */
-    var showAttackRangeUnit: String = "Never",
+    @Volatile var showAttackRangeUnit: String = "Never",
     var enableAnimations: Boolean = false,
     var maxDisplayUnitGroupCount: Int = 7,
     var displayUnitGroupXOffset: Int = 0,
     var changeGameTheme: Boolean = false,
-    var showUnitTargetLine: Boolean = false,
-    var improvedHealthBar: Boolean = false,
+    @Volatile var showUnitTargetLine: Boolean = false,
+    @Volatile var improvedHealthBar: Boolean = false,
     var mouseMoveView: Boolean = false,
     //var pathfindingOptimization: Boolean = false,
     var boldText: Boolean = false,
@@ -48,12 +48,12 @@ data class Settings(
     /** null 表示尚未选择，首次上传模组时询问。 */
     var browserUploadSource: BrowserUploadSource? = null,
     var enableOffscreenPanel: Boolean = false,
-    var displayTimeInGame: Boolean = false,
+    @Volatile var displayTimeInGame: Boolean = false,
     var effectLimitForAllEffects: String = "Keep", // Zero, Keep, Unlimited
 
     // --- Android ---
     var enableVolumeKeyMapping: Boolean = false,
-    var enableLargerKeys: Boolean = false,
+    @Volatile var enableLargerKeys: Boolean = false,
     // ---------------
 
     // --- Desktop ---
@@ -64,8 +64,8 @@ data class Settings(
     var isFullscreen: Boolean = true,
     // ---------------
 
-    // Offscreen Panel
-    var enableQuickSelectMenu: Boolean = false,
+    // 原生引擎 HUD，不再依赖 enableOffscreenPanel。
+    @Volatile var enableQuickSelectMenu: Boolean = false,
 
     /**
      * 配置版本号，用于迁移旧配置。null 表示旧版本配置（迁移前）。
@@ -92,17 +92,9 @@ data class Settings(
         // 每次加载都让 Settings.forceEnglish 与 language（含 auto）解析结果对齐
         LanguageHelper.applyToSettings(this)
 
-        // 局内 UI 干涉（攻击范围/目标线/改进血条/离屏面板/快捷选择等）已下线：
-        // 每次加载强制关闭，任何旧配置值都无法再开启
+        // 仅保留已下架的增强出兵和旧离屏渲染开关；原生局内辅助功能尊重用户设置。
         enhancedReinforceTroops = false
-        showBuildingAttackRange = false
-        showAttackRangeUnit = "Never"
-        showUnitTargetLine = false
-        improvedHealthBar = false
         enableOffscreenPanel = false
-        enableQuickSelectMenu = false
-        displayTimeInGame = false
-        showExtraButton = false
-        enableLargerKeys = false
+        if (showAttackRangeUnit !in unitAttackRangeTypes) showAttackRangeUnit = "Never"
     }
 }

@@ -333,4 +333,18 @@ class BundleParseTest {
             }
         }
     }
+    @Test
+    fun inGameAssistKeysExistInAllBundles() {
+        bundleNames.forEach { name ->
+            val table = Toml.parseToTomlTable(File(bundleDir, name).readText())
+            val settings = table["settings"] as TomlTable
+            assertTrue(settings.containsKey("inGameAssist"))
+            val hud = table["inGameAssist"] as TomlTable
+            listOf("all", "buildings", "sea", "air", "land", "buildingRange", "unitRange",
+                "selectedRange", "rangeNever", "rangeLand", "rangeAir", "rangeAll").forEach { key ->
+                assertTrue(hud.containsKey(key), "inGameAssist.$key missing in $name")
+            }
+        }
+    }
+
 }

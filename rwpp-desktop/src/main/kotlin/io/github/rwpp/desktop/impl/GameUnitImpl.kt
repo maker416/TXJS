@@ -11,10 +11,14 @@ import com.corrodinggames.rts.game.units.am
 import io.github.rwpp.game.Player
 import io.github.rwpp.game.units.GameUnit
 import io.github.rwpp.game.units.UnitType
+import io.github.rwpp.inject.NewField
 import io.github.rwpp.inject.SetInterfaceOn
 
 @SetInterfaceOn([am::class])
 interface GameUnitImpl : GameUnit {
+    @NewField
+    override var attackRangeHighlighted: Boolean
+
     val self: am
 
     override val player: Player

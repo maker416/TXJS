@@ -37,6 +37,11 @@ class MainProcessor(
             Builder.loadLib()
             val mergedPool = ClassPool(true).apply {
                 appendSystemPath()
+                // Android 游戏 jar 不含 framework 类型；局内血条重定向的 RectF/Paint
+                // 必须从本地 SDK 桩库解析。只加入编译期 classpath，不作为注入/发布对象。
+                if (GameLibraries.`android-game-lib` in GameLibraries.includes) {
+                    appendClassPath(java.io.File(Builder.libDir, "android.jar").absolutePath)
+                }
             }
 
             GameLibraries.includes.forEach { lib ->

@@ -322,6 +322,7 @@ fun SettingsView(
                                                 )
                                             }
                                         }
+                                        InGameAssistSettings(settings)
                                     }
 
                                     "audio" -> SettingsGroup("audio") {
@@ -697,4 +698,39 @@ private fun SettingsSliderRW(
         { configIO.setGameConfig(name, it) },
         0f..1f,
     )
+}
+
+
+@Composable
+private fun LazyItemScope.InGameAssistSettings(settings: Settings) {
+    SettingsGroup("", readI18n("settings.inGameAssist")) {
+        SettingsSwitchComp("", readI18n("settings.showBuildingAttackRange"), settings.showBuildingAttackRange) {
+            settings.showBuildingAttackRange = it
+        }
+        val rangeKeys = Settings.unitAttackRangeTypes
+        val labels = rangeKeys.map { readI18n("settings.attackRange$it") }
+        var index by remember { mutableIntStateOf(rangeKeys.indexOf(settings.showAttackRangeUnit).coerceAtLeast(0)) }
+        SettingsDropDown("showAttackRange", labels, index) { value, _ ->
+            index = value
+            settings.showAttackRangeUnit = rangeKeys[value]
+        }
+        SettingsSwitchComp("", readI18n("settings.showUnitTargetLine"), settings.showUnitTargetLine) {
+            settings.showUnitTargetLine = it
+        }
+        SettingsSwitchComp("", readI18n("settings.improvedHealthBar"), settings.improvedHealthBar) {
+            settings.improvedHealthBar = it
+        }
+        SettingsSwitchComp("", readI18n("settings.enableQuickSelectMenu"), settings.enableQuickSelectMenu) {
+            settings.enableQuickSelectMenu = it
+        }
+        SettingsSwitchComp("", readI18n("settings.displayTimeInGame"), settings.displayTimeInGame) {
+            settings.displayTimeInGame = it
+        }
+        SettingsSwitchComp("", readI18n("settings.showExtraButton"), settings.showExtraButton) {
+            settings.showExtraButton = it
+        }
+        SettingsSwitchComp("", readI18n("settings.enableLargerKeys"), settings.enableLargerKeys) {
+            settings.enableLargerKeys = it
+        }
+    }
 }

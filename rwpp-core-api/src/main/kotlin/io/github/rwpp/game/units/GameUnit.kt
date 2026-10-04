@@ -17,4 +17,9 @@ interface GameUnit : GameObject {
     val maxHealth: Float // showHpChanges
     val maxAttackRange: Float
     val target: GameUnit?
+
+    /** 仅本地显示的攻击范围标记，不参与引擎命令或网络同步。 */
+    var attackRangeHighlighted: Boolean
+        get() = false
+        set(value) {}
 }

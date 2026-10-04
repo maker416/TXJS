@@ -10,10 +10,14 @@ package io.github.rwpp.android.impl
 import io.github.rwpp.game.Player
 import io.github.rwpp.game.units.GameUnit
 import io.github.rwpp.game.units.UnitType
+import io.github.rwpp.inject.NewField
 import io.github.rwpp.inject.SetInterfaceOn
 
 @SetInterfaceOn([com.corrodinggames.rts.game.units.ce::class])
 interface GameUnitImpl : GameUnit {
+    @NewField
+    override var attackRangeHighlighted: Boolean
+
     val self: com.corrodinggames.rts.game.units.ce
 
     override val player: Player
