@@ -105,6 +105,11 @@ compose.desktop {
     }
 }
 
+// Compose 为 Windows jpackage 默认准备 WiX；app-image 不需要它，安装器完全交给 Inno Setup。
+rootProject.tasks.matching { it.name == "unzipWix" }.configureEach {
+    enabled = false
+}
+
 tasks.register<Exec>("packageInnoDistribution") {
     group = "distribution"
     description = "Build the standalone RWJS Windows installer with Inno Setup"
