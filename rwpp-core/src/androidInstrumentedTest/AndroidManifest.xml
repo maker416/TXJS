@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright 2023-2025 RWPP contributors. Licensed under GNU AGPLv3:
+     https://github.com/Minxyzgo/RWPP/blob/main/LICENSE -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application android:usesCleartextTraffic="true">
+        <activity android:name="io.github.rwpp.platform.GeckoBrowserTestActivity"
+            android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+    </application>
+</manifest>

@@ -51,13 +51,13 @@ kotlin {
             }
         }
 
-        commonMain.kotlin.srcDirs("build/generated/ksp/main/kotlin")
 
         val androidMain by getting {
             dependencies {
                 api("androidx.activity:activity-compose:1.10.1")
                 api("androidx.appcompat:appcompat:1.7.1")
                 api("androidx.core:core-ktx:1.16.0")
+                implementation("org.mozilla.geckoview:geckoview:157.0.20260924084938")
             }
         }
 
@@ -102,6 +102,13 @@ kotlin {
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${findProperty("kotlin.coroutines.version")}")
             }
         }
+        val androidInstrumentedTest by getting {
+            dependencies {
+                implementation("androidx.test.ext:junit:1.2.1")
+                implementation("androidx.test:runner:1.6.2")
+                implementation("androidx.test:core:1.6.1")
+            }
+        }
     }
 }
 
@@ -121,10 +128,15 @@ afterEvaluate {
 
 android {
     compileSdk = (findProperty("android.compileSdk") as String).toInt()
-    buildToolsVersion = "34.0.0"
-    namespace = "io.github.rwpp"
+    compileSdkMinor = 1
+    namespace = "io.github.rwpp.core"
+    defaultConfig {
+        minSdk = (findProperty("android.minSdk") as String).toInt()
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
 
     sourceSets["main"].res.srcDirs("src/androidMain/res")
+    sourceSets["main"].assets.srcDir("src/androidMain/assets")
     sourceSets["main"].resources.srcDirs("src/commonMain/resources")
 
     compileOptions {
@@ -144,5 +156,6 @@ dependencies {
     // ModPlaytimeControllerTest 验证真实累计请求以及持久队列不保存原 token。
     testImplementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     val koinAnnotationsVersion = findProperty("koin.annotations.version") as String
-    ksp("io.insert-koin:koin-ksp-compiler:$koinAnnotationsVersion")
+    add("kspAndroid", "io.insert-koin:koin-ksp-compiler:$koinAnnotationsVersion")
+    add("kspDesktop", "io.insert-koin:koin-ksp-compiler:$koinAnnotationsVersion")
 }
