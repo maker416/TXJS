@@ -10,6 +10,7 @@ package io.github.rwpp.net
 data class ReleaseAsset(
     val name: String,
     val downloadUrl: String,
+    val size: Long = 0,
 )
 
 data class LatestVersionProfile(

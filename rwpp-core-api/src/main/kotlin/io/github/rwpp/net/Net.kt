@@ -100,22 +100,18 @@ interface Net : KoinComponent, Initialization {
             val request = Request.Builder().url(
                 "https://gitee.com/api/v5/repos/maker416/TXJS/releases/latest"
             ).build()
-            val response = client.newCall(request).execute()
-
-            response.body?.string()?.let { str ->
-                val json = Json.parse(str).asObject()
-                val version = json.getString("tag_name", "null")
-                val body = json.getString("body", "null")
-                val prerelease = json.getBoolean("prerelease", false)
+            client.newBuilder().callTimeout(12, java.util.concurrent.TimeUnit.SECONDS).build()
+                .newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw IOException("Release check returned HTTP ${response.code}")
+                val json = Json.parse(response.body?.string() ?: throw IOException("Empty release")).asObject()
+                val version = json.getString("tag_name", "")
+                require(version.matches(Regex("[vV]?\\d+(?:\\.\\d+)+(?:[-+].*)?"))) { "Invalid release version" }
                 val assets = json.get("assets")?.asArray()?.map {
                     val obj = it.asObject()
-                    val name = obj.getString("name", "")
-                    val url = obj.getString("browser_download_url", "")
-                    ReleaseAsset(name, url)
-                }?.filter { asset ->
-                    !asset.name.endsWith(".zip") && !asset.name.endsWith(".tar.gz")
+                    ReleaseAsset(obj.getString("name", ""), obj.getString("browser_download_url", ""),
+                        obj.getLong("size", 0))
                 } ?: emptyList()
-                LatestVersionProfile(version, body, prerelease, assets)
+                LatestVersionProfile(version, json.getString("body", ""), json.getBoolean("prerelease", false), assets)
             }
         }.getOrNull()
     }

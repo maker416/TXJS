@@ -7,64 +7,44 @@
 
 package io.github.rwpp.net
 
-/**
- * 一次自动更新的下载计划。
- *
- * @param partUrls 需要按顺序下载的分卷下载地址；单文件安装包时只有一个元素
- * @param sha256Url 可选的合并 zip 的 SHA-256 校验文件地址（仅桌面端分卷更新可能存在）
- */
+/** ZIP 分卷按序拼接后解压；单 APK/EXE 保持兼容。 */
 data class UpdateDownloadPlan(
     val partUrls: List<String>,
     val sha256Url: String? = null,
+    val isArchive: Boolean = partUrls.size > 1,
+    val partSizes: List<Long> = emptyList(),
 )
 
-/** 匹配分卷资产名，如 `RWJS-Setup.zip.001`（7-Zip/WinRAR 分卷命名约定） */
-private val SPLIT_PART_REGEX = Regex("""^(.+)\.zip\.(\d+)$""")
+private val splitPart = Regex("""^(.+)\.zip\.(\d+)$""", RegexOption.IGNORE_CASE)
 
-/**
- * 从 release 资产中解析桌面端更新下载计划。
- *
- * 优先识别 zip 分卷组（`xxx.zip.001`、`xxx.zip.002`…，Gitee 单文件 100MB 限制下的
- * 桌面安装包发布形式，至少 2 卷）：按前缀分组、序号排序，要求序号从 1 开始连续。
- * 同时查找对应的 `<前缀>.zip.sha256` 校验资产。
- *
- * 没有任何分卷组（或分卷序号不连续）时，回退到旧的单 `.exe` 资产；
- * 两者都不存在时返回 null。
- */
-fun LatestVersionProfile.resolveDesktopUpdatePlan(): UpdateDownloadPlan? {
+private fun LatestVersionProfile.splitPlan(android: Boolean): UpdateDownloadPlan? {
     val groups = assets.mapNotNull { asset ->
-        val match = SPLIT_PART_REGEX.matchEntire(asset.name) ?: return@mapNotNull null
-        Triple(match.groupValues[1], match.groupValues[2].toInt(), asset.downloadUrl)
-    }.groupBy({ it.first }, { it.second to it.third })
-
-    // 优先取前缀含 "setup" 的组，其次取分卷数最多的组
-    val best = groups.entries.maxWithOrNull(
-        compareBy(
-            { if (it.key.contains("setup", ignoreCase = true)) 1 else 0 },
-            { it.value.size },
-        )
-    )
-
-    if (best != null && best.value.size >= 2) {
-        val sorted = best.value.sortedBy { it.first }
-        val contiguous = sorted.mapIndexed { index, part -> part.first } == (1..sorted.size).toList()
-        if (contiguous) {
-            val sha256Url = assets.firstOrNull {
-                it.name.equals("${best.key}.zip.sha256", ignoreCase = true)
-            }?.downloadUrl
-            return UpdateDownloadPlan(sorted.map { it.second }, sha256Url)
-        }
+        val match = splitPart.matchEntire(asset.name) ?: return@mapNotNull null
+        val index = match.groupValues[2].toIntOrNull() ?: -1
+        Triple(match.groupValues[1], index, asset)
+    }.groupBy { it.first.lowercase() }
+    return groups.values.filter { group ->
+        val prefix = group.first().first
+        if (android) prefix.contains("android", true) || prefix.contains("apk", true)
+        else !prefix.contains("android", true) && !prefix.contains("apk", true)
+    }.sortedWith(compareByDescending<List<Triple<String, Int, ReleaseAsset>>> {
+        it.first().first.contains(if (android) "android" else "setup", true)
+    }.thenByDescending { it.size }).firstNotNullOfOrNull { group ->
+        val sorted = group.sortedBy { it.second }
+        val checksum = assets.firstOrNull { it.name.equals("${group.first().first}.zip.sha256", true) && it.downloadUrl.isNotBlank() }
+        val minimum = if (android) 1 else 2
+        if (sorted.size < minimum || sorted.map { it.second } != (1..sorted.size).toList() ||
+            (android && checksum == null) || sorted.any { it.third.downloadUrl.isBlank() }) null
+        else UpdateDownloadPlan(sorted.map { it.third.downloadUrl }, checksum?.downloadUrl,
+            isArchive = true, partSizes = sorted.map { it.third.size })
     }
-
-    // 回退：旧版单 exe 安装包
-    val exeAsset = assets.firstOrNull { it.name.endsWith(".exe") } ?: return null
-    return UpdateDownloadPlan(listOf(exeAsset.downloadUrl))
 }
 
-/**
- * 从 release 资产中解析 Android 更新下载计划（单个 `.apk` 资产）。
- */
-fun LatestVersionProfile.resolveAndroidUpdatePlan(): UpdateDownloadPlan? {
-    val apkAsset = assets.firstOrNull { it.name.endsWith(".apk") } ?: return null
-    return UpdateDownloadPlan(listOf(apkAsset.downloadUrl))
+private fun LatestVersionProfile.rawPlan(extension: String): UpdateDownloadPlan? {
+    val asset = assets.firstOrNull { it.name.endsWith(extension, true) && it.downloadUrl.isNotBlank() } ?: return null
+    val checksum = assets.firstOrNull { it.name.equals("${asset.name}.sha256", true) && it.downloadUrl.isNotBlank() }
+    return UpdateDownloadPlan(listOf(asset.downloadUrl), checksum?.downloadUrl, false, listOf(asset.size))
 }
+
+fun LatestVersionProfile.resolveDesktopUpdatePlan(): UpdateDownloadPlan? = splitPlan(false) ?: rawPlan(".exe")
+fun LatestVersionProfile.resolveAndroidUpdatePlan(): UpdateDownloadPlan? = splitPlan(true) ?: rawPlan(".apk")

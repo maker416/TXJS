@@ -40,6 +40,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'update-packages.ps1')
 
 # 统一控制台输出为 UTF-8，保证中文正常显示
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
@@ -502,52 +503,8 @@ function Copy-InstallerFiles ([string]$Key) {
     Write-Step "Inno Setup 安装包已复制到: $dest"
     Get-ChildItem -LiteralPath $dest -Filter 'RWJS*' | ForEach-Object { Write-Host "  $($_.Name)" }
 }
-# 把安装包打成 zip 后按字节分卷（每卷 <= 95MB），命名沿用 7-Zip/WinRAR 分卷约定
-# （RWJS-Setup.zip.001/.002…），用户可直接用压缩软件打开 .001 解压；
-# 更新客户端按顺序拼接即为合法 zip，可流式解出 exe。
-# 同时生成 RWJS-Setup.zip.sha256（合并 zip 的 SHA-256），供客户端下载后强校验。
 function Split-SetupPackage ([string]$SourceExe, [string]$Dest) {
-    $partSize = 95MB
-    $zipPath  = Join-Path $Dest 'RWJS-Setup.zip'
-
-    if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
-    Get-ChildItem -LiteralPath $Dest -Filter 'RWJS-Setup.zip.*' -ErrorAction SilentlyContinue |
-        Remove-Item -Force -ErrorAction SilentlyContinue
-
-    Write-Step '正在生成 Gitee 分卷包（zip 分卷，每卷 95MB）...'
-    Compress-Archive -LiteralPath $SourceExe -DestinationPath $zipPath -CompressionLevel NoCompression -Force
-
-    $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    Set-Content -LiteralPath "$zipPath.sha256" -Value "$hash  RWJS-Setup.zip" -Encoding ASCII
-
-    $fs = [System.IO.File]::OpenRead($zipPath)
-    try {
-        $partIndex = 1
-        $buffer = New-Object byte[] (4MB)
-        while ($true) {
-            $partPath = '{0}.{1:D3}' -f $zipPath, $partIndex
-            $partWritten = 0L
-            $out = [System.IO.File]::Create($partPath)
-            try {
-                while ($partWritten -lt $partSize) {
-                    $toRead = [int][Math]::Min($buffer.Length, $partSize - $partWritten)
-                    $read = $fs.Read($buffer, 0, $toRead)
-                    if ($read -le 0) { break }
-                    $out.Write($buffer, 0, $read)
-                    $partWritten += $read
-                }
-            } finally { $out.Dispose() }
-            # zip 大小恰好为分卷整数倍时会产生一个空卷，删除即可
-            if ($partWritten -eq 0) {
-                Remove-Item -LiteralPath $partPath -Force
-                break
-            }
-            $partIndex++
-            if ($partWritten -lt $partSize) { break }  # 最后一卷
-        }
-    } finally { $fs.Dispose() }
-    Remove-Item -LiteralPath $zipPath -Force
-    Write-Step ("分卷包已生成: RWJS-Setup.zip.001 ~ RWJS-Setup.zip.{0:D3} + RWJS-Setup.zip.sha256" -f ($partIndex - 1))
+    Split-UpdatePackage -Source $SourceExe -Dest $Dest -BaseName 'RWJS-Setup'
 }
 
 function Copy-TestReports ([string]$Key) {
@@ -585,12 +542,15 @@ function Copy-Apk ([string]$Key, [string]$RelDir, [string]$BaseName) {
         Write-Warn "未找到 APK，请检查 $RelDir\。"
         return
     }
+    if ($apks.Count -ne 1) { throw "Expected one universal APK; found $($apks.Count) in $RelDir" }
     foreach ($apk in $apks) {
         Copy-Item -LiteralPath $apk.FullName -Destination (Join-Path $dest "$BaseName-$Version.apk") -Force
         Copy-Item -LiteralPath $apk.FullName -Destination (Join-Path $dest $apk.Name) -Force
     }
     Write-BuildInfo $dest $Key
-    Write-Step "APK 已复制到: $dest"
+    Split-UpdatePackage -Source $apks[0].FullName -Dest $dest -BaseName 'RWJS-Android'
+    Set-Content -LiteralPath (Join-Path $dest '发布说明.txt') -Encoding UTF8 -Value 'Gitee Release 上传全部 RWJS-Android.zip.001/.002/... 和 RWJS-Android.zip.sha256。完整 APK 供本地安装，不需要上传。分卷不是 Android split APK，客户端合并解出完整签名 APK。Debug 包只供测试；正式更新必须使用 android-release 并保持同一签名和渠道。'
+    Write-Step "APK 及发布分卷已复制到: $dest"
     Get-ChildItem -LiteralPath $dest -Filter '*.apk' | ForEach-Object { Write-Host "  $($_.Name)" }
 }
 

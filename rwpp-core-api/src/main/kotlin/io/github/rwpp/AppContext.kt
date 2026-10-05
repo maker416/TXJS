@@ -19,6 +19,15 @@ interface AppContext : KoinComponent {
 
     fun isDesktop(): Boolean
 
+    /** 没有可用网络连接时跳过启动更新检查；有连接但无法访问服务器时按检查失败处理。 */
+    fun hasNetworkConnection(): Boolean = runCatching {
+        java.net.NetworkInterface.getNetworkInterfaces()?.asSequence()?.any { network ->
+            network.isUp && !network.isLoopback && network.inetAddresses.asSequence().any {
+                !it.isLoopbackAddress && !it.isLinkLocalAddress
+            }
+        } == true
+    }.getOrDefault(true)
+
     fun externalStoragePath(path: String): String
 
     /**

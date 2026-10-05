@@ -6,6 +6,6 @@
   ~ https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
   -->
 <paths>
-    <!-- AutoUpdaterImpl writes APK to context.cacheDir (rwpp-update.apk) -->
+    <!-- AutoUpdaterImpl writes APK to context.cacheDir (rwpp-update-*.apk) -->
     <cache-path name="apk_cache" path="." />
 </paths>

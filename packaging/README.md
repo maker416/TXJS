@@ -1,4 +1,4 @@
-# RWJS Windows 安装包
+# RWJS 发布打包工具
 
 PC 安装器完全使用 Inno Setup，产物为 `RWJS-Setup.exe`。默认安装到 `%ProgramFiles%\RWJS`，支持中文向导、桌面/开始菜单快捷方式、覆盖更新与 Windows 应用卸载。
 
@@ -33,6 +33,30 @@ powershell -NoProfile -ExecutionPolicy Bypass -File packaging/build.ps1 installe
 powershell -NoProfile -ExecutionPolicy Bypass -File packaging/inno/package.ps1 -Version 1.19.363
 ```
 
+## Android 分卷发布
+
+本机 `build/build.ps1` 转发到仓库跟踪的 `packaging/build.ps1`；两种入口使用同一套升级后的打包工具。
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 android-release -Channel official
+# Debug 仅供测试
+powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 android-debug
+```
+
+产物位于 `build/artifacts/android-release-<渠道>/` 或 `android-debug-<渠道>/`：保留完整 APK 供本地安装，同时生成 `RWJS-Android.zip.001/.002/…`（每卷最多 95 MiB）和 `RWJS-Android.zip.sha256`，附发布说明。
+
+Gitee Release 必须上传**全部分卷及校验文件**。即使只有 `.001` 一卷，也要上传对应 SHA-256。这是标准 ZIP 的字节分卷，合并后解出完整签名 APK，再由系统安装；不是 Android 系统的 split APK。分卷不改变 APK 签名。正式发布必须使用 Release 包，保持原签名和正确渠道；不要混传不同渠道或 Debug 分卷。
+
+旧版 Android 客户端只有单 APK 下载能力，不能自动识别新增分卷。首次迁移需手动下载全部分卷，用 7-Zip/WinRAR 打开 `.001` 解出 APK 并覆盖安装；后续版本才可使用分卷自动更新。若另有可用的完整 APK 下载渠道，也可通过该渠道完成首次升级。
+
+Android 客户端优先采用连续且带校验文件的 Android 分卷组；缺卷、重复序号或缺少校验时回退旧版单 APK，否则显示手动安装入口。PC 继续支持原有分卷和单 EXE。下载器先校验 ZIP 的 SHA-256，再流式解包，不落合并后的大 ZIP；CRC 同时检测 ZIP 内容损坏。
+
+打包自测（PowerShell 5.1+）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File packaging/tests/UpdatePackages.Tests.ps1
+```
+
 ## 包内容
 
 `RWJS.exe`、`app/`（过滤非 Windows Skiko）、`runtime/`、图标、AGPL 许可证，以及原版目录的 `game-lib.jar`、根目录原生库、`steam_appid.txt`、`assets/`、`font/`、`libs/`、`res/`。
@@ -51,6 +75,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File packaging/inno/package.ps1 -
 # 正常静默安装可指定独立目录
 .\RWJS-Setup.exe /VERYSILENT /SP- /NORESTART /DIR="D:\Games\RWJS"
 ```
+
+客户端通过 Windows PowerShell 的 `Start-Process -Verb RunAs` 请求 UAC 授权，辅助进程隐藏；拒绝授权时留在全屏更新页，可重试。提权行为参见[微软 Start-Process 文档](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/start-process?view=powershell-5.1)。
 
 缺少有效 RWJS 安装记录时，更新模式中止并提示正常安装。客户端只调用新参数。覆盖更新清理安装器管理的 `app/*.jar`，避免版本改名后依赖冲突；保留用户配置和模组。更换已安装的 RWJS 目录前须先卸载。
 

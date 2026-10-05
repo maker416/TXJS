@@ -7,202 +7,102 @@
 
 package io.github.rwpp.android.impl
 
-import android.app.Activity
-import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
-import android.os.Bundle
 import android.provider.Settings
 import androidx.core.content.FileProvider
-import io.github.rwpp.app.AutoUpdater
-import io.github.rwpp.app.AutoUpdater.Companion.PROGRESS_FAILED
-import io.github.rwpp.app.AutoUpdater.Companion.PROGRESS_NEED_INSTALL_PERMISSION
+import io.github.rwpp.app.*
+import io.github.rwpp.projectVersion
+import io.github.rwpp.utils.compareVersions
 import io.github.rwpp.logger
 import io.github.rwpp.net.Net
-import okhttp3.Request
+import io.github.rwpp.net.UpdateDownloadPlan
 import org.koin.core.annotation.Single
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 import java.io.File
-import java.io.FileOutputStream
-import kotlin.concurrent.thread
 
 @Single
 class AutoUpdaterImpl : AutoUpdater, KoinComponent {
     private val context: Context by inject()
     private val net: Net by inject()
-    private val downloadLock = Any()
-    @Volatile
-    private var downloadInProgress = false
-    @Volatile
-    private var updateCancelled = false
-    private var installPermissionRetryCallback: Application.ActivityLifecycleCallbacks? = null
+    private val lock = Any()
+    private var active: UpdateDownloadSession? = null
+    @Volatile private var pendingApk: File? = null
+    override fun isSupported() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N
+    override fun cancelPendingUpdate() { synchronized(lock) { active?.cancel() } }
+    override fun downloadAndInstall(downloadUrls: List<String>, sha256Url: String?, onProgress: (Float) -> Unit) =
+        downloadAndInstall(UpdateDownloadPlan(downloadUrls, sha256Url)) { onProgress(it.legacyProgress) }
 
-    override fun isSupported(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N
-
-    override fun cancelPendingUpdate() {
-        updateCancelled = true
-        unregisterInstallPermissionRetry()
-    }
-
-    override fun downloadAndInstall(downloadUrls: List<String>, sha256Url: String?, onProgress: (Float) -> Unit) {
-        val downloadUrl = downloadUrls.firstOrNull() ?: run {
-            onProgress(PROGRESS_FAILED)
-            return
-        }
-
-        synchronized(downloadLock) {
-            if (downloadInProgress) return
-            downloadInProgress = true
-            updateCancelled = false
-        }
-
-        var apkFile: File? = null
+    override fun downloadAndInstall(plan: UpdateDownloadPlan, onStatus: (UpdateProgress) -> Unit) {
+        val session = synchronized(lock) {
+            if (active != null) null else UpdateDownloadSession().also { active = it }
+        } ?: return
+        var apk: File? = null
+        var work: File? = null
         var handedToInstaller = false
         try {
-            if (updateCancelled) return
-
             if (!hasInstallPermission()) {
-                requestInstallPermission(downloadUrl, onProgress)
+                requestPermission(onStatus)
                 return
             }
-
-            val downloadedApk = File.createTempFile("rwpp-update-", ".apk", context.cacheDir)
-            apkFile = downloadedApk
-
-            val request = Request.Builder().url(downloadUrl).build()
-            runCatching {
-                net.client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        onProgress(PROGRESS_FAILED)
-                        return
-                    }
-
-                    val body = response.body ?: run {
-                        onProgress(PROGRESS_FAILED)
-                        return
-                    }
-
-                    val contentLength = body.contentLength()
-
-                    body.byteStream().use { input ->
-                        FileOutputStream(downloadedApk).use { output ->
-                            val buffer = ByteArray(8192)
-                            var downloaded: Long = 0
-                            var read: Int
-
-                            while (input.read(buffer).also { read = it } != -1) {
-                                if (updateCancelled) return
-                                output.write(buffer, 0, read)
-                                downloaded += read
-                                if (contentLength > 0) {
-                                    onProgress(downloaded.toFloat() / contentLength.toFloat())
-                                }
-                            }
-                        }
-                    }
-                }
-            }.onFailure {
-                logger.error("Failed to download update: ${it.stackTraceToString()}")
-                onProgress(PROGRESS_FAILED)
-                return
+            work = File.createTempFile("rwpp-update-work-", "", context.cacheDir).apply { delete(); mkdir() }
+            apk = File.createTempFile("rwpp-update-", ".apk", context.cacheDir)
+            UpdatePackageDownloader(net.client).download(plan, session, work, apk, ".apk", onStatus)
+            @Suppress("DEPRECATION")
+            val info = context.packageManager.getPackageArchiveInfo(apk.absolutePath, 0)
+            require(info?.packageName == context.packageName) { "APK package does not match this application" }
+            require(compareVersions(info?.versionName.orEmpty(), projectVersion) > 0) {
+                "Downloaded APK is not a newer version"
             }
-
-            if (updateCancelled) return
-
-            logger.info("Download completed: ${downloadedApk.absolutePath}")
-
-            val authority = "${context.packageName}.fileprovider"
-            val uri = runCatching {
-                FileProvider.getUriForFile(context, authority, downloadedApk)
-            }.getOrElse {
-                logger.error("Failed to create APK content uri (authority=$authority): ${it.stackTraceToString()}")
-                onProgress(PROGRESS_FAILED)
-                return
+            handedToInstaller = session.startInstallation {
+                launchInstaller(apk)
+                pendingApk = apk
+                onStatus(UpdateProgress(UpdateStage.INSTALLING, 1f))
             }
-
-            val installIntent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/vnd.android.package-archive")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
-            }
-
-            runCatching {
-                context.startActivity(installIntent)
-                handedToInstaller = true
-            }.onFailure {
-                logger.error("Failed to start install activity: ${it.stackTraceToString()}")
-                onProgress(PROGRESS_FAILED)
+        } catch (e: Exception) {
+            if (!session.isCancelled) {
+                logger.error("Update failed", e)
+                onStatus(UpdateProgress(UpdateStage.FAILED, error = e.message))
             }
         } finally {
-            // 未交给系统安装器的失败/取消文件立即删除；安装器仍在读取的文件由下次启动回收。
-            if (!handedToInstaller) apkFile?.let {
-                if (it.exists() && !it.delete()) logger.warn("Cannot delete incomplete update APK: $it")
+            work?.deleteRecursively()
+            // 系统安装器仍可能读取 APK，已交接文件留给下次启动回收。
+            if (!handedToInstaller) apk?.delete()
+            synchronized(lock) { if (active === session) active = null }
+        }
+    }
+
+    override fun installPendingUpdate(onStatus: (UpdateProgress) -> Unit): Boolean {
+        val apk = pendingApk?.takeIf { it.isFile } ?: return false
+        try {
+            if (!hasInstallPermission()) requestPermission(onStatus)
+            else {
+                launchInstaller(apk)
+                onStatus(UpdateProgress(UpdateStage.INSTALLING, 1f))
             }
-            synchronized(downloadLock) {
-                downloadInProgress = false
-            }
+        } catch (e: Exception) {
+            onStatus(UpdateProgress(UpdateStage.FAILED, error = e.message))
         }
+        return true
     }
 
-    private fun hasInstallPermission(): Boolean {
-        return Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
-                context.packageManager.canRequestPackageInstalls()
+    private fun hasInstallPermission() = Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+        context.packageManager.canRequestPackageInstalls()
+
+    private fun requestPermission(onStatus: (UpdateProgress) -> Unit) {
+        context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        onStatus(UpdateProgress(UpdateStage.PERMISSION_REQUIRED))
     }
 
-    private fun requestInstallPermission(downloadUrl: String, onProgress: (Float) -> Unit) {
-        if (updateCancelled) return
-
-        val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
-            data = Uri.parse("package:${context.packageName}")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-
-        registerInstallPermissionRetry(downloadUrl, onProgress)
-
-        runCatching {
-            context.startActivity(intent)
-        }.onSuccess {
-            onProgress(PROGRESS_NEED_INSTALL_PERMISSION)
-        }.onFailure {
-            unregisterInstallPermissionRetry()
-            logger.error("Failed to request install permission: ${it.stackTraceToString()}")
-            onProgress(PROGRESS_FAILED)
-        }
-    }
-
-    private fun registerInstallPermissionRetry(downloadUrl: String, onProgress: (Float) -> Unit) {
-        val application = context.applicationContext as? Application ?: return
-        unregisterInstallPermissionRetry()
-
-        val callback = object : Application.ActivityLifecycleCallbacks {
-            override fun onActivityResumed(activity: Activity) {
-                if (!hasInstallPermission() || updateCancelled) return
-
-                unregisterInstallPermissionRetry()
-                thread(name = "rwpp-auto-update-retry") {
-                    onProgress(0f)
-                    downloadAndInstall(listOf(downloadUrl), onProgress = onProgress)
-                }
-            }
-
-            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
-            override fun onActivityStarted(activity: Activity) = Unit
-            override fun onActivityPaused(activity: Activity) = Unit
-            override fun onActivityStopped(activity: Activity) = Unit
-            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
-            override fun onActivityDestroyed(activity: Activity) = Unit
-        }
-
-        application.registerActivityLifecycleCallbacks(callback)
-        installPermissionRetryCallback = callback
-    }
-
-    private fun unregisterInstallPermissionRetry() {
-        val callback = installPermissionRetryCallback ?: return
-        val application = context.applicationContext as? Application ?: return
-        application.unregisterActivityLifecycleCallbacks(callback)
-        installPermissionRetryCallback = null
+    private fun launchInstaller(apk: File) {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apk)
+        context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+        })
     }
 }

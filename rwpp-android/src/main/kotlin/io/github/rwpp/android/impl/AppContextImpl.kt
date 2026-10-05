@@ -8,6 +8,8 @@
 package io.github.rwpp.android.impl
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Environment
 import io.github.rwpp.AppContext
 import io.github.rwpp.config.ConfigIO
@@ -35,6 +37,12 @@ class AppContextImpl : BaseAppContextImpl() {
     override fun isAndroid(): Boolean = true
 
     override fun isDesktop(): Boolean = false
+
+    override fun hasNetworkConnection(): Boolean = runCatching {
+        val manager = get<Context>().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = manager.activeNetwork ?: return@runCatching false
+        manager.getNetworkCapabilities(network)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+    }.getOrDefault(true)
     override fun externalStoragePath(path: String): String {
         return Environment.getExternalStorageDirectory().absolutePath + "/rustedWarfare/$path"
     }

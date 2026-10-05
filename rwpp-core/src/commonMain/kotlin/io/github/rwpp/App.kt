@@ -28,7 +28,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -39,16 +38,12 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.ImageLoader
 import coil3.compose.setSingletonImageLoaderFactory
 import coil3.request.crossfade
 import coil3.size.Precision
-import com.mikepenz.markdown.compose.Markdown
-import com.mikepenz.markdown.m3.markdownColor
-import com.mikepenz.markdown.m3.markdownTypography
 import io.github.rwpp.coil.AccountAvatarFetcherFactory
 import io.github.rwpp.coil.AccountAvatarKeyer
 import io.github.rwpp.coil.ImageableFetcherFactory
@@ -75,11 +70,7 @@ import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.io.SizeUtils
 import io.github.rwpp.app.AutoUpdater
-import io.github.rwpp.app.AutoUpdater.Companion.PROGRESS_NEED_INSTALL_PERMISSION
-import io.github.rwpp.net.LatestVersionProfile
 import io.github.rwpp.net.Net
-import io.github.rwpp.net.resolveAndroidUpdatePlan
-import io.github.rwpp.net.resolveDesktopUpdatePlan
 import io.github.rwpp.scripts.Render
 import io.github.rwpp.ui.*
 import io.github.rwpp.ui.UI.selectedColorSchemeName
@@ -102,14 +93,9 @@ import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.theme.LauncherMusicController
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.LineSpinFadeLoaderIndicator
-import io.github.rwpp.widget.v2.bounceClick
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -127,34 +113,32 @@ fun App(
     val coreData = koinInject<CoreData>()
     val settings = koinInject<Settings>()
     val net = koinInject<Net>()
+    val appContext = koinInject<AppContext>()
     var isSinglePlayerGame by remember { mutableStateOf(false) }
     var roomExitInProgress by remember { mutableStateOf(false) }
     val appScope = rememberCoroutineScope()
 
-    var checkUpdateDialogVisible by remember { mutableStateOf(false) }
-    var updateDownloadJob by remember { mutableStateOf<Job?>(null) }
-    var profile by remember { mutableStateOf<LatestVersionProfile?>(null) }
-
+    val updateController = remember {
+        MandatoryUpdateController(net::getLatestVersionProfile, appScope, appKoin.getOrNull<AutoUpdater>(),
+            appContext.isAndroid(), hasNetworkConnection = appContext::hasNetworkConnection)
+    }
+    LaunchedEffect(Unit) { UI.latestVersionProfile = updateController.check() }
     LaunchedEffect(Unit) {
+        coreData.lastPlayTime = System.currentTimeMillis()
         runCatching { AccountSession.restoreIfNeeded() }
-        val now = System.currentTimeMillis()
-        coreData.lastPlayTime = now
-
-        if (settings.autoCheckUpdate) {
-            val latestProfile = withContext(Dispatchers.IO) {
-                net.getLatestVersionProfile()
-            }
-
-            if (latestProfile != null) {
-                coreData.lastAutoCheckUpdateTime = now
-                UI.latestVersionProfile = latestProfile
-
-                if (compareVersions(latestProfile.version, projectVersion) > 0 || coreData.debug) {
-                    profile = latestProfile
-                    checkUpdateDialogVisible = true
-                }
-            }
+    }
+    DisposableEffect(updateController) {
+        onDispose { updateController.cancel() }
+    }
+    if (updateController.checking || updateController.release != null) {
+        RWPPTheme {
+            MandatoryUpdateScreen(updateController.release, updateController.checking, updateController.progress,
+                onUpdate = updateController::start,
+                onCancel = updateController::cancel,
+                onExit = { updateController.cancel(); appContext.exit() },
+                onOpenRelease = { net.openUriInBrowser("https://gitee.com/maker416/TXJS/releases") })
         }
+        return
     }
 
     // 好友私信全局轮询：驱动未读徽标与房间邀请悬浮卡片。
@@ -363,8 +347,7 @@ fun App(
                         {
                             if (compareVersions(it.version, projectVersion) <= 0) return@SettingsView
                             UI.latestVersionProfile = it
-                            profile = it
-                            checkUpdateDialogVisible = true
+                            updateController.accept(it)
                         },
                         selectedColorSchemeName,
                         { theme ->
@@ -562,301 +545,6 @@ fun App(
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                             RWTextButton(readI18n("common.ok"), onClick = dismiss)
-                        }
-                    }
-                }
-
-                AnimatedAlertDialog(
-                    checkUpdateDialogVisible,
-                    onDismissRequest = {
-                        updateDownloadJob?.cancel()
-                        appKoin.getOrNull<AutoUpdater>()?.cancelPendingUpdate()
-                        checkUpdateDialogVisible = false
-                    }
-                ) { dismiss ->
-                    BorderCard(
-                        modifier = Modifier
-                            .fillMaxWidth(GeneralProportion())
-                            .heightIn(max = maxHeight * 0.88f)
-                            .verticalScroll(rememberScrollState()),
-                        backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
-                    ) {
-                        Box(modifier = Modifier.fillMaxWidth()) {
-                            val appContextInner = koinInject<AppContext>()
-                            val autoUpdater = remember { appKoin.getOrNull<AutoUpdater>() }
-                            // 桌面端优先识别 zip 分卷（xxx.zip.001/.002…），无分卷时回退单 exe；Android 取 apk
-                            val updatePlan = remember(profile) {
-                                if (appContextInner.isDesktop()) {
-                                    profile!!.resolveDesktopUpdatePlan()
-                                } else {
-                                    profile!!.resolveAndroidUpdatePlan()
-                                }
-                            }
-                            val scopeInner = rememberCoroutineScope()
-                            var updating by remember { mutableStateOf(false) }
-                            var downloadProgress by remember { mutableStateOf(0f) }
-
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 18.dp, vertical = 16.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(end = 28.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Surface(
-                                        color = MaterialTheme.colorScheme.primaryContainer,
-                                        shape = CircleShape
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Info,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.padding(8.dp).size(22.dp)
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Column(
-                                        modifier = Modifier.weight(1f),
-                                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Text(
-                                            readI18n("settings.updateAvailable", I18nType.RWPP),
-                                            style = MaterialTheme.typography.headlineSmall,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Surface(
-                                                color = MaterialTheme.colorScheme.primaryContainer,
-                                                shape = RoundedCornerShape(8.dp),
-                                                modifier = Modifier.weight(1f, fill = false)
-                                            ) {
-                                                Text(
-                                                    profile!!.version,
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
-                                                )
-                                            }
-                                            if (profile!!.prerelease) {
-                                                Surface(
-                                                    color = MaterialTheme.colorScheme.secondaryContainer,
-                                                    shape = RoundedCornerShape(8.dp)
-                                                ) {
-                                                    Text(
-                                                        "Pre-release",
-                                                        style = MaterialTheme.typography.bodySmall,
-                                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                if (autoUpdater != null && autoUpdater.isSupported() && updatePlan != null && !updating) {
-                                    Surface(
-                                        color = MaterialTheme.colorScheme.primary,
-                                        shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier.fillMaxWidth().bounceClick {
-                                            updating = true
-                                            updateDownloadJob = scopeInner.launch(Dispatchers.IO) {
-                                                val downloadContext = currentCoroutineContext()
-                                                autoUpdater.downloadAndInstall(updatePlan!!.partUrls, updatePlan!!.sha256Url) { progress ->
-                                                    if (downloadContext.job.isCancelled) downloadContext.ensureActive()
-                                                    scopeInner.launch(Dispatchers.Main) {
-                                                        downloadProgress = progress
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth().padding(vertical = 11.dp),
-                                            horizontalArrangement = Arrangement.Center,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.PlayArrow,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.onPrimary,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                readI18n("settings.downloadAndInstall", I18nType.RWPP),
-                                                style = MaterialTheme.typography.bodyLarge,
-                                                color = MaterialTheme.colorScheme.onPrimary
-                                            )
-                                        }
-                                    }
-                                }
-
-                                if (updating) {
-                                    if (downloadProgress < 0f) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                        ) {
-                                            Text(
-                                                if (downloadProgress == PROGRESS_NEED_INSTALL_PERMISSION) {
-                                                    readI18n("settings.installPermissionRequired", I18nType.RWPP)
-                                                } else {
-                                                    readI18n("settings.downloadFailed", I18nType.RWPP)
-                                                },
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                color = if (downloadProgress == PROGRESS_NEED_INSTALL_PERMISSION) {
-                                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
-                                                } else {
-                                                    MaterialTheme.colorScheme.error
-                                                },
-                                                modifier = Modifier.weight(1f)
-                                            )
-                                            Surface(
-                                                color = MaterialTheme.colorScheme.surfaceContainer,
-                                                shape = RoundedCornerShape(8.dp),
-                                                modifier = Modifier.bounceClick {
-                                                    downloadProgress = 0f
-                                                    updateDownloadJob = scopeInner.launch(Dispatchers.IO) {
-                                                        val downloadContext = currentCoroutineContext()
-                                                        autoUpdater!!.downloadAndInstall(updatePlan!!.partUrls, updatePlan!!.sha256Url) { progress ->
-                                                            if (downloadContext.job.isCancelled) downloadContext.ensureActive()
-                                                            scopeInner.launch(Dispatchers.Main) {
-                                                                downloadProgress = progress
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            ) {
-                                                Text(
-                                                    readI18n("settings.retry", I18nType.RWPP),
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    color = MaterialTheme.colorScheme.onSurface,
-                                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                                                )
-                                            }
-                                        }
-                                    } else {
-                                        Column(
-                                            horizontalAlignment = Alignment.CenterHorizontally,
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    readI18n("settings.downloadingUpdate", I18nType.RWPP),
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
-                                                )
-                                                Text(
-                                                    "${(downloadProgress * 100).toInt()}%",
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    color = MaterialTheme.colorScheme.primary
-                                                )
-                                            }
-                                            Spacer(modifier = Modifier.height(6.dp))
-                                            LinearProgressIndicator(
-                                                progress = { downloadProgress.coerceIn(0f, 1f) },
-                                                modifier = Modifier.fillMaxWidth().height(8.dp),
-                                                color = MaterialTheme.colorScheme.primary,
-                                                trackColor = MaterialTheme.colorScheme.surfaceContainer
-                                            )
-                                        }
-                                    }
-                                }
-
-                                if (profile!!.assets.isNotEmpty()) {
-                                    Column(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        profile!!.assets.forEach { asset ->
-                                            Surface(
-                                                color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.5f),
-                                                shape = RoundedCornerShape(8.dp),
-                                                modifier = Modifier.fillMaxWidth().bounceClick {
-                                                    net.openUriInBrowser(asset.downloadUrl)
-                                                }
-                                            ) {
-                                                Row(
-                                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                                ) {
-                                                    Text(
-                                                        asset.name,
-                                                        style = MaterialTheme.typography.bodyMedium,
-                                                        color = MaterialTheme.colorScheme.onSurface,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis,
-                                                        modifier = Modifier.weight(1f)
-                                                    )
-                                                    Icon(
-                                                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                                        contentDescription = null,
-                                                        tint = MaterialTheme.colorScheme.primary,
-                                                        modifier = Modifier.size(18.dp)
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    Text(
-                                        readI18n("settings.noDownloadAssets", I18nType.RWPP),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                                    )
-                                }
-
-                                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceContainer)
-
-                                Text(
-                                    readI18n("settings.updateContent", I18nType.RWPP),
-                                    style = MaterialTheme.typography.headlineSmall,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.align(Alignment.Start)
-                                )
-                                BorderCard(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.5f)
-                                ) {
-                                    Markdown(
-                                        profile!!.body,
-                                        modifier = Modifier.padding(10.dp).fillMaxWidth(),
-                                        colors = markdownColor(),
-                                        typography = markdownTypography()
-                                    )
-                                }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End
-                                ) {
-                                    TextButton(onClick = dismiss) {
-                                        Text(
-                                            readI18n("settings.remindLater", I18nType.RWPP),
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                                        )
-                                    }
-                                }
-                            }
-
-                            ExitButton { dismiss() }
                         }
                     }
                 }

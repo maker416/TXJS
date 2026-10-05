@@ -52,7 +52,7 @@ class InstallArtifactMaintenance(
             val abandonedUpload = file.name.startsWith("rwjs-browser-upload-")
             val temporaryGameJar = file.name.startsWith("android-game-lib") && file.name.endsWith(".jar")
             val temporaryPatchedJar = file.name.startsWith("temp-android-game-lib.jar") && file.name.endsWith(".jar")
-            if (abandonedUpload || temporaryGameJar || temporaryPatchedJar ||
+            if (file.name.startsWith("rwpp-update-work-") || abandonedUpload || temporaryGameJar || temporaryPatchedJar ||
                 (updateApk && (afterInstall || nowMillis - file.lastModified() >= 24L * 60 * 60 * 1000))) {
                 deleteTree(file)
             }

@@ -116,4 +116,31 @@ class UpdateDownloadPlanTest {
 
         assertTrue(profile.resolveDesktopUpdatePlan() == null)
     }
+
+    @Test fun `android prefers ordered checked volumes over raw apk and desktop volumes`() {
+        val plan = profileOf("RWJS-Setup.zip.001", "RWJS-Setup.zip.002", "old.apk",
+            "RWJS-Android.zip.002", "RWJS-Android.zip.sha256", "RWJS-Android.zip.001").resolveAndroidUpdatePlan()!!
+        assertEquals(listOf("https://gitee.com/dl/RWJS-Android.zip.001", "https://gitee.com/dl/RWJS-Android.zip.002"), plan.partUrls)
+        assertTrue(plan.isArchive)
+        assertEquals("https://gitee.com/dl/RWJS-Android.zip.sha256", plan.sha256Url)
+    }
+
+    @Test fun `small android archive with one volume is extracted`() {
+        assertTrue(profileOf("RWJS-Android.zip.001", "RWJS-Android.zip.sha256").resolveAndroidUpdatePlan()!!.isArchive)
+    }
+
+    @Test fun `broken android volume groups never install partial packages`() {
+        for (names in listOf(
+            arrayOf("RWJS-Android.zip.001", "RWJS-Android.zip.003", "RWJS-Android.zip.sha256"),
+            arrayOf("RWJS-Android.zip.001", "RWJS-Android.zip.001", "RWJS-Android.zip.sha256"),
+            arrayOf("RWJS-Android.zip.001", "RWJS-Android.zip.002"),
+            arrayOf("RWJS-Android.zip.99999999999999999999", "RWJS-Android.zip.sha256"))) {
+            assertNull(profileOf(*names).resolveAndroidUpdatePlan())
+            assertTrue(!profileOf(*names, "legacy.apk").resolveAndroidUpdatePlan()!!.isArchive)
+        }
+    }
+
+    @Test fun `android volumes are never interpreted as desktop installers`() {
+        assertNull(profileOf("RWJS-Android.zip.001", "RWJS-Android.zip.002", "RWJS-Android.zip.sha256").resolveDesktopUpdatePlan())
+    }
 }

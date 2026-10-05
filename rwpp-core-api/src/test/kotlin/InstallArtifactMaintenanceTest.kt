@@ -91,10 +91,11 @@ class InstallArtifactMaintenanceTest {
         val expired = write(root, "private/cache/rwpp-update-old.apk").apply { setLastModified(now - 25L * 60 * 60 * 1000) }
         val upload = write(root, "private/cache/rwjs-browser-upload-abandoned/mod/snapshot.rwmod")
         val jar = write(root, "private/cache/android-game-lib123.jar")
+        val unfinishedPart = write(root, "private/cache/rwpp-update-work-crashed/part-0")
         val unrelated = write(root, "private/cache/user-file.apk")
         maintenance.cleanTemporaryFiles(false, now)
         assertTrue(recent.exists(), "The system installer may still be reading a recent APK")
-        listOf(expired, upload, jar).forEach { assertFalse(it.exists()) }
+        listOf(expired, upload, jar, unfinishedPart).forEach { assertFalse(it.exists()) }
         assertEquals("keep", unrelated.readText())
         maintenance.cleanTemporaryFiles(true, now)
         assertFalse(recent.exists())
