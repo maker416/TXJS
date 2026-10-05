@@ -19,6 +19,8 @@ data class Settings(
     var autoCheckUpdate: Boolean = true,
     var enhancedReinforceTroops: Boolean = false,
     var backgroundImagePath: String? = null,
+    /** false 时隐藏自选图片及主题包背景，保留主题包的其他外观。 */
+    var backgroundImageEnabled: Boolean = true,
     var selectedTheme: String? = null,
     /**
      * 当前启用的主题美术包 id（`themes/<id>/` 目录名）。null 表示未启用，使用内置主题。

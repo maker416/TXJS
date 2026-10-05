@@ -308,6 +308,14 @@ class BundleParseTest {
             ).forEach { key ->
                 assertTrue(themes.containsKey(key), "themes.$key missing in $name")
             }
+            val settings = table["settings"] as TomlTable
+            listOf(
+                "saveChanges", "themeAppearance", "themeBackground", "themeInterface", "themePackHint", "themePackActive",
+                "chooseBackgroundImage", "clearBackgroundImage", "backgroundDefaultHint",
+                "backgroundCustomHint", "backgroundThemeHint", "themeMusicHint", "themeMusic", "restoreThemeBackground",
+            ).forEach { key ->
+                assertTrue(settings.containsKey(key), "settings.$key missing in $name")
+            }
         }
     }
 

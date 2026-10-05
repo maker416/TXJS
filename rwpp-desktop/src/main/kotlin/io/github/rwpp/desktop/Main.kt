@@ -277,9 +277,10 @@ fun swingApplication() = SwingUtilities.invokeLater {
             val settings = koinInject<Settings>()
             val isPremium = true
             var backgroundImagePath by remember { mutableStateOf(settings.backgroundImagePath ?: "") }
+            var backgroundImageEnabled by remember { mutableStateOf(settings.backgroundImageEnabled) }
             // 主题美术包的背景图优先于用户在设置中手选的背景
             val themeBackground = ArtThemeController.activeTheme?.backgroundFile?.absolutePath
-            val effectiveBackgroundPath = themeBackground ?: backgroundImagePath
+            val effectiveBackgroundPath = if (backgroundImageEnabled) themeBackground ?: backgroundImagePath else ""
             val painter = remember(effectiveBackgroundPath) {
                 if (effectiveBackgroundPath.isNotBlank() && isPremium) {
                     runCatching { ImageIO.read(File(effectiveBackgroundPath)).toPainter() }.getOrNull()
@@ -320,6 +321,7 @@ fun swingApplication() = SwingUtilities.invokeLater {
 
                 if (isLoading) MenuLoadingView(message) else App(isPremium = isPremium) { path ->
                     backgroundImagePath = path
+                    backgroundImageEnabled = settings.backgroundImageEnabled
                 }
 
             }

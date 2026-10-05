@@ -7,7 +7,6 @@
 
 package io.github.rwpp.ui
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -18,7 +17,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -39,7 +37,6 @@ import io.github.rwpp.external.ExternalHandler
 import io.github.rwpp.i18n.GameI18nResolver
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
-import io.github.rwpp.theme.LauncherMusicController
 import io.github.rwpp.net.LatestVersionProfile
 import io.github.rwpp.net.Net
 import io.github.rwpp.platform.BackHandler
@@ -66,6 +63,7 @@ fun SettingsView(
     val accountPrefs = koinInject<AccountPreferences>()
     val playtimePrefs = koinInject<ModPlaytimePreferences>()
     val i18nResolver = koinInject<GameI18nResolver>()
+    val scope = rememberCoroutineScope()
 
     BackHandler(true, onExit)
     // 进入设置页时对齐启动器 language 与游戏 forceEnglish，避免混用 I18nType.RW / RWPP 时中英夹杂
@@ -79,6 +77,7 @@ fun SettingsView(
     }
 
     var backgroundImagePath by remember { mutableStateOf(settings.backgroundImagePath ?: "") }
+    var backgroundImageEnabled by remember { mutableStateOf(settings.backgroundImageEnabled) }
     var showRestartHint by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -86,7 +85,8 @@ fun SettingsView(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = {
-                    settings.backgroundImagePath = backgroundImagePath
+                    settings.backgroundImagePath = backgroundImagePath.takeIf { it.isNotBlank() }
+                    settings.backgroundImageEnabled = backgroundImageEnabled
                     configIO.saveAllConfig()
                     onChangeBackgroundImage(backgroundImagePath)
                     onExit()
@@ -95,7 +95,7 @@ fun SettingsView(
                 modifier = Modifier.padding(5.dp),
                 containerColor = MaterialTheme.colorScheme.secondaryContainer,
             ) {
-                Icon(Icons.Default.Done, null, tint = MaterialTheme.colorScheme.surfaceTint)
+                Icon(Icons.Default.Done, readI18n("settings.saveChanges"), tint = MaterialTheme.colorScheme.surfaceTint)
             }
         },
         floatingActionButtonPosition = FabPosition.End
@@ -147,7 +147,7 @@ fun SettingsView(
                     val state = rememberLazyListState()
 
                     LazyColumnScrollbar(listState = state) {
-                        LazyColumn(state = state) {
+                        LazyColumn(state = state, contentPadding = PaddingValues(bottom = 88.dp)) {
                             item(selectedItem) {
                                 val str = items[selectedItem]
 
@@ -472,88 +472,42 @@ fun SettingsView(
                                     }
 
                                     "rwpp-theme" -> {
-                                        val list = themes.keys.toList()
-                                        var selectedIndex by remember { mutableStateOf(list.indexOf(defaultTheme)) }
-                                        SettingsGroup("", readI18n("settings.theme")) {
-                                            SettingsSwitchComp(
-                                                "",
-                                                readI18n("settings.enableAnimations"),
-                                                settings.enableAnimations
-                                            ) {
-                                                settings.enableAnimations = it
-                                            }
-
-                                            SettingsSwitchComp(
-                                                "",
-                                                readI18n("settings.boldText"),
-                                                settings.boldText
-                                            ) {
-                                                settings.boldText = it
-                                            }
-
-                                            SettingsSwitchComp(
-                                                "",
-                                                readI18n("settings.changeGameTheme"),
-                                                settings.changeGameTheme
-                                            ) {
-                                                settings.changeGameTheme = it
-                                            }
-
-                                            SettingsDropDown("colorScheme", list, selectedIndex,
-                                                selectedItemColor = { theme, _ -> themes[theme]!!.primary }
-                                            ) { index, theme ->
-                                                onChangeTheme(theme)
-                                                selectedIndex = index
-                                            }
-
-                                            val externalHandler = koinInject<ExternalHandler>()
-
-                                            SettingsTextField(
-                                                readI18n("settings.setBackgroundImagePath"),
-                                                backgroundImagePath,
-                                                onValueChange = {
-                                                    backgroundImagePath = it
-                                                },
-                                                trailingIcon = {
-                                                    Icon(
-                                                        Icons.AutoMirrored.Filled.List,
-                                                        null,
-                                                        modifier = Modifier.clickable {
-                                                            externalHandler.openFileChooser { backgroundImagePath = it.canonicalPath }
-                                                        }
-                                                    )
-                                                },
-                                            )
-
-                                            SettingsSlider(
-                                                readI18n("settings.backgroundTransparency"),
-                                                settings.backgroundTransparency,
-                                                {
-                                                    settings.backgroundTransparency = it
-                                                    UI.backgroundTransparency = it
+                                        val externalHandler = koinInject<ExternalHandler>()
+                                        ThemeSettingsContent(
+                                            settings = settings,
+                                            selectedTheme = defaultTheme,
+                                            backgroundImagePath = backgroundImagePath,
+                                            backgroundImageEnabled = backgroundImageEnabled,
+                                            onChangeTheme = onChangeTheme,
+                                            onEditBackground = {
+                                                backgroundImagePath = it
+                                                backgroundImageEnabled = true
+                                            },
+                                            onChooseBackground = {
+                                                externalHandler.openFileChooser { file ->
+                                                    // 文件选择器回调可能来自后台线程。
+                                                    scope.launch {
+                                                        backgroundImagePath = file.canonicalPath
+                                                        backgroundImageEnabled = true
+                                                    }
                                                 }
-                                            )
-
-                                            SettingsSlider(
-                                                readI18n("settings.launcherMusicVolume"),
-                                                settings.launcherMusicVolume,
-                                                {
-                                                    settings.launcherMusicVolume = it
-                                                    LauncherMusicController.sync()
-                                                }
-                                            )
-
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                                horizontalArrangement = Arrangement.Center
-                                            ) {
-                                                RWTextButton(
-                                                    readI18n("themes.manageEntry", I18nType.RWPP)
-                                                ) {
-                                                    navigateTo(LauncherPage.Themes)
-                                                }
-                                            }
-                                        }
+                                            },
+                                            onClearBackground = {
+                                                backgroundImagePath = ""
+                                                backgroundImageEnabled = false
+                                                settings.backgroundImagePath = null
+                                                settings.backgroundImageEnabled = false
+                                                configIO.saveConfig(settings)
+                                                onChangeBackgroundImage("")
+                                            },
+                                            onManageThemes = { navigateTo(LauncherPage.Themes) },
+                                            onRestoreThemeBackground = {
+                                                backgroundImageEnabled = true
+                                                settings.backgroundImageEnabled = true
+                                                configIO.saveConfig(settings)
+                                                onChangeBackgroundImage(settings.backgroundImagePath ?: "")
+                                            },
+                                        )
                                     }
                                 }
                             }

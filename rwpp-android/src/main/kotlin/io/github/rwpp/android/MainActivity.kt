@@ -136,6 +136,7 @@ class MainActivity : ComponentActivity() {
 
         val settings = appKoin.get<Settings>()
         var backgroundImagePath by mutableStateOf(settings.backgroundImagePath ?: "")
+        var backgroundImageEnabled by mutableStateOf(settings.backgroundImageEnabled)
 
         if(d.b(this, true, true)) {
             gameView = d.b(this)
@@ -168,7 +169,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     // 主题美术包的背景图优先于用户在设置中手选的背景；主题文件在 app 可控目录，无需存储权限
                     val themeBackground = ArtThemeController.activeTheme?.backgroundFile?.absolutePath
-                    val effectiveBackgroundPath = themeBackground ?: backgroundImagePath
+                    val effectiveBackgroundPath = if (backgroundImageEnabled) themeBackground ?: backgroundImagePath else ""
                     val painter = remember(effectiveBackgroundPath) {
                         if (effectiveBackgroundPath.isNotBlank() && isPremium &&
                             (themeBackground != null || appKoin.get<PermissionHelper>().hasManageFilePermission())
@@ -194,6 +195,7 @@ class MainActivity : ComponentActivity() {
 
                     App(isPremium = isPremium) {
                         backgroundImagePath = it
+                        backgroundImageEnabled = settings.backgroundImageEnabled
                     }
                 }
             }
