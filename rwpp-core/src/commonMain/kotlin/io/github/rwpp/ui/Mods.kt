@@ -49,6 +49,9 @@ import io.github.rwpp.game.mod.Mod
 import io.github.rwpp.game.mod.ModInfoParser
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.game.mod.ModSourceType
+import io.github.rwpp.game.mod.SelectableMod
+import io.github.rwpp.game.mod.requireModSelectionApplied
+import io.github.rwpp.game.mod.snapshotModSelection
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.io.copyToWithProgress
@@ -132,11 +135,10 @@ private fun List<Mod>.withTitleErrors(): List<Mod> = map { mod ->
 private fun Mod.hasTitleWarning(): Boolean =
     this is TitleErrorMod || (this is UnloadedMod && titleMissing)
 
-private fun resolveModCardStatus(mod: Mod, loadedEnabledFileNames: Set<String>): ModCardStatus {
+private fun resolveModCardStatus(mod: Mod, loadedEnabledPaths: Set<String>): ModCardStatus {
     if (!mod.errorMessage.isNullOrBlank()) return ModCardStatus.LoadFailed
     if (mod.hasTitleWarning()) return ModCardStatus.TitleWarn
-    val fileName = File(mod.path).name.lowercase()
-    if (mod.isEnabled && fileName in loadedEnabledFileNames) return ModCardStatus.LoadedOk
+    if (mod.isEnabled && File(mod.path).canonicalPath in loadedEnabledPaths) return ModCardStatus.LoadedOk
     return ModCardStatus.Neutral
 }
 
@@ -149,11 +151,11 @@ private fun modCardStatusColor(status: ModCardStatus): Color = when (status) {
 }
 
 private fun scanUnloadedMods(existing: List<Mod>): List<Mod> {
-    val existingNames = existing.map { File(it.path).name.lowercase() }.toSet()
+    val existingPaths = existing.map { File(it.path).canonicalPath }.toSet()
     val result = mutableListOf<Mod>()
     File(modDir).listFiles()?.forEach { file ->
         if (file.isFile && file.extension.equals("rwmod", ignoreCase = true)
-            && file.name.lowercase() !in existingNames
+            && file.canonicalPath !in existingPaths
         ) {
             result.add(UnloadedMod(file))
         }
@@ -268,18 +270,18 @@ fun ModsView(
     val settings = koinInject<Settings>()
 
     var deletedMod by remember { mutableStateOf(false) }
-    val initialEngineMods = remember { modManager.getAllMods().withTitleErrors() }
+    val initialEngineMods = remember { modManager.getAllMods().map(::SelectableMod).withTitleErrors() }
     val mods = remember {
         SnapshotStateList<Mod>().apply {
             addAll(initialEngineMods)
             addAll(scanUnloadedMods(initialEngineMods))
         }
     }
-    var loadedEnabledFileNames by remember {
+    var loadedEnabledPaths by remember {
         mutableStateOf(
             initialEngineMods
                 .filter { it.isEnabled }
-                .map { File(it.path).name.lowercase() }
+                .map { File(it.path).canonicalPath }
                 .toSet()
         )
     }
@@ -296,6 +298,7 @@ fun ModsView(
     // 拦截后续重载时可带着名单重弹对话框
     var oomCulpritMods by remember { mutableStateOf<List<String>>(emptyList()) }
     var showMemoryExhaustedDialog by remember { mutableStateOf(false) }
+    var isReloading by remember { mutableStateOf(false) }
 
     ModImportProgressDialog(importProgress)
 
@@ -321,23 +324,18 @@ fun ModsView(
     }
     val disabledTotal = mods.size - enabledTotal
 
-    suspend fun reloadMods(): List<FailedModLoadInfo> {
-        val knownStates = mods.associate { File(it.path).name.lowercase() to it.isEnabled }
-
+    suspend fun reloadMods(knownStates: Map<String, Boolean>): List<FailedModLoadInfo> {
         withContext(Dispatchers.IO) {
             // 在引擎加载单位定义之前应用开关，未启用的新模组不会解析单位（避免浪费时间）
             modManager.modReload(enabledByFileName = knownStates)
         }
+        val actualMods = modManager.getAllMods()
+        if (!UI.modReloadMemoryExhausted) requireModSelectionApplied(actualMods, knownStates)
+        val engineMods = actualMods.map(::SelectableMod).withTitleErrors()
         mods.clear()
-        val engineMods = modManager.getAllMods().withTitleErrors()
-        // 再同步一次 UI 侧状态（与加载前写入引擎的状态一致）
-        engineMods.forEach { mod ->
-            val fileName = File(mod.path).name.lowercase()
-            mod.isEnabled = knownStates[fileName] ?: false
-        }
-        loadedEnabledFileNames = engineMods
+        loadedEnabledPaths = engineMods
             .filter { it.isEnabled }
-            .map { File(it.path).name.lowercase() }
+            .map { File(it.path).canonicalPath }
             .toSet()
 
         mods.addAll(engineMods)
@@ -351,9 +349,13 @@ fun ModsView(
 
     /** 进程内重载。OOM 由平台 runReloadCore 捕获并置位全局标志，此处负责归因与弹窗。 */
     fun doReloadInProcess() {
+        if (isReloading) return
+        // 点击时立即固定选择，防止协程启动/引擎扫描期间开关发生变化。
+        val selection = snapshotModSelection(mods.toList())
+        isReloading = true
         scope.launch {
             try {
-                val failed = reloadMods()
+                val failed = reloadMods(selection)
                 // 引擎把每个模组的 OOM 包装进该模组的错误消息后继续（首个撞 OOM 的是元凶，
                 // 其余多为连带失败）；未包装的外层 OOM 由平台 catch 置位标志（此时无名单）。
                 // 一旦堆耗尽，锁定后续重载（二次 OOM 必崩），弹窗指名元凶。
@@ -373,6 +375,8 @@ fun ModsView(
                 throw e
             } catch (e: Throwable) {
                 UI.showWarning(e.message ?: "Unknown error")
+            } finally {
+                isReloading = false
             }
         }
     }
@@ -387,7 +391,7 @@ fun ModsView(
     }
 
     fun exit() {
-        if (isClosingAfterDelete) return
+        if (isClosingAfterDelete || isReloading) return
 
         // 堆已耗尽时跳过删除后的重载：文件已删，下次启动引擎会干净重建，直接退出即可。
         if (!deletedMod || UI.modReloadMemoryExhausted) {
@@ -396,11 +400,12 @@ fun ModsView(
         }
 
         isClosingAfterDelete = true
+        val selection = snapshotModSelection(mods.toList())
         scope.launch {
             // 删除后的重建同样要全量解析所有启用模组；若中途撞 OOM 由平台 catch 兜底
             // （置位全局标志，不闪退），开关状态已随重载流程落盘，下次启动干净重建。
             try {
-                reloadMods()
+                reloadMods(selection)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -429,11 +434,11 @@ fun ModsView(
     /**
      * 重复导入时确保既有模组在列表中可见：
      * - 清空搜索关键字，避免模组被当前过滤条件隐藏；
-     * - 列表中没有该文件时（例如绕开导入流程直接放进 units/ 的文件），以 UnloadedMod 补入。
+     * - 列表中没有该文件时（例如绕开导入流程直接放进模组目录的文件），以 UnloadedMod 补入。
      */
     fun revealExistingMod(target: File) {
         filter = ""
-        val alreadyListed = mods.any { File(it.path).name.equals(target.name, ignoreCase = true) }
+        val alreadyListed = mods.any { File(it.path).canonicalFile == target.canonicalFile }
         if (!alreadyListed && target.isFile) {
             mods.add(UnloadedMod(target))
         }
@@ -441,7 +446,7 @@ fun ModsView(
     }
 
     fun importModFile(file: File) {
-        if (importProgress?.stage == ModImportStage.Importing) return
+        if (isReloading || importProgress?.stage == ModImportStage.Importing) return
 
         scope.launch {
             if (!file.extension.equals("rwmod", ignoreCase = true)) {
@@ -454,7 +459,7 @@ fun ModsView(
 
             // 目标已存在（重复导入）：不复制，确保列表中能看到既有模组，并给出明确提示。
             // 原实现直接展示 FileAlreadyExistsException 的英文异常信息；且当文件经导入流程
-            // 之外的途径进入 units/（手动复制、资源浏览器下载、联机同步激活）时列表中并没有它，
+            // 之外的途径进入模组目录（手动复制、资源浏览器下载、联机同步激活）时列表中并没有它，
             // 造成「提示已导入但界面看不到该模组」。
             if (target.exists()) {
                 revealExistingMod(target)
@@ -489,8 +494,8 @@ fun ModsView(
                 }
 
                 // 复制完成后扫描文件系统，将新模组以 UnloadedMod（禁用）加入列表
-                val enginePaths = mods.map { File(it.path).name }.toSet()
-                if (file.name !in enginePaths) {
+                val enginePaths = mods.map { File(it.path).canonicalPath }.toSet()
+                if (target.canonicalPath !in enginePaths) {
                     mods.add(UnloadedMod(target))
                     updated = !updated
                 }
@@ -525,12 +530,14 @@ fun ModsView(
     }
 
     fun changeModEnabled(mod: Mod, enabled: Boolean) {
+        if (isReloading) return
         if (mod.isEnabled == enabled) return
         mod.isEnabled = enabled
         enabledChanged = !enabledChanged
     }
 
     fun deleteMod(mod: Mod) {
+        if (isReloading) return
         if (mod.isEnabled) {
             UI.showWarning(readI18n("mod.removeEnabledInfo"))
         } else if (mod.tryDelete()) {
@@ -1006,11 +1013,11 @@ fun ModsView(
             val cardStatus = remember(
                 updated,
                 enabledChanged,
-                loadedEnabledFileNames,
+                loadedEnabledPaths,
                 mod.id,
                 mod.isEnabled,
             ) {
-                resolveModCardStatus(mod, loadedEnabledFileNames)
+                resolveModCardStatus(mod, loadedEnabledPaths)
             }
             BorderCard(
                 backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(
@@ -1145,6 +1152,7 @@ fun ModsView(
                 },
                 modifier = Modifier.padding(horizontal = 4.dp)
             ) {
+                if (isReloading) return@RWTextButton
                 mods.forEach { it.isEnabled = false }
                 enabledChanged = !enabledChanged
             }
@@ -1161,7 +1169,7 @@ fun ModsView(
                 modifier = Modifier.padding(horizontal = 4.dp),
             ) {
                 val enabledNotLoaded = mods.filter { mod ->
-                    mod.isEnabled && File(mod.path).name.lowercase() !in loadedEnabledFileNames
+                    mod.isEnabled && File(mod.path).canonicalPath !in loadedEnabledPaths
                 }
                 if (enabledNotLoaded.isNotEmpty()) {
                     UI.showWarning(
@@ -1175,7 +1183,7 @@ fun ModsView(
                 }
 
                 val needsUnitRebuild = deletedMod || mods.any { mod ->
-                    !mod.isEnabled && File(mod.path).name.lowercase() in loadedEnabledFileNames
+                    !mod.isEnabled && File(mod.path).canonicalPath in loadedEnabledPaths
                 }
                 if (needsUnitRebuild) {
                     // 禁用/删除已加载模组后必须先重载：直接应用会在错误线程重建单位表，

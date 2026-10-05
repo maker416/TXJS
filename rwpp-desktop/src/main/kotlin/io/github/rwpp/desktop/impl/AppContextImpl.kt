@@ -47,7 +47,7 @@ class AppContextImpl : BaseAppContextImpl() {
 
     override fun internalStoragePath(path: String): String {
         // 桌面端无 Android 私有目录概念，也不需要隔离网络同步模组，回退到外部路径，
-        // 保持与原行为一致（桌面端网络同步模组仍写入工作目录下的 units/）。
+        // 模组缓存与导入目录均由调用方使用 mods/units/，保持原版 PC 目录约定。
         return externalStoragePath(path)
     }
 

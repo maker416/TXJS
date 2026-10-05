@@ -17,6 +17,7 @@ import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
 import io.github.rwpp.inject.InterruptResult
 import io.github.rwpp.logger
+import io.github.rwpp.modDir
 import java.util.HashMap
 
 /**
@@ -44,6 +45,10 @@ object CustomUnitInject {
  */
 @InjectClass(com.corrodinggames.rts.game.units.custom.ag::class)
 object CustomUnitLoadInject {
+    /** 与 PC 导入、浏览器下载及网络缓存统一使用原版 mods/units/ 目录。 */
+    @Inject("m", InjectMode.Override, "()Ljava/lang/String;")
+    fun customModDirectory(): String = modDir
+
     @Inject(
         "a",
         InjectMode.InsertBefore,

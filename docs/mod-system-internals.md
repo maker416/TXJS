@@ -3,6 +3,12 @@
 > 基于反编译 `android-game-lib.jar`（Android 端混淆类）分析整理。
 > 桌面端 `game-lib.jar` 类名映射不同但逻辑一致。
 
+## PC 模组目录约定
+
+PC 使用原版的 `mods/units/`，导入、资源浏览器下载、网络缓存激活和引擎扫描均使用该目录；Android 继续使用自己的 `units/` 路径。PC 启动及重载扫描还会补扫旧启动器的根目录 `units/`，以保留既有模组，不搬移或删除文件。
+
+桌面注入 `CustomUnitLoadInject.customModDirectory` 统一引擎目录；`ModManagerInject.scanLegacyModsAfterLauncherDirectory` 在扫描清理旧登记项之前补扫旧目录。页面的待应用开关通过完整路径快照传入重载，在扫描结束、解析单位之前应用，并在解析后校验、保存；不能靠解析结束后改开关来表示加载成功。
+
 ## 1. 核心类映射
 
 | 层 | 混淆类（Android） | 混淆类（Desktop） | 作用 |

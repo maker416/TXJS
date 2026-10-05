@@ -131,7 +131,8 @@ val customMapDir by lazy {
 }
 
 val modDir by lazy {
-    appKoin.get<AppContext>().externalStoragePath("units/")
+    val ctx = appKoin.get<AppContext>()
+    ctx.externalStoragePath(if (ctx.isDesktop()) "mods/units/" else "units/")
 }
 
 /**
@@ -153,7 +154,8 @@ val replayDir by lazy {
  * 见 [io.github.rwpp.android.impl.inject.FileLoaderInject]。
  */
 val internalModDir by lazy {
-    appKoin.get<AppContext>().internalStoragePath("units/")
+    val ctx = appKoin.get<AppContext>()
+    if (ctx.isDesktop()) modDir else ctx.internalStoragePath("units/")
 }
 
 val generatedLibDir by lazy {

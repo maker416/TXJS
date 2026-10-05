@@ -20,6 +20,8 @@ import io.github.rwpp.game.mod.Mod
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.game.mod.ModReloadSelection
 import io.github.rwpp.game.mod.ReloadAbortToVanilla
+import io.github.rwpp.game.mod.requireModSelectionApplied
+import io.github.rwpp.game.mod.resolveModEnabledByFileName
 import io.github.rwpp.io.calculateSize
 import io.github.rwpp.logger
 import io.github.rwpp.io.zipFolderToByte
@@ -33,6 +35,7 @@ import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 @Single
 class ModManagerImpl : ModManager {
@@ -64,6 +67,7 @@ class ModManagerImpl : ModManager {
                 val started = AtomicBoolean(false)
                 val startedLatch = CountDownLatch(1)
                 val doneLatch = CountDownLatch(1)
+                val failure = AtomicReference<Throwable?>()
                 logger.info("[MODSYNC] modReload posting reload action to game thread")
                 game.post {
                     if (!started.compareAndSet(false, true)) {
@@ -79,7 +83,8 @@ class ModManagerImpl : ModManager {
                         logger.info("[MODSYNC] modReload game.post action DONE")
                     } catch (e: Throwable) {
                         logger.error("[MODSYNC] modReload game.post action THREW", e)
-                        throw e
+                        // 回传给等待方显示错误；不要让重载异常杀死 OpenGL 游戏主循环。
+                        failure.set(e)
                     } finally {
                         doneLatch.countDown()
                         logger.info("[MODSYNC] modReload latch counted down")
@@ -108,6 +113,7 @@ class ModManagerImpl : ModManager {
                         doneLatch.await()
                     }
                     logger.info("[MODSYNC] modReload latch released, refreshing maps")
+                    failure.get()?.let { throw it }
                 }
                 appKoin.get<Game>().getAllMaps(true)
             }
@@ -245,9 +251,7 @@ class ModManagerImpl : ModManager {
      */
     private fun runKeepConnectedReloadCore(enabledByFileName: Map<String, Boolean>?) {
         try {
-            val B = GameEngine.B()
-            B.bZ.e()
-            B.bQ.save()
+            saveModSelection(enabledByFileName)
             reloadUnitsWithSelection(enabledByFileName)
         } catch (e: OutOfMemoryError) {
             // 与 runReloadCore 同一防线：吞掉 OOM 并置全局标志，保住进程与连接。
@@ -269,8 +273,7 @@ class ModManagerImpl : ModManager {
         System.gc()
         try {
             val B = GameEngine.B()
-            B.bZ.e()
-            B.bQ.save()
+            saveModSelection(enabledByFileName)
             try {
                 B.br = true
                 B.e()
@@ -301,6 +304,7 @@ class ModManagerImpl : ModManager {
         ModReloadSelection.activate(enabledByFileName)
         try {
             B.bZ.a(false, false)
+            requireModSelectionApplied(getAllMods(), enabledByFileName)
         } finally {
             ModReloadSelection.deactivate()
         }
@@ -308,6 +312,19 @@ class ModManagerImpl : ModManager {
         // 扫描后再保存，确保新登记模组的禁用状态能够跨重启恢复。
         B.bZ.e()
         B.bQ.save()
+    }
+
+    private fun saveModSelection(enabledByFileName: Map<String, Boolean>?) {
+        // UI 的待应用开关不再直接修改引擎；停止/重载前先保存本次选择。
+        if (enabledByFileName != null) {
+            getAllMods().forEach { mod ->
+                mod.isEnabled = resolveModEnabledByFileName(listOf(mod.path), enabledByFileName)
+            }
+            logger.info("[MODSYNC] reload selection: {}", enabledByFileName)
+        }
+        val engine = GameEngine.B()
+        engine.bZ.e()
+        engine.bQ.save()
     }
 
     override suspend fun modUpdate() {
@@ -331,8 +348,7 @@ class ModManagerImpl : ModManager {
 
     override suspend fun modSaveChange(enabledByFileName: Map<String, Boolean>?) {
         val b = GameEngine.B()
-        b.bZ.e()
-        b.bQ.save()
+        saveModSelection(enabledByFileName)
         if (b.bX.B) return
         reloadUnitsWithSelection(enabledByFileName)
     }

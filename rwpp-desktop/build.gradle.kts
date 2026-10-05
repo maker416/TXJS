@@ -44,6 +44,8 @@ dependencies {
     val koinAnnotationsVersion = findProperty("koin.annotations.version") as String
     ksp("io.insert-koin:koin-ksp-compiler:$koinAnnotationsVersion")
     ksp(project(":rwpp-ksp"))
+    testImplementation(kotlin("test-junit"))
+    testImplementation(files(rootProject.file("lib/game-lib.jar")))
 }
 
 sourceSets.main {

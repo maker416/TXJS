@@ -23,7 +23,9 @@ fun resolveModEnabledByFileName(
     val normalizedMap = enabledByFileName.mapKeys { normalizeModSelectionKey(it.key) }
     // 同步状态表使用完整路径，避免不同目录的同名文件被同时启用。
     for (rawPath in candidates) {
-        val pathKey = normalizeModSelectionKey(File(rawPath.replace('\\', '/')).absolutePath)
+        val pathKey = runCatching {
+            normalizeModSelectionKey(File(rawPath.replace('\\', '/')).absolutePath)
+        }.getOrNull() ?: continue
         if (normalizedMap.containsKey(pathKey)) return normalizedMap.getValue(pathKey)
     }
 

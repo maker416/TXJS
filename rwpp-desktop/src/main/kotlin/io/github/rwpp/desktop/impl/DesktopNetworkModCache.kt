@@ -29,7 +29,7 @@ class DesktopNetworkModCache(
 ) : NetworkModCache {
     private val lock = Any()
     private val encryptedRoot: File get() = File(appContext.externalStoragePath(".rwpp/network-mod-cache/"))
-    private val workingRoot: File get() = File(appContext.externalStoragePath("units/"))
+    private val workingRoot: File get() = File(appContext.externalStoragePath("mods/units/"))
     private val entries = mutableMapOf<String, DesktopEntry>()
     private val random = SecureRandom()
     private var prepared = false

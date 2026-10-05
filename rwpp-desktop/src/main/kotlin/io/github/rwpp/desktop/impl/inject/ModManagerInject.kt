@@ -13,6 +13,8 @@ import io.github.rwpp.game.mod.ModReloadSelection
 import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
+import io.github.rwpp.modDir
+import java.io.File
 
 /**
  * `i.a.a(boolean, boolean)` 会先调用 `k()` 扫描目录，再开始解析启用模组的单位。
@@ -20,6 +22,16 @@ import io.github.rwpp.inject.InjectMode
  */
 @InjectClass(a::class)
 object ModManagerInject {
+    /** 在本轮扫描移除旧登记项之前补扫旧启动器目录，兼容已导入 units/ 的模组。 */
+    @Inject("a", InjectMode.InsertAfter, "(Ljava/lang/String;ZZ)V")
+    fun a.scanLegacyModsAfterLauncherDirectory(path: String, enabled: Boolean, builtIn: Boolean) {
+        if (File(path).canonicalFile != File(modDir).canonicalFile) return
+        val legacy = File(File(modDir).parentFile.parentFile, "units")
+        if (legacy.isDirectory && legacy.canonicalFile != File(modDir).canonicalFile) {
+            a(legacy.absolutePath, enabled, builtIn)
+        }
+    }
+
     @Inject("k", InjectMode.InsertAfter)
     @Suppress("UNCHECKED_CAST")
     fun a.applyReloadSelectionAfterScan() {
@@ -30,12 +42,9 @@ object ModManagerInject {
         mods.forEach { mod ->
             val candidates = buildList {
                 runCatching { mod.h() }.getOrNull()?.let { add(it) }
-                runCatching { b::class.java.getField("e").get(mod) as? String }
-                    .getOrNull()
-                    ?.let { add(it) }
-                runCatching { b::class.java.getField("o").get(mod) as? String }
-                    .getOrNull()
-                    ?.let { add(it) }
+                // p/q 为原始容器/实际解析目录；e 是标识哈希，o 是 "Storage: ..." 描述。
+                mod.p?.let { add(it) }
+                mod.q?.let { add(it) }
             }
             ModReloadSelection.resolve(candidates)?.let { enabled ->
                 mod.f = !enabled

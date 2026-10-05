@@ -16,6 +16,23 @@ import kotlin.test.assertTrue
 
 class ModEnabledLookupTest {
     @Test
+    fun invalidStorageDescriptionDoesNotPreventMatchingRealPathOnWindows() {
+        val selected = File("units/demo.rwmod").canonicalFile
+        assertTrue(
+            resolveModEnabledByFileName(
+                listOf("Storage: C:/game/units", selected.path),
+                mapOf(selected.path to true),
+            )
+        )
+        assertFalse(
+            resolveModEnabledByFileName(
+                listOf("Storage: C:/game/units", "units/unknown.rwmod"),
+                mapOf(selected.path to true),
+            )
+        )
+    }
+
+    @Test
     fun matchesFileNameCaseInsensitive() {
         assertFalse(
             resolveModEnabledByFileName(
