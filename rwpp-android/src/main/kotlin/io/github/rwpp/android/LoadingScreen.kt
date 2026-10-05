@@ -30,12 +30,15 @@ import io.github.rwpp.AppContext
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.android.impl.GameEngine
 import io.github.rwpp.app.PermissionHelper
+import io.github.rwpp.app.InstallArtifactMaintenance
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.GameLoadedEvent
 import io.github.rwpp.game.mod.NetworkModCache
 import io.github.rwpp.generatedLibDir
+import io.github.rwpp.resourceOutputDir
+import io.github.rwpp.platform.androidInstallationId
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.inject.GameLibraries
@@ -176,67 +179,71 @@ class LoadingScreen : ComponentActivity() {
                                     LaunchedEffect(Unit) {
                                         clearInjectLog()
                                         withContext(Dispatchers.IO) {
-                                            runCatching {
-                                                withContext(Dispatchers.Main) {
-                                                    buildState = buildState.startBuild()
-                                                }
-
-                                                val resource = Thread
-                                                    .currentThread()
-                                                    .contextClassLoader!!
-                                                    .getResourceAsStream("android-game-lib.jar")
-
-                                                val tempJar = File.createTempFile("android-game-lib", ".jar")
-                                                tempJar.deleteOnExit()
-                                                tempJar.writeBytes(resource.readBytes())
-                                                resource.close()
-
-                                                // Always reload the root inject config from the APK before applying it.
-                                                Builder.prepareReloadingLib()
-
-                                                GameLibraries.defClassPool.appendDalvikClassPath()
-
-                                                withContext(Dispatchers.Main) {
-                                                    buildState = buildState.prepareDone()
-                                                }
-
-                                                Builder.init(GameLibraries.`android-game-lib`, tempJar)
-
-                                                withContext(Dispatchers.Main) {
-                                                    buildState = buildState.applyDone()
-                                                }
-
-                                                val libPath = "$generatedLibDir/android-game-lib.jar"
-                                                logger?.logging("compiling dex: $libPath")
-                                                logger?.logging("Saving dex to ${dexFolder.absolutePath}/classes.dex")
-                                                val dex = DexFile()
-                                                dex.addJarFile(libPath)
-                                                dex.writeFile("${dexFolder.absolutePath}/classes.dex")
-                                                logger?.logging("Successfully compile dex")
-                                                logGeneratedArtifactState()
-
-                                                // 防死循环：记录连续重建次数，超过上限则停在诊断界面而非继续自动重启。
-                                                val attempts = incrementRebuildAttemptCount()
-                                                withContext(Dispatchers.Main) {
-                                                    buildState = if (attempts > MAX_REBUILD_ATTEMPTS) {
-                                                        diagnosticsReport = buildDiagnosticsReport(
-                                                            "injectLoopGuard",
-                                                            IllegalStateException("连续重建 $attempts 次仍未成功，已停止自动重启")
-                                                        )
-                                                        buildState.buildFailed(
-                                                            IllegalStateException("Rebuild loop guard tripped after $attempts attempts")
-                                                        )
-                                                    } else {
-                                                        buildState.buildSuccess()
+                                            var temporaryGameJar: File? = null
+                                            try {
+                                                runCatching {
+                                                    withContext(Dispatchers.Main) {
+                                                        buildState = buildState.startBuild()
                                                     }
+
+                                                    val resource = Thread
+                                                        .currentThread()
+                                                        .contextClassLoader!!
+                                                        .getResourceAsStream("android-game-lib.jar")
+
+                                                    val tempJar = File.createTempFile("android-game-lib", ".jar")
+                                                    temporaryGameJar = tempJar
+                                                    resource.use { tempJar.writeBytes(it.readBytes()) }
+
+                                                    // Always reload the root inject config from the APK before applying it.
+                                                    Builder.prepareReloadingLib()
+
+                                                    GameLibraries.defClassPool.appendDalvikClassPath()
+
+                                                    withContext(Dispatchers.Main) {
+                                                        buildState = buildState.prepareDone()
+                                                    }
+
+                                                    Builder.init(GameLibraries.`android-game-lib`, tempJar)
+
+                                                    withContext(Dispatchers.Main) {
+                                                        buildState = buildState.applyDone()
+                                                    }
+
+                                                    val libPath = "$generatedLibDir/android-game-lib.jar"
+                                                    logger?.logging("compiling dex: $libPath")
+                                                    logger?.logging("Saving dex to ${dexFolder.absolutePath}/classes.dex")
+                                                    val dex = DexFile()
+                                                    dex.addJarFile(libPath)
+                                                    dex.writeFile("${dexFolder.absolutePath}/classes.dex")
+                                                    logger?.logging("Successfully compile dex")
+                                                    logGeneratedArtifactState()
+
+                                                    // 防死循环：记录连续重建次数，超过上限则停在诊断界面而非继续自动重启。
+                                                    val attempts = incrementRebuildAttemptCount()
+                                                    withContext(Dispatchers.Main) {
+                                                        buildState = if (attempts > MAX_REBUILD_ATTEMPTS) {
+                                                            diagnosticsReport = buildDiagnosticsReport(
+                                                                "injectLoopGuard",
+                                                                IllegalStateException("连续重建 $attempts 次仍未成功，已停止自动重启")
+                                                            )
+                                                            buildState.buildFailed(
+                                                                IllegalStateException("Rebuild loop guard tripped after $attempts attempts")
+                                                            )
+                                                        } else {
+                                                            buildState.buildSuccess()
+                                                        }
+                                                    }
+                                                }.onFailure { error ->
+                                                    diagnosticsReport = buildDiagnosticsReport("inject", error)
+                                                    withContext(Dispatchers.Main) {
+                                                        buildState = buildState.buildFailed(error)
+                                                    }
+                                                    logger?.error("failed: ${error.stackTraceToString()}")
+                                                    logGeneratedArtifactState()
                                                 }
-                                            }.onFailure { error ->
-                                                diagnosticsReport = buildDiagnosticsReport("inject", error)
-                                                withContext(Dispatchers.Main) {
-                                                    buildState = buildState.buildFailed(error)
-                                                }
-                                                logger?.error("failed: ${error.stackTraceToString()}")
-                                                logGeneratedArtifactState()
+                                            } finally {
+                                                temporaryGameJar?.delete()
                                             }
                                         }
                                     }
@@ -286,6 +293,15 @@ class LoadingScreen : ComponentActivity() {
                                     LaunchedEffect(Unit) {
                                         message = "loading"
                                         val engineInitSuccess = withContext(Dispatchers.IO) {
+                                            // 公共目录的清理延后到权限已就绪；注入自动重启不会重复删除新产物。
+                                            try {
+                                                InstallArtifactMaintenance(filesDir, dexFolder, cacheDir)
+                                                    .prepareResources(androidInstallationId(this@LoadingScreen), File(resourceOutputDir))
+                                            } catch (error: Exception) {
+                                                Log.e("RWPP", "Cannot invalidate resources after APK update", error)
+                                                engineInitError = error
+                                                return@withContext false
+                                            }
                                             appKoin.get<AppContext>().init()
                                             runCatching {
                                                 val mapsDir = File(

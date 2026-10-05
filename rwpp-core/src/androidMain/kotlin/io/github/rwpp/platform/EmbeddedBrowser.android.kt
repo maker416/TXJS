@@ -42,6 +42,7 @@ import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoView
+import org.mozilla.geckoview.StorageController
 import org.mozilla.geckoview.WebExtension
 import org.mozilla.geckoview.WebResponse
 import org.mozilla.geckoview.WebRequestError
@@ -49,8 +50,47 @@ import org.mozilla.geckoview.WebRequestError
 /** 每个进程只建一个 runtime；关闭资源站只关闭 session，不销毁整个 Gecko 内核。 */
 private object BrowserGeckoRuntime {
     private var instance: GeckoRuntime? = null
+    private var preparation: GeckoResult<WebExtension>? = null
     fun get(context: Context): GeckoRuntime = instance
         ?: GeckoRuntime.create(context.applicationContext).also { instance = it }
+
+    fun prepare(context: Context): GeckoResult<WebExtension> {
+        preparation?.let { return it }
+        val result = GeckoResult<WebExtension>()
+        preparation = result
+        val runtime = get(context)
+        val preferences = context.getSharedPreferences("rwpp_browser_artifacts", Context.MODE_PRIVATE)
+        val installationId = androidInstallationId(context)
+        val changed = preferences.getString("installation", null) != installationId
+        fun fail(error: Throwable) {
+            preparation = null
+            result.completeExceptionally(error)
+        }
+        fun installBridge() {
+            // ensureBuiltIn 会复用相同 manifest version 的已安装副本；升级后强制从新 APK 安装。
+            val controller = runtime.webExtensionController
+            val uri = "resource://android/assets/rwpp-forum-bridge/"
+            val pending = if (changed) controller.installBuiltIn(uri)
+                else controller.ensureBuiltIn(uri, "forum-bridge@rwpp")
+            pending.accept({ addon ->
+                if (addon == null) {
+                    fail(IllegalStateException("Cannot install forum bridge"))
+                } else if (changed && !preferences.edit().putString("installation", installationId).commit()) {
+                    fail(java.io.IOException("Cannot persist browser installation marker"))
+                } else {
+                    result.complete(addon)
+                }
+            }, { fail(it ?: IllegalStateException("Cannot install forum bridge")) })
+        }
+        if (changed) {
+            // 仅清网页/图片等缓存；保留 Cookie、DOM storage、账号会话及网站权限。
+            runtime.storageController.clearData(StorageController.ClearFlags.ALL_CACHES)
+                .accept({ installBridge() }, { fail(it ?: IllegalStateException("Cannot clear browser caches")) })
+        } else {
+            installBridge()
+        }
+        return result
+    }
 }
 
 @Composable
@@ -136,7 +176,7 @@ actual fun EmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifier) {
     AndroidView(factory = { browser.view }, modifier = modifier)
 }
 
-private class AndroidGeckoBrowser(context: Context, private val state: EmbeddedBrowserState) : EmbeddedBrowserController {
+private class AndroidGeckoBrowser(private val context: Context, private val state: EmbeddedBrowserState) : EmbeddedBrowserController {
     private val runtime = BrowserGeckoRuntime.get(context)
     val session = GeckoSession()
     val view = GeckoView(context).apply {
@@ -268,7 +308,7 @@ private class AndroidGeckoBrowser(context: Context, private val state: EmbeddedB
     fun initialize() {
         if (disposed || initializing) return
         initializing = true
-        runtime.webExtensionController.ensureBuiltIn("resource://android/assets/rwpp-forum-bridge/", "forum-bridge@rwpp").accept({ addon ->
+        BrowserGeckoRuntime.prepare(context).accept({ addon ->
             initializing = false
             if (disposed) return@accept
             if (addon == null) {

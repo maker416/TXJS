@@ -59,6 +59,8 @@ class AutoUpdaterImpl : AutoUpdater, KoinComponent {
             updateCancelled = false
         }
 
+        var apkFile: File? = null
+        var handedToInstaller = false
         try {
             if (updateCancelled) return
 
@@ -67,7 +69,8 @@ class AutoUpdaterImpl : AutoUpdater, KoinComponent {
                 return
             }
 
-            val apkFile = File.createTempFile("rwpp-update-", ".apk", context.cacheDir)
+            val downloadedApk = File.createTempFile("rwpp-update-", ".apk", context.cacheDir)
+            apkFile = downloadedApk
 
             val request = Request.Builder().url(downloadUrl).build()
             runCatching {
@@ -85,7 +88,7 @@ class AutoUpdaterImpl : AutoUpdater, KoinComponent {
                     val contentLength = body.contentLength()
 
                     body.byteStream().use { input ->
-                        FileOutputStream(apkFile).use { output ->
+                        FileOutputStream(downloadedApk).use { output ->
                             val buffer = ByteArray(8192)
                             var downloaded: Long = 0
                             var read: Int
@@ -109,11 +112,11 @@ class AutoUpdaterImpl : AutoUpdater, KoinComponent {
 
             if (updateCancelled) return
 
-            logger.info("Download completed: ${apkFile.absolutePath}")
+            logger.info("Download completed: ${downloadedApk.absolutePath}")
 
             val authority = "${context.packageName}.fileprovider"
             val uri = runCatching {
-                FileProvider.getUriForFile(context, authority, apkFile)
+                FileProvider.getUriForFile(context, authority, downloadedApk)
             }.getOrElse {
                 logger.error("Failed to create APK content uri (authority=$authority): ${it.stackTraceToString()}")
                 onProgress(PROGRESS_FAILED)
@@ -127,11 +130,16 @@ class AutoUpdaterImpl : AutoUpdater, KoinComponent {
 
             runCatching {
                 context.startActivity(installIntent)
+                handedToInstaller = true
             }.onFailure {
                 logger.error("Failed to start install activity: ${it.stackTraceToString()}")
                 onProgress(PROGRESS_FAILED)
             }
         } finally {
+            // 未交给系统安装器的失败/取消文件立即删除；安装器仍在读取的文件由下次启动回收。
+            if (!handedToInstaller) apkFile?.let {
+                if (it.exists() && !it.delete()) logger.warn("Cannot delete incomplete update APK: $it")
+            }
             synchronized(downloadLock) {
                 downloadInProgress = false
             }

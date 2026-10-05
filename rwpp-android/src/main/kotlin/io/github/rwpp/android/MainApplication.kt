@@ -21,6 +21,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.FileAppender
 import io.github.rwpp.android.impl.GameSoundPoolImpl
 import io.github.rwpp.app.PermissionHelper
+import io.github.rwpp.app.InstallArtifactMaintenance
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.CoreImplModule
@@ -30,6 +31,7 @@ import io.github.rwpp.generatedLibDir
 import io.github.rwpp.inject.runtime.Builder
 import io.github.rwpp.koinInit
 import io.github.rwpp.logger
+import io.github.rwpp.platform.androidInstallationId
 import io.github.rwpp.ui.defaultBuildLogger
 import org.koin.android.ext.koin.androidLogger
 import org.koin.core.context.startKoin
@@ -124,8 +126,16 @@ class MainApplication : Application() {
             val hasPermission = permissionHelper.hasManageFilePermission()
             Builder.outputDir = generatedLibDir
             Builder.logger = defaultBuildLogger
-            init = true
             dexFolder = getDir("dexfiles", MODE_PRIVATE)
+            val maintenance = InstallArtifactMaintenance(filesDir, dexFolder, cacheDir)
+            val installationChanged = maintenance.prepareGeneratedArtifacts(androidInstallationId(this))
+            if (installationChanged) {
+                resetRebuildAttemptCount()
+                logger.info("APK installation changed; rebuilding generated game artifacts")
+            }
+            runCatching { maintenance.cleanTemporaryFiles(installationChanged) }
+                .onFailure { logger.warn("Cannot clean abandoned update/upload files", it) }
+            init = true
             requireReloadingLib = Builder.prepareReloadingLib() || !File(dexFolder, "classes.dex").exists()
             logger.info("hasPermission: $hasPermission, requireReloadingLib: $requireReloadingLib, generatedLibDir: $generatedLibDir, dexExists: ${File(dexFolder, "classes.dex").exists()}")
             if (!requireReloadingLib) {
