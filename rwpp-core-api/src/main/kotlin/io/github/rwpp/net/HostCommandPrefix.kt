@@ -8,7 +8,7 @@
 package io.github.rwpp.net
 
 /** Default join port for Q-series rooms (e.g. Q77182). */
-const val Q_ROOM_JOIN_PORT = 5129
+const val Q_ROOM_JOIN_PORT = 5123
 
 /** Default join port for R-series rooms (e.g. R77182). */
 const val R_ROOM_JOIN_PORT = 5123

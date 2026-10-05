@@ -492,7 +492,7 @@ class RwListParserTest {
     fun roomJoinPortMatchesQAndRSeries() {
         assertEquals(Q_ROOM_JOIN_PORT, roomJoinPortForId("Q77182"))
         assertEquals(R_ROOM_JOIN_PORT, roomJoinPortForId("R77182"))
-        assertEquals("Q77182:5129", roomListPublishAddress("Q77182"))
+        assertEquals("Q77182:5123", roomListPublishAddress("Q77182"))
         assertEquals("R77182:5123", roomListPublishAddress("R77182"))
     }
 }
