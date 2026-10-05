@@ -23,6 +23,17 @@ class BundleParseTest {
     private val bundleNames = listOf("bundle_zh.toml", "bundle_en.toml")
 
     @Test
+    fun roomListKeysExistInAllBundles() {
+        bundleNames.forEach { name ->
+            val root = Toml.parseToTomlTable(File(bundleDir, name).readText())
+            val roomList = (root["multiplayer"] as TomlTable)["roomList"] as TomlTable
+            listOf("unnamedRoom", "mapNotProvided", "modCount", "currentPlayers", "statusUnknown").forEach { key ->
+                assertTrue(roomList.containsKey(key), "multiplayer.roomList.$key missing in $name")
+            }
+        }
+    }
+
+    @Test
     fun browserUploadKeysExistInAllBundles() {
         bundleNames.forEach { name ->
             val browser = Toml.parseToTomlTable(File(bundleDir, name).readText())["browser"] as TomlTable

@@ -47,6 +47,8 @@ data class RoomDescription(
     val roomJoinType: String = RoomJoinType.IP,
     /** RWList `available == "1"`; false covers offline, in-game, and other non-joinable states. */
     val listAvailable: Boolean = true,
+    /** RWList `available` is explicitly "0" or "1"; empty legacy values have unknown status. */
+    val listAvailabilityKnown: Boolean = true,
 ) {
     fun addressProvider(): String {
         if (this.roomId != 0) {

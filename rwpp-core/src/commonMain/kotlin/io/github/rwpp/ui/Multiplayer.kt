@@ -67,7 +67,6 @@ import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.event.events.JoinGameEvent
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.mod.ModManager
-import io.github.rwpp.gameVersion
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.logger
 import io.github.rwpp.net.Net
@@ -75,15 +74,11 @@ import io.github.rwpp.net.HostCommandPrefix
 import io.github.rwpp.net.roomListApiBasesWithDefaultFallback
 import io.github.rwpp.net.MOD_SYNC_ROOM_TYPE
 import io.github.rwpp.net.RoomDescription
-import io.github.rwpp.net.RoomListDegradeReason
-import io.github.rwpp.net.ModSyncStatus
 import io.github.rwpp.net.hasRoomLabel
 import io.github.rwpp.net.isJoinableFromList
 import io.github.rwpp.net.isModdedRoom
 import io.github.rwpp.net.labels
-import io.github.rwpp.net.listDegradeReason
 import io.github.rwpp.net.matchesAnyRoomLabel
-import io.github.rwpp.net.modSyncStatus
 import io.github.rwpp.net.parseRequiredModNames
 import io.github.rwpp.net.sorted
 import io.github.rwpp.platform.BackHandler
@@ -103,31 +98,17 @@ import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import kotlin.math.roundToInt
 
-private fun roomListCategoryText(
-    desc: RoomDescription,
-    vanillaLabel: String,
-    moddedLabel: String,
-    modSyncLabel: String,
-): String = when {
-    desc.isModdedRoom && desc.hasRoomLabel(MOD_SYNC_ROOM_TYPE) -> modSyncLabel
-    desc.isModdedRoom -> moddedLabel
-    else -> vanillaLabel
-}
+private fun roomListCategoryText(desc: RoomDescription): String =
+    readI18n(if (desc.isModdedRoom) "multiplayer.roomList.moddedDisplay" else "multiplayer.roomList.vanillaDisplay")
 
-/**
- * 用于列表/详情中作为独立 Chip 展示的普通服务端标签：排除协议哨兵 [MOD_SYNC_ROOM_TYPE]，
- * 后者已由本地化的主类型文本表达。
- */
+/** 普通标签与同步能力分别呈现，避免重复或把同步能力误当作房间类型。 */
 private fun ordinaryRoomLabels(desc: RoomDescription): List<String> =
     desc.labels.filterNot { it.equals(MOD_SYNC_ROOM_TYPE, ignoreCase = true) }
 
-/**
- * 模组同步状态 Chip 的本地化 key。
- * 主类型已是「模组同步」时返回 null（避免与主类型重复）；仅模组房间但未含哨兵时提示「未开启」。
- */
-private fun roomModSyncStatusI18nKey(desc: RoomDescription): String? = when (desc.modSyncStatus) {
-    ModSyncStatus.NotEnabled -> "multiplayer.roomList.modSyncDisabled"
-    ModSyncStatus.Enabled, ModSyncStatus.NotModded -> null
+private fun roomModSyncStatusI18nKey(desc: RoomDescription): String? = when {
+    desc.hasRoomLabel(MOD_SYNC_ROOM_TYPE) -> "multiplayer.roomList.modSyncEnabled"
+    desc.isModdedRoom -> "multiplayer.roomList.modSyncDisabled"
+    else -> null
 }
 
 private const val LIST_POSITION_APPLICATION_URL = "http://listup.xn--rhqr8xvr4ahqsgka.com:11452/"
@@ -214,15 +195,6 @@ private fun RoomAccessChip(text: String) {
             color = MaterialTheme.colorScheme.onTertiaryContainer,
         )
     }
-}
-
-/** Status chips for rooms that cannot be joined from the list; password uses [RoomAccessChip] instead. */
-private fun roomListDegradeReasonI18nKey(reason: RoomListDegradeReason): String? = when (reason) {
-    RoomListDegradeReason.Unavailable -> "multiplayer.roomList.statusUnavailable"
-    RoomListDegradeReason.Full -> "multiplayer.roomList.statusFull"
-    RoomListDegradeReason.VersionMismatch -> "multiplayer.roomList.statusVersionMismatch"
-    RoomListDegradeReason.PasswordRequired,
-    RoomListDegradeReason.None -> null
 }
 
 @Composable
@@ -1112,126 +1084,16 @@ fun MultiplayerView(
             key = { descriptions[it].uuid }
         ) { index ->
             val desc = descriptions[index]
-            val degradeReason = desc.listDegradeReason()
-            val isDegraded = !desc.isJoinableFromList
-            val degradeAlpha = if (isDegraded) 0.65f else 1f
-            val accentUpperCase = !isDegraded && desc.isUpperCase && desc.gameVersion == gameVersion
-            val rowFontWeight: FontWeight? = when {
-                accentUpperCase -> FontWeight.Black
-                !isDegraded && desc.isUpperCase -> FontWeight.ExtraBold
-                else -> null
-            }
-            val textColor: Color = when {
-                isDegraded -> MaterialTheme.colorScheme.onSurfaceVariant
-                desc.isLocal -> Color(255, 127, 80)
-                else -> MaterialTheme.colorScheme.onSurface
-            }
-            val statusChipText = if (isDegraded) {
-                roomListDegradeReasonI18nKey(degradeReason)?.let { readI18n(it) }
-            } else null
-            val categoryText = roomListCategoryText(
-                desc,
-                readI18n("multiplayer.roomList.vanillaDisplay"),
-                readI18n("multiplayer.roomList.moddedDisplay"),
-                readI18n("multiplayer.roomList.modSyncDisplay"),
-            )
-            val modSyncChipText = roomModSyncStatusI18nKey(desc)?.let(::readI18n)
-            val ordinaryLabels = ordinaryRoomLabels(desc)
-            val playersText = "${desc.playerCurrentCount ?: "?"}/${desc.playerMaxCount ?: "?"}"
-            val requiredMods = parseRequiredModNames(desc.mods)
-            val modsText = when {
-                !desc.isModdedRoom -> readI18n("multiplayer.roomList.noRequiredMods")
-                requiredMods.isEmpty() -> readI18n("multiplayer.roomList.modInfoUnavailable")
-                else -> requiredMods.joinToString(", ")
-            }
-
-            Card(
+            RoomListCard(
+                room = desc,
                 onClick = {
                     selectedRoomDescription = desc
                     showJoinRequestDialog = true
                 },
                 modifier = Modifier
-                    .then(if (koinInject<Settings>().enableAnimations) Modifier.animateItem() else Modifier)
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 3.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-                ),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    // 左侧:房间标签+地图名(上) + 启用模组/状态(下)
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(5.dp),
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            ordinaryLabels.forEach { label ->
-                                RoomLabelChip(label)
-                            }
-                            Text(
-                                desc.mapName.removeSuffix(".tmx"),
-                                modifier = Modifier.weight(1f, fill = false),
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = textColor.copy(alpha = degradeAlpha),
-                                fontWeight = rowFontWeight,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        FlowRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            Text(
-                                modsText,
-                                modifier = Modifier.weight(1f, fill = false),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = textColor.copy(alpha = 0.85f * degradeAlpha),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            if (desc.requiredPassword) {
-                                RoomAccessChip(readI18n("multiplayer.roomList.accessPassword"))
-                            }
-                            if (statusChipText != null) {
-                                RoomStatusChip(statusChipText)
-                            }
-                        }
-                    }
-                    // 右侧:类型标签 + 人数(上),模组同步状态(下,右下角)
-                    Column(
-                        horizontalAlignment = Alignment.End,
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            RoomLabelChip(categoryText)
-                            Text(
-                                playersText,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = textColor.copy(alpha = 0.8f * degradeAlpha),
-                                fontWeight = rowFontWeight,
-                            )
-                        }
-                        if (modSyncChipText != null) {
-                            RoomAccessChip(modSyncChipText)
-                        }
-                    }
-                }
-            }
+                    .then(if (settings.enableAnimations) Modifier.animateItem() else Modifier)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
         }
     }
 
@@ -2289,16 +2151,11 @@ private fun JoinServerRequestDialog(
     AnimatedAlertDialog(
         visible, onDismissRequest = onDismissRequest
     ) { dismiss ->
-        val categoryText = roomListCategoryText(
-            roomDescription,
-            readI18n("multiplayer.roomList.vanillaDisplay"),
-            readI18n("multiplayer.roomList.moddedDisplay"),
-            readI18n("multiplayer.roomList.modSyncDisplay"),
-        )
+        val categoryText = roomListCategoryText(roomDescription)
         val ordinaryLabels = ordinaryRoomLabels(roomDescription)
         val requiredMods = parseRequiredModNames(roomDescription.mods)
         val modSyncText = roomModSyncStatusI18nKey(roomDescription)?.let(::readI18n)
-        val statusText = roomListDegradeReasonI18nKey(roomDescription.listDegradeReason())?.let(::readI18n)
+        val statusText = roomListStatusI18nKey(roomDescription)?.let(::readI18n)
         val joinable = roomDescription.isJoinableFromList
 
         BorderCard(
@@ -2333,7 +2190,7 @@ private fun JoinServerRequestDialog(
                         color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f),
                     )
                     Text(
-                        roomDescription.mapName.removeSuffix(".tmx"),
+                        roomDisplayName(roomDescription),
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimary,
@@ -2393,7 +2250,7 @@ private fun JoinServerRequestDialog(
                         RoomInfoTile(
                             Icons.Default.Person,
                             readI18n("multiplayer.roomList.detailHost"),
-                            roomDescription.creator,
+                            roomDisplayName(roomDescription),
                             Modifier.weight(1f),
                         )
                         RoomInfoTile(
@@ -2407,7 +2264,7 @@ private fun JoinServerRequestDialog(
                         RoomInfoTile(
                             Icons.Default.Place,
                             readI18n("multiplayer.roomList.detailMap"),
-                            roomDescription.mapName.removeSuffix(".tmx"),
+                            roomDisplayMap(roomDescription),
                             Modifier.weight(1f),
                         )
                         RoomInfoTile(

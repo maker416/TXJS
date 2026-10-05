@@ -201,6 +201,7 @@ fun mapRwListEntryToRoomDescription(entry: RwListServerEntry): RoomDescription {
         label = entry.roomtype,
         roomJoinType = if (isShortCode) RoomJoinType.SHORT else RoomJoinType.IP,
         listAvailable = isRwListEntryJoinable(entry),
+        listAvailabilityKnown = entry.available == "0" || entry.available == "1",
     )
 }
 

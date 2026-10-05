@@ -67,6 +67,26 @@ class RwListParserTest {
     }
 
     @Test
+    fun emptyMapPreservesRoomNameAndLegacyAvailabilityRemainsUnknown() {
+        val entry = parseRwListServersPage(sampleListJson).list.first().copy(
+            name = "公开房间-R7471", mapname = "", roomtype = "默认|模组同步", available = "",
+        )
+        val unknown = mapRwListEntryToRoomDescription(entry)
+        assertEquals("公开房间-R7471", unknown.creator)
+        assertEquals("", unknown.mapName)
+        assertFalse(unknown.listAvailabilityKnown)
+        assertFalse(unknown.listAvailable)
+        assertFalse(unknown.isModdedRoom)
+        assertTrue(unknown.hasRoomLabel(MOD_SYNC_ROOM_TYPE))
+        val unavailable = mapRwListEntryToRoomDescription(entry.copy(available = "0"))
+        assertTrue(unavailable.listAvailabilityKnown)
+        assertFalse(unavailable.listAvailable)
+        val available = mapRwListEntryToRoomDescription(entry.copy(available = "1"))
+        assertTrue(available.listAvailabilityKnown)
+        assertTrue(available.listAvailable)
+    }
+
+    @Test
     fun shortJoinCodeEntryMapsWithoutPortSuffix() {
         val entry = RwListServerEntry(
             name = "自定义房间",
