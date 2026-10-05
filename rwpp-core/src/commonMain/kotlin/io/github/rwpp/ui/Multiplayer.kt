@@ -31,6 +31,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -231,7 +232,7 @@ private fun RoomLabelChip(label: String) {
     }
 }
 
-@Suppress("UnusedMaterial3ScaffoldPaddingParameter", "RememberReturnType")
+@Suppress("RememberReturnType")
 @Composable
 fun MultiplayerView(
     onExit: () -> Unit,
@@ -265,8 +266,17 @@ fun MultiplayerView(
     }
     val lazyListState = rememberLazyListState()
     val reorderableLazyListState = rememberReorderableLazyListState(lazyListState) { from, to ->
-        allServerData.add(to.index - 1, allServerData.removeAt(from.index - 1))
-        instance.allServerConfig.add(to.index - 1, instance.allServerConfig.removeAt(from.index - 1))
+        // 网格行数和错误提示会改变列表索引，收藏服务器排序必须按稳定 key 找到真实对象。
+        val sourceIndex = allServerData.indexOfFirst { it.hashCode() == from.key }
+        val targetIndex = allServerData.indexOfFirst { it.hashCode() == to.key }
+        if (sourceIndex >= 0 && targetIndex >= 0) {
+            val sourceConfigIndex = instance.allServerConfig.indexOf(allServerData[sourceIndex].config)
+            val targetConfigIndex = instance.allServerConfig.indexOf(allServerData[targetIndex].config)
+            if (sourceConfigIndex >= 0 && targetConfigIndex >= 0) {
+                allServerData.add(targetIndex, allServerData.removeAt(sourceIndex))
+                instance.allServerConfig.add(targetConfigIndex, instance.allServerConfig.removeAt(sourceConfigIndex))
+            }
+        }
     }
 
     var currentViewList by remember { mutableStateOf<List<RoomDescription>>(listOf()) }
@@ -1076,27 +1086,6 @@ fun MultiplayerView(
         }
     }
 
-    fun LazyListScope.RoomListAnimated(
-        descriptions: List<RoomDescription>
-    ) {
-        items(
-            count = descriptions.size,
-            key = { descriptions[it].uuid }
-        ) { index ->
-            val desc = descriptions[index]
-            RoomListCard(
-                room = desc,
-                onClick = {
-                    selectedRoomDescription = desc
-                    showJoinRequestDialog = true
-                },
-                modifier = Modifier
-                    .then(if (settings.enableAnimations) Modifier.animateItem() else Modifier)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-            )
-        }
-    }
-
     @Composable
     fun AnimatedServerConfigInfo(
         visible: Boolean,
@@ -1705,7 +1694,7 @@ fun MultiplayerView(
                 }
             }
         },
-    ) {
+    ) { innerPadding ->
         ExpandedCard {
             Box {
                 ExitButton(onExit)
@@ -1763,114 +1752,121 @@ fun MultiplayerView(
                     CompositionLocalProvider(
                         LocalContentColor provides MaterialTheme.colorScheme.onSurface
                     ) {
-                        LazyColumnScrollbar(
-                            listState = lazyListState,
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            LazyColumn(
-                                modifier = Modifier.fillMaxSize(),
-                                state = lazyListState
+                        BoxWithConstraints(Modifier.fillMaxSize()) {
+                            val roomColumns = roomCardColumnCount(maxWidth, LocalDensity.current.fontScale)
+                            LazyColumnScrollbar(
+                                listState = lazyListState,
+                                modifier = Modifier.fillMaxSize()
                             ) {
-                                item {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                                        horizontalArrangement = Arrangement.Center,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        OutlinedTextField(
-                                            label = {
-                                                Text(
-                                                    readI18n(
-                                                        if (accountNameLocked) "multiplayer.userNameAccountBound"
-                                                        else "multiplayer.userName"
-                                                    ),
-                                                    fontFamily = MaterialTheme.typography.headlineMedium.fontFamily
-                                                )
-                                            },
-                                            textStyle = MaterialTheme.typography.headlineLarge,
-                                            colors = RWOutlinedTextColors,
-                                            value = userName,
-                                            enabled = true,
-                                            readOnly = accountNameLocked,
-                                            singleLine = true,
-                                            leadingIcon = { Icon(Icons.Default.Person, null, modifier = Modifier.size(30.dp)) },
-                                            trailingIcon = if (accountNameLocked) {
-                                                {
-                                                    Icon(
-                                                        Icons.Default.Lock,
-                                                        null,
-                                                        tint = MaterialTheme.colorScheme.primary,
-                                                        modifier = Modifier.size(22.dp)
-                                                    )
-                                                }
-                                            } else null,
-                                            modifier = Modifier.width(200.dp).padding(10.dp),
-                                            onValueChange =
-                                            {
-                                                userName = it
-                                            },
-                                        )
-
-                                        JoinServerField()
-
-                                        // 顶部工具栏：筛选 / 刷新（刷新为高频操作，移除添加按钮）
-                                        RWIconButton(
-                                            painterResource(Res.drawable.tune_30),
-                                            modifier = Modifier.padding(5.dp),
-                                            size = 50.dp
-                                        ) { filterSurfaceDialogVisible = true }
-
-                                        RefreshButtonWithHint(
-                                            isRefreshing = isRefreshing,
-                                            onRefresh = { if(!isRefreshing) scope.launch { refresh.trySend(Unit) } },
-                                            modifier = Modifier.padding(5.dp)
-                                        )
-
-                                    }
-                                }
-
-                                if (throwable != null) {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxSize(),
+                                    state = lazyListState,
+                                    contentPadding = PaddingValues(bottom = innerPadding.calculateBottomPadding() + 12.dp),
+                                ) {
                                     item {
-                                        var showErrorDetails by remember { mutableStateOf(false) }
-                                        Column(modifier = Modifier.padding(16.dp)) {
-                                            Text(
-                                                readI18n("multiplayer.connectionFailed"),
-                                                color = MaterialTheme.colorScheme.error,
-                                                style = MaterialTheme.typography.bodyMedium,
-                                            )
-                                            Spacer(Modifier.height(8.dp))
-                                            TextButton(onClick = { showErrorDetails = !showErrorDetails }) {
-                                                Text(readI18n("multiplayer.viewDetails"))
-                                            }
-                                            AnimatedVisibility(showErrorDetails) {
-                                                SelectionContainer {
-                                                    Text(
-                                                        throwable?.stackTraceToString() ?: "Unknown error",
-                                                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
-                                                        style = MaterialTheme.typography.bodySmall,
-                                                        modifier = Modifier.padding(top = 8.dp),
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                if (realList.isEmpty() && allServerData.isEmpty() && throwable == null && !isRefreshing) {
-                                    item {
-                                        Box(
-                                            modifier = Modifier.fillMaxWidth().padding(32.dp),
-                                            contentAlignment = Alignment.Center
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                            horizontalArrangement = Arrangement.Center,
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Text(
-                                                readI18n("multiplayer.emptyList"),
-                                                style = MaterialTheme.typography.bodyLarge,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            OutlinedTextField(
+                                                label = {
+                                                    Text(
+                                                        readI18n(
+                                                            if (accountNameLocked) "multiplayer.userNameAccountBound"
+                                                            else "multiplayer.userName"
+                                                        ),
+                                                        fontFamily = MaterialTheme.typography.headlineMedium.fontFamily
+                                                    )
+                                                },
+                                                textStyle = MaterialTheme.typography.headlineLarge,
+                                                colors = RWOutlinedTextColors,
+                                                value = userName,
+                                                enabled = true,
+                                                readOnly = accountNameLocked,
+                                                singleLine = true,
+                                                leadingIcon = { Icon(Icons.Default.Person, null, modifier = Modifier.size(30.dp)) },
+                                                trailingIcon = if (accountNameLocked) {
+                                                    {
+                                                        Icon(
+                                                            Icons.Default.Lock,
+                                                            null,
+                                                            tint = MaterialTheme.colorScheme.primary,
+                                                            modifier = Modifier.size(22.dp)
+                                                        )
+                                                    }
+                                                } else null,
+                                                modifier = Modifier.width(200.dp).padding(10.dp),
+                                                onValueChange =
+                                                {
+                                                    userName = it
+                                                },
                                             )
+
+                                            JoinServerField()
+
+                                            // 顶部工具栏：筛选 / 刷新（刷新为高频操作，移除添加按钮）
+                                            RWIconButton(
+                                                painterResource(Res.drawable.tune_30),
+                                                modifier = Modifier.padding(5.dp),
+                                                size = 50.dp
+                                            ) { filterSurfaceDialogVisible = true }
+
+                                            RefreshButtonWithHint(
+                                                isRefreshing = isRefreshing,
+                                                onRefresh = { if(!isRefreshing) scope.launch { refresh.trySend(Unit) } },
+                                                modifier = Modifier.padding(5.dp)
+                                            )
+
                                         }
                                     }
+
+                                    if (throwable != null) {
+                                        item {
+                                            var showErrorDetails by remember { mutableStateOf(false) }
+                                            Column(modifier = Modifier.padding(16.dp)) {
+                                                Text(
+                                                    readI18n("multiplayer.connectionFailed"),
+                                                    color = MaterialTheme.colorScheme.error,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                )
+                                                Spacer(Modifier.height(8.dp))
+                                                TextButton(onClick = { showErrorDetails = !showErrorDetails }) {
+                                                    Text(readI18n("multiplayer.viewDetails"))
+                                                }
+                                                AnimatedVisibility(showErrorDetails) {
+                                                    SelectionContainer {
+                                                        Text(
+                                                            throwable?.stackTraceToString() ?: "Unknown error",
+                                                            color = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            modifier = Modifier.padding(top = 8.dp),
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if (realList.isEmpty() && allServerData.isEmpty() && throwable == null && !isRefreshing) {
+                                        item {
+                                            Box(
+                                                modifier = Modifier.fillMaxWidth().padding(32.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    readI18n("multiplayer.emptyList"),
+                                                    style = MaterialTheme.typography.bodyLarge,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
+                                        }
+                                    }
+                                    roomCardRows(realList, roomColumns, settings.enableAnimations) { room ->
+                                        selectedRoomDescription = room
+                                        showJoinRequestDialog = true
+                                    }
+                                    ServerList(allServerData)
                                 }
-                                RoomListAnimated(realList)
-                                ServerList(allServerData)
                             }
                         }
 

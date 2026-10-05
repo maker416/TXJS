@@ -9,10 +9,16 @@ package io.github.rwpp.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toAwtImage
@@ -75,7 +81,13 @@ class RoomListCardUiTest {
                 uuid = "full", creator = "周末原版对战", mapName = "峡谷.tmx",
                 label = "休闲", playerCurrentCount = 10,
             ),
-        )
+        ) + listOf("UN混战结盟服务器", "列国排位【单人混战】", "尸如潮水生存", "小块地排位", "娱乐生存")
+            .mapIndexed { index, name ->
+                publicRoom.copy(
+                    uuid = "lobby-$index", creator = name, mapName = if (index == 0) "" else name,
+                    label = "排位", playerCurrentCount = 0, playerMaxCount = 9_999_999,
+                )
+            }
         setContent { TestList(rooms) }
         waitForIdle()
         save("room_list_landscape.png")
@@ -86,6 +98,13 @@ class RoomListCardUiTest {
         onAllNodesWithText("模组同步", useUnmergedTree = true).assertCountEquals(2)
         onNodeWithText("已满员", useUnmergedTree = true).assertIsDisplayed()
         onNodeWithText("9999999", substring = true, useUnmergedTree = true).assertDoesNotExist()
+        val first = cardBounds("公开房间-R7471")
+        val second = cardBounds("团队混战-排位赛")
+        val last = cardBounds("周末原版对战")
+        assertEquals(first.top, second.top)
+        assertEquals(first.height, second.height)
+        assertTrue(second.left > first.right)
+        assertEquals(first.width, last.width, "last card must retain its column width")
     }
 
     @Test
@@ -132,6 +151,63 @@ class RoomListCardUiTest {
             assertEquals(1, clicks)
         }
 
+    @Test
+    fun wideGridUsesThreeColumnsAndReflowsAfterResizeAndRefresh() =
+        runDesktopComposeUiTest(width = 1024, height = 640) {
+            var viewport by mutableStateOf(1000.dp)
+            var rooms by mutableStateOf(List(8) { publicRoom.copy(uuid = "room-$it", creator = "房间 $it") })
+            var selected: String? = null
+            setContent {
+                Box(Modifier.width(viewport).fillMaxHeight()) {
+                    TestList(rooms, onClick = { selected = it.uuid })
+                }
+            }
+            waitForIdle()
+            val first = cardBounds("房间 0")
+            val second = cardBounds("房间 1")
+            val third = cardBounds("房间 2")
+            assertEquals(first.top, second.top)
+            assertEquals(first.top, third.top)
+            assertTrue(second.left > first.right && third.left > second.right)
+            assertEquals(second.width, cardBounds("房间 7").width)
+            save("room_grid_three_columns.png")
+            onNodeWithText("房间 2", useUnmergedTree = true).performClick()
+            assertEquals("room-2", selected)
+
+            viewport = 360.dp
+            rooms = rooms.drop(1).take(3)
+            waitForIdle()
+            val narrowFirst = cardBounds("房间 1")
+            val narrowSecond = cardBounds("房间 2")
+            assertEquals(narrowFirst.left, narrowSecond.left)
+            assertTrue(narrowSecond.top > narrowFirst.bottom)
+            onNodeWithText("房间 2", useUnmergedTree = true).performClick()
+            assertEquals("room-2", selected)
+        }
+
+    @Test
+    fun finalGridRowCanScrollAboveBottomActions() = runDesktopComposeUiTest(width = 720, height = 360) {
+        val rooms = List(40) { publicRoom.copy(uuid = "room-$it", creator = "房间 $it") }
+        setContent {
+            MaterialTheme(colorScheme = defaultRWPPColorScheme) {
+                Scaffold(bottomBar = { Box(Modifier.fillMaxWidth().height(64.dp)) { Text("底部操作") } }) { padding ->
+                    BoxWithConstraints(Modifier.fillMaxSize()) {
+                        val columns = roomCardColumnCount(maxWidth, LocalDensity.current.fontScale)
+                        LazyColumn(
+                            Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(bottom = padding.calculateBottomPadding() + 12.dp),
+                        ) {
+                            roomCardRows(rooms, columns) {}
+                        }
+                    }
+                }
+            }
+        }
+        onNode(hasScrollToIndexAction()).performScrollToIndex((rooms.size - 1) / roomCardColumnCount(720.dp))
+        waitForIdle()
+        assertTrue(cardBounds("房间 39").bottom <= 360f - 64f, "bottom actions overlap the final card")
+    }
+
     private fun loadLanguage(language: String) {
         reloadI18n()
         setI18nOverride(null)
@@ -139,17 +215,22 @@ class RoomListCardUiTest {
     }
 
     @Composable
-    private fun TestList(rooms: List<RoomDescription>, light: Boolean = false, onClick: () -> Unit = {}) {
+    private fun TestList(rooms: List<RoomDescription>, light: Boolean = false, onClick: (RoomDescription) -> Unit = {}) {
         MaterialTheme(colorScheme = if (light) lightColorScheme() else defaultRWPPColorScheme) {
-            Column(
+            BoxWithConstraints(
                 Modifier.fillMaxSize().background(if (light) Color(0xFFF1F4F0) else Color(0xFF353935))
                     .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                rooms.forEach { RoomListCard(it, onClick) }
+                val columns = roomCardColumnCount(maxWidth, LocalDensity.current.fontScale)
+                LazyColumn(Modifier.fillMaxSize()) {
+                    roomCardRows(rooms, columns, onRoomClick = onClick)
+                }
             }
         }
     }
+
+    private fun ComposeUiTest.cardBounds(name: String) =
+        onNode(hasClickAction() and hasText(name)).fetchSemanticsNode().boundsInRoot
 
     private fun ComposeUiTest.assertTextFits(text: String, index: Int = 0) {
         val node = onAllNodesWithText(text, useUnmergedTree = true)[index]
