@@ -327,7 +327,9 @@ open class UIProvider {
                     style = versionStyle,
                     color = Color.White,
                 )
-
+                if (LocalUpdateCheckInProgress.current) {
+                    UpdateCheckHint(Modifier.padding(top = 6.dp))
+                }
             }
 
             Column(

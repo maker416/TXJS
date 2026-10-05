@@ -45,7 +45,7 @@ private fun updateText(key: String) = readI18n("mandatoryUpdate.$key", I18nType.
 /** 全屏根页面：不组合启动器，返回键不会关闭更新闸门。 */
 @Composable
 fun MandatoryUpdateScreen(
-    release: LatestVersionProfile?, checking: Boolean, progress: UpdateProgress,
+    release: LatestVersionProfile, progress: UpdateProgress,
     onUpdate: () -> Unit, onCancel: () -> Unit, onExit: () -> Unit, onOpenRelease: () -> Unit,
 ) {
     BackHandler(true) {}
@@ -69,34 +69,21 @@ fun MandatoryUpdateScreen(
                         }
                         TextButton(onClick = onExit) { Text(updateText("exit"), color = UpdateMuted) }
                     }
-                    if (checking) {
-                        Column(Modifier.weight(1f).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center) {
-                            UpdateEmblem(Modifier.size(120.dp))
-                            Spacer(Modifier.height(24.dp))
-                            Text(updateText("checking"), fontSize = 25.sp, fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.height(12.dp))
-                            Text(updateText("offline"), color = UpdateMuted)
-                            Spacer(Modifier.height(22.dp))
-                            CircularProgressIndicator(color = UpdateMint, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                        }
-                    } else if (release != null) {
-                        if (wide) {
-                            Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-                                Column(Modifier.weight(0.95f).fillMaxHeight().verticalScroll(rememberScrollState())) {
-                                    UpdateHero(release, compact)
-                                }
-                                ReleaseNotes(release, Modifier.weight(1.05f).fillMaxHeight())
-                            }
-                        } else {
-                            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
-                                verticalArrangement = Arrangement.spacedBy(22.dp)) {
+                    if (wide) {
+                        Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(32.dp)) {
+                            Column(Modifier.weight(0.95f).fillMaxHeight().verticalScroll(rememberScrollState())) {
                                 UpdateHero(release, compact)
-                                ReleaseNotes(release, Modifier.fillMaxWidth(), scroll = false)
                             }
+                            ReleaseNotes(release, Modifier.weight(1.05f).fillMaxHeight())
                         }
-                        UpdateControls(progress, onUpdate, onCancel, onOpenRelease, compact)
+                    } else {
+                        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(22.dp)) {
+                            UpdateHero(release, compact)
+                            ReleaseNotes(release, Modifier.fillMaxWidth(), scroll = false)
+                        }
                     }
+                    UpdateControls(progress, onUpdate, onCancel, onOpenRelease, compact)
                 }
             }
         }

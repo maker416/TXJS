@@ -130,9 +130,10 @@ fun App(
     DisposableEffect(updateController) {
         onDispose { updateController.cancel() }
     }
-    if (updateController.checking || updateController.release != null) {
+    val requiredRelease = updateController.release
+    if (requiredRelease != null) {
         RWPPTheme {
-            MandatoryUpdateScreen(updateController.release, updateController.checking, updateController.progress,
+            MandatoryUpdateScreen(requiredRelease, updateController.progress,
                 onUpdate = updateController::start,
                 onCancel = updateController::cancel,
                 onExit = { updateController.cancel(); appContext.exit() },
@@ -210,7 +211,8 @@ fun App(
         ) {
             CompositionLocalProvider(
                 LocalTextSelectionColors provides RWSelectionColors,
-                LocalWindowManager provides ConstraintWindowManager(maxWidth, maxHeight)
+                LocalWindowManager provides ConstraintWindowManager(maxWidth, maxHeight),
+                LocalUpdateCheckInProgress provides updateController.checking,
             ) {
 
                 val enableAnimations = settings.enableAnimations

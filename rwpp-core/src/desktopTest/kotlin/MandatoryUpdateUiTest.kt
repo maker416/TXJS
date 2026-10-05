@@ -25,7 +25,7 @@ class MandatoryUpdateUiTest {
         runDesktopComposeUiTest(width = width, height = height) {
             i18nTable = Toml.parseToTomlTable(File("src/commonMain/composeResources/files/bundle_zh.toml").readText())
             var exits = 0
-            setContent { MandatoryUpdateScreen(release, false, progress, {}, {}, { exits++ }, {}) }
+            setContent { MandatoryUpdateScreen(release, progress, {}, {}, { exits++ }, {}) }
             onNodeWithText("退出应用").assertIsDisplayed()
             onNodeWithText(if (progress.stage == UpdateStage.DOWNLOADING) "停止下载" else "下载并安装").assertIsDisplayed()
             onNodeWithText("稍后提醒").assertDoesNotExist()
