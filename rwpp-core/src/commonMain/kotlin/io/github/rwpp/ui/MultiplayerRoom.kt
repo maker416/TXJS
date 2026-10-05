@@ -232,6 +232,8 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     var remainingSeconds by remember { mutableIntStateOf(0) }
     var totalSeconds by remember { mutableIntStateOf(0) }
     var isRefreshingExpiry by remember { mutableStateOf(false) }
+    // Q/R 房统一通过房间号手动申请公开，各种等待室布局使用同一个显示条件。
+    val showPublishButton = roomIdForPublish != null && !isPublishing && !hasPublishedInfo
 
     fun updatePublishedExpiry(seconds: Int) {
         val safeSeconds = seconds.coerceAtLeast(0)
@@ -846,10 +848,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                             RoomInvitePolicy.setByHost(room, !RoomInvitePolicy.membersCanInvite)
                                         },
                                         isDesktop = isDesktop,
-                                        // Q 房本身已公开，无需再走 RWList「公开到列表」
-                                        showPublishButton = roomIdForPublish.let { id ->
-                                            id != null && !id.startsWith('Q') && !isPublishing && !hasPublishedInfo
-                                        },
+                                        showPublishButton = showPublishButton,
                                         onOption = { optionVisible = true },
                                         onStart = startGame,
                                         onAddAI = { room.addAI() },
@@ -908,9 +907,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                             RoomInvitePolicy.setByHost(room, !RoomInvitePolicy.membersCanInvite)
                                         },
                                         isDesktop = isDesktop,
-                                        showPublishButton = roomIdForPublish.let { id ->
-                                            id != null && !id.startsWith('Q') && !isPublishing && !hasPublishedInfo
-                                        },
+                                        showPublishButton = showPublishButton,
                                         onOption = { optionVisible = true },
                                         onStart = startGame,
                                         onAddAI = { room.addAI() },
@@ -993,10 +990,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                     totalSeconds = totalSeconds,
                                     isRefreshingExpiry = isRefreshingExpiry,
                                     onRenew = renewPublishedRoom,
-                                    // Q 房本身已公开，无需再走 RWList「公开到列表」
-                                    showPublishButton = roomIdForPublish.let { id ->
-                                        id != null && !id.startsWith('Q') && !isPublishing && !hasPublishedInfo
-                                    },
+                                    showPublishButton = showPublishButton,
                                     onMapClick = { showMapSelectView = true },
                                     onOption = { optionVisible = true },
                                     onStart = startGame,

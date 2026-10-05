@@ -50,7 +50,7 @@ hostPrivate = "创建私有"
 hostPrefix = "开房协议"
 hostPrefixQ = "Q房间"
 hostPrefixR = "R房间"
-qRoomAutoPublishHint = "Q房间创建后会自动公开，无需手动公开到列表；如需不公开的房间，请使用R房间。"
+roomManualPublishHint = "Q房间和R房间创建后均不会自动公开。需要公开时，请在等待室点击「公开到列表」。"
 port = "端口"
 roomInfo = """
 房主: {0}

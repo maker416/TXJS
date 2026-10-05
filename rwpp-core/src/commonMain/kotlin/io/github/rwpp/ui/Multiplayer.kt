@@ -661,25 +661,23 @@ fun MultiplayerView(
                             label = { Text(readI18n("multiplayer.hostPrefixR")) },
                         )
                     }
-                    if (hostPrefix == HostCommandPrefix.Q) {
-                        Text(
-                            readI18n("multiplayer.qRoomAutoPublishHint"),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.surface.copy(alpha = .18f))
-                                .border(
-                                    BorderStroke(
-                                        1.dp,
-                                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f),
-                                    ),
-                                    RoundedCornerShape(8.dp),
-                                )
-                                .padding(horizontal = 10.dp, vertical = 10.dp),
-                        )
-                    }
+                    Text(
+                        readI18n("multiplayer.roomManualPublishHint"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = .18f))
+                            .border(
+                                BorderStroke(
+                                    1.dp,
+                                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f),
+                                ),
+                                RoundedCornerShape(8.dp),
+                            )
+                            .padding(horizontal = 10.dp, vertical = 10.dp),
+                    )
                 }
             }
 
