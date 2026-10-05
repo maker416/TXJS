@@ -73,7 +73,8 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Deb)
 
-            modules("jdk.unsupported")
+            // Gson 的 SQL 类型探测需要真实 JDK 模块，避免从游戏 Android 占位库加载 java.sql。
+            modules("jdk.unsupported", "java.sql")
 
             packageName = "RWJS"
             packageVersion = rootProject.version.toString()

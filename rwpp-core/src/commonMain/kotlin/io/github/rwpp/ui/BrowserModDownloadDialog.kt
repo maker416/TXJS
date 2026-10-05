@@ -13,12 +13,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -32,8 +35,15 @@ import androidx.compose.ui.window.DialogProperties
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.logger
 import io.github.rwpp.modDir
+import io.github.rwpp.customMapDir
+import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.net.browser.BrowserModDownload
-import io.github.rwpp.net.browser.BrowserModFiles
+import io.github.rwpp.net.browser.BrowserResourceFiles
+import io.github.rwpp.net.browser.BrowserResourceInstallKind
+import io.github.rwpp.net.browser.BrowserResourceInstallError
+import io.github.rwpp.net.browser.BrowserResourceInstallException
+import io.github.rwpp.net.browser.BrowserResourceType
+import io.github.rwpp.net.browser.browserResourceType
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.platform.EmbeddedBrowserState
 import io.github.rwpp.widget.BorderCard
@@ -48,23 +58,38 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.atomic.AtomicLong
 
-private enum class DownloadStage { Confirm, Downloading, Installing, Complete, Failed }
+private enum class DownloadStage { ChooseZipType, ConfirmZipMod, Confirm, Downloading, Installing, Complete, Failed, Unsupported }
 
 @Composable
-internal fun BrowserModDownloadDialog(browser: EmbeddedBrowserState, directory: () -> File = { File(modDir) }) {
-    browser.modDownload?.let { download -> key(download) { ModDownloadDialog(download, directory) { browser.modDownload = null } } }
+internal fun BrowserModDownloadDialog(
+    browser: EmbeddedBrowserState,
+    onMapsInstalled: () -> Unit = {},
+    mapDirectory: () -> File = { File(customMapDir) },
+    directory: () -> File = { File(modDir) },
+) {
+    browser.modDownload?.let { download -> key(download) {
+        ModDownloadDialog(download, directory, mapDirectory, onMapsInstalled) { browser.modDownload = null }
+    } }
 }
 
 @Composable
-private fun ModDownloadDialog(download: BrowserModDownload, modDirectory: () -> File, onClose: () -> Unit) {
+private fun ModDownloadDialog(download: BrowserModDownload, modDirectory: () -> File, mapDirectory: () -> File,
+    onMapsInstalled: () -> Unit, onClose: () -> Unit,
+) {
     val scope = rememberCoroutineScope()
-    var stage by remember { mutableStateOf(DownloadStage.Confirm) }
+    val type = remember(download) { browserResourceType(download.fileName) }
+    var kind by remember { mutableStateOf(if (type == BrowserResourceType.Map) BrowserResourceInstallKind.Map else BrowserResourceInstallKind.Mod) }
+    var stage by remember { mutableStateOf(if (type == BrowserResourceType.Zip) DownloadStage.ChooseZipType else DownloadStage.Confirm) }
     var received by remember { mutableStateOf(0L) }
     var total by remember { mutableStateOf(download.totalBytes) }
     var installedName by remember { mutableStateOf(download.fileName) }
+    var installedPath by remember { mutableStateOf("") }
+    var installedMapCount by remember { mutableStateOf(0) }
     var error by remember { mutableStateOf("") }
     var job by remember { mutableStateOf<Job?>(null) }
     val lastProgress = remember { AtomicLong(0) }
+    val scrollState = rememberScrollState()
+    LaunchedEffect(stage) { scrollState.scrollTo(0) }
 
     fun close() {
         if (stage == DownloadStage.Installing) return
@@ -77,15 +102,16 @@ private fun ModDownloadDialog(download: BrowserModDownload, modDirectory: () -> 
     BackHandler(true, ::close)
 
     fun begin() {
-        if (stage != DownloadStage.Confirm) return
+        if (stage != DownloadStage.Confirm && stage != DownloadStage.ConfirmZipMod) return
+        val installKind = kind
         stage = DownloadStage.Downloading
         job = scope.launch {
             var partial: File? = null
             try {
-                val directory = modDirectory()
+                val directory = if (installKind == BrowserResourceInstallKind.Mod) modDirectory() else mapDirectory()
                 // 即使取消发生在 IO 返回到 Main 的窗口内，也必须保存引用以清理临时文件。
                 val stagedFile = withContext(NonCancellable + Dispatchers.IO) {
-                    BrowserModFiles.createPartial(directory).also { partial = it }
+                    BrowserResourceFiles.createPartial(directory).also { partial = it }
                 }
                 ensureActive()
                 download.transfer.download(stagedFile) { bytes, expected ->
@@ -100,14 +126,24 @@ private fun ModDownloadDialog(download: BrowserModDownload, modDirectory: () -> 
                 stage = DownloadStage.Installing
                 // 不触发引擎重载，用户在模组页启用；提交中禁止取消，避免已安装却被显示为取消。
                 val installed = withContext(NonCancellable + Dispatchers.IO) {
-                    BrowserModFiles.install(stagedFile, directory, download.fileName)
+                    BrowserResourceFiles.install(stagedFile, directory, download.fileName, installKind)
                 }
-                installedName = installed.name
+                installedName = installed.file.name
+                installedPath = installed.file.absolutePath
+                installedMapCount = installed.mapCount
                 stage = DownloadStage.Complete
+                if (installKind != BrowserResourceInstallKind.Mod) {
+                    runCatching(onMapsInstalled).onFailure { logger.warn("[BROWSER-RESOURCE] Cannot refresh map list", it) }
+                }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
-                error = failure.message.orEmpty()
-                stage = DownloadStage.Failed
+                if (failure is BrowserResourceInstallException && failure.reason == BrowserResourceInstallError.ModCollection) {
+                    stage = DownloadStage.Unsupported
+                } else {
+                    error = if (failure is BrowserResourceInstallException) readI18n("browser.installError${failure.reason.name}")
+                        else failure.message.orEmpty()
+                    stage = DownloadStage.Failed
+                }
             } finally {
                 withContext(NonCancellable + Dispatchers.IO) {
                     partial?.let { file ->
@@ -116,7 +152,7 @@ private fun ModDownloadDialog(download: BrowserModDownload, modDirectory: () -> 
                             if (!file.exists() || file.delete()) return@withContext
                             delay(100)
                         }
-                        logger.warn("[BROWSER-MOD] Cannot remove partial download: ${file.absolutePath}")
+                        logger.warn("[BROWSER-RESOURCE] Cannot remove partial download: ${file.absolutePath}")
                     }
                 }
             }
@@ -126,17 +162,43 @@ private fun ModDownloadDialog(download: BrowserModDownload, modDirectory: () -> 
     Dialog(onDismissRequest = ::close, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         BorderCard(Modifier.padding(16.dp).widthIn(max = 480.dp).fillMaxWidth(),
             backgroundColor = MaterialTheme.colorScheme.surface) {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Column(Modifier.padding(20.dp).verticalScroll(scrollState), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text(readI18n(when (stage) {
-                    DownloadStage.Confirm -> "browser.modInstallTitle"
-                    DownloadStage.Downloading -> "browser.modDownloading"
-                    DownloadStage.Installing -> "browser.modInstalling"
-                    DownloadStage.Complete -> "browser.modInstalled"
-                    DownloadStage.Failed -> "browser.modDownloadFailed"
+                    DownloadStage.ChooseZipType -> "browser.zipTypeTitle"
+                    DownloadStage.ConfirmZipMod -> "browser.zipModTitle"
+                    DownloadStage.Unsupported -> "browser.modCollectionUnsupportedTitle"
+                    DownloadStage.Confirm -> if (kind == BrowserResourceInstallKind.Mod) "browser.modInstallTitle" else "browser.mapInstallTitle"
+                    DownloadStage.Downloading -> if (kind == BrowserResourceInstallKind.Mod) "browser.modDownloading" else "browser.mapDownloading"
+                    DownloadStage.Installing -> if (kind == BrowserResourceInstallKind.Mod) "browser.modInstalling" else "browser.mapInstalling"
+                    DownloadStage.Complete -> if (kind == BrowserResourceInstallKind.Mod) "browser.modInstalled" else "browser.mapInstalled"
+                    DownloadStage.Failed -> if (kind == BrowserResourceInstallKind.Mod) "browser.modDownloadFailed" else "browser.mapDownloadFailed"
                 }), style = MaterialTheme.typography.titleLarge)
                 Text(installedName, style = MaterialTheme.typography.bodyMedium)
                 when (stage) {
-                    DownloadStage.Confirm -> Text(readI18n("browser.modInstallConfirm"))
+                    DownloadStage.ChooseZipType -> {
+                        Text(readI18n("browser.zipTypeHint"))
+                        TextButton(modifier = Modifier.fillMaxWidth(), onClick = {
+                            kind = BrowserResourceInstallKind.MapPack
+                            stage = DownloadStage.Confirm
+                        }) { Text(readI18n("browser.zipMapPack")) }
+                        TextButton(modifier = Modifier.fillMaxWidth(), onClick = { stage = DownloadStage.ConfirmZipMod }) {
+                            Text(readI18n("browser.zipMod"))
+                        }
+                    }
+                    DownloadStage.ConfirmZipMod -> {
+                        Text(readI18n("browser.zipModHint"))
+                        TextButton(modifier = Modifier.fillMaxWidth(), onClick = ::begin) { Text(readI18n("browser.zipCompleteMod")) }
+                        TextButton(modifier = Modifier.fillMaxWidth(), onClick = {
+                            download.transfer.cancel()
+                            stage = DownloadStage.Unsupported
+                        }) { Text(readI18n("browser.zipModCollection")) }
+                    }
+                    DownloadStage.Unsupported -> Text(readI18n("browser.modCollectionUnsupportedHint"))
+                    DownloadStage.Confirm -> Text(readI18n(when (kind) {
+                        BrowserResourceInstallKind.Mod -> "browser.modInstallConfirm"
+                        BrowserResourceInstallKind.Map -> "browser.mapInstallConfirm"
+                        BrowserResourceInstallKind.MapPack -> "browser.mapPackInstallConfirm"
+                    }))
                     DownloadStage.Downloading -> {
                         val expected = total
                         if (expected != null && expected > 0) {
@@ -149,14 +211,22 @@ private fun ModDownloadDialog(download: BrowserModDownload, modDirectory: () -> 
                         }
                     }
                     DownloadStage.Installing -> LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    DownloadStage.Complete -> Text(readI18n("browser.modInstalledHint"))
+                    DownloadStage.Complete -> {
+                        Text(readI18n(when (kind) {
+                            BrowserResourceInstallKind.Mod -> "browser.modInstalledHint"
+                            BrowserResourceInstallKind.Map -> "browser.mapInstalledHint"
+                            BrowserResourceInstallKind.MapPack -> "browser.mapPackInstalledHint"
+                        }, I18nType.RWPP, installedMapCount.toString()))
+                        Text(installedPath, style = MaterialTheme.typography.bodySmall)
+                    }
                     DownloadStage.Failed -> Text(error, color = MaterialTheme.colorScheme.error)
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     if (stage == DownloadStage.Confirm) {
                         TextButton(onClick = ::close) { Text(readI18n("common.cancel")) }
-                        TextButton(onClick = ::begin) { Text(readI18n("browser.modDownloadInstall")) }
-                    } else if (stage == DownloadStage.Downloading) {
+                        TextButton(onClick = ::begin) { Text(readI18n(if (kind == BrowserResourceInstallKind.MapPack)
+                            "browser.mapPackDownloadInstall" else "browser.modDownloadInstall")) }
+                    } else if (stage in setOf(DownloadStage.Downloading, DownloadStage.ChooseZipType, DownloadStage.ConfirmZipMod)) {
                         TextButton(onClick = ::close) { Text(readI18n("common.cancel")) }
                     } else if (stage != DownloadStage.Installing) {
                         TextButton(onClick = ::close) { Text(readI18n("common.ok")) }

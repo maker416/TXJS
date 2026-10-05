@@ -265,7 +265,7 @@ class GameImpl : Game, CoroutineScope {
             val t = GameEngine.t()
             val levelDirs = com.corrodinggames.rts.gameFramework.e.a.a(LevelGroupSelectActivity.customLevelsDir, true)
             val mapPaths = mapOf<MapType, Array<String>?>(
-                MapType.CustomMap to t.bW.a(levelDirs, LevelGroupSelectActivity.customLevelsDir),
+                MapType.CustomMap to browserCustomMapPaths(t.bW.a(levelDirs, LevelGroupSelectActivity.customLevelsDir)),
                 MapType.SavedGame to LoadLevelActivity.getGameSaves()
             )
 

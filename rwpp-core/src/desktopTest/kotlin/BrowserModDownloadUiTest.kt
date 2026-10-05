@@ -12,6 +12,7 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import io.github.rwpp.i18n.i18nTable
 import io.github.rwpp.net.browser.BrowserModDownload
@@ -37,12 +38,14 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalTestApi::class)
 class BrowserModDownloadUiTest {
     private lateinit var directory: File
+    private lateinit var mapDirectory: File
 
     @BeforeTest fun setup() {
         directory = Files.createTempDirectory("browser-mod-ui-").toFile()
+        mapDirectory = Files.createTempDirectory("browser-map-ui-").toFile()
         i18nTable = Toml.parseToTomlTable(File("src/commonMain/composeResources/files/bundle_zh.toml").readText())
     }
-    @AfterTest fun cleanup() { directory.deleteRecursively() }
+    @AfterTest fun cleanup() { directory.deleteRecursively(); mapDirectory.deleteRecursively() }
 
     @Test fun confirmationPrecedesTransferAndProgressEndsWithInstalledMod() = runDesktopComposeUiTest(width = 360, height = 720) {
         val transfer = ControlledTransfer(archive())
@@ -95,6 +98,109 @@ class BrowserModDownloadUiTest {
         onNodeWithText("模组下载或安装失败").assertIsDisplayed()
         runOnIdle { assertFalse(File(directory, "fake.rwmod").exists()) }
     }
+
+    @Test fun tmxIsConfirmedAndSavedToMapsInsteadOfMods() = runDesktopComposeUiTest(width = 360, height = 720) {
+        val transfer = ControlledTransfer("<map width=\"1\" height=\"1\"/>".toByteArray())
+        val browser = EmbeddedBrowserState("https://resources.example")
+        browser.offerModDownload(BrowserModDownload("example.tmx", null, transfer))
+        var refreshes = 0
+        setContent { MaterialTheme { BrowserModDownloadDialog(browser, onMapsInstalled = { refreshes++ },
+            mapDirectory = { mapDirectory }, directory = { directory }) } }
+        onNodeWithText("下载并安装地图").assertIsDisplayed()
+        runOnIdle { assertFalse(transfer.started.get()) }
+        onNodeWithText("下载并安装").performClick()
+        runOnIdle { transfer.release.complete(Unit) }
+        waitUntil(timeoutMillis = 5000) { File(mapDirectory, "example.tmx").exists() }
+        onNodeWithText("地图安装完成").assertIsDisplayed()
+        onNodeWithText("已保存到地图目录，可在自定义地图中选择。").assertIsDisplayed()
+        runOnIdle { assertTrue(directory.listFiles()!!.isEmpty()); assertEquals(1, refreshes) }
+    }
+
+    @Test fun zipMapChoiceExplainsExtractionAndPreservesPackFiles() = runDesktopComposeUiTest(width = 360, height = 720) {
+        val transfer = ControlledTransfer(mapArchive())
+        val browser = EmbeddedBrowserState("https://resources.example")
+        browser.offerModDownload(BrowserModDownload("maps.zip", null, transfer))
+        setContent { MaterialTheme { BrowserModDownloadDialog(browser, mapDirectory = { mapDirectory }, directory = { directory }) } }
+        onNodeWithText("这个 ZIP 是什么资源？").assertIsDisplayed()
+        onNodeWithText("地图包").performClick()
+        onNodeWithText("会帮你自动解压此地图包，并放入地图文件夹，保留目录结构与配套文件。已有地图不会被覆盖。").assertIsDisplayed()
+        runOnIdle { assertFalse(transfer.started.get()) }
+        onNodeWithText("下载并解压").performClick()
+        runOnIdle { transfer.release.complete(Unit) }
+        waitUntil(timeoutMillis = 5000) { File(mapDirectory, "maps/folder/map.tmx").exists() }
+        onNodeWithText("已解压到地图目录，共 1 张地图，可在自定义地图中选择。").assertIsDisplayed()
+        runOnIdle {
+            assertEquals("preview", File(mapDirectory, "maps/folder/map_map.png").readText())
+            assertTrue(directory.listFiles()!!.isEmpty())
+        }
+    }
+
+    @Test fun completeModZipRequiresTwoChoicesAndIsSavedAsRwmod() = runDesktopComposeUiTest(width = 360, height = 720) {
+        val transfer = ControlledTransfer(archive())
+        val browser = EmbeddedBrowserState("https://resources.example")
+        browser.offerModDownload(BrowserModDownload("example.zip", null, transfer))
+        setContent { MaterialTheme { BrowserModDownloadDialog(browser, mapDirectory = { mapDirectory }, directory = { directory }) } }
+        onNodeWithText("模组").performClick()
+        onNodeWithText("这是一个完整的模组吗？").assertIsDisplayed()
+        runOnIdle { assertFalse(transfer.started.get()) }
+        onNodeWithText("是，完整模组").performClick()
+        runOnIdle { transfer.release.complete(Unit) }
+        waitUntil(timeoutMillis = 5000) { File(directory, "example.rwmod").exists() }
+        onNodeWithText("模组安装完成").assertIsDisplayed()
+        runOnIdle { assertTrue(mapDirectory.listFiles()!!.isEmpty()) }
+    }
+
+    @Test fun modCollectionIsRefusedBeforeAnyTransfer() = runDesktopComposeUiTest(width = 360, height = 720) {
+        val transfer = ControlledTransfer(archive())
+        val browser = EmbeddedBrowserState("https://resources.example")
+        browser.offerModDownload(BrowserModDownload("collection.zip", null, transfer))
+        setContent { MaterialTheme { BrowserModDownloadDialog(browser, mapDirectory = { mapDirectory }, directory = { directory }) } }
+        onNodeWithText("模组").performClick()
+        onNodeWithText("这是模组整合包").performClick()
+        onNodeWithText("暂不支持模组整合包").assertIsDisplayed()
+        onNodeWithText("目前还不支持模组整合包。请分别下载各个模组的 .rwmod 文件。").assertIsDisplayed()
+        runOnIdle {
+            assertFalse(transfer.started.get())
+            assertTrue(transfer.cancelled.get())
+            assertTrue(directory.listFiles()!!.isEmpty())
+            assertTrue(mapDirectory.listFiles()!!.isEmpty())
+        }
+        onNodeWithText("确定").performClick()
+        runOnIdle { assertEquals(null, browser.modDownload) }
+    }
+
+    @Test fun mapDownloadCancellationRemovesPartialFiles() = runDesktopComposeUiTest {
+        val transfer = ControlledTransfer("<map/>".toByteArray())
+        val browser = EmbeddedBrowserState("https://resources.example")
+        browser.offerModDownload(BrowserModDownload("map.tmx", null, transfer))
+        setContent { MaterialTheme { BrowserModDownloadDialog(browser, mapDirectory = { mapDirectory }, directory = { directory }) } }
+        onNodeWithText("下载并安装").performClick()
+        waitUntil(timeoutMillis = 5000) { transfer.started.get() }
+        onNodeWithText("取消").performClick()
+        waitUntil(timeoutMillis = 5000) { mapDirectory.listFiles()!!.isEmpty() }
+        runOnIdle { assertTrue(transfer.cancelled.get()); assertEquals(null, browser.modDownload) }
+    }
+
+    @Test fun zipChoicesRemainReachableInALandscapeWindow() = runDesktopComposeUiTest(width = 720, height = 360) {
+        val transfer = ControlledTransfer(archive())
+        val browser = EmbeddedBrowserState("https://resources.example")
+        browser.offerModDownload(BrowserModDownload("中文名称.zip", null, transfer))
+        setContent { MaterialTheme { BrowserModDownloadDialog(browser) { directory } } }
+        onNodeWithText("模组").performScrollTo().performClick()
+        onNodeWithText("这是一个完整的模组吗？").performScrollTo().assertIsDisplayed()
+        onNodeWithText("这是模组整合包").performScrollTo().performClick()
+        onNodeWithText("暂不支持模组整合包").performScrollTo().assertIsDisplayed()
+        onNodeWithText("确定").performScrollTo().performClick()
+        runOnIdle { assertEquals(null, browser.modDownload); assertFalse(transfer.started.get()) }
+    }
+
+    private fun mapArchive(): ByteArray = ByteArrayOutputStream().also { output ->
+        ZipOutputStream(output).use { zip ->
+            for ((name, content) in listOf("folder/map.tmx" to "<map/>", "folder/map_map.png" to "preview")) {
+                zip.putNextEntry(ZipEntry(name)); zip.write(content.toByteArray()); zip.closeEntry()
+            }
+        }
+    }.toByteArray()
 
     private class ControlledTransfer(private val bytes: ByteArray) : BrowserModTransfer {
         val started = AtomicBoolean(false)

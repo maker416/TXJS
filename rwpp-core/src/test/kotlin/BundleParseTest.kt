@@ -56,6 +56,21 @@ class BundleParseTest {
     }
 
     @Test
+    fun browserResourceDownloadKeysExistInAllBundles() {
+        bundleNames.forEach { name ->
+            val browser = Toml.parseToTomlTable(File(bundleDir, name).readText())["browser"] as TomlTable
+            listOf("zipTypeTitle", "zipTypeHint", "zipMapPack", "zipMod", "zipModTitle", "zipModHint",
+                "zipCompleteMod", "zipModCollection", "modCollectionUnsupportedTitle", "modCollectionUnsupportedHint",
+                "mapInstallTitle", "mapInstallConfirm", "mapPackInstallConfirm", "mapPackDownloadInstall",
+                "mapDownloading", "mapInstalling", "mapInstalled", "mapInstalledHint", "mapPackInstalledHint",
+                "mapDownloadFailed", "installErrorNoMaps", "installErrorUnsafeArchive", "installErrorArchiveTooLarge",
+                "installErrorInvalidMap").forEach {
+                assertTrue(browser.containsKey(it), "browser.$it missing in $name")
+            }
+        }
+    }
+
+    @Test
     fun bundlesAreValidToml() {
         bundleNames.forEach { name ->
             val file = File(bundleDir, name)

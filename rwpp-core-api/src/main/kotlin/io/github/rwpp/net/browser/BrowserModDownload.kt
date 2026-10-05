@@ -26,8 +26,17 @@ data class BrowserModDownload(
     val transfer: BrowserModTransfer,
 )
 
-/** 响应提供的名称优先于 URL；查询参数和 MIME 类型不会改变 rwmod 后缀。 */
-fun browserModFileName(url: String, contentDisposition: String? = null, suggestedName: String? = null): String? {
+enum class BrowserResourceType { Mod, Map, Zip }
+
+fun browserResourceType(fileName: String): BrowserResourceType? = when (fileName.substringAfterLast('.', "").lowercase()) {
+    "rwmod" -> BrowserResourceType.Mod
+    "tmx" -> BrowserResourceType.Map
+    "zip" -> BrowserResourceType.Zip
+    else -> null
+}
+
+/** 响应提供的名称优先于 URL；按真实文件后缀分类，不从查询参数或 MIME 猜测。 */
+fun browserResourceFileName(url: String, contentDisposition: String? = null, suggestedName: String? = null): String? {
     val extended = Regex("(?:^|;)\\s*filename\\*\\s*=\\s*([^;]+)", RegexOption.IGNORE_CASE)
         .find(contentDisposition.orEmpty())?.groupValues?.get(1)?.trim()?.trim('"')
     val encodedName = extended?.split('\'', limit = 3)?.takeIf { it.size == 3 && it[0].equals("UTF-8", true) }
@@ -37,18 +46,28 @@ fun browserModFileName(url: String, contentDisposition: String? = null, suggeste
     val name = sequenceOf(encodedName, ordinary, suggestedName, url.toHttpUrlOrNull()?.pathSegments?.lastOrNull())
         .firstOrNull { !it.isNullOrBlank() } ?: return null
     val base = name.substringAfterLast('/').substringAfterLast('\\')
-    if (!base.endsWith(".rwmod", ignoreCase = true)) return null
-    var stem = base.dropLast(6).map { if (it.isISOControl() || it in "<>:\"/\\|?*") '_' else it }.joinToString("")
+    val type = browserResourceType(base) ?: return null
+    val extension = base.substringAfterLast('.').lowercase()
+    val fallback = when (type) { BrowserResourceType.Mod -> "mod"; BrowserResourceType.Map -> "map"; BrowserResourceType.Zip -> "resource" }
+    return "${browserResourceStem(base.substringBeforeLast('.'), fallback)}.$extension"
+}
+
+internal fun browserResourceStem(name: String, fallback: String = "resource"): String {
+    var stem = name.map { if (it.isISOControl() || it in "<>:\"/\\|?*") '_' else it }.joinToString("")
         .trim().trimEnd('.')
     while (stem.toByteArray(Charsets.UTF_8).size > 180) {
         stem = stem.dropLast(if (stem.last().isLowSurrogate() && stem.length > 1) 2 else 1)
     }
-    if (stem.isBlank()) stem = "mod"
+    if (stem.isBlank()) stem = fallback
     if (stem.substringBefore('.').uppercase() in setOf("CON", "PRN", "AUX", "NUL", *(1..9).map { "COM$it" }.toTypedArray(), *(1..9).map { "LPT$it" }.toTypedArray())) {
         stem = "_$stem"
     }
-    return "$stem.rwmod"
+    return stem
 }
+
+/** 兼容原有仅模组的调用点。浏览器下载入口使用 [browserResourceFileName]。 */
+fun browserModFileName(url: String, contentDisposition: String? = null, suggestedName: String? = null): String? =
+    browserResourceFileName(url, contentDisposition, suggestedName)?.takeIf { browserResourceType(it) == BrowserResourceType.Mod }
 
 /** 下载先写 .part，完整 ZIP 才进入模组列表。已有模组始终保留，同名新文件另存。 */
 object BrowserModFiles {

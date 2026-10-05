@@ -39,6 +39,11 @@ fun scanCustomMapFiles(root: File = File(customMapDir)): List<CustomMapFile> {
         .toList()
 }
 
+/** 保留引擎注册的模组地图，并补上地图 ZIP 解压后位于子目录的 TMX。 */
+fun browserCustomMapPaths(existing: Array<String>?, root: File = File(customMapDir)): Array<String> =
+    (existing.orEmpty().asList() + scanCustomMapFiles(root).map { it.file.relativeTo(root).invariantSeparatorsPath })
+        .distinct().toTypedArray()
+
 /**
  * 在 [customMapDir] 白名单内安全删除 `.tmx` 及其伴生 `_map.png`。
  *

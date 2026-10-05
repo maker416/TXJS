@@ -33,7 +33,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.github.rwpp.net.browser.BrowserModDownload
 import io.github.rwpp.net.browser.BrowserModStreamTransfer
 import io.github.rwpp.net.browser.BrowserModUploadCache
-import io.github.rwpp.net.browser.browserModFileName
+import io.github.rwpp.net.browser.browserResourceFileName
 import io.github.rwpp.net.browser.browserCanonicalDisplayUrl
 import io.github.rwpp.i18n.readI18n
 import org.json.JSONObject
@@ -262,7 +262,7 @@ private class AndroidGeckoBrowser(private val context: Context, private val stat
         session.contentDelegate = object : GeckoSession.ContentDelegate {
             override fun onExternalResponse(session: GeckoSession, response: WebResponse) {
                 val input = response.body ?: return
-                val name = browserModFileName(response.uri, response.headers["Content-Disposition"])
+                val name = browserResourceFileName(response.uri, response.headers["Content-Disposition"])
                 if (disposed || name == null || response.statusCode !in 200..299) {
                     input.close()
                     return

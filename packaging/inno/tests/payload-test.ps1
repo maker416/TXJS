@@ -32,7 +32,7 @@ try {
         'runtime/bin/server/jvm.dll', 'jvm64/java.exe', 'generated_lib/core.jar', 'extension/plugin.jar',
         'saves/save.rwsave', 'replays/replay', 'cache/file', 'mods/units/private.ini',
         'mods/maps/private.tmx', 'io.github.rwpp.config.Settings.toml', 'preferences.ini',
-        'lastrun.log', 'assets/private.log', 'res/backup.bak')
+        'lastrun.log', 'assets/private.log', 'res/backup.bak', 'libs/android.jar', 'libs/android-game-lib.jar')
     foreach ($path in $included + $excluded) { Write-FixtureFile $game $path }
     Write-FixtureFile $fixture 'packaging/game-root.local.txt' ("# local setting`r`n$game")
     $env:RW_GAME_ROOT = $null

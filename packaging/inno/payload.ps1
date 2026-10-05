@@ -24,6 +24,8 @@ function Test-RwPayloadFile {
     param([string]$RelativePath)
     $parts = $RelativePath.Replace('\', '/').Split('/')
     $name = $parts[-1]
+    # Android SDK 占位类不属于桌面运行时，尤其不能与精简 JDK 的 java.* 模块混用。
+    if ($parts[0] -eq 'libs' -and $name -in @('android.jar', 'android-game-lib.jar')) { return $false }
     if ($name -match '^(io\.github\.rwpp\.|RWPP|RWJS|launcher\.)' -or
         $name -match '\.(toml|bak|log|hprof)$' -or $name -eq 'preferences.ini') { return $false }
     # 只收集游戏运行资源，原版 exe、启动脚本、JVM 及用户数据不属于 RWJS 安装包。

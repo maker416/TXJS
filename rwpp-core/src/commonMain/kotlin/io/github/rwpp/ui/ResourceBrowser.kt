@@ -37,6 +37,7 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.Settings
+import io.github.rwpp.game.Game
 import io.github.rwpp.config.AccountPreferences
 import io.github.rwpp.config.resolveForumUrl
 import io.github.rwpp.account.AccountSession
@@ -55,6 +56,7 @@ import org.koin.compose.koinInject
 @Composable
 fun ResourceBrowser(onExit: () -> Unit) {
     val settings = koinInject<Settings>()
+    val game = koinInject<Game>()
     val configIO = koinInject<ConfigIO>()
     val accountPrefs = koinInject<AccountPreferences>()
     var orientation by remember(settings) { mutableStateOf(settings.resourceBrowserOrientation) }
@@ -155,6 +157,7 @@ fun ResourceBrowser(onExit: () -> Unit) {
             }
         }
     }
-    BrowserModDownloadDialog(browser)
+    // UI 线程沿用选图页面的采样入口，安装后无需重启或手动刷新地图列表。
+    BrowserModDownloadDialog(browser, onMapsInstalled = { game.getAllMaps(true) })
     BrowserModUploadDialog(browser)
 }

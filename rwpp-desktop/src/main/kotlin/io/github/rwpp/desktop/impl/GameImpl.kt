@@ -50,6 +50,7 @@ import io.github.rwpp.game.map.Mission
 import io.github.rwpp.game.map.MissionType
 import io.github.rwpp.game.map.Replay
 import io.github.rwpp.game.map.scanReplayFiles
+import io.github.rwpp.game.map.browserCustomMapPaths
 import io.github.rwpp.game.mod.KeepConnectedReload
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.game.mod.ModPlaytimeState
@@ -433,7 +434,7 @@ class GameImpl : AbstractGame() {
             val levelDirs = com.corrodinggames.rts.gameFramework.e.a.a("/SD/rusted_warfare_maps", true)
             val mapFolders = mapOf(
                 MapType.SkirmishMap to File("assets/maps/skirmish"),
-                MapType.CustomMap to B.bZ.a(levelDirs, "/SD/rusted_warfare_maps"),
+                MapType.CustomMap to browserCustomMapPaths(B.bZ.a(levelDirs, "/SD/rusted_warfare_maps")),
                 MapType.SavedGame to File("saves")
             )
             for((type, folder) in mapFolders) {

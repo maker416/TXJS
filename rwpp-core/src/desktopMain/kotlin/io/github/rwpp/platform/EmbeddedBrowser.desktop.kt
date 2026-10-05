@@ -38,7 +38,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.io.IOException
 import io.github.rwpp.net.browser.BrowserModDownload
 import io.github.rwpp.net.browser.BrowserModTransfer
-import io.github.rwpp.net.browser.browserModFileName
+import io.github.rwpp.net.browser.browserResourceFileName
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
@@ -119,6 +119,7 @@ private class DesktopBrowserController(
                     try {
                         attachBrowser(app)
                     } catch (error: Throwable) {
+                        org.slf4j.LoggerFactory.getLogger("resource-browser").error("Cannot attach desktop browser", error)
                         client?.dispose()
                         client = null
                         browser = null
@@ -130,6 +131,7 @@ private class DesktopBrowserController(
                     }
                 }
             } catch (error: Throwable) {
+                org.slf4j.LoggerFactory.getLogger("resource-browser").error("Cannot initialize desktop browser runtime", error)
                 initializing.set(false)
                 publish {
                     state.isLoading = false
@@ -183,7 +185,7 @@ private class DesktopBrowserController(
             override fun onBeforeBrowse(browser: CefBrowser, frame: CefFrame, request: CefRequest,
                 userGesture: Boolean, isRedirect: Boolean,
             ): Boolean {
-                if (!frame.isMain || request.method != "GET" || browserModFileName(request.url) == null) return false
+                if (!frame.isMain || request.method != "GET" || browserResourceFileName(request.url) == null) return false
                 val url = request.url
                 publish { browser.startDownload(url) }
                 return true
@@ -193,7 +195,7 @@ private class DesktopBrowserController(
             override fun onBeforeDownload(browser: CefBrowser, item: CefDownloadItem,
                 suggestedName: String, callback: CefBeforeDownloadCallback,
             ): Boolean {
-                val fileName = browserModFileName(item.url, item.contentDisposition, suggestedName) ?: return false
+                val fileName = browserResourceFileName(item.url, item.contentDisposition, suggestedName) ?: return false
                 val id = item.id
                 val expected = item.totalBytes.takeIf { it > 0 }
                 val transfer = CefModTransfer(callback).also { it.control = downloadCallbacks[id] }
