@@ -14,6 +14,7 @@ import io.github.rwpp.desktop.FullscreenController
 import io.github.rwpp.desktop.GameEngine
 import io.github.rwpp.graphics.GL
 import io.github.rwpp.impl.BaseAppContextImpl
+import io.github.rwpp.logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
@@ -78,6 +79,7 @@ class AppContextImpl : BaseAppContextImpl() {
     override fun exit() {
         if (exiting) return
         exiting = true
+        logger.info("[EXIT] requested on thread=${Thread.currentThread().name}", Throwable("PC exit request origin"))
 
         markExitOverlayVisible()
 
@@ -92,15 +94,24 @@ class AppContextImpl : BaseAppContextImpl() {
                     numIncompleteLoadAttempts = 0
                 }
                 configIO.saveAllConfig()
+            }.onFailure { logger.error("[EXIT] failed to save configuration", it) }
+            exitActions.forEachIndexed { index, action ->
+                runCatching { action.invoke() }
+                    .onFailure { logger.error("[EXIT] cleanup action $index failed", it) }
             }
-            runCatching { exitActions.forEach { it.invoke() } }
 
             Thread {
+                logger.info("[EXIT] requesting engine shutdown")
                 runCatching { ScriptEngine.getInstance().root.exit() }
+                    .onFailure { logger.error("[EXIT] engine shutdown failed", it) }
             }.apply { isDaemon = true; name = "rwpp-engine-shutdown" }.start()
 
             Thread {
                 runCatching { Thread.sleep(1000) }
+                // halt 不运行 shutdown hook，必须在终止前主动写入并刷新日志。
+                logger.info("[EXIT] watchdog halting JVM after shutdown grace period")
+                System.out.flush()
+                System.err.flush()
                 Runtime.getRuntime().halt(0)
             }.apply { isDaemon = true; name = "rwpp-exit-watchdog" }.start()
         }

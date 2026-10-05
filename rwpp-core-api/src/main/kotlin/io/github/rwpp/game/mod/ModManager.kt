@@ -22,6 +22,8 @@ interface ModManager : KoinComponent {
      *        传 true：直接在当前协程线程同步执行引擎重载方法，绕过主循环依赖。
      *        用于 mod 同步：下载完成时加入者仍处于加载阶段、游戏主循环 [com.corrodinggames.rts.game.i.b] 尚未启动，
      *        此时投递到主线程的 action 永远不会被消费。
+     *        上述内联/超时回退仅适用于 Android；PC 始终交给持有 GL 上下文的游戏线程，
+     *        未开始任务超时会撤销并报错，不能在等待线程加载纹理。
      * @param enabledByFileName 按完整路径或磁盘文件名指定期望启用状态，完整路径优先。在引擎扫完目录、加载单位定义之前应用。
      *        传入时：map 中有的按指定值启用/禁用；不在 map 中的新模组默认禁用。
      *        未启用的模组只登记元数据，不解析其单位定义。
@@ -38,6 +40,7 @@ interface ModManager : KoinComponent {
      * 解析在当前协程线程执行，**禁止**把 `bW.a()` 投进游戏主循环 `i.b`/`a(float,int)`：
      * 主循环被占满则网络保活停摆。置位 [KeepConnectedReload] 期间主循环只泵网络并跳过单位 tick，
      * 主循环卡住时由看门狗补泵。与 [modSaveChange] 一样在单位解析前应用 [enabledByFileName]。
+     * PC 工作线程必须绑定与主窗口共享的 GL 上下文，期间跳过原版绘制；解析不占游戏线程。
      */
     suspend fun modReloadKeepConnected(enabledByFileName: Map<String, Boolean>? = null)
 

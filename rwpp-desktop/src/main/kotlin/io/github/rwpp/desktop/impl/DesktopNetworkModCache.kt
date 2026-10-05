@@ -13,6 +13,7 @@ import io.github.rwpp.game.mod.NetworkModCacheEntry
 import io.github.rwpp.game.mod.NetworkModCacheFiles
 import io.github.rwpp.game.mod.NetworkModDescriptor
 import org.koin.core.annotation.Single
+import org.slf4j.LoggerFactory
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -33,6 +34,7 @@ class DesktopNetworkModCache(
     private val entries = mutableMapOf<String, DesktopEntry>()
     private val random = SecureRandom()
     private var prepared = false
+    private val cacheLogger = LoggerFactory.getLogger(DesktopNetworkModCache::class.java)
 
     override fun prepareStartup() = synchronized(lock) {
         if (prepared) return@synchronized
@@ -48,7 +50,12 @@ class DesktopNetworkModCache(
         }
         val key = loadOrCreateKey(cacheRoot)
         cacheRoot.listFiles { file -> file.extension == CACHE_EXTENSION }.orEmpty().forEach { cacheFile ->
-            val entry = runCatching { readEnvelope(cacheFile, key) }.getOrNull()
+            val entry = try {
+                readEnvelope(cacheFile, key)
+            } catch (e: Exception) {
+                cacheLogger.warn("Invalid network mod cache: {}", cacheFile.name, e)
+                null
+            }
             if (entry == null || NetworkModCacheFiles.isExpired(entry.createdAtMillis, now)) {
                 NetworkModCacheFiles.deleteOrQuarantine(cacheRoot, cacheFile)
                 return@forEach
@@ -57,7 +64,12 @@ class DesktopNetworkModCache(
         }
         entries.values.groupBy { it.descriptor.name }.forEach { (_, group) ->
             val latest = group.maxByOrNull { it.createdAtMillis } ?: return@forEach
-            runCatching { activate(latest.descriptor) }
+            try {
+                // 初始化期间不能回调公开 activate()，它会再次进入 prepareStartup()。
+                activatePrepared(latest.descriptor)
+            } catch (e: Exception) {
+                cacheLogger.warn("Failed to restore network mod cache: {}", latest.descriptor.name, e)
+            }
         }
         prepared = true
     }
@@ -85,14 +97,22 @@ class DesktopNetworkModCache(
 
     override fun activate(descriptor: NetworkModDescriptor): NetworkModCacheEntry = synchronized(lock) {
         prepareStartup()
+        activatePrepared(descriptor)
+    }
+
+    /** 调用方持有 lock，且条目索引已建立；不递归触发启动初始化。 */
+    private fun activatePrepared(descriptor: NetworkModDescriptor): NetworkModCacheEntry {
         val entry = entries[descriptor.cacheKey()] ?: throw IllegalStateException("Network mod cache miss: ${descriptor.name}")
+        check(!NetworkModCacheFiles.isExpired(entry.createdAtMillis, System.currentTimeMillis())) {
+            "Network mod cache expired: ${descriptor.name}"
+        }
         val workRoot = workingRoot.apply { mkdirs() }
         demoteSameName(workRoot, descriptor)
         val active = NetworkModCacheFiles.activeFile(workRoot, descriptor)
         val key = loadOrCreateKey(encryptedRoot.apply { mkdirs() })
         val bytes = readEnvelopeBytes(entry.cacheFile, key, descriptor)
         NetworkModCacheFiles.atomicWrite(active, bytes, workRoot)
-        entry.asCacheEntry(active)
+        return entry.asCacheEntry(active)
     }
 
     override fun descriptorForManagedPath(path: String): NetworkModDescriptor? = synchronized(lock) {

@@ -46,6 +46,7 @@ dependencies {
     ksp(project(":rwpp-ksp"))
     testImplementation(kotlin("test-junit"))
     testImplementation(files(rootProject.file("lib/game-lib.jar")))
+    testImplementation(files(rootProject.file("lib/lwjgl.jar")))
 }
 
 sourceSets.main {
@@ -86,6 +87,7 @@ compose.desktop {
                 "-Djava.net.preferIPv4Stack=true",
              //   "-Xmx2000M",
                 "-Dfile.encoding=UTF-8",
+                "-XX:ErrorFile=\$ROOTDIR/logs/hs_err_pid%p.log",
                 "-Djava.library.path=\$ROOTDIR",
                 "--add-opens=java.base/java.net=ALL-UNNAMED",
                 "--add-opens=java.desktop/sun.awt=ALL-UNNAMED",

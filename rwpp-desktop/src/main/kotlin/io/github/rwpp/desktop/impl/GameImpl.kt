@@ -33,6 +33,7 @@ import io.github.rwpp.desktop.gameOver
 import io.github.rwpp.desktop.isGaming
 import io.github.rwpp.desktop.getDPIScale
 import io.github.rwpp.desktop.GameSessionManager
+import io.github.rwpp.desktop.DesktopReloadGlContext
 import io.github.rwpp.desktop.GameStartMode
 import io.github.rwpp.desktop.displaySwitcher
 import io.github.rwpp.desktop.gameSessionManager
@@ -163,6 +164,7 @@ class GameImpl : AbstractGame() {
         val receivedChannel = Channel<Unit>(1)
 
         container.post {
+            DesktopReloadGlContext.initialize(Display.getDrawable())
             val nHelper = object : n() {
                 val i = com.corrodinggames.rts.java.i(main)
 
@@ -607,9 +609,9 @@ class GameImpl : AbstractGame() {
 
         override fun updateAndRender(p0: Int) {
             frameNumber++
-            val logFrame = frameNumber <= 10 || (frameNumber % 180 == 0L)
+            val now = System.currentTimeMillis()
+            val logFrame = frameNumber <= 10 || now - lastFrameLogTime >= 60_000L
             if (logFrame) {
-                val now = System.currentTimeMillis()
                 val elapsed = now - lastFrameLogTime
                 lastFrameLogTime = now
                 logger.info("[GameLoop] frame #{} delta={}ms channelPending={} (thread={})",

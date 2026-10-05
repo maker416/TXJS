@@ -11,6 +11,8 @@ import com.corrodinggames.rts.gameFramework.i.b
 import io.github.rwpp.appKoin
 import io.github.rwpp.desktop.GameEngine
 import io.github.rwpp.desktop.IAClass
+import io.github.rwpp.desktop.DesktopGameThreadDispatcher
+import io.github.rwpp.desktop.DesktopReloadGlContext
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.ReloadModEvent
 import io.github.rwpp.event.events.ReloadModFinishedEvent
@@ -28,23 +30,21 @@ import io.github.rwpp.io.zipFolderToByte
 import io.github.rwpp.widget.clearProtectedModLoadHint
 import io.github.rwpp.widget.refreshProtectedModLoadHint
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import org.koin.core.annotation.Single
 import org.koin.core.component.get
 import java.io.File
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 
 @Single
 class ModManagerImpl : ModManager {
     private val game: Game = get()
     private val isReloadingMods = AtomicBoolean(false)
 
-    private companion object {
-        /** 等待游戏主循环开始执行已投递 action 的超时；主循环存活时一帧内（约 33ms）即会开始。 */
-        const val GAME_POST_START_TIMEOUT_MS = 5000L
+    private val gameThreadDispatcher by lazy {
+        DesktopGameThreadDispatcher(game::post, DesktopReloadGlContext::isOwnerThread)
     }
 
     override suspend fun modReload(forceImmediate: Boolean, enabledByFileName: Map<String, Boolean>?) {
@@ -56,65 +56,10 @@ class ModManagerImpl : ModManager {
             logger.info("[MODSYNC] modReload start, broadcasting ReloadModEvent (forceImmediate=$forceImmediate)")
             ReloadModEvent().broadcastIn()
             refreshProtectedModLoadHint(getAllMods(), enabledByFileName)
-            if (forceImmediate) {
-                // mod 同步专用：加入者仍在加载阶段、游戏主循环尚未启动，
-                // game.post 投递的 action 永远不会被消费 -> 直接在当前线程同步执行重载。
-                logger.info("[MODSYNC] modReload forceImmediate: running reload inline on current thread")
+            // PC 的 forceImmediate 也不能绕过 GL 所有权；已在游戏线程时直接执行，否则排队。
+            gameThreadDispatcher.run {
+                DesktopReloadGlContext.requireOwnerContext()
                 runReloadCore(enabledByFileName)
-                logger.info("[MODSYNC] modReload forceImmediate: reload core done, refreshing maps")
-                appKoin.get<Game>().getAllMaps(true)
-            } else {
-                val started = AtomicBoolean(false)
-                val startedLatch = CountDownLatch(1)
-                val doneLatch = CountDownLatch(1)
-                val failure = AtomicReference<Throwable?>()
-                logger.info("[MODSYNC] modReload posting reload action to game thread")
-                game.post {
-                    if (!started.compareAndSet(false, true)) {
-                        // 超时兜底已在其他线程内联执行；此处仅释放可能存在的等待方后丢弃。
-                        logger.info("[MODSYNC] modReload game.post action STALE (inline fallback already ran)")
-                        doneLatch.countDown()
-                        return@post
-                    }
-                    logger.info("[MODSYNC] modReload game.post action RUNNING on game thread")
-                    startedLatch.countDown()
-                    try {
-                        runReloadCore(enabledByFileName)
-                        logger.info("[MODSYNC] modReload game.post action DONE")
-                    } catch (e: Throwable) {
-                        logger.error("[MODSYNC] modReload game.post action THREW", e)
-                        // 回传给等待方显示错误；不要让重载异常杀死 OpenGL 游戏主循环。
-                        failure.set(e)
-                    } finally {
-                        doneLatch.countDown()
-                        logger.info("[MODSYNC] modReload latch counted down")
-                    }
-                }
-
-                // 主循环存活时一帧内（约 33ms）就会取出 action 并开始执行。
-                // 超时仍未开始 => 主循环已不在消费 action（例如模组同步的内联重载曾停止引擎线程，
-                // 之后未进对局，菜单主循环一直是死的），若无限等待将导致 loading 弹窗永久卡死。
-                val consumed = withContext(Dispatchers.IO) {
-                    startedLatch.await(GAME_POST_START_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                }
-                if (!consumed && started.compareAndSet(false, true)) {
-                    // 与 forceImmediate 相同的语义：直接在当前线程执行重载。
-                    // started 的 CAS 保证恰好执行一次；主循环若之后复活再取出该 action 会直接丢弃。
-                    logger.warn(
-                        "[MODSYNC] modReload: game loop did not consume posted action within " +
-                            "${GAME_POST_START_TIMEOUT_MS}ms, running reload inline on current thread"
-                    )
-                    runReloadCore(enabledByFileName)
-                    logger.info("[MODSYNC] modReload inline fallback done, refreshing maps")
-                } else {
-                    // 主循环已接手（含超时瞬间恰好开始执行的竞态），等待其完成。
-                    logger.info("[MODSYNC] modReload waiting for game thread (doneLatch.await) ...")
-                    withContext(Dispatchers.IO) {
-                        doneLatch.await()
-                    }
-                    logger.info("[MODSYNC] modReload latch released, refreshing maps")
-                    failure.get()?.let { throw it }
-                }
                 appKoin.get<Game>().getAllMaps(true)
             }
             logger.info("[MODSYNC] modReload main work finished")
@@ -139,26 +84,38 @@ class ModManagerImpl : ModManager {
             logger.info("[MODSYNC] modReloadKeepConnected start, broadcasting ReloadModEvent")
             ReloadModEvent().broadcastIn()
             refreshProtectedModLoadHint(getAllMods(), enabledByFileName)
-            KeepConnectedReload.begin()
+            gameThreadDispatcher.run { KeepConnectedReload.begin() }
             val watchdog = startNetWatchdog()
             try {
-                var aborted = false
-                try {
-                    runKeepConnectedReloadCore(enabledByFileName)
-                } catch (e: ReloadAbortToVanilla) {
-                    logger.info("[MODSYNC] custom mod load aborted by cancel")
-                    aborted = true
+                withContext(Dispatchers.IO) {
+                    DesktopReloadGlContext.withSharedContext {
+                        var aborted = false
+                        try {
+                            runKeepConnectedReloadCore(enabledByFileName)
+                        } catch (e: ReloadAbortToVanilla) {
+                            logger.info("[MODSYNC] custom mod load aborted by cancel")
+                            aborted = true
+                        }
+                        runVanillaFallbackIfRequested(aborted)
+                    }
                 }
-                runVanillaFallbackIfRequested(aborted)
                 if (!io.github.rwpp.ui.UI.modReloadMemoryExhausted) {
                     game.refreshHandshakeChecksumCache()
                 }
             } finally {
-                finishKeepConnectedReload()
-                watchdog.interrupt()
-                watchdog.join(2_000L)
+                withContext(NonCancellable) {
+                    try { finishKeepConnectedReload() } finally {
+                        watchdog.interrupt()
+                        watchdog.join(2_000L)
+                    }
+                }
             }
             logger.info("[MODSYNC] modReloadKeepConnected main work finished")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            logger.error("[MODSYNC] keep-connected mod reload failed", e)
+            throw e
         } finally {
             ReloadModFinishedEvent().broadcastIn()
             clearProtectedModLoadHint()
@@ -176,19 +133,31 @@ class ModManagerImpl : ModManager {
             return
         }
         try {
-            KeepConnectedReload.begin()
+            gameThreadDispatcher.run { KeepConnectedReload.begin() }
             val watchdog = startNetWatchdog()
             try {
-                KeepConnectedReload.disarmAbortInject()
-                runVanillaFallbackIfRequested(aborted = true)
+                withContext(Dispatchers.IO) {
+                    DesktopReloadGlContext.withSharedContext {
+                        KeepConnectedReload.disarmAbortInject()
+                        runVanillaFallbackIfRequested(aborted = true)
+                    }
+                }
                 if (!io.github.rwpp.ui.UI.modReloadMemoryExhausted) {
                     game.refreshHandshakeChecksumCache()
                 }
             } finally {
-                finishKeepConnectedReload()
-                watchdog.interrupt()
-                watchdog.join(2_000L)
+                withContext(NonCancellable) {
+                    try { finishKeepConnectedReload() } finally {
+                        watchdog.interrupt()
+                        watchdog.join(2_000L)
+                    }
+                }
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            logger.error("[MODSYNC] vanilla-only mod reload failed", e)
+            throw e
         } finally {
             clearProtectedModLoadHint()
             isReloadingMods.set(false)
@@ -220,7 +189,11 @@ class ModManagerImpl : ModManager {
         } catch (e: Throwable) {
             logger.warn("[MODSYNC] refresh menu after abort failed: ${e.message}")
         }
-        KeepConnectedReload.end()
+        try {
+            gameThreadDispatcher.run { DesktopReloadGlContext.resetOwnerTextureBinding() }
+        } finally {
+            KeepConnectedReload.end()
+        }
     }
 
     private fun startNetWatchdog(): Thread {
@@ -262,7 +235,7 @@ class ModManagerImpl : ModManager {
 
     /**
      * 重载内核：调用引擎扫描 mods 目录并重新加载。
-     * 默认应在游戏主线程执行；forceImmediate 时为绕过主循环在调用线程直接执行。
+     * 必须在持有主窗口 GL 上下文的游戏线程执行。
      */
     private fun runReloadCore(enabledByFileName: Map<String, Boolean>?) {
         val runtime = Runtime.getRuntime()
@@ -336,21 +309,19 @@ class ModManagerImpl : ModManager {
     }
 
     override suspend fun modReregister() {
-        val latch = CountDownLatch(1)
-        game.post {
+        gameThreadDispatcher.run {
+            DesktopReloadGlContext.requireOwnerContext()
             GameEngine.B().bZ.a(false, false)
-            latch.countDown()
-        }
-        withContext(Dispatchers.IO) {
-            latch.await()
         }
     }
 
     override suspend fun modSaveChange(enabledByFileName: Map<String, Boolean>?) {
-        val b = GameEngine.B()
-        saveModSelection(enabledByFileName)
-        if (b.bX.B) return
-        reloadUnitsWithSelection(enabledByFileName)
+        gameThreadDispatcher.run {
+            DesktopReloadGlContext.requireOwnerContext()
+            val b = GameEngine.B()
+            saveModSelection(enabledByFileName)
+            if (!b.bX.B) reloadUnitsWithSelection(enabledByFileName)
+        }
     }
 
     override fun getModByName(name: String): Mod? {

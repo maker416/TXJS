@@ -5,9 +5,13 @@
 
 ## PC 模组目录约定
 
-PC 使用原版的 `mods/units/`，导入、资源浏览器下载、网络缓存激活和引擎扫描均使用该目录；Android 继续使用自己的 `units/` 路径。PC 启动及重载扫描还会补扫旧启动器的根目录 `units/`，以保留既有模组，不搬移或删除文件。
+PC 使用原版的 `mods/units/`，导入、资源浏览器下载、网络缓存激活和引擎扫描均使用该目录；Android 继续使用自己的 `units/` 路径。PC 不扫描根目录 `units/`，旧目录中的用户文件不自动搬移或删除。
 
-桌面注入 `CustomUnitLoadInject.customModDirectory` 统一引擎目录；`ModManagerInject.scanLegacyModsAfterLauncherDirectory` 在扫描清理旧登记项之前补扫旧目录。页面的待应用开关通过完整路径快照传入重载，在扫描结束、解析单位之前应用，并在解析后校验、保存；不能靠解析结束后改开关来表示加载成功。
+桌面注入 `CustomUnitLoadInject.customModDirectory` 统一引擎目录。页面的待应用开关通过完整路径快照传入重载，在扫描结束、解析单位之前应用，并在解析后校验、保存；不能靠解析结束后改开关来表示加载成功。
+
+PC 普通重载由 `DesktopGameThreadDispatcher` 调度到原版 GL 游戏线程，未开始任务超时只撤销、报错，不切 IO 内联。保连接重载由 `DesktopReloadGlContext` 在工作线程绑定共享上下文，主线程继续网络 tick 并暂时跳过绘制；结束后清 Slick 纹理绑定缓存。共享上下文不可用时明确失败，不能退回无 GL 上下文解析。
+
+PC 每次启动保存独立的 `logs/rwjs-*.log`，保留最近 10 次；目录不可写时回落到 `%LOCALAPPDATA%/RWJS/logs`。日志覆盖引擎输出、启动器日志、未捕获异常、游戏更新异常、窗口关闭和主动退出来源堆栈；`Runtime.halt` 前主动刷新，不能只依赖 JVM shutdown hook。游戏循环遥测与同类更新异常最多每分钟输出一次，避免刷屏淹没关键事件。安装版及启动脚本将 JVM 原生崩溃报告保存到 `logs/hs_err_pid*.log`；断连 EOF 本身不能作为窗口崩溃的证据。
 
 ## 1. 核心类映射
 

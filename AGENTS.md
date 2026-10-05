@@ -237,6 +237,7 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 两端的真实线程模型**不对称**，不要想当然对齐：
 
 - **桌面端**：引擎写操作约定投游戏线程——`AbstractGame` 的大量方法用 `post {}`（`RWPPContainer` channel，主循环消费）包住引擎调用。
+- **桌面模组重载**：普通重载必须持有游戏线程的主 GL 上下文，排队超时只能撤销未开始任务，禁止回落到 IO 内联。房内保连接解析通过 `DesktopReloadGlContext` 在工作线程绑定 LWJGL 共享上下文，主游戏线程继续网络 tick 并跳过绘制；不要把耗时解析迁回主循环。
 - **Android 端**：原版大量引擎入口**隐含 UI 线程依赖**（会触碰 Android View/Activity 路径），原版就在 UI 线程调用它们，与主循环之间靠引擎监视锁（`k`）互斥。`LevelSelectActivity.loadSinglePlayerMapRaw`、`ae.r()/s()` 等即属此类。**曾把 `hostNewSinglePlayer`/`startNewMissionGame` 迁入 `mainThreadChannel`（游戏线程）导致：点沙盒闪退（游戏线程抛异常致死）、任务/生存启动动作积压丢失、直到多人对局开新主循环才被冲刷执行（commit `bfc6cb2`，已全量回滚）。**
 - 因此：`Game.post` 只表示「在游戏主循环线程上执行」，**不等于**「引擎写操作都可以/应该投进来」。任何引擎调用要换线程，必须逐点核实其线程依赖（是否触碰 View/Activity、是否需 GL 上下文、是否阻塞）并**真机验证**；阻塞型网络操作（`directJoinServer` 的连接）无论如何不得投游戏线程（会停掉保活泵）。
 - Android 进入遭遇战/沙盒时 Compose 的一次性卡顿（UI 线程跑 `loadSinglePlayerMapRaw`）目前视为原版固有行为保留，未找到安全迁移方案前不要动。
@@ -352,6 +353,7 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
    - 注入模块以 `Inject` 结尾，按领域分组（如 `GameInject.kt`、`NetPacketInject.kt`）
    - 接口与数据模型放在 `rwpp-core-api`，实现放在平台模块
 6. **日志**：使用 SLF4J API（`rwpp-core-api` 引入 `slf4j-api`）；桌面端运行时提供 `slf4j-simple`，Android 端使用 `logback-android`。
+   PC 的 `DesktopRuntimeLog` 必须在 SLF4J 初始化前接管标准输出与错误输出，每次运行独立保存到 `logs/rwjs-*.log`（保留 10 次，不可写时使用 `%LOCALAPPDATA%/RWJS/logs`）。主动退出会用 `Runtime.halt`，调用前必须写入退出来源并刷新，不能仅靠 shutdown hook。原生 JVM 崩溃报告为 `logs/hs_err_pid*.log`。
 7. **中文注释**：核心业务逻辑与复杂注入点通常使用中文注释；公开 API 的 KDoc 也大量使用中文。
 8. **资源引用**：Compose Multiplatform 资源通过 generated accessor 访问，如 `Res.drawable.logo`。
 9. **提交信息**：git 提交说明统一使用中文。

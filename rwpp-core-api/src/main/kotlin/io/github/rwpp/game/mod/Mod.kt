@@ -29,7 +29,7 @@ fun detectModSourceType(file: File): ModSourceType {
 
 fun deleteModFileSafely(
     file: File,
-    allowedRoots: List<File> = listOf(File(modDir), File(internalModDir), File("mods/units"), File("units"))
+    allowedRoots: List<File> = listOf(File(modDir), File(internalModDir))
 ): Boolean {
     return runCatching {
         if (!file.exists()) return@runCatching false
@@ -73,7 +73,7 @@ interface Mod {
     /**
      * 是否为通过网络传输下载的 mod。
      *
-     * 原版 RW 引擎只扫描 units/ 目录顶层（File.listFiles 非递归，路径硬编码），
+     * 原版 RW 引擎只扫描模组目录顶层（Android units/，PC mods/units/；File.listFiles 非递归），
      * 无法用物理子目录分离网络下载的 mod，故采用命名约定 {name}.network.rwmod：
      * 保留 .rwmod 后缀让引擎能识别，.network 作为内部分辨标记。
      * 检测基于 [path]（磁盘路径），跨平台一致，不依赖混淆字段名。

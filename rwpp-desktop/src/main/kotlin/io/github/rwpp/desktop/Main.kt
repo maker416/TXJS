@@ -102,8 +102,6 @@ import java.awt.event.KeyEvent
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import java.io.File
-import java.io.FileOutputStream
-import java.io.PrintStream
 import java.util.logging.Level
 import java.util.logging.Logger
 import javax.imageio.ImageIO
@@ -112,6 +110,7 @@ import javax.swing.JOptionPane
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
+import io.github.rwpp.projectVersion
 
 
 typealias ColorCompose = androidx.compose.ui.graphics.Color
@@ -146,6 +145,8 @@ private fun resolveLauncherExePath(): String {
 }
 
 fun main(array: Array<String>) {
+    // 必须在 SLF4J 创建 ConsoleAppender 之前接管输出，否则启动器日志仍写旧 stderr。
+    DesktopRuntimeLog.initialize()
     // 独立窗口浮层才能覆盖 Chromium 原生子窗口，资源页悬浮球不会被网页遮挡。
     System.setProperty("compose.layers.type", "WINDOW")
     if (array.contains("-localgl") && File("opengl32.dll").exists()) { // for only debug
@@ -155,25 +156,7 @@ fun main(array: Array<String>) {
     logger = LoggerFactory.getLogger(packageName)
     native = array.contains("-native")
 
-    if (native) {
-        // 指定输出文件路径
-        val outFilePath = "rwpp-log.txt"
-
-        try {
-            // 创建文件输出流
-            val fileOut = FileOutputStream(outFilePath)
-
-            // 创建PrintStream实例
-            val printOut = PrintStream(fileOut)
-
-            // 重定向标准输出和标准错误输出
-            System.setOut(printOut)
-            System.setErr(printOut)
-
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
+    logger.info("[START] RWJS {} native={}", projectVersion, native)
 
     koinInit = true
     appKoin = startKoin {
@@ -356,6 +339,7 @@ fun swingApplication() = SwingUtilities.invokeLater {
     if (!requireReloadingLib) {
         window.addWindowListener(object : WindowAdapter() {
             override fun windowClosing(e: WindowEvent?) {
+                logger.info("[WINDOW] main window close requested")
                 val result = JOptionPane.showConfirmDialog(
                     frame,
                     "Are you sure to exit RWJS? (确定要退出RWJS吗？)",
@@ -365,6 +349,9 @@ fun swingApplication() = SwingUtilities.invokeLater {
                 if (result == JOptionPane.YES_OPTION) {
                     appKoin.get<AppContext>().exit()
                 }
+            }
+            override fun windowClosed(e: WindowEvent?) {
+                logger.info("[WINDOW] main window disposed")
             }
         })
     }
