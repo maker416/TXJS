@@ -64,6 +64,7 @@ import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
 import io.github.rwpp.appKoin
+import io.github.rwpp.core.ListDetectorPlayers
 import io.github.rwpp.coil.AccountAvatar
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.Settings
@@ -191,6 +192,7 @@ object UI : Initialization, IUserInterface {
     }
 
     fun onReceiveChatMessage(sender: String, message: String, color: Int, senderPlayer: Player? = null) {
+        if (ListDetectorPlayers.hideChatMessage(sender, message)) return
         // 房间邀请策略控制消息：仅房主发送才生效——应用到本地并抑制显示（不进聊天记录）。
         // 注入层按昵称匹配发送者，同名成员可冒名房主，故额外要求该昵称在房内唯一；
         // 不信任的控制消息按普通聊天显示，让尝试暴露出来

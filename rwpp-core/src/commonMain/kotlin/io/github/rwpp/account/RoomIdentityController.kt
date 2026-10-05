@@ -9,6 +9,7 @@ package io.github.rwpp.account
 
 import androidx.compose.runtime.mutableStateMapOf
 import io.github.rwpp.appKoin
+import io.github.rwpp.core.ListDetectorPlayers
 import io.github.rwpp.config.AccountPreferences
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.DEFAULT_MOD_SYNC_API_URLS
@@ -261,7 +262,7 @@ object RoomIdentityController {
     suspend fun prefetchPlayerCards(room: GameRoom) {
         val self = room.localPlayer
         val names = room.getPlayers()
-            .filter { !it.isAI && it != self }
+            .filter { !it.isAI && it != self && !ListDetectorPlayers.isDetector(it.name) }
             .map { it.name.trim() }
             .filter { it.isNotEmpty() }
             .toSet()

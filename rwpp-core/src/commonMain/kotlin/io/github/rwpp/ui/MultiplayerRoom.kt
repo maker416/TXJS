@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.ripple.RippleAlpha
@@ -57,6 +58,7 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
@@ -104,6 +106,8 @@ import io.github.rwpp.net.roomListPublishAddress
 import io.github.rwpp.config.DEFAULT_ROOM_LIST_API_URLS
 import com.eclipsesource.json.Json
 import io.github.rwpp.core.ModSyncController
+import io.github.rwpp.core.ListDetectorGuard
+import io.github.rwpp.core.ListDetectorPlayers
 import io.github.rwpp.core.RoomSnapshotStore
 import io.github.rwpp.io.SizeUtils
 import io.github.rwpp.platform.BackHandler
@@ -143,8 +147,6 @@ private const val PUBLISH_LOADING_MIN_MS = 400L
 
 /** 房内玩家名片可用性预取间隔（每秒一轮，新进房并完成公示的玩家最迟约 1s 后点亮按钮） */
 private const val ROOM_CARD_PREFETCH_INTERVAL_MS = 1_000L
-
-private const val LIST_DETECTOR_PLAYER_KEYWORD = "列表探测器"
 
 private enum class PublishStep {
     FetchingTypes,
@@ -372,6 +374,19 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     var selectedPlayer by remember { mutableStateOf(players.firstOrNull() ?: ConnectingPlayer) }
     var playerOverrideVisible by remember { mutableStateOf(false) }
     var playerCardVisible by remember { mutableStateOf(false) }
+    var listDetectorVisible by remember { mutableStateOf(false) }
+
+    // 单调时钟计时，不因刷新/弹窗/系统时间调整重置；离开等待室后取消并丢弃本轮记录。
+    LaunchedEffect(room) {
+        val detectorGuard = ListDetectorGuard()
+        while (isActive) {
+            if (launcherPage == LauncherPage.Room) {
+                RoomSnapshotStore.resample(game)
+                detectorGuard.poll(room, RoomSnapshotStore.snapshot.value.players, System.nanoTime() / 1_000_000L)
+            }
+            delay(1_000L)
+        }
+    }
 
     LaunchedEffect(selectedPlayer) {
         UI.roomSelectedPlayer = selectedPlayer
@@ -396,6 +411,18 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
         player = selectedPlayer,
         room = room,
         onDismiss = { playerCardVisible = false },
+    )
+
+    ListDetectorDialog(
+        visible = listDetectorVisible,
+        canKick = players.any { it === selectedPlayer } && ListDetectorPlayers.canKick(room, selectedPlayer),
+        onDismiss = { listDetectorVisible = false },
+        onKick = {
+            if (runCatching { ListDetectorPlayers.kickIfPresent(room, selectedPlayer) }.getOrDefault(false)) {
+                listDetectorVisible = false
+                updateAction()
+            }
+        },
     )
 
     MapViewDialog(
@@ -425,16 +452,6 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     suspend fun ensureMinPublishLoading(startMs: Long) {
         val remaining = PUBLISH_LOADING_MIN_MS - (System.currentTimeMillis() - startMs)
         if (remaining > 0) delay(remaining)
-    }
-
-    fun kickListDetectorPlayers() {
-        if (!room.isHost && !room.isHostServer) return
-        val detectors = room.getPlayers().filter { it.name.contains(LIST_DETECTOR_PLAYER_KEYWORD) }
-        if (detectors.isEmpty()) return
-        detectors.forEach { player ->
-            runCatching { room.kickPlayer(player) }
-        }
-        updateAction()
     }
 
     suspend fun submitPublish(roomId: String, roomType: String, roomName: String) {
@@ -475,11 +492,9 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                     ModSyncController.bindPublishedServerId(serverId)
                     // 发布到列表后补充 sid 别名 key（内部立即重发一次 publish）
                     RoomIdentityController.addServerIdKey(serverId)
-                    kickListDetectorPlayers()
                     publishState = PublishToListUiState.Success(roomId, serverId)
                 } else {
                     val detail = if (msg.isNotBlank()) "$msg (code: $code)" else "code: $code"
-                    kickListDetectorPlayers()
                     publishState = PublishToListUiState.Failure(
                         readI18n("multiplayer.room.publishFailedDetail", I18nType.RWPP, detail),
                         PublishStep.Publishing,
@@ -487,7 +502,6 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                 }
             },
             onFailure = { e ->
-                kickListDetectorPlayers()
                 publishState = PublishToListUiState.Failure(
                     readI18n(
                         "multiplayer.room.publishFailedDetail",
@@ -521,7 +535,6 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
         currentCoroutineContext().ensureActive()
         when {
             types.isEmpty() -> {
-                kickListDetectorPlayers()
                 publishState = PublishToListUiState.Failure(
                     readI18n("multiplayer.room.publishFetchTypesFailed"),
                     PublishStep.FetchingTypes,
@@ -536,7 +549,6 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                 val selectableTypes = types.filterNot { it.equals(MOD_SYNC_ROOM_TYPE, ignoreCase = true) }
                 if (canTransferMod && types.none { it.equals(MOD_SYNC_ROOM_TYPE, ignoreCase = true) }) {
                     // 房间列表白名单未提供模组同步标签，发布必然被服务端白名单拒绝
-                    kickListDetectorPlayers()
                     publishState = PublishToListUiState.Failure(
                         readI18n("multiplayer.room.publishModSyncTypeMissing"),
                         PublishStep.FetchingTypes,
@@ -645,13 +657,16 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 
         val openPlayerCard: (Player) -> Unit = { player ->
             selectedPlayer = player
-            playerCardVisible = true
+            if (ListDetectorPlayers.isDetector(player.name)) listDetectorVisible = true
+            else playerCardVisible = true
         }
 
         val onPlayerClick: (Player) -> Unit = { player ->
             selectedPlayer = player
             // 房主/主机/点自己：沿用玩家配置弹窗；其余真人玩家：打开个人名片
-            if (room.isHost || room.isHostServer || room.localPlayer == player) {
+            if (ListDetectorPlayers.isDetector(player.name)) {
+                listDetectorVisible = true
+            } else if (room.isHost || room.isHostServer || room.localPlayer == player) {
                 playerOverrideVisible = true
             } else {
                 playerCardVisible = true
@@ -1314,6 +1329,54 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                         if (room.isHostServer) room.sendQuickGameCommand("-start")
                         else room.startGame()
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ListDetectorDialog(
+    visible: Boolean,
+    canKick: Boolean,
+    onDismiss: () -> Unit,
+    onKick: () -> Unit,
+) {
+    AnimatedAlertDialog(visible, onDismissRequest = onDismiss) { dismiss ->
+        BorderCard(
+            modifier = Modifier.fillMaxWidth(LargeProportion()).widthIn(max = 420.dp).padding(10.dp)
+                .testTag("listDetectorDialog"),
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Text(
+                    readI18n("multiplayer.room.listDetectorTitle"),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    readI18n("multiplayer.room.listDetectorDescription"),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                if (!canKick) {
+                    Text(
+                        readI18n("multiplayer.room.listDetectorHostOnly"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = canKick,
+                    onClick = onKick,
+                ) {
+                    Text(readI18n("multiplayer.room.listDetectorKick"))
+                }
+                TextButton(onClick = dismiss, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                    Text(readI18n("common.close"))
                 }
             }
         }
@@ -3187,7 +3250,7 @@ private fun RoomPlayerTableHeader(
 }
 
 @Composable
-private fun RoomPlayerTableRow(
+internal fun RoomPlayerTableRow(
     player: Player,
     room: GameRoom,
     game: Game,
@@ -3199,7 +3262,8 @@ private fun RoomPlayerTableRow(
     onViewProfile: ((Player) -> Unit)? = null,
 ) {
     // 跟随房间刷新重建，避免模组预设变化后玩家初始单位后缀显示 Unknown
-    val options = remember(update) { game.getStartingUnitOptions() }
+    val isDetector = ListDetectorPlayers.isDetector(player.name)
+    val options = remember(update, isDetector) { if (isDetector) emptyList() else game.getStartingUnitOptions() }
     val rowPadding = if (compact) 2.dp else 5.dp
     Box(modifier) {
         KickPlayerContextMenuAreaMultiplatform(player, onViewProfile = onViewProfile) {
@@ -3220,7 +3284,7 @@ private fun RoomPlayerTableRow(
                         onPlayerClick(player)
                     },
             ) {
-                val baseName = player.name + if (player.startingUnit != -1) {
+                val baseName = player.name + if (!isDetector && player.startingUnit != -1) {
                     " - ${options.firstOrNull { it.first == player.startingUnit }?.second ?: "Unknown"}"
                 } else ""
                 RoomPlayerNameCell(
@@ -3230,8 +3294,8 @@ private fun RoomPlayerTableRow(
                     } else {
                         MaterialTheme.colorScheme.onSurface
                     },
-                    syncPeer = ModSyncController.roomPeerBadges[player.name],
-                    showReadySpinner = !player.data.ready,
+                    syncPeer = if (isDetector) null else ModSyncController.roomPeerBadges[player.name],
+                    showReadySpinner = !isDetector && !player.data.ready,
                     compact = compact,
                 )
                 TableCell(
@@ -3286,7 +3350,8 @@ private fun RowScope.RoomPlayerCardActionCell(
         contentAlignment = Alignment.Center,
     ) {
         if (onViewProfile != null && !player.isAI && player != ConnectingPlayer) {
-            val lit = isPlayerCardLit(player, room)
+            val isDetector = ListDetectorPlayers.isDetector(player.name)
+            val lit = isDetector || isPlayerCardLit(player, room)
             Box(
                 modifier = Modifier
                     .size(if (compact) 26.dp else 30.dp)
@@ -3298,12 +3363,18 @@ private fun RowScope.RoomPlayerCardActionCell(
                             MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
                         },
                     )
-                    .clickable { onPlayerCardButtonClick(player, room, onViewProfile) },
+                    .clickable {
+                        if (isDetector) onViewProfile(player)
+                        else onPlayerCardButtonClick(player, room, onViewProfile)
+                    },
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    Icons.Default.AccountBox,
-                    contentDescription = readI18n("playerCard.viewProfile", I18nType.RWPP),
+                    if (isDetector) Icons.Default.Info else Icons.Default.AccountBox,
+                    contentDescription = readI18n(
+                        if (isDetector) "multiplayer.room.listDetectorTitle" else "playerCard.viewProfile",
+                        I18nType.RWPP,
+                    ),
                     tint = if (lit) {
                         MaterialTheme.colorScheme.primary
                     } else {

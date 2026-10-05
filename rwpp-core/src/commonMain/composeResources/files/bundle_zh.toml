@@ -202,6 +202,10 @@ inviteSend = "发送邀请 ({0})"
 inviteSendFailed = "{0} 位好友邀请发送失败，请稍后重试"
 lockRoom = "锁房"
 memberInvites = "成员邀请"
+listDetectorTitle = "列表探测器"
+listDetectorDescription = "这是列表探测器玩家，用于探测房间信息。正常情况下会很快离开；如果超过 30 秒还没走，就是卡住了，踢出就好。房主端会自动踢出停留超过 30 秒的探测器。"
+listDetectorKick = "一键踢出"
+listDetectorHostOnly = "仅房主可在等待室踢出仍在房内的探测器。"
 
 [multiplayer.room.teamMode]
 twoTeams = "两队（如 5v5）"

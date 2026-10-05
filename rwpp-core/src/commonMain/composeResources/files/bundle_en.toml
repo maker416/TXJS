@@ -201,6 +201,10 @@ inviteSend = "Send Invite ({0})"
 inviteSendFailed = "Failed to send invites to {0} friend(s). Please try again."
 lockRoom = "Lock room"
 memberInvites = "Member invites"
+listDetectorTitle = "Room List Probe"
+listDetectorDescription = "This player probes the room for the server list and normally leaves quickly. If it stays for over 30 seconds, it is stuck and can be kicked. The host automatically kicks probes that stay longer than 30 seconds."
+listDetectorKick = "Kick Probe"
+listDetectorHostOnly = "Only the host can kick a probe that is still in the waiting room."
 
 [multiplayer.room.teamMode]
 twoTeams = "2 Teams (eg 5v5)"
