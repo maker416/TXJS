@@ -8,15 +8,19 @@
 package io.github.rwpp.desktop.impl
 
 import io.github.rwpp.app.*
+import io.github.rwpp.AppContext
+import io.github.rwpp.platform.WindowsUpdateInstaller
 import io.github.rwpp.net.Net
 import io.github.rwpp.net.UpdateDownloadPlan
 import io.github.rwpp.logger
 import org.koin.core.annotation.Single
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
+import org.koin.core.component.get
 import java.io.File
 import java.nio.file.Files
-import kotlin.system.exitProcess
+import java.util.concurrent.CompletableFuture
+import kotlin.concurrent.thread
 
 @Single
 class AutoUpdaterImpl : AutoUpdater, KoinComponent {
@@ -38,21 +42,26 @@ class AutoUpdaterImpl : AutoUpdater, KoinComponent {
             directory = Files.createTempDirectory("RWJS-update-").toFile()
             val installer = UpdatePackageDownloader(net.client).download(plan, session, directory,
                 File(directory, "RWJS-Setup-update.exe"), ".exe", onStatus)
-            var launcher: Process? = null
-            session.startInstallation {
+            val launched = CompletableFuture<Unit>()
+            val allowed = session.startInstallation {
                 onStatus(UpdateProgress(UpdateStage.INSTALLING, 1f))
-                launcher = ProcessBuilder(WindowsInstallerCommand.command(installer)).redirectErrorStream(true).start()
+                thread(name = "RWJS-install", isDaemon = true) {
+                    try {
+                        session.checkActive()
+                        WindowsUpdateInstaller().launch(installer)
+                        launched.complete(Unit)
+                    } catch (failure: Throwable) { launched.completeExceptionally(failure) }
+                }
             }
-            // 锁只覆盖启动辅助进程；UAC 等待在 IO 线程，拒绝授权时保留更新页可重试。
-            launcher?.let { process ->
-                val diagnostic = process.inputStream.bufferedReader().use { it.readText() }
-                if (process.waitFor() != 0) throw java.io.IOException(diagnostic.take(500).ifBlank { "Installer launch was denied" })
+            // UAC 在独立线程等待；主线程的退出/取消不被安装交接锁阻塞。
+            if (allowed) {
+                launched.get()
                 started = true
             }
         } catch (e: Exception) {
             if (!session.isCancelled) {
                 logger.error("Update failed", e)
-                onStatus(UpdateProgress(UpdateStage.FAILED, error = e.message))
+                onStatus(UpdateProgress(UpdateStage.FAILED, error = e.cause?.message ?: e.message))
             }
         } finally {
             directory?.walkBottomUp()?.forEach {
@@ -60,6 +69,6 @@ class AutoUpdaterImpl : AutoUpdater, KoinComponent {
             }
             synchronized(lock) { if (active === session) active = null }
         }
-        if (started) exitProcess(0)
+        if (started) get<AppContext>().exit()
     }
 }

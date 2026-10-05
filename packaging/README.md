@@ -76,7 +76,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File packaging/tests/UpdatePackag
 .\RWJS-Setup.exe /VERYSILENT /SP- /NORESTART /DIR="D:\Games\RWJS"
 ```
 
-客户端通过 Windows PowerShell 的 `Start-Process -Verb RunAs` 请求 UAC 授权，辅助进程隐藏；拒绝授权时留在全屏更新页，可重试。提权行为参见[微软 Start-Process 文档](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/start-process?view=powershell-5.1)。
+客户端通过 Windows 原生 `ShellExecuteW` 的 `runas` 请求 UAC 授权；拒绝授权时留在全屏更新页，可重试。路径直接作为 Unicode 字符串交给系统，不通过命令解释器。接口行为参见[微软 ShellExecuteW 文档](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew)。
 
 缺少有效 RWJS 安装记录时，更新模式中止并提示正常安装。客户端只调用新参数。覆盖更新清理安装器管理的 `app/*.jar`，避免版本改名后依赖冲突；保留用户配置和模组。更换已安装的 RWJS 目录前须先卸载。
 
