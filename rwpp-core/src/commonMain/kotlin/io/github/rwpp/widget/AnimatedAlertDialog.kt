@@ -9,23 +9,21 @@ package io.github.rwpp.widget
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
 internal const val ANIMATION_TIME = 500L
-internal const val DIALOG_BUILD_TIME = 300L
+// 退出动画只负责绘制；子弹层必须立即关闭，不能在父弹窗退出期间重新抢占焦点。
+internal val LocalDialogInteractive = staticCompositionLocalOf { true }
 
 // Inspired by https://medium.com/tech-takeaways/ios-like-modal-view-dialog-animation-in-jetpack-compose-fac5778969af
 
@@ -76,61 +74,53 @@ fun AnimatedTransitionDialog(
     contentAlignment: Alignment = Alignment.Center,
     content: @Composable (AnimatedTransitionDialogHelper) -> Unit
 ) {
-    val onDismissSharedFlow: MutableSharedFlow<Any> = remember { MutableSharedFlow() }
-    val coroutineScope: CoroutineScope = rememberCoroutineScope()
-    val animateTrigger = remember { mutableStateOf(false) }
+    val visibility = remember { MutableTransitionState(false).apply { targetState = true } }
+    var dismissRequested by remember { mutableStateOf(false) }
     val enableAnimations = koinInject<Settings>().enableAnimations
     val currentOnDismissRequest by rememberUpdatedState(onDismissRequest)
     val currentEnableDismiss by rememberUpdatedState(enableDismiss)
 
-    LaunchedEffect(key1 = Unit) {
-        launch {
-            delay(if (enableAnimations) DIALOG_BUILD_TIME else 0)
-            animateTrigger.value = true
-        }
-        launch {
-            onDismissSharedFlow.asSharedFlow().collectLatest {
-                startDismissWithExitAnimation(animateTrigger, currentOnDismissRequest)
+    val helper = remember {
+        AnimatedTransitionDialogHelper {
+            if (!dismissRequested) {
+                dismissRequested = true
+                visibility.targetState = false
             }
         }
     }
-
-//    Popup(alignment = Alignment.Center,
-//        onDismissRequest = {
-//            if (enableDismiss) {
-//                coroutineScope.launch {
-//                    startDismissWithExitAnimation(animateTrigger, onDismissRequest)
-//                }
-//            }
-//        }
-//    ) {
-//        Box(
-//            contentAlignment = contentAlignment,
-//            modifier = Modifier.fillMaxSize()
-//        ) {
-//            AnimatedScaleInTransition(visible = animateTrigger.value) {
-//
-//                content(AnimatedTransitionDialogHelper(coroutineScope, onDismissSharedFlow))
-//
-//            }
-//        }
-//    }
+    // 等动画真正结束再移除 Dialog；重复关闭不会重置计时，快速关闭也不会被延迟入场重新打开。
+    LaunchedEffect(dismissRequested, visibility.isIdle, visibility.currentState) {
+        if (dismissRequested && visibility.isIdle && !visibility.currentState) currentOnDismissRequest()
+    }
 
     Dialog(
         onDismissRequest = {
             if (currentEnableDismiss) {
-                coroutineScope.launch {
-                    startDismissWithExitAnimation(animateTrigger, currentOnDismissRequest)
-                }
+                helper.triggerAnimatedDismiss()
             }
         },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Box(
-            contentAlignment = contentAlignment,
-        ) {
-            AnimatedScaleInTransition(visible = animateTrigger.value) {
-                content(AnimatedTransitionDialogHelper(coroutineScope, onDismissSharedFlow))
+        CompositionLocalProvider(LocalDialogInteractive provides !dismissRequested) {
+            val interactive by rememberUpdatedState(!dismissRequested)
+            Box(
+                contentAlignment = contentAlignment,
+                modifier = Modifier.pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (!interactive) event.changes.forEach { it.consume() }
+                        }
+                    }
+                },
+            ) {
+                AnimatedVisibility(
+                    visibleState = visibility,
+                    enter = if (enableAnimations) scaleIn(tween(ANIMATION_TIME.toInt())) else EnterTransition.None,
+                    exit = if (enableAnimations) scaleOut(tween(ANIMATION_TIME.toInt())) else ExitTransition.None,
+                ) {
+                    content(helper)
+                }
             }
         }
     }
@@ -138,26 +128,12 @@ fun AnimatedTransitionDialog(
 
 
 class AnimatedTransitionDialogHelper(
-    private val coroutineScope: CoroutineScope,
-    private val onDismissFlow: MutableSharedFlow<Any>
+    private val onDismiss: () -> Unit
 ) {
 
     fun triggerAnimatedDismiss() {
-        coroutineScope.launch {
-            onDismissFlow.emit(Any())
-        }
+        onDismiss()
     }
-}
-
-suspend fun startDismissWithExitAnimation(
-    animateTrigger: MutableState<Boolean>,
-    onDismissRequest: () -> Unit
-) {
-    val enableAnimations = appKoin.get<Settings>().enableAnimations
-
-    animateTrigger.value = false
-    delay(if(enableAnimations) ANIMATION_TIME else 50)
-    onDismissRequest()
 }
 
 @Composable

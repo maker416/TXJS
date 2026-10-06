@@ -58,8 +58,6 @@ import io.github.rwpp.core.ModPlaytimeController
 import io.github.rwpp.core.RoomSnapshotStore
 import io.github.rwpp.net.sync.SyncPeerPhase
 import io.github.rwpp.event.GlobalEventChannel
-import io.github.rwpp.event.broadcast
-import io.github.rwpp.event.events.KeyboardEvent
 import io.github.rwpp.event.events.RefreshUIEvent
 import io.github.rwpp.event.events.ReloadModEvent
 import io.github.rwpp.event.events.ReloadModFinishedEvent
@@ -97,7 +95,6 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.koin.compose.koinInject
 
@@ -201,13 +198,7 @@ fun App(
                 ) {
                     globalFocusRequester.requestFocus()
                     keyboardController?.hide()
-                }.onKeyEvent {
-                    runBlocking {
-                        if (it.type == KeyEventType.KeyDown) {
-                            KeyboardEvent(it.key.keyCode.toInt()).broadcast().isIntercepted
-                        } else false
-                    }
-                }
+                }.launcherKeyboardEvents(appScope)
         ) {
             CompositionLocalProvider(
                 LocalTextSelectionColors provides RWSelectionColors,

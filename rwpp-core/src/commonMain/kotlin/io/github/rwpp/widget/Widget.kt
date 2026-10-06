@@ -85,7 +85,7 @@ fun <T> BasicDropdownMenu(
     onItemSelected: (Int, T) -> Unit,
     onDismissRequest: () -> Unit
 ) = DropdownMenu(
-    expanded = expanded,
+    expanded = expanded && LocalDialogInteractive.current,
     onDismissRequest = onDismissRequest
 ) {
     items.forEachIndexed { index, t ->
@@ -113,8 +113,9 @@ fun <T> LargeDropdownMenu(
     selectedItemColor: @Composable (T?, Int) -> Color = { _, _ -> MaterialTheme.colorScheme.onSurface }
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val focusRequest = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
+    val interactive = enabled && LocalDialogInteractive.current
+    LaunchedEffect(interactive) { if (!interactive) expanded = false }
 
     Box(
         modifier = modifier
@@ -132,8 +133,9 @@ fun <T> LargeDropdownMenu(
             ),
             colors = RWOutlinedTextColors,
             value = if (hasValue) items.getOrNull(selectedIndex)?.let { selectedItemToString(it) } ?: "" else "",
-            enabled = enabled,
-            modifier = Modifier.fillMaxWidth().focusRequester(focusRequest),
+            enabled = interactive,
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
             trailingIcon = {
                 val icon = if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown
                 Icon(icon, "", tint = MaterialTheme.colorScheme.surfaceTint)
@@ -150,12 +152,12 @@ fun <T> LargeDropdownMenu(
                 .fillMaxSize()
                 .padding(top = 8.dp)
                 .clip(RoundedCornerShape(10.dp))
-                .clickable(enabled = enabled && !expanded) { expanded = true; focusRequest.requestFocus() },
+                .clickable(enabled = interactive && !expanded) { expanded = true },
             color = Color.Transparent
         ) {}
 
         DropdownMenu(
-            expanded = expanded,
+            expanded = expanded && interactive,
             onDismissRequest = {
                 expanded = false
                 focusManager.clearFocus()
@@ -171,9 +173,9 @@ fun <T> LargeDropdownMenu(
                         )
                     },
                     onClick = {
-                        onItemSelected(index, t)
                         expanded = false
                         focusManager.clearFocus()
+                        onItemSelected(index, t)
                     }
                 )
             }

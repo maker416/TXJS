@@ -19,13 +19,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
-import io.github.rwpp.app.PermissionHelper
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.map.GameMap
 import io.github.rwpp.game.map.MapType
@@ -46,7 +44,7 @@ fun MapViewDialog(
 ) { d ->
     BorderCard(
         modifier = Modifier
-            // .fillMaxSize(0.95f)
+            .fillMaxSize(0.95f)
             .padding(10.dp)
             .autoClearFocus()
     ) {
@@ -70,12 +68,8 @@ fun MapViewDialog(
 
                 var selectedIndex0 by remember { mutableStateOf(lastSelectedMapType.ordinal) }
                 var maps by remember { mutableStateOf(listOf<GameMap>()) }
-                var mapType = remember { MapType.entries[selectedIndex0] }
-
-                val permissionHelper = koinInject<PermissionHelper>()
-//                remember(mapType) {
-//                    if (mapType != MapType.SkirmishMap) permissionHelper.requestExternalStoragePermission()
-//                }
+                val mapType = MapType.entries[selectedIndex0]
+                var refreshGeneration by remember { mutableIntStateOf(0) }
 
                 Row(
                     horizontalArrangement = Arrangement.Center,
@@ -108,38 +102,46 @@ fun MapViewDialog(
                         modifier = Modifier.offset(y = 10.dp).padding(5.dp),
                         size = 50.dp
                     ) {
-                        game.getAllMaps(true)
-                        maps = game.getAllMapsByMapType(mapType)
-                            .filter { it.displayName().contains(filter, true) }
+                        refreshGeneration++
                     }
                 }
 
                 LargeDividingLine { 0.dp }
 
                 with(game) {
-                    LaunchedEffect(selectedIndex0, filter) {
-                        mapType = MapType.entries[selectedIndex0]
-                        maps = getAllMapsByMapType(mapType).filter {
+                    LaunchedEffect(mapType, refreshGeneration) {
+                        if (refreshGeneration > 0) getAllMaps(true)
+                        maps = getAllMapsByMapType(mapType)
+                    }
+                    val filteredMaps = remember(maps, filter) {
+                        maps.filter {
                             it.displayName().contains(filter, true)
                         }
                     }
 
                     val state1 = rememberLazyGridState()
 
-                    LaunchedEffect(Unit) {
-                        state1.scrollToItem(lastSelectedIndex)
+                    var initialScrollDone by remember { mutableStateOf(false) }
+                    LaunchedEffect(filteredMaps, mapType, filter) {
+                        if (filteredMaps.isNotEmpty()) {
+                            val index = if (!initialScrollDone && mapType == lastSelectedMapType && filter.isEmpty())
+                                lastSelectedIndex.coerceIn(filteredMaps.indices) else 0
+                            state1.scrollToItem(index)
+                            initialScrollDone = true
+                        }
                     }
 
                     LazyVerticalGrid(
                         state = state1,
                         columns = GridCells.Fixed(5),
+                        modifier = Modifier.fillMaxWidth().weight(1f),
                     ) {
                         items(
-                            count = maps.size,
-                            key = { maps[it].mapName + maps[it].id }
+                            count = filteredMaps.size,
+                            key = { "${mapType.name}:${filteredMaps[it].id}:${filteredMaps[it].mapName}" }
                         ) {
-                            val map = maps[it]
-                            val name = rememberSaveable { map.displayName() }
+                            val map = filteredMaps[it]
+                            val name = remember(map) { map.displayName() }
                             MapItem(
                                 name,
                                 map,
@@ -161,9 +163,11 @@ fun LazyGridItemScope.MapItem(
     onClick: () -> Unit,
 ) {
     BorderCard(
-        modifier = Modifier.then(Modifier.animateItem())
+        // 先固定占位，缩略图解码/缺图/异步切换都不能改变网格行高和桌面弹窗边界。
+        modifier = Modifier
             .padding(10.dp)
-            .sizeIn(maxHeight = 200.dp * scaleFitFloat(), maxWidth = 200.dp * scaleFitFloat()),
+            .fillMaxWidth()
+            .height(200.dp * scaleFitFloat()),
         onClick = onClick,
         backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(.7f)
     ) {
@@ -171,7 +175,7 @@ fun LazyGridItemScope.MapItem(
             AsyncImage(
                 model = model,
                 contentDescription = null,
-                modifier = Modifier.padding(5.dp).weight(1f).align(Alignment.CenterHorizontally),
+                modifier = Modifier.fillMaxWidth().padding(5.dp).weight(1f).align(Alignment.CenterHorizontally),
             )
         }
         // 限制名称行数：卡片限高 200dp，长名称无限换行会把 weight(1f) 的图片挤压到不可见
