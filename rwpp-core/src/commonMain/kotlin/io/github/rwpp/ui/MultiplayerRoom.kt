@@ -103,6 +103,8 @@ import io.github.rwpp.net.account.RoomInvite
 import io.github.rwpp.net.account.isPlausibleJoinAddress
 import io.github.rwpp.net.composePublishRoomType
 import io.github.rwpp.net.roomListPublishAddress
+import io.github.rwpp.net.extractRoomJoinAddress
+import io.github.rwpp.net.normalizeRoomAddressesInDetails
 import io.github.rwpp.config.DEFAULT_ROOM_LIST_API_URLS
 import com.eclipsesource.json.Json
 import io.github.rwpp.core.ModSyncController
@@ -625,10 +627,10 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 
     LaunchedEffect(update) {
         val raw = room.roomDetails()
-        roomDetails = raw.split("\n")
+        roomDetails = normalizeRoomAddressesInDetails(raw).split("\n")
             .filter { !it.startsWith("Map:") && it.isNotBlank() }
             .joinToString("\n")
-        roomIdForPublish = Regex("""[QR]\d+""").find(raw)?.value
+        roomIdForPublish = extractRoomJoinAddress(raw)
         // 房主开启「传输模组」时：拿到短码即启动带外同步会话（内部幂等）
         roomIdForPublish?.let { code ->
             if (room.isHost) ModSyncController.startHostSession(code)
@@ -1175,7 +1177,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 
     /**
      * 以当前房间快照生成邀请负载；无法确定可加入地址时返回 null。
-     * 地址优先取当前房间短码（roomDetails 的 [QR]\d+，与「加入上次游戏」的 R 码直连同先例）；
+     * 地址优先取当前房间号（Q/R 短码或 T 房间的 t.mxy.wang/房间号）；
      * 无短码才回退 lastNetworkIP，且必须像 host:port/IP——快速建房指令（Qnews 等）会被拒绝。
      */
     fun buildRoomInvite(): RoomInvite? {

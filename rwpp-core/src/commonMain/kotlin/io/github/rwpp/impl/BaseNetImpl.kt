@@ -105,15 +105,16 @@ abstract class BaseNetImpl : Net {
         speedMultiplier: Int?,
         prefix: HostCommandPrefix,
     ): String {
-        val letter = when (prefix) {
-            HostCommandPrefix.Q -> 'Q'
-            HostCommandPrefix.R -> 'R'
+        val commandPrefix = when (prefix) {
+            HostCommandPrefix.Q -> "Q"
+            HostCommandPrefix.R -> "R"
+            HostCommandPrefix.T -> T_ROOM_ADDRESS_PREFIX
         }
         val base = when {
-            roomId != null && enableMods -> "${letter}CM$roomId"
-            roomId != null -> "${letter}C$roomId"
-            enableMods -> "${letter}mods"
-            else -> "${letter}news"
+            roomId != null && enableMods -> "${commandPrefix}CM$roomId"
+            roomId != null -> "${commandPrefix}C$roomId"
+            enableMods -> "${commandPrefix}mods"
+            else -> "${commandPrefix}news"
         }
         val params = buildString {
             maxPlayer?.let { append("P$it") }

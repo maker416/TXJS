@@ -28,7 +28,7 @@ private val ADDR_HOST_REGEX = Regex("^[a-z0-9][a-z0-9.\\-]*$")
 /**
  * 由原始加入地址推导身份公示 key：
  *
- * - trim 后 host 部分匹配 `^[QR]\d+$`（大小写不敏感）→ `["code:XXX"]`（归一大写，复用
+ * - Q/R 短码及 T 房间地址 → `["code:XXX"]`（归一大写，T 地址归一为 T 短码，复用
  *   [forAddress]，与其行为保持一致）；
  * - 否则按直连地址归一化为 `addr:host:port`：去空白、host 小写、无 `:端口`（或端口非法）时补
  *   默认端口 [DEFAULT_GAME_PORT]；
@@ -41,6 +41,8 @@ fun identityKeysForAddress(address: String): List<String> {
     // 短码：与模组同步共用同一份归一逻辑（host 部分匹配短码时产出 code: key）
     val codeKeys = forAddress(trimmed)
     if (codeKeys.isNotEmpty()) return codeKeys
+    // 中转路径中的快速建房指令不是可加入地址，也不能退化为整台中转服务器的 addr key。
+    if ('/' in trimmed || '\\' in trimmed) return emptyList()
     val host = trimmed.substringBefore(':').trim().lowercase()
     if (!ADDR_HOST_REGEX.matches(host) || '.' !in host) return emptyList()
     val port = trimmed.substringAfter(':', "").trim()

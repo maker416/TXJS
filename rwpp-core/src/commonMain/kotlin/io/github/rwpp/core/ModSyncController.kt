@@ -33,7 +33,6 @@ import io.github.rwpp.io.SizeUtils
 import io.github.rwpp.logger
 import io.github.rwpp.net.Net
 import io.github.rwpp.net.RoomDescription
-import io.github.rwpp.net.sync.CODE_PREFIX
 import io.github.rwpp.net.sync.ModSyncClient
 import io.github.rwpp.net.sync.ModSyncException
 import io.github.rwpp.net.sync.RoomManifestResponse
@@ -263,7 +262,7 @@ object ModSyncController {
      */
     fun startHostSession(roomCode: String) {
         if (!hostSyncRequested) return
-        val key = CODE_PREFIX + roomCode.uppercase()
+        val key = forAddress(roomCode).firstOrNull() ?: return
         if (hostKey == key && (hostJob?.isActive == true || hostSyncState is HostSyncState.Ready)) return
         val cleanup = stopHostSession(clearRequest = false)
         hostKey = key

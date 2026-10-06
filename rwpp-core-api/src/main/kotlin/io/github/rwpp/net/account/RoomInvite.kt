@@ -7,6 +7,8 @@
 
 package io.github.rwpp.net.account
 
+import io.github.rwpp.net.T_ROOM_ADDRESS_PREFIX
+import io.github.rwpp.net.roomCodeForAddress
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -66,18 +68,18 @@ object RoomInviteCodec {
         invite.invitedAt <= 0 || nowMs - invite.invitedAt > ROOM_INVITE_TTL_MS
 }
 
-private val roomCodeRegex = Regex("""^[QR]\d+$""", RegexOption.IGNORE_CASE)
-
 /**
  * 校验一个字符串是否可作为「加入地址」直连房间。
  *
- * 接受：房间短码（`Q34091`/`R12345`）、`host:port`、IP / 域名（含 `.` 或 `:`）。
+ * 接受：房间短码（`Q34091`/`R12345`）、T 地址（`t.mxy.wang/12345`）、`host:port`、IP / 域名。
  * 拒绝：快速建房指令（`Qnews`、`Qmods`、`QC6666`、`QnewsP20U3000` 等）——
  * 它们会被输入框写入 `lastNetworkIP`，但对受邀方不是可加入地址。
  */
 fun isPlausibleJoinAddress(address: String): Boolean {
     val a = address.trim()
     if (a.isEmpty()) return false
-    if (roomCodeRegex.matches(a)) return true
+    if (roomCodeForAddress(a) != null) return true
+    if (a.startsWith(T_ROOM_ADDRESS_PREFIX, ignoreCase = true)
+        || a.startsWith("t.mxy.wang:", ignoreCase = true) && '/' in a) return false
     return a.contains(':') || a.contains('.')
 }

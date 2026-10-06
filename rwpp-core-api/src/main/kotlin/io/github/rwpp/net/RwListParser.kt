@@ -181,11 +181,12 @@ fun isDirectNetworkEndpoint(host: String): Boolean {
 fun mapRwListEntryToRoomDescription(entry: RwListServerEntry): RoomDescription {
     val modNames = parseRequiredModNames(entry.required_mod)
     val (host, port) = splitHostPort(entry.ip)
-    val isShortCode = !isDirectNetworkEndpoint(host)
+    val relayAddress = roomCodeForAddress(entry.ip)?.let(::roomJoinAddressForId)
+    val isShortCode = relayAddress != null || !isDirectNetworkEndpoint(host)
     return RoomDescription(
         uuid = rwListEntryUuid(entry),
         roomOwner = entry.name,
-        netWorkAddress = host,
+        netWorkAddress = relayAddress ?: host,
         port = port,
         isOpen = !entry.needpass,
         creator = entry.name,

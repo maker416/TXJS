@@ -69,8 +69,8 @@ interface Net : KoinComponent, Initialization {
      * @param unitLimit unit limit (U parameter).
      * @param credits initial credits (C parameter).
      * @param speedMultiplier game speed multiplier (Z parameter).
-     * @param prefix command family: Q (default) or R.
-     * @return a command string like "QnewsP20C5000Z5", "QCM6666P10", or "RnewsP10U500".
+     * @param prefix command family: Q (default), R, or T (t.mxy.wang/).
+     * @return a command string like "QnewsP20C5000Z5", "QCM6666P10", "RnewsP10U500", or "t.mxy.wang/news".
      */
     fun buildQuickHostCommand(
         enableMods: Boolean,

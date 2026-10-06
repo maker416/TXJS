@@ -31,8 +31,8 @@ import io.github.rwpp.net.roomid.RoomIdentityClient
 import io.github.rwpp.net.roomid.identityKeysForAddress
 import io.github.rwpp.net.roomid.identityKeysForRoomDescription
 import io.github.rwpp.net.roomid.prioritizeIdentityKeys
-import io.github.rwpp.net.sync.CODE_PREFIX
 import io.github.rwpp.net.sync.SID_PREFIX
+import io.github.rwpp.net.sync.forAddress
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -154,9 +154,7 @@ object RoomIdentityController {
 
     /** 补充短码 key（房间短码就绪时调用）并立即重发一次 publish。 */
     fun addRoomCodeKey(code: String) {
-        val c = code.trim()
-        if (c.isEmpty()) return
-        addKeys(listOf("$CODE_PREFIX${c.uppercase()}"))
+        addKeys(forAddress(code))
     }
 
     /** 补充 server_id 别名 key（发布到列表成功后调用）并立即重发一次 publish。 */

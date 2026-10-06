@@ -81,6 +81,7 @@ import io.github.rwpp.net.isModdedRoom
 import io.github.rwpp.net.labels
 import io.github.rwpp.net.matchesAnyRoomLabel
 import io.github.rwpp.net.parseRequiredModNames
+import io.github.rwpp.net.roomJoinAddressForId
 import io.github.rwpp.net.sorted
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.platform.readPainterByBytes
@@ -392,6 +393,7 @@ fun MultiplayerView(
                     message("That server no longer exists")
                     return@beginSession false
                 }
+                serverAddress = roomJoinAddressForId(serverAddress)
 
                 if (pendingHostSession) {
                     // 旧断线清理会清空 hostSyncRequested，必须在开始屏障之后提交本次选项。
@@ -505,7 +507,7 @@ fun MultiplayerView(
                 pendingHostTransferMods = transferMod && enableMods
                 serverAddress = net.buildQuickHostCommand(
                     enableMods = enableMods,
-                    roomId = if (hostPrefix == HostCommandPrefix.Q) roomId.ifBlank { null } else null,
+                    roomId = if (hostPrefix != HostCommandPrefix.R) roomId.ifBlank { null } else null,
                     maxPlayer = maxPlayer,
                     unitLimit = unitLimit,
                     credits = credits,
@@ -659,6 +661,11 @@ fun MultiplayerView(
                                 roomId = ""
                             },
                             label = { Text(readI18n("multiplayer.hostPrefixR")) },
+                        )
+                        FilterChip(
+                            selected = hostPrefix == HostCommandPrefix.T,
+                            onClick = { hostPrefix = HostCommandPrefix.T },
+                            label = { Text(readI18n("multiplayer.hostPrefixT")) },
                         )
                     }
                     Text(
@@ -957,7 +964,7 @@ fun MultiplayerView(
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                 ) {
                     val twoColumns = maxWidth >= 620.dp
-                    val canSetRoomId = hostPrefix == HostCommandPrefix.Q
+                    val canSetRoomId = hostPrefix != HostCommandPrefix.R
                     val hostOptionsListState = rememberLazyListState()
                     LazyColumnScrollbar(
                         listState = hostOptionsListState,

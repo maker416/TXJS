@@ -9,22 +9,21 @@ package io.github.rwpp.net.sync
 
 import io.github.rwpp.io.HashUtils
 import io.github.rwpp.net.RoomDescription
+import io.github.rwpp.net.roomCodeForAddress
 import java.io.File
 import java.nio.charset.StandardCharsets
 
-/** 同步记录 key 前缀：Q/R 短码房（大小写归一为大写），如 `code:Q77182`。 */
+/** 同步记录 key 前缀：Q/R/T 短码房（大小写归一为大写），如 `code:Q77182`。 */
 const val CODE_PREFIX = "code:"
 
 /** 同步记录 key 前缀：房间发布到列表后的 server_id 别名，如 `sid:<uuid>`。 */
 const val SID_PREFIX = "sid:"
 
-private val ROOM_CODE_REGEX = Regex("^[QR]\\d+$", RegexOption.IGNORE_CASE)
-
 /**
  * 由列表房间信息推导候选同步 key（按优先级排序，去重）：
  *
  * - [RoomDescription.uuid] 非空时产出 `sid:<uuid>`（发布后绑定的 server_id 别名）为首项；
- * - [RoomDescription.addressProvider] 去掉端口部分后形似 `[QR]\d+` 短码时追加 `code:XXX`（归一大写）。
+ * - [RoomDescription.addressProvider] 为 Q/R 短码或 T 房间地址时追加 `code:XXX`（T 地址归一为 T 短码）。
  *
  * 直连 IP 房不产出 `code:` key；无任何匹配时返回空列表（调用方按原版行为加入）。
  */
@@ -33,24 +32,16 @@ fun forRoomDescription(desc: RoomDescription): List<String> {
     if (desc.uuid.isNotBlank()) {
         keys += "$SID_PREFIX${desc.uuid}"
     }
-    val host = desc.addressProvider().substringBefore(':')
-    if (ROOM_CODE_REGEX.matches(host)) {
-        keys += "$CODE_PREFIX${host.uppercase()}"
-    }
+    keys += forAddress(desc.addressProvider())
     return keys.distinct()
 }
 
 /**
- * 由原始加入地址推导候选同步 key：trim 并截掉可能的 `:端口` 后缀后，
- * 仅当形如 `[QR]\d+` 短码时产出 `["code:XXX"]`（归一大写）；`ip:port` 等直连地址返回空列表。
+ * 由原始加入地址推导候选同步 key：Q/R 短码和 T 房间地址产出 `["code:XXX"]`；
+ * T 房间归一为 T 短码，`ip:port` 等直连地址返回空列表。
  */
 fun forAddress(address: String): List<String> {
-    val host = address.trim().substringBefore(':')
-    return if (ROOM_CODE_REGEX.matches(host)) {
-        listOf("$CODE_PREFIX${host.uppercase()}")
-    } else {
-        emptyList()
-    }
+    return roomCodeForAddress(address)?.let { listOf("$CODE_PREFIX$it") } ?: emptyList()
 }
 
 /**
