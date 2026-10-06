@@ -650,6 +650,11 @@ fun MultiplayerView(
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         FilterChip(
+                            selected = hostPrefix == HostCommandPrefix.T,
+                            onClick = { hostPrefix = HostCommandPrefix.T },
+                            label = { Text(readI18n("multiplayer.hostPrefixT")) },
+                        )
+                        FilterChip(
                             selected = hostPrefix == HostCommandPrefix.Q,
                             onClick = { hostPrefix = HostCommandPrefix.Q },
                             label = { Text(readI18n("multiplayer.hostPrefixQ")) },
@@ -661,11 +666,6 @@ fun MultiplayerView(
                                 roomId = ""
                             },
                             label = { Text(readI18n("multiplayer.hostPrefixR")) },
-                        )
-                        FilterChip(
-                            selected = hostPrefix == HostCommandPrefix.T,
-                            onClick = { hostPrefix = HostCommandPrefix.T },
-                            label = { Text(readI18n("multiplayer.hostPrefixT")) },
                         )
                     }
                     Text(

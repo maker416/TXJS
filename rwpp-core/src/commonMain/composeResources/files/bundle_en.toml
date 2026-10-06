@@ -50,7 +50,7 @@ hostPrefix = "Host protocol"
 hostPrefixQ = "Q room"
 hostPrefixR = "R room"
 hostPrefixT = "T room"
-roomManualPublishHint = "Q, R, and T rooms are not published automatically. Join T rooms using t.mxy.wang/room-number. To make your room public, click \"Publish to List\" in the waiting room."
+roomManualPublishHint = "T rooms use Rusted Warfare Speed Edition's official public-benefit relay server. Welcome! Join T rooms using t.mxy.wang/room-number. T, Q, and R rooms are not published automatically. To make your room public, click \"Publish to List\" in the waiting room."
 port = "port"
 roomInfo = """
 creator: {0}

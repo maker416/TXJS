@@ -51,7 +51,7 @@ hostPrefix = "开房协议"
 hostPrefixQ = "Q房间"
 hostPrefixR = "R房间"
 hostPrefixT = "T房间"
-roomManualPublishHint = "Q、R、T房间创建后均不会自动公开。T房间使用 t.mxy.wang/房间号 加入。需要公开时，请在等待室点击「公开到列表」。"
+roomManualPublishHint = "T房为我们极速版官方公益中转房间服务器，欢迎使用！T房间使用 t.mxy.wang/房间号 加入。T、Q、R房间创建后均不会自动公开。需要公开时，请在等待室点击「公开到列表」。"
 port = "端口"
 roomInfo = """
 房主: {0}
