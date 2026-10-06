@@ -12,6 +12,7 @@ import io.github.rwpp.AppContext
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.desktop.FullscreenController
 import io.github.rwpp.desktop.GameEngine
+import io.github.rwpp.desktop.desktopEngineLoaded
 import io.github.rwpp.graphics.GL
 import io.github.rwpp.impl.BaseAppContextImpl
 import io.github.rwpp.logger
@@ -87,12 +88,14 @@ class AppContextImpl : BaseAppContextImpl() {
             yield()
 
             runCatching {
-                GameEngine.B().bO
-                val configIO: ConfigIO = get()
-                GameEngine.B().bQ.apply {
-                    numLoadsSinceRunningGameOrNormalExit = 0
-                    numIncompleteLoadAttempts = 0
+                // 初始化失败时仍保存启动器设置，不能再访问已初始化失败的引擎类。
+                if (desktopEngineLoaded) {
+                    GameEngine.B().bQ.apply {
+                        numLoadsSinceRunningGameOrNormalExit = 0
+                        numIncompleteLoadAttempts = 0
+                    }
                 }
+                val configIO: ConfigIO = get()
                 configIO.saveAllConfig()
             }.onFailure { logger.error("[EXIT] failed to save configuration", it) }
             exitActions.forEachIndexed { index, action ->
@@ -100,11 +103,13 @@ class AppContextImpl : BaseAppContextImpl() {
                     .onFailure { logger.error("[EXIT] cleanup action $index failed", it) }
             }
 
-            Thread {
-                logger.info("[EXIT] requesting engine shutdown")
-                runCatching { ScriptEngine.getInstance().root.exit() }
-                    .onFailure { logger.error("[EXIT] engine shutdown failed", it) }
-            }.apply { isDaemon = true; name = "rwpp-engine-shutdown" }.start()
+            if (desktopEngineLoaded) {
+                Thread {
+                    logger.info("[EXIT] requesting engine shutdown")
+                    runCatching { ScriptEngine.getInstance()?.root?.exit() }
+                        .onFailure { logger.error("[EXIT] engine shutdown failed", it) }
+                }.apply { isDaemon = true; name = "rwpp-engine-shutdown" }.start()
+            }
 
             Thread {
                 runCatching { Thread.sleep(1000) }

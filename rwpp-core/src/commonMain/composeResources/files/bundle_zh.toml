@@ -224,6 +224,8 @@ threeEngineersNoCc = "3名战斗工兵（无指挥中心）"
 experimentalSpider = "实验蜘蛛"
 
 [mod]
+startupFailed = "启动失败"
+startupFailedDetail = "游戏初始化未能完成，请将本次运行日志提供给开发者。错误：{0}"
 update = "刷新"
 reload = "重载"
 disableAll = "禁用全部"

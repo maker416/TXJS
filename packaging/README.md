@@ -61,6 +61,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File packaging/tests/UpdatePackag
 
 `RWJS.exe`、`app/`（过滤非 Windows Skiko）、`runtime/`、图标、AGPL 许可证，以及原版目录的 `game-lib.jar`、根目录原生库、`steam_appid.txt`、`assets/`、`font/`、`libs/`、`res/`。
 
+桌面构建会从仓库 `lib/android.jar` 生成 `app/rwjs-android-compat.jar`，补齐原版桌面核心引用的 `Build.VERSION` 等类型。兼容 jar 排除 JDK 命名空间及 `game-lib.jar` 已提供的类，保留引擎自身的 Android 桌面实现。原版 `libs/android.jar` 和 Android 游戏核心仍不进入安装包。
+
 只包含 RWJS 入口，不附带原版 exe、启动脚本、原版 JVM、用户模组/地图、用户配置、缓存、存档、回放、日志、备份或注入生成库。安装时创建空 `mods/units` 和 `mods/maps`。资源暂存到 `build/tmp/game-payload/`，跳过符号链接/junction。
 
 ## 注册表、更新和卸载

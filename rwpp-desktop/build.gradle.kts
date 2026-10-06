@@ -7,6 +7,7 @@
  */
 
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import java.util.zip.ZipFile
 
 plugins {
     kotlin("jvm")
@@ -21,6 +22,22 @@ ksp {
     arg("lib", "game-lib")
     arg("libDir", "$rootDir/lib")
     arg("pathType", "Path")
+}
+
+// 原版桌面核心仍引用 Build.VERSION 等 Android 类型。只补充游戏库缺失的兼容类，
+// 不把 SDK 中的 java.* / javax.* JDK 占位类或引擎自带的可运行实现放进桌面 classpath。
+val desktopAndroidCompatJar = tasks.register<Jar>("desktopAndroidCompatJar") {
+    archiveFileName.set("rwjs-android-compat.jar")
+    destinationDirectory.set(layout.buildDirectory.dir("generated/desktop-compat"))
+    val gameLib = rootProject.file("lib/game-lib.jar")
+    inputs.file(gameLib)
+    val engineEntries = ZipFile(gameLib).use { jar ->
+        jar.entries().asSequence().map { it.name }.toSet()
+    }
+    from(zipTree(rootProject.file("lib/android.jar"))) {
+        include("android/**/*.class", "dalvik/**/*.class", "javax/microedition/**/*.class", "org/xmlpull/**/*.class")
+        exclude { it.path in engineEntries }
+    }
 }
 
 dependencies {
@@ -39,6 +56,7 @@ dependencies {
         "exclude" to listOf("android-game-lib.jar", "android.jar")
     ))
 
+    implementation(files(desktopAndroidCompatJar))
     runtimeOnly("party.iroiro.luajava:lua54-platform:4.0.2:natives-desktop")
     implementation("org.javassist:javassist:3.30.2-GA")
     val koinAnnotationsVersion = findProperty("koin.annotations.version") as String
@@ -47,6 +65,10 @@ dependencies {
     testImplementation(kotlin("test-junit"))
     testImplementation(files(rootProject.file("lib/game-lib.jar")))
     testImplementation(files(rootProject.file("lib/lwjgl.jar")))
+}
+
+tasks.test {
+    systemProperty("rwjs.test.libDir", rootProject.file("lib").absolutePath)
 }
 
 sourceSets.main {
@@ -131,6 +153,4 @@ tasks.register<Exec>("packageInnoDistribution") {
         }
     }
 }
-
-
 

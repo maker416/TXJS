@@ -223,6 +223,8 @@ threeEngineersNoCc = "3 Engineers (No Command Center)"
 experimentalSpider = "Experimental Spider"
 
 [mod]
+startupFailed = "Startup failed"
+startupFailedDetail = "Game initialization could not complete. Please share the log from this run with the developers. Error: {0}"
 update = "Update"
 reload = "Reload"
 disableAll = "DisableAll"

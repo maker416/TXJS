@@ -23,6 +23,16 @@ class BundleParseTest {
     private val bundleNames = listOf("bundle_zh.toml", "bundle_en.toml")
 
     @Test
+    fun desktopStartupFailureKeysExistInAllBundles() {
+        bundleNames.forEach { name ->
+            val mod = Toml.parseToTomlTable(File(bundleDir, name).readText())["mod"] as TomlTable
+            listOf("startupFailed", "startupFailedDetail").forEach { key ->
+                assertTrue(mod.containsKey(key), "mod.$key missing in $name")
+            }
+        }
+    }
+
+    @Test
     fun listDetectorKeysExistInAllBundles() {
         bundleNames.forEach { name ->
             val root = Toml.parseToTomlTable(File(bundleDir, name).readText())

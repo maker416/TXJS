@@ -19,10 +19,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -82,6 +84,7 @@ import io.github.rwpp.widget.RWPPTheme
 import io.github.rwpp.widget.RWSingleOutlinedTextField
 import io.github.rwpp.widget.RWTextButton
 import io.github.rwpp.widget.RWTextFieldColors
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -209,6 +212,7 @@ fun swingApplication() = SwingUtilities.invokeLater {
     panel.setContent {
         var isLoading by remember { mutableStateOf(true) }
         var message by remember { mutableStateOf("loading...") }
+        var startupError by remember { mutableStateOf<Throwable?>(null) }
         LaunchedEffect(Unit) {
             withContext(Dispatchers.IO) {
                 if (requireReloadingLib) {
@@ -225,12 +229,20 @@ fun swingApplication() = SwingUtilities.invokeLater {
                         Builder.logger?.error(it.stackTraceToString())
                     }
                 } else {
-                    val game = appKoin.get<Game>()
-                    game.load { message = it }
-
-                    GameLoadedEvent().broadcastIn()
-
-                    isLoading = false
+                    try {
+                        val game = appKoin.get<Game>()
+                        game.load { message = it }
+                        withContext(Dispatchers.Main.immediate) {
+                            GameLoadedEvent().broadcastIn()
+                            isLoading = false
+                            logger.info("[START] game initialization completed")
+                        }
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Throwable) {
+                        logger.error("[START] game initialization failed", error)
+                        withContext(Dispatchers.Main.immediate) { startupError = error }
+                    }
                 }
             }
         }
@@ -302,9 +314,26 @@ fun swingApplication() = SwingUtilities.invokeLater {
                     )
                 }
 
-                if (isLoading) MenuLoadingView(message) else App(isPremium = isPremium) { path ->
-                    backgroundImagePath = path
-                    backgroundImageEnabled = settings.backgroundImageEnabled
+                val error = startupError
+                if (error != null) {
+                    RWPPTheme(true) {
+                        Column(
+                            modifier = Modifier.widthIn(max = 600.dp).padding(24.dp),
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(readI18n("mod.startupFailed"), color = ColorCompose.White, style = MaterialTheme.typography.headlineSmall)
+                            Text(readI18n("mod.startupFailedDetail", arg = arrayOf(error.toString())), color = ColorCompose.White)
+                            RWTextButton(readI18n("menu.exit")) { appKoin.get<AppContext>().exit() }
+                        }
+                    }
+                } else if (isLoading) {
+                    MenuLoadingView(message)
+                } else {
+                    App(isPremium = isPremium) { path ->
+                        backgroundImagePath = path
+                        backgroundImageEnabled = settings.backgroundImageEnabled
+                    }
                 }
 
             }

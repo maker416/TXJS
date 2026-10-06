@@ -25,6 +25,8 @@ import io.github.rwpp.config.Settings
 import io.github.rwpp.core.LoadingContext
 import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.desktop.AbstractGame
+import io.github.rwpp.desktop.DesktopEngineStartup
+import io.github.rwpp.desktop.desktopEngineLoaded
 import io.github.rwpp.desktop.AbstractGameRoom
 import io.github.rwpp.desktop.GameEngine
 import io.github.rwpp.desktop.displaySize
@@ -149,20 +151,19 @@ class GameImpl : AbstractGame() {
     }
 
     override suspend fun load(context: LoadingContext): Unit = with(context) {
-        gameThread = Thread {
-            Display.setParent(gameCanvas)
-            container.start()
-        }
-
+        val startup = DesktopEngineStartup()
+        gameThread = Thread({
+            startup.runEngine {
+                Display.setParent(gameCanvas)
+                container.start()
+            }
+        }, "rwjs-game")
         gameThread.isDaemon = true
-        gameThread.start()
 
         Main::class.java.declaredConstructors[0].apply {
             isAccessible = true
             main = newInstance() as Main
         }
-
-        val receivedChannel = Channel<Unit>(1)
 
         container.post {
             DesktopReloadGlContext.initialize(Display.getDrawable())
@@ -317,14 +318,14 @@ class GameImpl : AbstractGame() {
             val scale = getDPIScale()
             libRocket.setDimensionsWrap((displaySize.width / scale).toInt(), (displaySize.height / scale).toInt())
 
-            receivedChannel.trySend(Unit)
+            startup.completeInitialization()
 
             //Display.destroy()
         }
 
-        //q = true
-        // r = true // is reloaded
-        receivedChannel.receive()
+        // Main 与初始化任务先准备好，再启动引擎，避免游戏线程抢先初始化。
+        gameThread.start()
+        startup.awaitInitialization()
 
         gameSessionManager = GameSessionManager(
             displaySwitcher = displaySwitcher,
@@ -386,6 +387,7 @@ class GameImpl : AbstractGame() {
                 if (singlePlayer) GameStartMode.Skirmish() else GameStartMode.Multiplayer
             )
         }
+        desktopEngineLoaded = true
     }
 
     override fun getAllMissions(): List<Mission> {
