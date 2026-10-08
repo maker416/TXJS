@@ -113,6 +113,8 @@ fun LoadingView(
     cancellable: Boolean = false,
     showProtectedModHint: Boolean = false,
     showMemoryUsage: Boolean = false,
+    /** 加载协程结束（成功/失败/被忽略）时调用，用于收起外层 `visible`；勿在此取消进房逻辑。 */
+    onLoadingFinished: () -> Unit = {},
     loadContent: suspend LoadingContext.() -> Boolean?
 ) {
     // 必须持有可取消的 Job：关闭对话框时立刻 cancel，避免退出动画期间后台仍跑完
@@ -155,13 +157,12 @@ fun LoadingView(
                         val result = loadContent(LoadingContext { loadingMessage = it })
                         loadFinished = true
                         withContext(Dispatchers.Main.immediate) {
+                            loadingMessage = ""
+                            onLoadingFinished()
                             when (result) {
-                                true -> {
-                                    loadingMessage = ""
-                                    dismiss()
-                                }
-                                false -> cancel = true
-                                null -> Unit
+                                true -> dismiss()
+                                false -> dismiss()
+                                null -> dismiss()
                             }
                         }
                     } catch (_: CancellationException) {

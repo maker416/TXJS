@@ -92,7 +92,7 @@ class RoomListCardUiTest {
         waitForIdle()
         save("room_list_landscape.png")
         assertTextFits("公开房间-R7471")
-        assertTextFits("地图 · 暂未提供")
+        assertTextFits("暂未提供")
         assertTextFits("0 人")
         assertTextFits("2 个模组", index = 0)
         onAllNodesWithText("模组同步", useUnmergedTree = true).assertCountEquals(2)
@@ -124,8 +124,7 @@ class RoomListCardUiTest {
             assertTextFits("公开房间-R7471")
             assertTextFits("1/10")
             assertTextFits("3/8")
-            assertTextFits("地图 · 冰封群岛")
-            assertTextFits("需要密码")
+            assertTextFits("冰封群岛")
             assertTextFits("状态未确定")
             onAllNodesWithText("模组同步", useUnmergedTree = true).assertCountEquals(2)
         }
@@ -144,17 +143,16 @@ class RoomListCardUiTest {
             waitForIdle()
             save("room_list_english_large_font.png")
             assertTextFits("Unnamed room")
-            assertTextFits("Map · Not provided")
+            assertTextFits("Not provided")
             assertTextFits("Mod Sync")
-            assertTextFits("Password required")
             onNodeWithText("Unnamed room", useUnmergedTree = true).performClick()
             assertEquals(1, clicks)
         }
 
     @Test
     fun wideGridUsesThreeColumnsAndReflowsAfterResizeAndRefresh() =
-        runDesktopComposeUiTest(width = 1024, height = 640) {
-            var viewport by mutableStateOf(1000.dp)
+        runDesktopComposeUiTest(width = 1280, height = 640) {
+            var viewport by mutableStateOf(1200.dp)
             var rooms by mutableStateOf(List(8) { publicRoom.copy(uuid = "room-$it", creator = "房间 $it") })
             var selected: String? = null
             setContent {

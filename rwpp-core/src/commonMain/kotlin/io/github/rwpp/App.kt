@@ -313,6 +313,19 @@ fun App(
                                 }
                             }
                         },
+                        onLoadSavedGame = { map ->
+                            appScope.launch {
+                                GameSessionController.beginSession {
+                                    if (launcherPage != LauncherPage.SinglePlayer) return@beginSession
+                                    isSinglePlayerGame = true
+                                    game.hostNewSinglePlayer(false)
+                                    game.gameRoom.selectedMap = map
+                                    game.gameRoom.startGame()
+                                    showSinglePlayerView = false
+                                    GameSessionController.onRoomOpened()
+                                }
+                            }
+                        },
                     )
                 }
 

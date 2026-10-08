@@ -9,17 +9,18 @@ package io.github.rwpp.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.material3.ColorScheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -88,76 +89,85 @@ internal fun RoomListCard(
         colors = CardDefaults.cardColors(containerColor = colors.surface.copy(alpha = 0.94f)),
         border = BorderStroke(1.dp, colors.outlineVariant.copy(alpha = 0.45f)),
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .alpha(if (isDegraded) 0.7f else 1f)
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.Top,
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.Top,
+            RoomListMapThumbnail(room.mapName)
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Text(
-                    roomDisplayName(room),
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = if (room.isUpperCase) FontWeight.Bold else FontWeight.SemiBold,
-                    color = titleColor,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        roomDisplayName(room),
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = if (room.isUpperCase) FontWeight.Bold else FontWeight.SemiBold,
+                        color = titleColor,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    RoomListBadge(players, icon = Icons.Default.Person)
+                }
+                RoomListCardLabelFlow(
+                    room = room,
+                    category = category,
+                    labels = labels,
+                    colors = colors,
+                    modifier = Modifier.fillMaxWidth(),
                 )
-                RoomListBadge(players, icon = Icons.Default.Person)
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    Icons.Default.Place,
-                    contentDescription = null,
-                    modifier = Modifier.size(14.dp),
-                    tint = colors.onSurfaceVariant,
-                )
                 Text(
-                    "${readI18n("multiplayer.roomList.detailMap")} · ${roomDisplayMap(room)}",
-                    modifier = Modifier.weight(1f),
+                    roomDisplayMap(room),
+                    modifier = Modifier.fillMaxWidth(),
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                RoomListBadge(category)
-                // 同步能力由协议标签表示，即使当前启用集合为空也应提示玩家。
-                if (room.hasRoomLabel(MOD_SYNC_ROOM_TYPE)) {
-                    RoomListBadge(
-                        readI18n("multiplayer.roomList.modSyncDisplay"),
-                        icon = Icons.Default.Refresh,
-                        foreground = colors.primary,
-                        background = colors.primary.copy(alpha = 0.10f),
-                    )
-                }
-                if (room.requiredPassword) {
-                    RoomListBadge(readI18n("multiplayer.roomList.accessPassword"), icon = Icons.Default.Lock)
-                }
-                roomListStatusI18nKey(room)?.let { key ->
-                    RoomListBadge(
-                        readI18n(key),
-                        foreground = if (room.listAvailabilityKnown) colors.error else colors.onSurfaceVariant,
-                        background = if (room.listAvailabilityKnown) colors.error.copy(alpha = 0.10f)
-                            else colors.onSurface.copy(alpha = 0.06f),
-                    )
-                }
-                labels.forEach { RoomListBadge(it) }
+        }
+    }
+}
+
+@Composable
+private fun RoomListCardLabelFlow(
+    room: RoomDescription,
+    category: String,
+    labels: List<String>,
+    colors: ColorScheme,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier.clipToBounds()) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            RoomListBadge(category)
+            if (room.hasRoomLabel(MOD_SYNC_ROOM_TYPE)) {
+                RoomListBadge(
+                    readI18n("multiplayer.roomList.modSyncDisplay"),
+                    icon = Icons.Default.Refresh,
+                    foreground = colors.primary,
+                    background = colors.primary.copy(alpha = 0.10f),
+                )
             }
+            if (room.requiredPassword) {
+                RoomListBadge(readI18n("multiplayer.roomList.accessPassword"), icon = Icons.Default.Lock)
+            }
+            roomListStatusI18nKey(room)?.let { key ->
+                RoomListBadge(
+                    readI18n(key),
+                    foreground = if (room.listAvailabilityKnown) colors.error else colors.onSurfaceVariant,
+                    background = if (room.listAvailabilityKnown) colors.error.copy(alpha = 0.10f)
+                        else colors.onSurface.copy(alpha = 0.06f),
+                )
+            }
+            labels.forEach { RoomListBadge(it) }
         }
     }
 }

@@ -20,9 +20,12 @@ import io.github.rwpp.net.RoomDescription
 private val roomGridHorizontalPadding = 8.dp
 private val roomGridSpacing = 10.dp
 
-/** 按可用宽度分列，大字体提高卡片最小宽度，保持名称、人数和标签可读。 */
+/**
+ * 按可用宽度分列。卡片含缩略图 + 单行标签，最小宽度略保守，避免宽屏过早挤成 4 列；
+ * 不硬编码列数上限，超宽屏仍可自然增加列数。
+ */
 internal fun roomCardColumnCount(availableWidth: Dp, fontScale: Float = 1f): Int {
-    val minimumCardWidth = 300.dp * maxOf(1f, fontScale)
+    val minimumCardWidth = 332.dp * maxOf(1f, fontScale)
     return ((availableWidth - roomGridHorizontalPadding * 2 + roomGridSpacing) /
         (minimumCardWidth + roomGridSpacing)).toInt().coerceAtLeast(1)
 }

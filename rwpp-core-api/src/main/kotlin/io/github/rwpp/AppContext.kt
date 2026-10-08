@@ -50,6 +50,9 @@ interface AppContext : KoinComponent {
      */
     fun setFullscreen(fullscreen: Boolean) {}
 
+    /** 无边框全屏时拖动面板顶栏移动主窗口；非桌面端为空实现。 */
+    fun moveMainWindowBy(deltaX: Float, deltaY: Float) {}
+
     /** Emits `true` once [exit] has been called; drives the full-screen "exiting" overlay. */
     val exitOverlayVisible: StateFlow<Boolean>
 }

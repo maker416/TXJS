@@ -267,3 +267,27 @@ fun LazyGridItemScope.MapItem(
         if (!showImage) Spacer(Modifier.weight(1f))
     }
 }
+
+/** 单人菜单「加载保存的游戏」：仅列出 [MapType.SavedGame]。 */
+@Composable
+fun SavedGamePickerDialog(
+    visible: Boolean,
+    onDismissRequest: () -> Unit,
+    onSelectedSave: (GameMap) -> Unit,
+) = AnimatedAlertDialog(visible = visible, onDismissRequest = onDismissRequest) { dismiss ->
+    val game = koinInject<Game>()
+    MapSelectionContent(
+        mapTypes = listOf(MapType.SavedGame),
+        lastSelectedIndex = 0,
+        lastSelectedMapType = MapType.SavedGame,
+        loadMaps = { type, refresh ->
+            if (refresh) game.getAllMaps(true)
+            game.getAllMapsByMapType(type)
+        },
+        onDismiss = dismiss,
+        onSelectedMap = { _, map ->
+            onSelectedSave(map)
+            dismiss()
+        },
+    )
+}
