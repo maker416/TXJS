@@ -10,10 +10,12 @@ package io.github.rwpp.desktop.impl
 import android.graphics.Paint
 import io.github.rwpp.desktop.inGameWidget
 import io.github.rwpp.desktop.inGameWidgetDialog
+import io.github.rwpp.desktop.resetInGameWidgetDialogLocation
 import io.github.rwpp.game.base.GamePaint
 import io.github.rwpp.game.ui.GUI
 import io.github.rwpp.inject.SetInterfaceOn
 import io.github.rwpp.ui.Widget
+import javax.swing.SwingUtilities
 
 @SetInterfaceOn([com.corrodinggames.rts.gameFramework.f.g::class])
 interface GUIImpl : GUI {
@@ -24,9 +26,13 @@ interface GUIImpl : GUI {
         set(value) { self.aC = value as Paint }
 
     override fun showWidgetInGame(widget: (dispose: () -> Unit) -> Widget) {
-        inGameWidget = widget { inGameWidgetDialog.isVisible = false }
-        inGameWidgetDialog.pack()
-        inGameWidgetDialog.isVisible = true
+        val content = widget { SwingUtilities.invokeLater { inGameWidgetDialog.isVisible = false } }
+        SwingUtilities.invokeLater {
+            inGameWidget = content
+            inGameWidgetDialog.pack()
+            resetInGameWidgetDialogLocation()
+            inGameWidgetDialog.isVisible = true
+        }
     }
 
     override fun showChatMessage(sender: String, message: String) {

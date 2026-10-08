@@ -8,56 +8,45 @@
 package io.github.rwpp.widget.v2
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.Role
 import io.github.rwpp.config.Settings
 import org.koin.compose.koinInject
-
-enum class ButtonState { Pressed, Idle }
 
 @OptIn(ExperimentalFoundationApi::class)
 fun Modifier.bounceClick(
     onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit
 ) = composed {
-    if (koinInject<Settings>().enableAnimations) {
-        var buttonState by remember { mutableStateOf(ButtonState.Idle) }
-        val scale by animateFloatAsState(if (buttonState == ButtonState.Pressed) 0.70f else 1f)
-
-        this
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongClick
-            )
-            .pointerInput(buttonState) {
-                awaitPointerEventScope {
-                    buttonState = if (buttonState == ButtonState.Pressed) {
-                        waitForUpOrCancellation()
-                        ButtonState.Idle
-                    } else {
-                        awaitFirstDown(false)
-                        ButtonState.Pressed
-                    }
-                }
-            }
-    } else {
-        this.combinedClickable(
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val animationsEnabled = koinInject<Settings>().enableAnimations
+    // 使用点击组件自己的按压状态，避免状态作为 pointerInput key 时取消当前手势。
+    val scale by animateFloatAsState(
+        targetValue = if (animationsEnabled && pressed) 0.97f else 1f,
+        animationSpec = tween(if (animationsEnabled) 120 else 0),
+        label = "button press scale",
+    )
+    this
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
+        .combinedClickable(
+            interactionSource = interactionSource,
+            indication = LocalIndication.current,
+            role = Role.Button,
             onClick = onClick,
-            onLongClick = onLongClick
+            onLongClick = onLongClick,
         )
-    }
 }

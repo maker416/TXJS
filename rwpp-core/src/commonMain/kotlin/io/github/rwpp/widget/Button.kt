@@ -20,6 +20,8 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
+import io.github.rwpp.i18n.readI18n
 
 @Composable
 fun MenuButton(
@@ -60,21 +62,22 @@ fun MenuButton(
 
 @Composable
 fun BoxScope.ExitButton(onClick: () -> Unit) {
-    Button(
+    FilledIconButton(
         shape = CircleShape,
-        colors = ButtonDefaults.buttonColors(
+        colors = IconButtonDefaults.filledIconButtonColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(
                 0.8f
             )
         ),
-        modifier = Modifier.size(30.dp).align(Alignment.TopEnd),
-        contentPadding = PaddingValues(0.dp),
-        onClick = { onClick() },
+        // 部分页面先绘制关闭按钮再绘制正文；保持按钮在正文之上，触摸热区至少 48dp。
+        modifier = Modifier.size(48.dp).align(Alignment.TopEnd).zIndex(1f),
+        onClick = onClick,
     ) {
         Icon(
             Icons.Default.Close,
             tint = MaterialTheme.colorScheme.surfaceTint,
-            contentDescription = null
+            contentDescription = readI18n("common.close"),
+            modifier = Modifier.size(24.dp),
         )
     }
 }

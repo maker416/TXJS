@@ -49,6 +49,7 @@ import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
 @Suppress("UnusedMaterial3ScaffoldPaddingParameter")
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsView(
     onCheckUpdate: (LatestVersionProfile) -> Unit,
@@ -104,7 +105,7 @@ fun SettingsView(
             Box {
                 ExitButton(onExit)
                 Column {
-                    Spacer(Modifier.height(30.dp))
+                    Spacer(Modifier.height(48.dp))
                     var selectedItem by remember { mutableIntStateOf(0) }
                     // 利用前缀来区分从游戏还是rwpp读取i18n
                     val items = listOf(
@@ -117,34 +118,34 @@ fun SettingsView(
                         "rwpp-theme"
                     )
 
-                    NavigationBar(
-                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    SecondaryScrollableTabRow(
+                        selectedTabIndex = selectedItem,
+                        modifier = Modifier.fillMaxWidth(),
+                        edgePadding = 12.dp,
                         containerColor = Color.Transparent,
                     ) {
                         items.forEachIndexed { index, s ->
-                            NavigationBarItem(
-                                icon = {},
-                                label = {
+                            Tab(
+                                text = {
                                     Text(
                                         if (s.startsWith("rwpp-"))
                                             readI18n("settings.${s.removePrefix("rwpp-")}", I18nType.RWPP)
                                         else readI18n("menus.settings.heading.$s", I18nType.RW),
-                                        style = MaterialTheme.typography.bodyLarge
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        maxLines = 1,
                                     )
                                 },
                                 selected = selectedItem == index,
                                 onClick = { selectedItem = index },
                             )
 
-                            if (index != items.lastIndex) {
-                                VerticalDivider(modifier = Modifier.padding(2.dp).height(40.dp), thickness = 2.dp)
-                            }
                         }
                     }
 
                     LargeDividingLine { 0.dp }
 
                     val state = rememberLazyListState()
+                    LaunchedEffect(selectedItem) { state.scrollToItem(0) }
 
                     LazyColumnScrollbar(listState = state) {
                         LazyColumn(state = state, contentPadding = PaddingValues(bottom = 88.dp)) {

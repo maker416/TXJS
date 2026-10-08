@@ -188,7 +188,7 @@ class ThemeSettingsUiTest {
     }
 
     private fun ComposeUiTest.themeTab() {
-        onNodeWithText(readI18n("settings.theme")).performClick()
+        onNodeWithText(readI18n("settings.theme")).performScrollTo().performClick()
         waitForIdle()
     }
 

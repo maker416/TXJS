@@ -57,14 +57,18 @@ fun ExpandedCard(
     backgroundColor: Color = MaterialTheme.colorScheme.background.copy((UI.backgroundTransparency + 0.2f).coerceAtMost(1f)),
     content: @Composable ColumnScope.() -> Unit
 ) {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Card(
             shape = RectangleShape,
             elevation =  CardDefaults.cardElevation(defaultElevation = 10.dp),
-            colors = CardDefaults.cardColors(containerColor = backgroundColor),
+            colors = CardDefaults.cardColors(
+                containerColor = backgroundColor,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+            ),
             modifier = Modifier
                 .fillMaxHeight()
-                .fillMaxWidth(if (LocalWindowManager.current == WindowManager.Small) 0.95f else 0.75f)
+                // 连续响应窗口宽度；跨过尺寸档位时不再突然从 95% 收缩到 75%。
+                .width((maxWidth * 0.95f).coerceAtMost(1440.dp))
                 .then(modifier),
             content = content
         )

@@ -7,6 +7,7 @@
 
 package io.github.rwpp.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyGridItemScope
@@ -15,12 +16,13 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -28,8 +30,9 @@ import io.github.rwpp.game.Game
 import io.github.rwpp.game.map.GameMap
 import io.github.rwpp.game.map.MapType
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.logger
 import io.github.rwpp.widget.*
-import io.github.rwpp.widget.v2.RWIconButton
+import kotlinx.coroutines.CancellationException
 import org.koin.compose.koinInject
 
 @Composable
@@ -38,119 +41,193 @@ fun MapViewDialog(
     onDismissRequest: () -> Unit,
     lastSelectedIndex: Int = 0,
     lastSelectedMapType: MapType = MapType.SkirmishMap,
-    onSelectedMap: (Int, GameMap) -> Unit
-) = AnimatedAlertDialog(
-    visible = visible, onDismissRequest = onDismissRequest
-) { d ->
-    BorderCard(
-        modifier = Modifier
-            .fillMaxSize(0.95f)
-            .padding(10.dp)
-            .autoClearFocus()
-    ) {
-        Box {
-            ExitButton(d)
-            Column {
+    onSelectedMap: (Int, GameMap) -> Unit,
+) = AnimatedAlertDialog(visible = visible, onDismissRequest = onDismissRequest) { dismiss ->
+    val game = koinInject<Game>()
+    MapSelectionContent(
+        mapTypes = if (game.gameRoom.isHost) MapType.entries else listOf(MapType.SkirmishMap),
+        lastSelectedIndex = lastSelectedIndex,
+        lastSelectedMapType = lastSelectedMapType,
+        loadMaps = { type, refresh ->
+            // 保留原有调用线程：地图枚举也会访问引擎模组目录与平台资源。
+            if (refresh) game.getAllMaps(true)
+            game.getAllMapsByMapType(type)
+        },
+        onDismiss = dismiss,
+        onSelectedMap = onSelectedMap,
+    )
+}
 
-                val game = koinInject<Game>()
-                var filter by remember { mutableStateOf("") }
-                val room = koinInject<Game>().gameRoom
+private data class MapBrowserEntry(val sourceIndex: Int, val map: GameMap, val name: String, val key: String)
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center
+/** 房间和测试共用实际地图选择界面；引擎只负责提供地图列表。 */
+@Composable
+internal fun MapSelectionContent(
+    mapTypes: List<MapType>,
+    lastSelectedIndex: Int,
+    lastSelectedMapType: MapType,
+    loadMaps: (MapType, Boolean) -> List<GameMap>,
+    onDismiss: () -> Unit,
+    onSelectedMap: (Int, GameMap) -> Unit,
+) {
+    var filter by remember { mutableStateOf("") }
+    var mapType by remember(mapTypes, lastSelectedMapType) {
+        mutableStateOf(lastSelectedMapType.takeIf { it in mapTypes } ?: mapTypes.first())
+    }
+    var entries by remember { mutableStateOf(emptyList<MapBrowserEntry>()) }
+    var loadedMapType by remember { mutableStateOf<MapType?>(null) }
+    var loadFailure by remember { mutableStateOf<String?>(null) }
+    var refreshGeneration by remember { mutableIntStateOf(0) }
+    var loadedRefreshGeneration by remember { mutableIntStateOf(0) }
+    val currentLoadMaps by rememberUpdatedState(loadMaps)
+    LaunchedEffect(mapType, refreshGeneration) {
+        loadFailure = null
+        try {
+            entries = currentLoadMaps(mapType, refreshGeneration != loadedRefreshGeneration)
+                .mapIndexed { index, map ->
+                    MapBrowserEntry(index, map, map.displayName(), "${mapType.name}:${map.id}:${map.mapName}:$index")
+                }
+        } catch (failure: Exception) {
+            if (failure is CancellationException) throw failure
+            logger.warn("Failed to load map selection list: $mapType", failure)
+            entries = emptyList()
+            loadFailure = failure.message ?: failure.toString()
+        }
+        loadedMapType = mapType
+        loadedRefreshGeneration = refreshGeneration
+    }
+
+    val filteredMaps = remember(entries, filter, loadedMapType, mapType) {
+        if (loadedMapType != mapType) emptyList() else {
+            entries.filter { it.name.contains(filter.trim(), ignoreCase = true) }
+        }
+    }
+    val gridState = rememberLazyGridState()
+    var initialScrollDone by remember { mutableStateOf(false) }
+    var previousScrollRequest by remember { mutableStateOf<Pair<MapType, String>?>(null) }
+    LaunchedEffect(filteredMaps, mapType, filter) {
+        val request = mapType to filter
+        if (filteredMaps.isNotEmpty() && previousScrollRequest != request) {
+            val index = if (!initialScrollDone && mapType == lastSelectedMapType && filter.isEmpty()) {
+                lastSelectedIndex.coerceIn(filteredMaps.indices)
+            } else 0
+            gridState.scrollToItem(index)
+            initialScrollDone = true
+            previousScrollRequest = request
+        }
+    }
+
+    BorderCard(modifier = Modifier.fillMaxSize(0.95f).padding(10.dp)) {
+        Box(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().padding(12.dp)) {
+                Text(
+                    readI18n("multiplayer.room.mapView"),
+                    modifier = Modifier.fillMaxWidth().padding(end = 48.dp, bottom = 10.dp),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+
+                @Composable
+                fun TypeSelector(modifier: Modifier) = LargeDropdownMenu(
+                    modifier = modifier.testTag("mapType"),
+                    label = readI18n("multiplayer.room.mapType"),
+                    items = mapTypes,
+                    selectedItemToString = { it.displayName() },
+                    selectedIndex = mapTypes.indexOf(mapType),
+                    onItemSelected = { _, type -> mapType = type },
+                )
+
+                @Composable
+                fun SearchField(modifier: Modifier) = OutlinedTextField(
+                    value = filter,
+                    onValueChange = { filter = it },
+                    modifier = modifier.testTag("mapSearch"),
+                    label = { Text(readI18n("maps.search")) },
+                    textStyle = MaterialTheme.typography.bodyLarge,
+                    singleLine = true,
+                    colors = RWOutlinedTextColors,
+                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                )
+
+                @Composable
+                fun RefreshButton() = IconButton(
+                    onClick = { refreshGeneration++ },
+                    modifier = Modifier.size(48.dp).testTag("mapRefresh"),
                 ) {
-                    Text(
-                        readI18n("multiplayer.room.mapView"),
-                        modifier = Modifier.padding(5.dp),
-                        style = MaterialTheme.typography.headlineLarge.run { copy(fontSize = this.fontSize * scaleFitFloat()) })
+                    Icon(Icons.Default.Refresh, readI18n("maps.refresh"), tint = MaterialTheme.colorScheme.onSurface)
                 }
 
-                var selectedIndex0 by remember { mutableStateOf(lastSelectedMapType.ordinal) }
-                var maps by remember { mutableStateOf(listOf<GameMap>()) }
-                val mapType = MapType.entries[selectedIndex0]
-                var refreshGeneration by remember { mutableIntStateOf(0) }
-
-                Row(
-                    horizontalArrangement = Arrangement.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .wrapContentHeight()
-                        .padding(top = 5.dp)
-
-                ) {
-                    LargeDropdownMenu(
-                        modifier = Modifier.wrapContentSize().padding(5.dp),
-                        label = readI18n("multiplayer.room.mapType"),
-                        items = if (room.isHost) MapType.entries else listOf(MapType.SkirmishMap),
-                        selectedItemToString = { it.displayName() },
-                        selectedIndex = selectedIndex0,
-                        onItemSelected = { index, _ -> selectedIndex0 = index }
-                    )
-
-                    RWSingleOutlinedTextField(
-                        "Filter",
-                        filter,
-                        modifier = Modifier.fillMaxWidth(.4f).padding(5.dp),
-                        leadingIcon = { Icon(Icons.Default.Search, null) }
-                    ) {
-                        filter = it
-                    }
-
-                    RWIconButton(
-                        Icons.Default.Refresh,
-                        modifier = Modifier.offset(y = 10.dp).padding(5.dp),
-                        size = 50.dp
-                    ) {
-                        refreshGeneration++
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    if (maxWidth < 640.dp) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                TypeSelector(Modifier.weight(1f))
+                                RefreshButton()
+                            }
+                            SearchField(Modifier.fillMaxWidth())
+                        }
+                    } else {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            TypeSelector(Modifier.width(240.dp))
+                            SearchField(Modifier.weight(1f))
+                            RefreshButton()
+                        }
                     }
                 }
 
-                LargeDividingLine { 0.dp }
-
-                with(game) {
-                    LaunchedEffect(mapType, refreshGeneration) {
-                        if (refreshGeneration > 0) getAllMaps(true)
-                        maps = getAllMapsByMapType(mapType)
-                    }
-                    val filteredMaps = remember(maps, filter) {
-                        maps.filter {
-                            it.displayName().contains(filter, true)
+                HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                if (filteredMaps.isEmpty()) {
+                    Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                        if (loadFailure != null && loadedMapType == mapType) {
+                            Text(
+                                readI18n("common.failed") + ": " + loadFailure,
+                                color = MaterialTheme.colorScheme.error,
+                                maxLines = 4,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        } else if (loadedMapType == mapType) {
+                            Text(readI18n("maps.emptyFiltered"), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            CircularProgressIndicator()
                         }
                     }
-
-                    val state1 = rememberLazyGridState()
-
-                    var initialScrollDone by remember { mutableStateOf(false) }
-                    LaunchedEffect(filteredMaps, mapType, filter) {
-                        if (filteredMaps.isNotEmpty()) {
-                            val index = if (!initialScrollDone && mapType == lastSelectedMapType && filter.isEmpty())
-                                lastSelectedIndex.coerceIn(filteredMaps.indices) else 0
-                            state1.scrollToItem(index)
-                            initialScrollDone = true
-                        }
-                    }
-
+                } else {
                     LazyVerticalGrid(
-                        state = state1,
-                        columns = GridCells.Fixed(5),
-                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        state = gridState,
+                        columns = GridCells.Adaptive(180.dp * LocalDensity.current.fontScale.coerceAtLeast(1f)),
+                        modifier = Modifier.fillMaxWidth().weight(1f).testTag("mapGrid"),
+                        contentPadding = PaddingValues(bottom = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         items(
                             count = filteredMaps.size,
-                            key = { "${mapType.name}:${filteredMaps[it].id}:${filteredMaps[it].mapName}" }
-                        ) {
-                            val map = filteredMaps[it]
-                            val name = remember(map) { map.displayName() }
+                            key = { index -> filteredMaps[index].key },
+                        ) { index ->
+                            val entry = filteredMaps[index]
                             MapItem(
-                                name,
-                                map,
-                                mapType != MapType.SavedGame
-                            ) { onSelectedMap(it, map); d() }
+                                name = entry.name,
+                                model = entry.map,
+                                showImage = mapType != MapType.SavedGame,
+                            ) {
+                                // 筛选只改变展示位置；保存源列表位置才能在重开时回到所选地图。
+                                onSelectedMap(entry.sourceIndex, entry.map)
+                                onDismiss()
+                            }
                         }
                     }
                 }
             }
+            // 最后绘制，标题与工具栏不能覆盖关闭按钮的点击区域。
+            ExitButton(onDismiss)
         }
     }
 }
@@ -163,28 +240,30 @@ fun LazyGridItemScope.MapItem(
     onClick: () -> Unit,
 ) {
     BorderCard(
-        // 先固定占位，缩略图解码/缺图/异步切换都不能改变网格行高和桌面弹窗边界。
-        modifier = Modifier
-            .padding(10.dp)
-            .fillMaxWidth()
-            .height(200.dp * scaleFitFloat()),
+        // 固定占位：缩略图解码、长名称与窗口尺寸分档不能改变网格行高。
+        modifier = Modifier.fillMaxWidth().height(200.dp),
         onClick = onClick,
-        backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(.7f)
+        backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(.7f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
-        if(showImage) {
+        if (showImage) {
             AsyncImage(
                 model = model,
                 contentDescription = null,
-                modifier = Modifier.fillMaxWidth().padding(5.dp).weight(1f).align(Alignment.CenterHorizontally),
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxWidth().padding(8.dp).weight(1f).align(Alignment.CenterHorizontally),
             )
+        } else {
+            Spacer(Modifier.weight(1f))
         }
-        // 限制名称行数：卡片限高 200dp，长名称无限换行会把 weight(1f) 的图片挤压到不可见
         Text(
             name,
-            modifier = Modifier.padding(5.dp).align(Alignment.CenterHorizontally),
-            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp).align(Alignment.CenterHorizontally),
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
             maxLines = if (showImage) 2 else 4,
             overflow = TextOverflow.Ellipsis,
         )
+        if (!showImage) Spacer(Modifier.weight(1f))
     }
 }

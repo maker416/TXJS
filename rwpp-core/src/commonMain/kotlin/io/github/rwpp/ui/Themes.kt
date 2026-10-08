@@ -91,7 +91,7 @@ fun ThemesView(
     val activeId = ArtThemeController.activeTheme?.id
 
     // 导入中遮罩（不可关闭）
-    AnimatedAlertDialog(importing, onDismissRequest = { }) { _ ->
+    AnimatedAlertDialog(importing, onDismissRequest = { }, enableDismiss = false) { _ ->
         BorderCard(modifier = Modifier.size(320.dp, 160.dp)) {
             Column(
                 modifier = Modifier.fillMaxSize(),
@@ -111,7 +111,7 @@ fun ThemesView(
 
     // 游戏内贴图覆盖层应用进度（重建资源目录 + 单位重载，不可关闭）
     val applyingGameArt = GameArtOverlayManager.applying
-    AnimatedAlertDialog(applyingGameArt, onDismissRequest = { }) { _ ->
+    AnimatedAlertDialog(applyingGameArt, onDismissRequest = { }, enableDismiss = false) { _ ->
         BorderCard(modifier = Modifier.size(320.dp, 160.dp)) {
             Column(
                 modifier = Modifier.fillMaxSize(),

@@ -115,7 +115,7 @@ fun MissionView(fixedType: MissionType? = null, onExit: () -> Unit) {
                     }
 
                     LazyVerticalGrid(
-                        columns = GridCells.Fixed(5),
+                        columns = GridCells.Adaptive(180.dp),
                     ) {
                         items(
                             count = missions.size,

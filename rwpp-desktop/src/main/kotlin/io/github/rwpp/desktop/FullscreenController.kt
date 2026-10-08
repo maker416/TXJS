@@ -76,8 +76,9 @@ object FullscreenController {
      */
     fun enterFullscreenAtStartup(window: JFrame) {
         if (!isWindowsPlatform) return
-        runCatching { applyFullscreenWin32(window, true) }
+        inFullscreen = runCatching { applyFullscreenWin32(window, true) }
             .onFailure { logger.error("[Fullscreen] 启动进入全屏失败，将以窗口模式启动", it) }
+            .getOrDefault(false)
     }
 
     /**

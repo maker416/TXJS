@@ -8,7 +8,6 @@
 package io.github.rwpp.ui
 
 import androidx.compose.animation.*
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
@@ -126,7 +125,6 @@ import io.github.rwpp.widget.v2.LineSpinFadeLoaderIndicator
 import io.github.rwpp.widget.v2.ListIndicatorSettings
 import io.github.rwpp.widget.v2.ScrollbarSelectionActionable
 import io.github.rwpp.widget.v2.bounceClick
-import io.github.rwpp.widget.v2.lazyListCanScroll
 import kotlin.time.DurationUnit
 import kotlin.time.toDuration
 import kotlinx.coroutines.Dispatchers
@@ -940,7 +938,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .heightIn(min = CompactChatMessageAreaMinHeight),
+                                        .heightIn(min = CompactChatMessageAreaMinHeight, max = 240.dp),
                                 ) {
                                     RoomChatMessageView(modifier = Modifier.fillMaxSize())
                                 }
@@ -1004,6 +1002,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                             }
 
                             val state = rememberLazyListState()
+                            val playerListKeys = remember { RoomPlayerKeyStore() }.keysFor(players)
 
                             Column(
                                 modifier = Modifier.weight(.52f).padding(10.dp).then(
@@ -1029,7 +1028,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                         ) {
                                             items(
                                                 count = players.size,
-                                                key = { roomPlayerListKey(players[it], it) },
+                                                key = { playerListKeys[it] },
                                             ) { index ->
                                                 RoomPlayerTableRow(
                                                     player = players[index],
@@ -1068,17 +1067,18 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                         backgroundColor = MaterialTheme.colorScheme.surfaceContainer,
                     ) {
                         Column {
-                            Row(
+                            FlowRow(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(IntrinsicSize.Max)
                                     .padding(5.dp),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
                                 RWTextButton(
                                     readI18n("multiplayer.room.changeSite") + if (isDesktop) "(C)" else "",
                                     modifier = Modifier.padding(
                                         horizontal = 5.dp,
-                                        vertical = 30.dp,
+                                        vertical = 5.dp,
                                     ),
                                 ) {
                                     if (players.isNotEmpty()) {
@@ -1091,7 +1091,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                         readI18n("multiplayer.room.addAI") + if (isDesktop) "(A)" else "",
                                         modifier = Modifier.padding(
                                             horizontal = 5.dp,
-                                            vertical = 30.dp,
+                                            vertical = 5.dp,
                                         ),
                                         onLongClick = { room.addAI(10) },
                                     ) { room.addAI() }
@@ -1142,7 +1142,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                         readI18n("multiplayer.room.invite", I18nType.RWPP),
                                         modifier = Modifier.padding(
                                             horizontal = 5.dp,
-                                            vertical = 30.dp,
+                                            vertical = 5.dp,
                                         ),
                                     ) { inviteDialogVisible = true }
                                 }
@@ -2445,15 +2445,6 @@ private fun PublishToListDialog(
 }
 
 
-/**
- * 引擎玩家数组里 [Player.connectHexId]（Android `p.S` / 桌面 `n.O`）并不保证唯一：
- * 缺省值、握手占位与正式槽位可能共用同一把 SHA-256。玩家列表的去重/排序已上移到
- * RoomSnapshotStore.resample；这里的行 key 仍保留 connectHexId 仅作展示区分。
- */
-
-private fun roomPlayerListKey(player: Player, index: Int): String =
-    "${player.spawnPoint}\u0000${player.name}\u0000${player.connectHexId}\u0000$index"
-
 private val RoomPlayerNameWeight = 0.6f
 
 private val RoomPlayerSpawnWeight = 0.1f
@@ -2468,15 +2459,13 @@ private val CompactChatMessageAreaMinHeight = 160.dp
 private val CompactMapPreviewHeight = 140.dp
 private val CompactPlayerListMinHeight = 140.dp
 private val CompactScrollbarReservedWidth = 14.dp
-private const val CompactScrollbarFadeInMillis = 280
-private const val CompactScrollbarFadeOutMillis = 400
 private const val CompactScrollbarHideDelayMillis = 350
 /** 横屏左右面板等高时的固定高度（避免 Row + IntrinsicSize.Max 与 LazyColumn 冲突） */
 private val CompactTopPanelHeight = 320.dp
 private val CompactHostButtonMinHeight = 36.dp
 
 @Composable
-private fun CompactPlayerPanel(
+internal fun CompactPlayerPanel(
     players: List<Player>,
     room: GameRoom,
     game: Game,
@@ -2490,24 +2479,7 @@ private fun CompactPlayerPanel(
     onInvite: (() -> Unit)? = null,
     onViewProfile: ((Player) -> Unit)? = null,
 ) {
-    val playerListCanScroll by remember {
-        derivedStateOf { lazyListCanScroll(playerListState) }
-    }
-    val reserveScrollbarSpace = playerListCanScroll && playerListState.isScrollInProgress
-    val animatedScrollbarReservedWidth by animateDpAsState(
-        targetValue = if (reserveScrollbarSpace) CompactScrollbarReservedWidth else 0.dp,
-        animationSpec = tween(
-            durationMillis = if (reserveScrollbarSpace) {
-                CompactScrollbarFadeInMillis
-            } else {
-                CompactScrollbarFadeOutMillis
-            },
-            delayMillis = if (reserveScrollbarSpace) 0 else CompactScrollbarHideDelayMillis,
-            easing = FastOutSlowInEasing,
-        ),
-        label = "compact player scrollbar reserved width",
-    )
-
+    val playerListKeys = remember { RoomPlayerKeyStore() }.keysFor(players)
     CompactRoomPanel(
         modifier = modifier
             .then(
@@ -2518,7 +2490,11 @@ private fun CompactPlayerPanel(
                 },
             ),
     ) {
-        RoomPlayerTableHeader(compact = true, rowShape = rowShape)
+        RoomPlayerTableHeader(
+            compact = true,
+            rowShape = rowShape,
+            modifier = Modifier.padding(end = CompactScrollbarReservedWidth),
+        )
         LazyColumnScrollbar(
             listState = playerListState,
             modifier = Modifier
@@ -2527,7 +2503,8 @@ private fun CompactPlayerPanel(
                     if (expandVertically) {
                         Modifier.weight(1f)
                     } else {
-                        Modifier.heightIn(min = CompactPlayerListMinHeight)
+                        // 竖屏父面板本身可滚动；LazyColumn 仍需有限的测量高度。
+                        Modifier.heightIn(min = CompactPlayerListMinHeight, max = CompactTopPanelHeight)
                     },
                 ),
             thickness = 4.dp,
@@ -2538,13 +2515,14 @@ private fun CompactPlayerPanel(
             hideDelay = CompactScrollbarHideDelayMillis.toDuration(DurationUnit.MILLISECONDS),
         ) {
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().testTag("compactRoomPlayers"),
                 state = playerListState,
-                contentPadding = PaddingValues(end = animatedScrollbarReservedWidth),
+                // 滚动条只淡入淡出，不再在滚动期间动画改变玩家列宽。
+                contentPadding = PaddingValues(end = CompactScrollbarReservedWidth),
             ) {
                 items(
                     count = players.size,
-                    key = { roomPlayerListKey(players[it], it) },
+                    key = { playerListKeys[it] },
                 ) { index ->
                     val player = players[index]
                     RoomPlayerTableRow(
@@ -2884,11 +2862,12 @@ private fun DesktopMapSettingsCard(
         )
 
         if (isHost) {
-            Row(
+            FlowRow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 8.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.Center,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 RWTextButton(
                     readI18n("multiplayer.room.selectMap") + if (isDesktop) "(M)" else "",
@@ -3409,7 +3388,7 @@ private fun onPlayerCardButtonClick(player: Player, room: GameRoom, onViewProfil
 }
 
 @Composable
-private fun RoomChatMessageTextField(
+internal fun RoomChatMessageTextField(
     chatMessage: String,
     focusRequester: FocusRequester,
     onChatMessageChange: (String) -> Unit,
@@ -3423,11 +3402,13 @@ private fun RoomChatMessageTextField(
             onChatMessageChange("")
         }
     }
-    val keyModifier = Modifier.onKeyEvent {
-        if ((it.key == Key.Enter || it.key == Key.NumPadEnter) && chatMessage.isNotEmpty()) {
-            sendAction()
+    val keyModifier = Modifier.onPreviewKeyEvent {
+        if (it.key == Key.Enter || it.key == Key.NumPadEnter) {
+            if (it.type == KeyEventType.KeyDown) sendAction()
+            true
+        } else {
+            false
         }
-        true
     }
     val trailingIcon: @Composable () -> Unit = {
         Icon(
@@ -3438,40 +3419,26 @@ private fun RoomChatMessageTextField(
         )
     }
 
-    if (compact) {
-        OutlinedTextField(
-            value = chatMessage,
-            onValueChange = onChatMessageChange,
-            placeholder = {
-                Text(
-                    readI18n("multiplayer.room.sendMessage"),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            },
-            textStyle = MaterialTheme.typography.bodySmall,
-            singleLine = true,
-            trailingIcon = trailingIcon,
-            colors = RWOutlinedTextColors,
-            modifier = modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 2.dp)
-                .defaultMinSize(minHeight = 52.dp)
-                .focusRequester(focusRequester)
-                .then(keyModifier),
-        )
-    } else {
-        RWSingleOutlinedTextField(
-            label = readI18n("multiplayer.room.sendMessage"),
-            value = chatMessage,
-            focusRequester = focusRequester,
-            modifier = modifier
-                .fillMaxWidth()
-                .padding(10.dp)
-                .then(keyModifier),
-            trailingIcon = trailingIcon,
-            onValueChange = onChatMessageChange,
-        )
-    }
+    OutlinedTextField(
+        value = chatMessage,
+        onValueChange = onChatMessageChange,
+        placeholder = {
+            Text(
+                readI18n("multiplayer.room.sendMessage"),
+                style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
+            )
+        },
+        textStyle = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
+        singleLine = true,
+        trailingIcon = trailingIcon,
+        colors = RWOutlinedTextColors,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = if (compact) 4.dp else 10.dp, vertical = 2.dp)
+            .defaultMinSize(minHeight = 52.dp)
+            .focusRequester(focusRequester)
+            .then(keyModifier),
+    )
 }
 
 @Composable
@@ -3504,6 +3471,10 @@ private fun RoomMapPreview(
     modifier: Modifier = Modifier,
 ) {
     val previewShape = RoundedCornerShape(8.dp)
+    val context = LocalPlatformContext.current
+    val request = remember(context, selectedMap) {
+        ImageRequest.Builder(context).data(selectedMap).precision(Precision.INEXACT).build()
+    }
     Box(
         modifier = modifier
             .padding(vertical = 4.dp)
@@ -3514,10 +3485,7 @@ private fun RoomMapPreview(
         contentAlignment = Alignment.Center,
     ) {
         AsyncImage(
-            ImageRequest.Builder(LocalPlatformContext.current)
-                .data(selectedMap)
-                .precision(Precision.INEXACT)
-                .build(),
+            request,
             null,
             contentScale = ContentScale.Fit,
             modifier = Modifier.fillMaxSize(),

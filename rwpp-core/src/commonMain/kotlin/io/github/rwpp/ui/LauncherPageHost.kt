@@ -11,11 +11,14 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.zIndex
 import io.github.rwpp.platform.BackHandlerScope
+import io.github.rwpp.widget.LocalDialogInteractive
 
 @Composable
 internal fun LauncherPageHost(
@@ -42,10 +45,13 @@ internal fun LauncherOverlayHost(
     exit: ExitTransition,
     content: @Composable () -> Unit,
 ) {
-    val currentInteractive = rememberUpdatedState(isInteractive)
+    val parentInteractive = LocalDialogInteractive.current
+    val currentInteractive = rememberUpdatedState { visible && parentInteractive && isInteractive() }
     AnimatedVisibility(
         visible = visible,
-        modifier = Modifier.pointerInput(Unit) {
+        // 退出中的整屏页仍参与命中测试。把它放到活动页下方，避免旧页吞掉新页的 X。
+        // -1 也让外层旧页退到 Scaffold 后方，覆盖任务页在 Scaffold 内的情况。
+        modifier = Modifier.zIndex(if (currentInteractive.value()) 1f else -1f).pointerInput(Unit) {
             awaitPointerEventScope {
                 while (true) {
                     val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -56,6 +62,8 @@ internal fun LauncherOverlayHost(
         enter = enter,
         exit = exit,
     ) {
-        BackHandlerScope(enabled = { currentInteractive.value() }, content = content)
+        CompositionLocalProvider(LocalDialogInteractive provides currentInteractive.value()) {
+            BackHandlerScope(enabled = { currentInteractive.value() }, content = content)
+        }
     }
 }

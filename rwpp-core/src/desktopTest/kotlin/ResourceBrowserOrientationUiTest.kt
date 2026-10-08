@@ -64,9 +64,14 @@ class ResourceBrowserOrientationUiTest {
     fun setup() {
         runCatching { stopKoin() }
         settings = Settings(enableAnimations = false)
-        configIO = Proxy.newProxyInstance(ConfigIO::class.java.classLoader, arrayOf(ConfigIO::class.java)) { _, method, args ->
-            if (method.name == "saveConfig") savedChoices += (args!![0] as Settings).resourceBrowserOrientation
-            null
+        configIO = Proxy.newProxyInstance(ConfigIO::class.java.classLoader, arrayOf(ConfigIO::class.java)) { proxy, method, args ->
+            when (method.name) {
+                "equals" -> proxy === args?.firstOrNull()
+                "hashCode" -> System.identityHashCode(proxy)
+                "toString" -> "OrientationTestConfigIO"
+                "saveConfig" -> { savedChoices += (args!![0] as Settings).resourceBrowserOrientation; Unit }
+                else -> null
+            }
         } as ConfigIO
         appKoin = startKoin { modules(module { single { settings }; single { configIO } }) }.koin
         koinInit = true

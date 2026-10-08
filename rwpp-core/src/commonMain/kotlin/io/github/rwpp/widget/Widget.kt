@@ -63,7 +63,10 @@ fun BorderCard(
             onClick = onClick,
             shape = shape,
             border = border,
-            colors = CardDefaults.cardColors(containerColor = backgroundColor),
+            colors = CardDefaults.cardColors(
+                containerColor = backgroundColor,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+            ),
             modifier = modifier,
             content = content
         )
@@ -71,7 +74,10 @@ fun BorderCard(
         Card(
             shape = shape,
             border = border,
-            colors = CardDefaults.cardColors(containerColor = backgroundColor),
+            colors = CardDefaults.cardColors(
+                containerColor = backgroundColor,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+            ),
             modifier = modifier,
             content = content
         )
@@ -117,14 +123,10 @@ fun <T> LargeDropdownMenu(
     val interactive = enabled && LocalDialogInteractive.current
     LaunchedEffect(interactive) { if (!interactive) expanded = false }
 
-    Box(
-        modifier = modifier
-            .height(IntrinsicSize.Min)
-            .width(IntrinsicSize.Max)
-    ) {
+    Box(modifier = modifier.width(IntrinsicSize.Max)) {
         OutlinedTextField(
-            label = { Text(label, fontFamily = MaterialTheme.typography.headlineLarge.fontFamily) },
-            textStyle = MaterialTheme.typography.headlineMedium.copy(
+            label = { Text(label, style = MaterialTheme.typography.bodyMedium) },
+            textStyle = MaterialTheme.typography.bodyLarge.copy(
                 color = selectedItemColor(
                     items.getOrNull(
                         selectedIndex
@@ -149,7 +151,7 @@ fun <T> LargeDropdownMenu(
         // Transparent clickable surface on top of OutlinedTextField
         Surface(
             modifier = Modifier
-                .fillMaxSize()
+                .matchParentSize()
                 .padding(top = 8.dp)
                 .clip(RoundedCornerShape(10.dp))
                 .clickable(enabled = interactive && !expanded) { expanded = true },
@@ -168,7 +170,7 @@ fun <T> LargeDropdownMenu(
                     text = {
                         Text(
                             selectedItemToString(t),
-                            style = MaterialTheme.typography.headlineSmall,
+                            style = MaterialTheme.typography.bodyLarge,
                             color = selectedItemColor(t, index)
                         )
                     },
@@ -192,14 +194,10 @@ fun LargeOutlinedButton(
     trailingIcon: @Composable () -> Unit = {},
     onClick: () -> Unit
 ) {
-    Box(
-        modifier = modifier
-            .height(IntrinsicSize.Min)
-            .then(modifier)
-    ) {
+    Box(modifier = modifier) {
         OutlinedTextField(
             label = label,
-            textStyle = MaterialTheme.typography.headlineMedium,
+            textStyle = MaterialTheme.typography.bodyLarge,
             colors = RWOutlinedTextColors,
             value = value,
             enabled = enabled,
@@ -212,7 +210,7 @@ fun LargeOutlinedButton(
         // Transparent clickable surface on top of OutlinedTextField
         Surface(
             modifier = Modifier
-                .fillMaxSize()
+                .matchParentSize()
                 .padding(top = 8.dp)
                 .clip(MaterialTheme.shapes.extraSmall)
                 .clickable(enabled = enabled) { onClick() },
@@ -251,25 +249,22 @@ fun RWSingleOutlinedTextField(
     onFocusChanged: (FocusState) -> Unit = {},
     onValueChange: (String) -> Unit
 ) {
-    Box(
-        modifier = modifier
-            .height(IntrinsicSize.Min)
-            .width(IntrinsicSize.Max)
-    ) {
+    // modifier 直接作用于输入框，保留 Row 的 weight、点击与焦点约束。
+    @Composable
+    fun Field(fieldModifier: Modifier) {
         OutlinedTextField(
             label = {
                 Text(
                     label,
-                    fontFamily = MaterialTheme.typography.headlineMedium.fontFamily
+                    style = MaterialTheme.typography.bodyMedium,
                 )
             },
-            textStyle = MaterialTheme.typography.headlineMedium,
+            textStyle = MaterialTheme.typography.bodyLarge,
             colors = RWOutlinedTextColors,
             value = value,
             enabled = enabled,
             singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
+            modifier = fieldModifier
                 .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
                 .onFocusChanged(onFocusChanged),
             trailingIcon = trailingIcon,
@@ -290,7 +285,14 @@ fun RWSingleOutlinedTextField(
             keyboardOptions = KeyboardOptions(keyboardType = if(typeInNumberOnly) KeyboardType.Number else KeyboardType.Text)
         )
 
-        appendedContent?.invoke()
+    }
+    if (appendedContent == null) {
+        Field(modifier)
+    } else {
+        Box(modifier = modifier) {
+            Field(Modifier.fillMaxWidth())
+            appendedContent()
+        }
     }
 }
 

@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material3.Icon
@@ -28,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -43,10 +45,10 @@ import androidx.compose.ui.graphics.toPainter
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType.Companion.KeyDown
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.App
@@ -93,7 +95,6 @@ import org.koin.core.context.startKoin
 import org.koin.ksp.generated.module
 import org.slf4j.LoggerFactory
 import java.awt.BorderLayout
-import java.awt.CardLayout
 import java.awt.Canvas
 import java.awt.Dialog
 import java.awt.Dimension
@@ -127,7 +128,7 @@ lateinit var sendMessageDialog: Dialog
 lateinit var displaySwitcher: DisplaySwitcher
 lateinit var gameSessionManager: GameSessionManager
 lateinit var focusRequester: FocusRequester
-var inGameWidget: Widget? = null
+var inGameWidget: Widget? by mutableStateOf(null)
 lateinit var inGameWidgetDialog: Dialog
 var requireReloadingLib = false
 
@@ -342,12 +343,9 @@ fun swingApplication() = SwingUtilities.invokeLater {
 
     val window = JFrame()
     mainJFrame = window
-    val frame = JFrame("退出RWJS")
-    frame.setSize(300, 200)
     if (requireReloadingLib) {
         window.defaultCloseOperation = JFrame.EXIT_ON_CLOSE
     } else {
-        frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE)
         window.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE)
     }
     window.background = java.awt.Color.BLACK
@@ -370,7 +368,7 @@ fun swingApplication() = SwingUtilities.invokeLater {
             override fun windowClosing(e: WindowEvent?) {
                 logger.info("[WINDOW] main window close requested")
                 val result = JOptionPane.showConfirmDialog(
-                    frame,
+                    window,
                     "Are you sure to exit RWJS? (确定要退出RWJS吗？)",
                     "提示",
                     JOptionPane.YES_NO_OPTION
@@ -392,7 +390,7 @@ fun swingApplication() = SwingUtilities.invokeLater {
     canvas.background = java.awt.Color.BLACK
     canvas.isFocusable = true
 
-    val displayLayout = CardLayout()
+    val displayLayout = NativeCanvasCardLayout(canvas, ::getDPIScale)
     val displayHost = JPanel(displayLayout).apply {
         isOpaque = true
         background = java.awt.Color.BLACK
@@ -410,12 +408,6 @@ fun swingApplication() = SwingUtilities.invokeLater {
         displayLayout = displayLayout,
         window = window
     )
-
-    // showGame()/showMenu() 中的 validate 会触发 CardLayout 重置 canvas 尺寸，
-    // 切换完成后兜底再同步一次（canvas 自身的 componentResized 通常已纠正，此处为保险）
-    displaySwitcher.onAfterSwitch += {
-        SwingUtilities.invokeLater { syncGameCanvasSizeToNative() }
-    }
 
     // Windows 下需要全屏启动时，先创建原生句柄再在窗口可见前应用无边框样式，避免闪现标题栏
     if (startFullscreen && FullscreenController.isWindowsPlatform) {
@@ -436,11 +428,11 @@ fun swingApplication() = SwingUtilities.invokeLater {
             BorderCard(
                 modifier = Modifier
                     .fillMaxSize()
-                    .onKeyEvent {
+                    .onPreviewKeyEvent {
                         if (it.key == Key.Escape && it.type == KeyDown) {
-                            sendMessageDialog.isVisible = false
-                        }
-                        true
+                            closeSendMessageDialog()
+                            true
+                        } else false
                     },
 
                 backgroundColor = Color(53, 57, 53),
@@ -453,11 +445,11 @@ fun swingApplication() = SwingUtilities.invokeLater {
 
                 Box {
                     fun onExit() {
-                        sendMessageDialog.isVisible = false
-                        isSendingTeamChat = false
+                        closeSendMessageDialog()
                     }
 
                     fun onSendMessage() {
+                        if (chatMessage.isBlank()) return
                         if (isSendingTeamChat) {
                             game.gameRoom.sendChatMessage("-t $chatMessage")
                         } else {
@@ -468,16 +460,12 @@ fun swingApplication() = SwingUtilities.invokeLater {
                         onExit()
                     }
 
-                    ExitButton {
-                        onExit()
-                    }
-
                     GlobalEventChannel.filter(QuitGameEvent::class).onDispose {
                         subscribeAlways { onExit() }
                     }
 
                     Column(modifier = Modifier.fillMaxSize()) {
-                        Spacer(modifier = Modifier.height(30.dp))
+                        Spacer(modifier = Modifier.height(48.dp))
                         TextField(
                             value = allChatMessages,
                             onValueChange = { allChatMessages = it },
@@ -492,16 +480,11 @@ fun swingApplication() = SwingUtilities.invokeLater {
                             value = chatMessage,
                             focusRequester = focusRequester,
                             modifier = Modifier.fillMaxWidth().padding(10.dp)
-                                .onKeyEvent {
-                                    if ((it.key == Key.Enter || it.key == Key.NumPadEnter) &&  chatMessage.isNotEmpty()) {
+                                .onPreviewKeyEvent {
+                                    if ((it.key == Key.Enter || it.key == Key.NumPadEnter) && it.type == KeyDown) {
                                         onSendMessage()
-                                    }
-
-                                    if (it.key == Key.Escape && it.type == KeyDown) {
-                                        sendMessageDialog.isVisible = false
-                                    }
-
-                                    true
+                                        true
+                                    } else false
                                 },
                             trailingIcon = {
                                 Icon(
@@ -541,6 +524,8 @@ fun swingApplication() = SwingUtilities.invokeLater {
                             }
                         }
                     }
+
+                    ExitButton { onExit() }
                 }
             }
         }
@@ -555,8 +540,19 @@ fun swingApplication() = SwingUtilities.invokeLater {
     sendMessageDialog.add(panel2)
 
     // F11 即时切换全屏/窗口（与设置页中的「沉浸式全屏」开关等价，并立即持久化配置）
+    var fullscreenKeyDown = false
+    window.addWindowFocusListener(object : WindowAdapter() {
+        override fun windowLostFocus(e: WindowEvent?) {
+            fullscreenKeyDown = false
+        }
+    })
     KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher { e ->
-        if (!requireReloadingLib && e.id == KeyEvent.KEY_PRESSED && e.keyCode == KeyEvent.VK_F11) {
+        if (!requireReloadingLib && e.keyCode == KeyEvent.VK_F11 && e.id == KeyEvent.KEY_RELEASED) {
+            fullscreenKeyDown = false
+            true
+        } else if (!requireReloadingLib && e.keyCode == KeyEvent.VK_F11 && e.id == KeyEvent.KEY_PRESSED) {
+            if (fullscreenKeyDown) return@addKeyEventDispatcher true
+            fullscreenKeyDown = true
             val settings = appKoin.get<Settings>()
             settings.isFullscreen = !settings.isFullscreen
             FullscreenController.setFullscreen(settings.isFullscreen)
@@ -579,14 +575,9 @@ fun swingApplication() = SwingUtilities.invokeLater {
             resetSendDialogLocation()
         }
     })
-
-    // CardLayout 每次 validate 都会把 canvas 重置回容器逻辑尺寸，
-    // 在 canvas 自身的 componentResized 上重新施加物理尺寸补偿，实现自我纠正
-    canvas.addComponentListener(object : ComponentAdapter() {
-        override fun componentResized(e: ComponentEvent) {
-            syncGameCanvasSizeToNative()
-        }
-    })
+    window.addPropertyChangeListener("graphicsConfiguration") {
+        SwingUtilities.invokeLater { syncGameCanvasSizeToNative() }
+    }
 
     onInitInGameWidgetDialog()
 }
@@ -595,34 +586,36 @@ fun onInitInGameWidgetDialog() = SwingUtilities.invokeLater {
     val panel = ComposePanel()
     panel.isOpaque = false
     panel.isFocusable = true
-   // panel.size = Dimension(550, 540)
     panel.setContent {
         RWPPTheme {
             BorderCard(
                 modifier = Modifier
-                  //  .wrapContentSize()
-                    .onKeyEvent {
+                    .wrapContentSize(unbounded = true)
+                    .onPreviewKeyEvent {
                         if (it.key == Key.Escape && it.type == KeyDown) {
                             inGameWidgetDialog.isVisible = false
                             true
                         } else {
                             false
                         }
-                    }.onGloballyPositioned { coordinates ->
+                    }.onSizeChanged { size ->
                         SwingUtilities.invokeLater {
-                            val scale = getDPIScale()
-                            inGameWidgetDialog.preferredSize = Dimension(
-                                (coordinates.size.width / scale).toInt(),
-                                (coordinates.size.height / scale).toInt()
+                            val scale = inGameWidgetDialog.graphicsConfiguration?.defaultTransform?.scaleX ?: getDPIScale()
+                            val preferredSize = Dimension(
+                                (size.width / scale).toInt().coerceAtLeast(1),
+                                (size.height / scale).toInt().coerceAtLeast(1)
                             )
-                            inGameWidgetDialog.pack()
-                            resetInGameWidgetDialogLocation()
+                            if (inGameWidgetDialog.preferredSize != preferredSize) {
+                                inGameWidgetDialog.preferredSize = preferredSize
+                                inGameWidgetDialog.pack()
+                                resetInGameWidgetDialogLocation()
+                            }
                         }
                     },
                 backgroundColor = Color(53, 57, 53),
                 shape = RectangleShape
             ) {
-                inGameWidget?.Render()
+                key(inGameWidget) { inGameWidget?.Render() }
             }
         }
     }
@@ -647,6 +640,7 @@ fun onInitInGameWidgetDialog() = SwingUtilities.invokeLater {
 }
 
 fun resetInGameWidgetDialogLocation() {
+    if (!::inGameWidgetDialog.isInitialized) return
     inGameWidgetDialog.setLocation(
         mainJFrame.x + mainJFrame.width / 2 - inGameWidgetDialog.width / 2,
         mainJFrame.y + mainJFrame.height / 2 - inGameWidgetDialog.height / 2
@@ -654,10 +648,22 @@ fun resetInGameWidgetDialogLocation() {
 }
 
 fun showSendMessageDialog() {
+    check(SwingUtilities.isEventDispatchThread())
+    resetSendDialogLocation()
     sendMessageDialog.isVisible = true
     sendMessageDialog.requestFocus()
-    focusRequester.requestFocus()
-    resetSendDialogLocation()
+    SwingUtilities.invokeLater {
+        if (sendMessageDialog.isVisible) focusRequester.requestFocus()
+    }
+}
+
+private fun closeSendMessageDialog() {
+    if (!SwingUtilities.isEventDispatchThread()) {
+        SwingUtilities.invokeLater { closeSendMessageDialog() }
+        return
+    }
+    sendMessageDialog.isVisible = false
+    isSendingTeamChat = false
 }
 
 private fun resetSendDialogLocation() {
@@ -682,23 +688,12 @@ fun getDPIScale(): Double {
  * 原生渲染子窗口。HiDPI（系统缩放 >100%）下逻辑像素小于物理像素，会导致全屏画面缩在
  * 屏幕左上角、其余区域黑屏，因此这里把 canvas 尺寸放大到物理像素进行抵消。
  *
- * 注意：CardLayout 每次 validate 都会把 canvas 重置回容器逻辑尺寸
- * （见 DisplaySwitcher.refreshWindow），所以本函数同时挂在 window 与 canvas 自身的
- * componentResized/componentMoved 上，被布局重置后能立即自我纠正。
+ * NativeCanvasCardLayout 在布局时直接设置正确尺寸，此处仅在跨屏移动或全屏切换后
+ * 使用当前显示器的缩放重做布局，避免先缩小、再由 resize 回调放大的反馈循环。
  */
 fun syncGameCanvasSizeToNative() {
     if (!::gameCanvas.isInitialized || !::mainJFrame.isInitialized) return
 
-    // CardLayout 会把 canvas 布局为父容器大小，以父容器逻辑尺寸为基准
-    val base = gameCanvas.parent?.size ?: mainJFrame.contentPane.size
-    if (base.width <= 0 || base.height <= 0) return
-
-    val scale = getDPIScale()
-    val targetWidth = (base.width * scale).toInt()
-    val targetHeight = (base.height * scale).toInt()
-
-    // 仅尺寸不符时才设置：setSize 尺寸不变时不触发事件，避免 componentResized 死循环
-    if (gameCanvas.width != targetWidth || gameCanvas.height != targetHeight) {
-        gameCanvas.setSize(targetWidth, targetHeight)
-    }
+    val parent = gameCanvas.parent ?: return
+    (parent.layout as? NativeCanvasCardLayout)?.layoutContainer(parent)
 }

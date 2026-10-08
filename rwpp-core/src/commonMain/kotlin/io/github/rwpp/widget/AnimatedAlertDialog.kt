@@ -21,8 +21,8 @@ import androidx.compose.ui.window.DialogProperties
 import io.github.rwpp.config.Settings
 import org.koin.compose.koinInject
 
-internal const val ANIMATION_TIME = 500L
-// 退出动画只负责绘制；子弹层必须立即关闭，不能在父弹窗退出期间重新抢占焦点。
+internal const val ANIMATION_TIME = 200L
+// 页面/弹窗的退出动画只保留绘制，其弹窗与下拉层不能继续抢占输入。
 internal val LocalDialogInteractive = staticCompositionLocalOf { true }
 
 // Inspired by https://medium.com/tech-takeaways/ios-like-modal-view-dialog-animation-in-jetpack-compose-fac5778969af
@@ -58,10 +58,10 @@ internal fun AnimatedScaleInTransition(
     AnimatedVisibility(
         visible = visible,
         enter = if (enableAnimations) scaleIn(
-            animationSpec = tween(ANIMATION_TIME.toInt())
+            animationSpec = tween(ANIMATION_TIME.toInt()), initialScale = 0.96f
         ) else EnterTransition.None,
         exit = if (enableAnimations) scaleOut(
-            animationSpec = tween(ANIMATION_TIME.toInt())
+            animationSpec = tween(ANIMATION_TIME.toInt()), targetScale = 0.96f
         ) else ExitTransition.None,
         content = content
     )
@@ -93,6 +93,9 @@ fun AnimatedTransitionDialog(
         if (dismissRequested && visibility.isIdle && !visibility.currentState) currentOnDismissRequest()
     }
 
+    // 即使调用方没有立即复位 visible，也不能留下看不见、仍吞掉鼠标/触摸的原生窗口。
+    if (dismissRequested && visibility.isIdle && !visibility.currentState) return
+
     Dialog(
         onDismissRequest = {
             if (currentEnableDismiss) {
@@ -116,8 +119,10 @@ fun AnimatedTransitionDialog(
             ) {
                 AnimatedVisibility(
                     visibleState = visibility,
-                    enter = if (enableAnimations) scaleIn(tween(ANIMATION_TIME.toInt())) else EnterTransition.None,
-                    exit = if (enableAnimations) scaleOut(tween(ANIMATION_TIME.toInt())) else ExitTransition.None,
+                    enter = if (enableAnimations) fadeIn(tween(ANIMATION_TIME.toInt())) +
+                        scaleIn(tween(ANIMATION_TIME.toInt()), initialScale = 0.96f) else EnterTransition.None,
+                    exit = if (enableAnimations) fadeOut(tween(ANIMATION_TIME.toInt())) +
+                        scaleOut(tween(ANIMATION_TIME.toInt()), targetScale = 0.96f) else ExitTransition.None,
                 ) {
                     content(helper)
                 }
@@ -143,7 +148,7 @@ fun AnimatedAlertDialog(
     enableDismiss: Boolean = true,
     content: @Composable (dismiss: () -> Unit) -> Unit
 ) {
-    if(visible) {
+    if (visible && LocalDialogInteractive.current) {
         AnimatedTransitionDialog(onDismissRequest = onDismissRequest, enableDismiss = enableDismiss) { animatedTransitionDialogHelper ->
             content(animatedTransitionDialogHelper::triggerAnimatedDismiss)
         }
