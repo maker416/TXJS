@@ -13,6 +13,11 @@ import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.desktop.FullscreenController
 import io.github.rwpp.desktop.GameEngine
 import io.github.rwpp.desktop.desktopEngineLoaded
+import io.github.rwpp.desktop.isMainWindowInitialized
+import io.github.rwpp.desktop.mainJFrame
+import java.awt.Point
+import javax.swing.SwingUtilities
+import kotlin.math.roundToInt
 import io.github.rwpp.graphics.GL
 import io.github.rwpp.impl.BaseAppContextImpl
 import io.github.rwpp.logger
@@ -41,6 +46,18 @@ class AppContextImpl : BaseAppContextImpl() {
 
     override fun setFullscreen(fullscreen: Boolean) {
         FullscreenController.setFullscreen(fullscreen)
+    }
+
+    override fun moveMainWindowBy(deltaX: Float, deltaY: Float) {
+        if (!isMainWindowInitialized) return
+        SwingUtilities.invokeLater {
+            if (!isMainWindowInitialized) return@invokeLater
+            val frame = mainJFrame
+            frame.location = Point(
+                frame.x + deltaX.roundToInt(),
+                frame.y + deltaY.roundToInt(),
+            )
+        }
     }
 
     override fun externalStoragePath(path: String): String {

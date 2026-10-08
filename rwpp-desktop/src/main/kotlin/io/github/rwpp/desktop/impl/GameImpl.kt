@@ -26,6 +26,7 @@ import io.github.rwpp.core.LoadingContext
 import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.desktop.AbstractGame
 import io.github.rwpp.desktop.DesktopEngineStartup
+import io.github.rwpp.desktop.DesktopGameThreadDispatcher
 import io.github.rwpp.desktop.desktopEngineLoaded
 import io.github.rwpp.desktop.AbstractGameRoom
 import io.github.rwpp.desktop.GameEngine
@@ -143,6 +144,16 @@ class GameImpl : AbstractGame() {
 
     override fun post(action: () -> Unit) {
         container.post(action)
+    }
+
+    override suspend fun loadSavedGame(map: GameMap) {
+        require(map.mapType == MapType.SavedGame)
+        DesktopGameThreadDispatcher(::post, { Thread.currentThread() === gameThread }).run {
+            // 同一个游戏线程任务内完成三步，避免默认地图初始化覆盖刚选中的存档。
+            initializeSinglePlayer(false)
+            gameRoom.selectedMap = map
+            gameRoom.startGame()
+        }
     }
 
 

@@ -28,8 +28,12 @@ import java.io.IOException
 abstract class AbstractGame : Game {
 
     override fun hostNewSinglePlayer(sandbox: Boolean) {
-        post {
-            com.corrodinggames.rts.game.n.F()
+        post { initializeSinglePlayer(sandbox) }
+    }
+
+    /** 只能在桌面游戏线程调用，初始化完成后才允许选择存档。 */
+    protected fun initializeSinglePlayer(sandbox: Boolean) {
+        com.corrodinggames.rts.game.n.F()
 
 //            val root = ScriptEngine.getInstance().root
 //            val libRocket = ScriptContext::class.java.getDeclaredField("libRocket").run {
@@ -41,50 +45,49 @@ abstract class AbstractGame : Game {
 //                get(root)
 //            } as a
 
-            val game = GameEngine.B()
-            game.bX.b("starting singleplayer")
-            game.bQ.aiDifficulty = Difficulty.Hard.ordinal - 2 // fuck code
+        val game = GameEngine.B()
+        game.bX.b("starting singleplayer")
+        game.bQ.aiDifficulty = Difficulty.Hard.ordinal - 2 // fuck code
 
 //            guiEngine.b(true)
 //            guiEngine.c(false)
 
-            val B: l = game
-            B.bS.g()
-            B.L()
-            synchronized(B) {
-                B.dm = null
-                B.dl = "maps/skirmish/[z;p10]Crossing Large (10p).tmx"
-            }
-
-            B.a(true, s.b)
-
-            initMap(true)
-
-            if (sandbox) {
-                game.bL.E = false
-                game.bS.y()
-                game.bv = true
-            } else {
-                game.bv = false
-            }
-
-            game.bX.y = "You"
-            game.bX.o = true
-            val S: Boolean = if (sandbox) game.bX.R() else game.bX.S()
-
-            if (S) {
-                val e = game.bX.e()
-                if (e != null) {
-                    e.f = game.bQ.aiDifficulty
-                    game.bX.a(e)
-                }
-
-                singlePlayer = true
-            }
-
-            RefreshUIEvent().broadcastIn(delay = 200L)
-            HostSinglePlayerGameEvent().broadcastIn()
+        val B: l = game
+        B.bS.g()
+        B.L()
+        synchronized(B) {
+            B.dm = null
+            B.dl = "maps/skirmish/[z;p10]Crossing Large (10p).tmx"
         }
+
+        B.a(true, s.b)
+
+        initMap(true)
+
+        if (sandbox) {
+            game.bL.E = false
+            game.bS.y()
+            game.bv = true
+        } else {
+            game.bv = false
+        }
+
+        game.bX.y = "You"
+        game.bX.o = true
+        val S: Boolean = if (sandbox) game.bX.R() else game.bX.S()
+
+        if (S) {
+            val e = game.bX.e()
+            if (e != null) {
+                e.f = game.bQ.aiDifficulty
+                game.bX.a(e)
+            }
+
+            singlePlayer = true
+        }
+
+        RefreshUIEvent().broadcastIn(delay = 200L)
+        HostSinglePlayerGameEvent().broadcastIn()
     }
 
     override fun hostStartWithPasswordAndMods(

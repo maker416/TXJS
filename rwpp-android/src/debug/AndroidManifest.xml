@@ -20,10 +20,7 @@
                 android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden"
                 android:windowSoftInputMode="adjustResize|stateHidden"
                 android:theme="@style/app_theme">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN"/>
-                <category android:name="android.intent.category.LAUNCHER"/>
-            </intent-filter>
+            <!-- 仅 adb / 深链调试，不注册 LAUNCHER，避免桌面出现第二个图标 -->
             <intent-filter>
                 <action android:name="io.github.rwpp.ACCOUNT_UI_HOST"/>
                 <category android:name="android.intent.category.DEFAULT"/>

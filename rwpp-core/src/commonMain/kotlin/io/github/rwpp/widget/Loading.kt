@@ -113,6 +113,8 @@ fun LoadingView(
     cancellable: Boolean = false,
     showProtectedModHint: Boolean = false,
     showMemoryUsage: Boolean = false,
+    /** 仅加载成功时调用，用于收起外层 `visible`；失败保留提示，null 等待外部状态关闭。 */
+    onLoadingFinished: () -> Unit = {},
     loadContent: suspend LoadingContext.() -> Boolean?
 ) {
     // 必须持有可取消的 Job：关闭对话框时立刻 cancel，避免退出动画期间后台仍跑完
@@ -158,6 +160,7 @@ fun LoadingView(
                             when (result) {
                                 true -> {
                                     loadingMessage = ""
+                                    onLoadingFinished()
                                     dismiss()
                                 }
                                 false -> cancel = true

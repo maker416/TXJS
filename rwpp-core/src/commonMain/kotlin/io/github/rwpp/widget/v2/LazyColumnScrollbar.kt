@@ -581,6 +581,33 @@ internal fun lazyListCanScroll(listState: LazyListState): Boolean {
     return last.offset + last.size > layoutInfo.viewportEndOffset - layoutInfo.afterContentPadding
 }
 
+/** 独立右侧滚动条轨道（与 [LazyColumnScrollbar] 分离，供固定侧栏使用）。 */
+@Composable
+fun LazyListScrollbarRail(
+    listState: LazyListState,
+    modifier: Modifier = Modifier,
+    alwaysShowScrollBar: Boolean = true,
+    thickness: Dp = 10.dp,
+    padding: Dp = 2.dp,
+    thumbMinHeight: Float = 0.12f,
+) {
+    InternalLazyColumnScrollbar(
+        listState = listState,
+        modifier = modifier,
+        rightSide = true,
+        alwaysShowScrollBar = alwaysShowScrollBar,
+        thickness = thickness,
+        padding = padding,
+        thumbMinHeight = thumbMinHeight,
+        thumbColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+        thumbSelectedColor = MaterialTheme.colorScheme.primary,
+        selectionMode = ScrollbarSelectionMode.Thumb,
+        selectionActionable = ScrollbarSelectionActionable.Always,
+        hideDelay = 400.toDuration(DurationUnit.MILLISECONDS),
+        indicatorContent = null,
+    )
+}
+
 internal fun calculateVisibilityStates(
     listState: LazyListState,
     showItemIndicator: ListIndicatorSettings
