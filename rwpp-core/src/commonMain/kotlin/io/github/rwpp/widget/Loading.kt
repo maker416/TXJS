@@ -113,7 +113,7 @@ fun LoadingView(
     cancellable: Boolean = false,
     showProtectedModHint: Boolean = false,
     showMemoryUsage: Boolean = false,
-    /** 加载协程结束（成功/失败/被忽略）时调用，用于收起外层 `visible`；勿在此取消进房逻辑。 */
+    /** 仅加载成功时调用，用于收起外层 `visible`；失败保留提示，null 等待外部状态关闭。 */
     onLoadingFinished: () -> Unit = {},
     loadContent: suspend LoadingContext.() -> Boolean?
 ) {
@@ -157,12 +157,14 @@ fun LoadingView(
                         val result = loadContent(LoadingContext { loadingMessage = it })
                         loadFinished = true
                         withContext(Dispatchers.Main.immediate) {
-                            loadingMessage = ""
-                            onLoadingFinished()
                             when (result) {
-                                true -> dismiss()
-                                false -> dismiss()
-                                null -> dismiss()
+                                true -> {
+                                    loadingMessage = ""
+                                    onLoadingFinished()
+                                    dismiss()
+                                }
+                                false -> cancel = true
+                                null -> Unit
                             }
                         }
                     } catch (_: CancellationException) {

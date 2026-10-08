@@ -17,6 +17,28 @@ import java.util.concurrent.TimeUnit
 import kotlin.test.*
 
 class DesktopGameThreadDispatcherTest {
+    @Test fun queuedStartupKeepsTheSessionWaitingUntilTheEntireEngineActionFinishes() = runBlocking {
+        var queued: (() -> Unit)? = null
+        var selectedMap = "old map"
+        var startedMap: String? = null
+        val dispatcher = DesktopGameThreadDispatcher({ queued = it }, { false })
+        val startup = async {
+            dispatcher.run {
+                selectedMap = "default map"
+                selectedMap = "saved game"
+                startedMap = selectedMap
+            }
+        }
+        yield()
+        assertFalse(startup.isCompleted)
+        assertEquals("old map", selectedMap)
+        assertNull(startedMap)
+        queued!!()
+        startup.await()
+        assertEquals("saved game", selectedMap)
+        assertEquals("saved game", startedMap)
+    }
+
     @Test fun timeoutDoesNotRunOnCallerOrLaterConsumeStaleTask() = runBlocking {
         var queued: (() -> Unit)? = null
         var ran = false

@@ -43,7 +43,7 @@ internal class DesktopGameThreadDispatcher(
                 pending.compareAndSet(true, false)
             ) {
                 dispatchLogger.warn("[GAME] engine dispatch timed out before start; queued action cancelled")
-                error("PC 游戏线程未响应，已取消重载。请重启客户端后重试。")
+                error("PC 游戏线程未响应，已取消操作。请重启客户端后重试。")
             }
         } catch (e: CancellationException) {
             if (!pending.compareAndSet(true, false)) {

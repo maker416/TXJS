@@ -91,6 +91,7 @@ import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.theme.LauncherMusicController
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.LineSpinFadeLoaderIndicator
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -315,14 +316,20 @@ fun App(
                         },
                         onLoadSavedGame = { map ->
                             appScope.launch {
-                                GameSessionController.beginSession {
-                                    if (launcherPage != LauncherPage.SinglePlayer) return@beginSession
-                                    isSinglePlayerGame = true
-                                    game.hostNewSinglePlayer(false)
-                                    game.gameRoom.selectedMap = map
-                                    game.gameRoom.startGame()
-                                    showSinglePlayerView = false
-                                    GameSessionController.onRoomOpened()
+                                try {
+                                    GameSessionController.beginSession {
+                                        if (launcherPage != LauncherPage.SinglePlayer) return@beginSession
+                                        isSinglePlayerGame = true
+                                        game.loadSavedGame(map)
+                                        showSinglePlayerView = false
+                                        GameSessionController.onRoomOpened()
+                                    }
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    isSinglePlayerGame = false
+                                    logger.error("Failed to load saved game", e)
+                                    UI.showWarning(e.message ?: e.toString())
                                 }
                             }
                         },
