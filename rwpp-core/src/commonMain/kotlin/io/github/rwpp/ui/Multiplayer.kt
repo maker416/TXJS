@@ -2368,7 +2368,7 @@ internal fun RefreshButtonWithHint(
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
     buttonSize: Dp = 50.dp,
-    /** 桌面空格刷新需要焦点；顶栏内勿抢焦点，否则手机滚动会卡。 */
+    /** 仅桌面请求初始焦点以支持空格刷新；Android 不主动聚焦。 */
     requestInitialFocus: Boolean = true,
 ) {
     val appContext = koinInject<AppContext>()

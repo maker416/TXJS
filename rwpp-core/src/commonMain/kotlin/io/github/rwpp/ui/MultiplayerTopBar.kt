@@ -7,9 +7,10 @@
 
 package io.github.rwpp.ui
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -39,7 +40,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
@@ -133,17 +133,16 @@ private fun MultiplayerTopBarRow(
     onSelectJoinHistory: (String) -> Unit,
     onClose: () -> Unit,
 ) {
-    Row(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = MultiplayerTopBarHeight)
             .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier.weight(1f),
-            contentAlignment = Alignment.CenterStart,
-        ) {
+        // 工具区还需三个 40dp 按钮、三个 6dp 间距与 16dp 区域内边距。
+        // 空间不足时换成两行，昵称和关闭按钮始终拥有完整的可交互区域。
+        val compact = maxWidth < joinFieldWidth + 154.dp + 168.dp * 2
+        val identity: @Composable () -> Unit = {
             MultiplayerTopBarZone(modifier = Modifier.widthIn(max = 168.dp)) {
                 MultiplayerIdentityContent(
                     userName = userName,
@@ -154,25 +153,42 @@ private fun MultiplayerTopBarRow(
             }
         }
 
-        MultiplayerTopBarZone {
-            MultiplayerJoinToolsContent(
-                joinServerAddress = joinServerAddress,
-                onJoinServerAddressChange = onJoinServerAddressChange,
-                onJoinServer = onJoinServer,
-                onFilter = onFilter,
-                onRefresh = onRefresh,
-                isRefreshing = isRefreshing,
-                joinFieldWidth = joinFieldWidth,
-                joinHistory = joinHistory,
-                onSelectJoinHistory = onSelectJoinHistory,
-            )
+        val tools: @Composable () -> Unit = {
+            MultiplayerTopBarZone(modifier = if (compact) Modifier.fillMaxWidth() else Modifier) {
+                MultiplayerJoinToolsContent(
+                    joinServerAddress = joinServerAddress,
+                    onJoinServerAddressChange = onJoinServerAddressChange,
+                    onJoinServer = onJoinServer,
+                    onFilter = onFilter,
+                    onRefresh = onRefresh,
+                    isRefreshing = isRefreshing,
+                    joinFieldWidth = joinFieldWidth,
+                    joinHistory = joinHistory,
+                    onSelectJoinHistory = onSelectJoinHistory,
+                    stretchJoinField = compact,
+                    modifier = if (compact) Modifier.fillMaxWidth() else Modifier,
+                )
+            }
         }
 
-        Box(
-            modifier = Modifier.weight(1f),
-            contentAlignment = Alignment.CenterEnd,
-        ) {
-            PanelCloseIconButton(onClose = onClose)
+        if (compact) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) { identity() }
+                    Box(Modifier.width(48.dp), contentAlignment = Alignment.Center) {
+                        PanelCloseIconButton(onClose = onClose)
+                    }
+                }
+                tools()
+            }
+        } else {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) { identity() }
+                tools()
+                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                    PanelCloseIconButton(onClose = onClose)
+                }
+            }
         }
     }
 }
@@ -252,11 +268,14 @@ private fun MultiplayerJoinToolsContent(
     joinFieldWidth: androidx.compose.ui.unit.Dp,
     joinHistory: List<String>,
     onSelectJoinHistory: (String) -> Unit,
+    stretchJoinField: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     var historyMenuExpanded by remember { mutableStateOf(false) }
     val joinFieldExtraHeight = 16.dp
 
     Row(
+        modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -333,8 +352,7 @@ private fun MultiplayerJoinToolsContent(
                     )
                 }
             },
-            modifier = Modifier
-                .width(joinFieldWidth)
+            modifier = (if (stretchJoinField) Modifier.weight(1f) else Modifier.width(joinFieldWidth))
                 .defaultMinSize(minHeight = 40.dp),
         )
         RWIconButton(
@@ -347,7 +365,6 @@ private fun MultiplayerJoinToolsContent(
             onRefresh = onRefresh,
             modifier = Modifier.size(40.dp),
             buttonSize = 40.dp,
-            requestInitialFocus = false,
         )
     }
 }
