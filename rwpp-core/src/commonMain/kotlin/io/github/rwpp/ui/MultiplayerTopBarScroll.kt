@@ -1,5 +1,8 @@
 /*
  * Copyright 2023-2025 RWPP contributors
+ * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
+ * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
+ * https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
  */
 
 package io.github.rwpp.ui
@@ -36,23 +39,24 @@ internal fun rememberMultiplayerTopBarVisible(listState: LazyListState): Mutable
     var prevOffset by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(listState) {
-        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
-            .collect { (index, offset) ->
-                if (index == 0 && offset == 0) {
-                    visible.value = true
-                } else {
-                    val scrolledDown = index > prevIndex ||
-                        (index == prevIndex && offset > prevOffset + ListScrollVisibilityThresholdPx)
-                    val scrolledUp = index < prevIndex ||
-                        (index == prevIndex && offset < prevOffset - ListScrollVisibilityThresholdPx)
-                    when {
-                        scrolledDown -> visible.value = false
-                        scrolledUp -> visible.value = true
-                    }
+        snapshotFlow {
+            Triple(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, listState.canScrollBackward)
+        }.collect { (index, offset, canScrollBackward) ->
+            if (!canScrollBackward || (index == 0 && offset == 0)) {
+                visible.value = true
+            } else {
+                val scrolledDown = index > prevIndex ||
+                    (index == prevIndex && offset > prevOffset + ListScrollVisibilityThresholdPx)
+                val scrolledUp = index < prevIndex ||
+                    (index == prevIndex && offset < prevOffset - ListScrollVisibilityThresholdPx)
+                when {
+                    scrolledDown -> visible.value = false
+                    scrolledUp -> visible.value = true
                 }
-                prevIndex = index
-                prevOffset = offset
             }
+            prevIndex = index
+            prevOffset = offset
+        }
     }
     return visible
 }
@@ -75,10 +79,11 @@ internal fun rememberAnimatedMultiplayerTopBarOffsetY(
     return animateDpAsState(target, label = "multiplayerTopBarOffset")
 }
 
-/** 桌面滚轮：累计 delta 过阈值再切换，与列表 snapshot 监听分离。 */
+/** 桌面滚轮：仅在列表可以沿输入方向滚动时累计 delta，列表顶部始终保留顶栏。 */
 internal fun Modifier.multiplayerTopBarWheelVisibility(
+    listState: LazyListState,
     onVisibilityChange: (visible: Boolean) -> Unit,
-): Modifier = pointerInput(Unit) {
+): Modifier = pointerInput(listState) {
     var wheelAccum = 0f
     awaitPointerEventScope {
         while (true) {
@@ -88,6 +93,15 @@ internal fun Modifier.multiplayerTopBarWheelVisibility(
                 acc + change.scrollDelta.y
             }
             if (deltaY == 0f) continue
+            if (!listState.canScrollBackward) {
+                wheelAccum = 0f
+                onVisibilityChange(true)
+                continue
+            }
+            if (deltaY > 0f && !listState.canScrollForward) {
+                wheelAccum = 0f
+                continue
+            }
             wheelAccum += deltaY
             when {
                 wheelAccum >= WheelVisibilityThresholdPx -> {

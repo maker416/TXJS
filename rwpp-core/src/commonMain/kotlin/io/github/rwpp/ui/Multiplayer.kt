@@ -1777,7 +1777,7 @@ fun MultiplayerView(
                                 LazyColumn(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .multiplayerTopBarWheelVisibility { visible ->
+                                        .multiplayerTopBarWheelVisibility(lazyListState) { visible ->
                                             topBarVisible = visible
                                         },
                                     state = lazyListState,
