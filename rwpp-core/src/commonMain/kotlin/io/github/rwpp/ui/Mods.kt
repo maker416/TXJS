@@ -30,6 +30,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -58,10 +59,8 @@ import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.io.copyToWithProgress
 import io.github.rwpp.modDir
 import io.github.rwpp.platform.BackHandler
-import io.github.rwpp.platform.FileDropProbePhase
-import io.github.rwpp.platform.FileDropProbeReport
-import io.github.rwpp.platform.fileDropProbeTarget
-import io.github.rwpp.platform.formatForDisplay
+import io.github.rwpp.platform.analyzeRwmodFileDrop
+import io.github.rwpp.platform.modFileDropTarget
 import io.github.rwpp.rwpp_core.generated.resources.*
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.ExpandedCard
@@ -304,8 +303,12 @@ fun ModsView(
     var oomCulpritMods by remember { mutableStateOf<List<String>>(emptyList()) }
     var showMemoryExhaustedDialog by remember { mutableStateOf(false) }
     var isReloading by remember { mutableStateOf(false) }
-    var fileDropProbeReport by remember { mutableStateOf<FileDropProbeReport?>(null) }
+    var modDropOverlayActive by remember { mutableStateOf(false) }
+    var modDropPointerInRoot by remember { mutableStateOf(Offset.Unspecified) }
     val appContext = koinInject<AppContext>()
+    val canAcceptModFileDrop = appContext.isDesktop() &&
+        !isReloading &&
+        importProgress == null
 
     ModImportProgressDialog(importProgress)
 
@@ -1205,48 +1208,6 @@ fun ModsView(
         }
     }
 
-    /** 桌面拖放探测：仅展示 DataFlavor / 路径，不导入模组。 */
-    @Composable
-    fun FileDropProbeDialog() {
-        val report = fileDropProbeReport
-        AnimatedAlertDialog(
-            visible = report != null,
-            onDismissRequest = { fileDropProbeReport = null },
-            enableDismiss = true,
-        ) { dismiss ->
-            BorderCard(
-                modifier = Modifier
-                    .fillMaxWidth(0.92f)
-                    .widthIn(max = 560.dp)
-                    .wrapContentHeight(),
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Text(
-                        "拖放探测（调试）",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    SelectionContainer {
-                        Text(
-                            report?.formatForDisplay() ?: "",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                    ) {
-                        RWTextButton(readI18n("common.ok"), onClick = dismiss)
-                    }
-                }
-            }
-        }
-    }
-
     /** 堆耗尽后的拦截对话框：指名导致 OOM 的元凶模组，并说明重载已锁定（防二次 OOM 闪退）。 */
     @Composable
     fun MemoryExhaustedDialog() {
@@ -1504,23 +1465,51 @@ fun ModsView(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .fileDropProbeTarget(enabled = appContext.isDesktop()) { report ->
-                    if (report.phase == FileDropProbePhase.Drop) {
-                        fileDropProbeReport = report
-                    }
-                }
+                .modFileDropTarget(
+                    enabled = canAcceptModFileDrop,
+                    onDragStarted = { modDropOverlayActive = true },
+                    onDragEnded = {
+                        modDropOverlayActive = false
+                        modDropPointerInRoot = Offset.Unspecified
+                    },
+                    onDragPointerInRoot = { modDropPointerInRoot = it },
+                    onFilesDropped = { files ->
+                        val selection = analyzeRwmodFileDrop(files)
+                        selection.importCandidate?.let { importModFile(it) }
+                        if (selection.rwmodCount > 1) {
+                            UI.showWarning(
+                                readI18n(
+                                    "mod.dropExtraRwmodIgnored",
+                                    I18nType.RWPP,
+                                    (selection.rwmodCount - 1).toString(),
+                                )
+                            )
+                        }
+                    },
+                )
         ) {
             val denseCards = maxWidth < 840.dp
             val compactMemory = maxHeight < 560.dp
-            if (embedded) {
-                ModsBody(denseCards = denseCards, compactMemory = compactMemory, modifier = Modifier.fillMaxSize())
-            } else {
-                ExpandedCard {
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        ModsBody(denseCards = denseCards, compactMemory = compactMemory, modifier = Modifier.fillMaxSize())
-                        ExitButton { exit() }
+            Box(modifier = Modifier.fillMaxSize()) {
+                if (embedded) {
+                    ModsBody(denseCards = denseCards, compactMemory = compactMemory, modifier = Modifier.fillMaxSize())
+                } else {
+                    ExpandedCard {
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            ModsBody(
+                                denseCards = denseCards,
+                                compactMemory = compactMemory,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                            ExitButton { exit() }
+                        }
                     }
                 }
+                ModDropOverlay(
+                    visible = modDropOverlayActive,
+                    dragPointerInRoot = modDropPointerInRoot,
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
         }
     }
@@ -1528,5 +1517,4 @@ fun ModsView(
     DeleteModConfirmDialog()
     FailedModsReloadDialog()
     MemoryExhaustedDialog()
-    FileDropProbeDialog()
 }

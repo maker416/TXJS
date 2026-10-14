@@ -8,8 +8,13 @@
 package io.github.rwpp.platform
 
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import java.io.File
 
-actual fun Modifier.fileDropProbeTarget(
+actual fun Modifier.modFileDropTarget(
     enabled: Boolean,
-    onReport: (FileDropProbeReport) -> Unit,
+    onDragStarted: () -> Unit,
+    onDragEnded: () -> Unit,
+    onDragPointerInRoot: (Offset) -> Unit,
+    onFilesDropped: (List<File>) -> Unit,
 ): Modifier = this
