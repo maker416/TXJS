@@ -41,17 +41,19 @@ function Resolve-RwjsGameRoot([string]$Override) {
 
 function Stop-RwjsProcess {
     Get-Process -Name 'RWJS' -ErrorAction SilentlyContinue | ForEach-Object {
-        Write-Host "停止已运行的 RWJS (pid $($_.Id))"
+        Write-Host "Stopping RWJS (pid $($_.Id))"
         Stop-Process -Id $_.Id -Force
     }
     Start-Sleep -Milliseconds 400
 }
 
 function Get-CfgJarName([string]$CfgPath, [string]$Prefix) {
-    $line = Select-String -LiteralPath $CfgPath -Pattern ("app\.classpath=\`$APPDIR\\{0}-[^\s]+\.jar" -f [regex]::Escape($Prefix)) |
+    $like = "*\$Prefix-*.jar"
+    $line = Get-Content -LiteralPath $CfgPath |
+        Where-Object { $_ -like 'app.classpath=*' -and $_ -like $like } |
         Select-Object -First 1
     if (-not $line) { return $null }
-    if ($line.Line -match '\\([^\\]+\.jar)\s*$') { return $Matches[1] }
+    if ($line -match '\\([^\\]+\.jar)\s*$') { return $Matches[1] }
     return $null
 }
 
@@ -68,21 +70,21 @@ function Install-RwjsDebugJars {
     $appDir = Join-Path $resolved 'app'
     $cfg = Join-Path $appDir 'RWJS.cfg'
     if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
-        throw "找不到 RWJS.exe: $exe"
+        throw "RWJS.exe not found: $exe"
     }
     if (-not (Test-Path -LiteralPath $cfg -PathType Leaf)) {
-        throw "找不到 app\RWJS.cfg: $cfg（请先装一次完整桌面包）"
+        throw "Missing app\RWJS.cfg under $cfg (install full desktop package first)."
     }
 
     $localRootFile = Join-Path $repoRoot 'packaging\game-root.local.txt'
     Set-Content -LiteralPath $localRootFile -Value $resolved -Encoding utf8
-    Write-Host "game-root.local.txt -> $resolved"
+    Write-Host ('game-root.local.txt -> ' + $resolved)
 
     if ($DoBuild) {
         $gradlew = Join-Path $repoRoot 'gradlew.bat'
-        Write-Host '编译 debug jar（rwpp-desktop / core / core-api / android-compat）...'
+        Write-Host 'Building debug jars (rwpp-desktop, core, core-api, android-compat)...'
         & $gradlew ':rwpp-desktop:jar' ':rwpp-core:desktopJar' ':rwpp-core-api:jar' ':rwpp-desktop:desktopAndroidCompatJar' --quiet
-        if ($LASTEXITCODE -ne 0) { throw "Gradle 编译失败，exit $LASTEXITCODE" }
+        if ($LASTEXITCODE -ne 0) { throw "Gradle build failed, exit $LASTEXITCODE" }
     }
 
     Stop-RwjsProcess
@@ -96,15 +98,15 @@ function Install-RwjsDebugJars {
 
     foreach ($item in $copies) {
         if (-not (Test-Path -LiteralPath $item.Source -PathType Leaf)) {
-            throw "缺少编译产物: $($item.Source)"
+            throw "Missing build output: $($item.Source)"
         }
         $destName = Get-CfgJarName $cfg $item.Prefix
         if (-not $destName) {
-            throw "RWJS.cfg 中找不到 $($item.Prefix)-*.jar"
+            throw "RWJS.cfg has no entry for $($item.Prefix)-*.jar"
         }
         $dest = Join-Path $appDir $destName
         Copy-Item -LiteralPath $item.Source -Destination $dest -Force
-        Write-Host "覆盖 $destName"
+        Write-Host "Updated $destName"
     }
 
     return @{
@@ -116,10 +118,10 @@ function Install-RwjsDebugJars {
 if ($MyInvocation.InvocationName -ne '.') {
     $info = Install-RwjsDebugJars -Root $GameRoot -DoBuild (-not $SkipBuild)
     if ($Launch) {
-        Write-Host "启动 $($info.Exe)"
+        Write-Host "Launching $($info.Exe)"
         Start-Process -FilePath $info.Exe -WorkingDirectory $info.GameRoot
-        Write-Host 'RWJS 已启动。'
+        Write-Host 'RWJS started.'
     } else {
-        Write-Host "已安装到 $($info.GameRoot)（未启动）"
+        Write-Host ('Installed to ' + $info.GameRoot + ' (not launched)')
     }
 }
