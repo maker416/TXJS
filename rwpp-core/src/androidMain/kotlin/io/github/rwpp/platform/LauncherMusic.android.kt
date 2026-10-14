@@ -21,20 +21,25 @@ actual object LauncherMusic {
     @Volatile
     private var volume: Float = 0.5f
 
+    /**
+     * App 退后台期间为 true。独立于播放器实例：[stop] 不清除，后台期间 [play] 只准备不开播，
+     * 避免后台断线 / 主题切换触发 `LauncherMusicController.sync()` 时在后台重新出声。
+     */
     @Volatile
     private var paused: Boolean = false
+
+    private var prepared: Boolean = false
 
     @Synchronized
     actual fun play(file: File, volume: Float) {
         setVolume(volume)
         val existing = player
         if (currentFile == file && existing != null) {
-            if (paused) return
+            if (paused || !prepared) return
             runCatching { if (!existing.isPlaying) existing.start() }
             return
         }
         stop()
-        paused = false
         currentFile = file
         runCatching {
             MediaPlayer().apply {
@@ -42,13 +47,21 @@ actual object LauncherMusic {
                 isLooping = true
                 setVolume(volume, volume)
                 setOnPreparedListener { p ->
-                    runCatching { if (!paused) p.start() }
+                    synchronized(this@LauncherMusic) {
+                        if (player == p) {
+                            prepared = true
+                            runCatching { if (!paused) p.start() }
+                        }
+                    }
                 }
                 setOnErrorListener { p, _, _ ->
-                    runCatching { p.release() }
-                    if (player == p) {
-                        player = null
-                        currentFile = null
+                    synchronized(this@LauncherMusic) {
+                        runCatching { p.release() }
+                        if (player == p) {
+                            player = null
+                            currentFile = null
+                            prepared = false
+                        }
                     }
                     true
                 }
@@ -69,19 +82,24 @@ actual object LauncherMusic {
         }
         player = null
         currentFile = null
-        paused = false
+        prepared = false
     }
 
+    @Synchronized
     actual fun pause() {
         paused = true
         runCatching { player?.let { if (it.isPlaying) it.pause() } }
     }
 
+    @Synchronized
     actual fun resume() {
         paused = false
+        // 未准备完成时 start() 会进入错误态，交给 OnPreparedListener 开播
+        if (!prepared) return
         runCatching { player?.let { if (!it.isPlaying) it.start() } }
     }
 
+    @Synchronized
     actual fun setVolume(volume: Float) {
         this.volume = volume.coerceIn(0f, 1f)
         runCatching { player?.setVolume(this.volume, this.volume) }

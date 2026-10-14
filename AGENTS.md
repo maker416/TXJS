@@ -242,6 +242,7 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 - 因此：`Game.post` 只表示「在游戏主循环线程上执行」，**不等于**「引擎写操作都可以/应该投进来」。任何引擎调用要换线程，必须逐点核实其线程依赖（是否触碰 View/Activity、是否需 GL 上下文、是否阻塞）并**真机验证**；阻塞型网络操作（`directJoinServer` 的连接）无论如何不得投游戏线程（会停掉保活泵）。
 - Android 进入遭遇战/沙盒时 Compose 的一次性卡顿（UI 线程跑 `loadSinglePlayerMapRaw`）目前视为原版固有行为保留，未找到安全迁移方案前不要动。
 - 跨线程可见的会话标志（Android `isSinglePlayerGame`/`isGaming`/`isReturnToBattleRoom`/`gameOver`/`questionOption`）用 `@Volatile`。
+- **Android 后台保活**（`BackgroundKeepAlive` + `KeepAliveService`）：原版后台掉线有两条链路——Surface 销毁后主循环 `a(float,int)` 在 `ae.k()` 后直接返回、网络泵停摆；对局 `InGameActivity.onStop` → `i.a(Activity,ab)` → `d(false)` 700ms 后 `C()` 停游戏主线程。修复：`BaseEngineInject.onMainLoop` 在联机（`bU.C`）且无 Surface 时于引擎锁 `ai` 内只泵 `ae.k()/l()/a(float)`；`onActivityStop` 联机时跳过停线程。联机期间由前台服务（`specialUse`，持 partial WakeLock + 低延迟 WifiLock）防冻结，仅在前台时启动。前后台按已 start 的 Activity 计数判定，退后台暂停启动器音乐（`LauncherMusic.paused` 不随 `stop()` 清除）与引擎 `bK.d()`，回前台由原版 `A()` 恢复。房主退后台时模拟不推进，其他玩家会等待。
 
 ## 导航与 UI 架构
 

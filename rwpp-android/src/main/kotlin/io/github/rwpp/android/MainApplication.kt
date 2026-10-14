@@ -116,6 +116,8 @@ class MainApplication : Application() {
 
         logger = LoggerFactory.getLogger(packageName)
 
+        BackgroundKeepAlive.install(this)
+
         onInit()
     }
 

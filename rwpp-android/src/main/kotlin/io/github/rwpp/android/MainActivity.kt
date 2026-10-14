@@ -123,7 +123,9 @@ class MainActivity : ComponentActivity() {
             arrayOf(
                 Manifest.permission.READ_MEDIA_IMAGES,
                 Manifest.permission.READ_MEDIA_VIDEO,
-                Manifest.permission.READ_MEDIA_AUDIO
+                Manifest.permission.READ_MEDIA_AUDIO,
+                // 联机保活前台服务的常驻通知（拒绝也不影响保活，只是通知不显示）
+                Manifest.permission.POST_NOTIFICATIONS
             )
         } else {
             arrayOf(

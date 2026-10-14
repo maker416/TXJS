@@ -7,7 +7,10 @@
 
 package io.github.rwpp.android.impl.inject
 
+import android.app.Activity
+import com.corrodinggames.rts.appFramework.ab
 import com.corrodinggames.rts.game.i
+import io.github.rwpp.android.BackgroundKeepAlive
 import io.github.rwpp.android._gameSpeed
 import io.github.rwpp.android.impl.GameEngine
 import io.github.rwpp.android.mainThreadChannel
@@ -39,19 +42,55 @@ object BaseEngineInject {
     /**
      * 主循环 `a(float,int)`：保连接重载期间只泵网络并跳过原方法体（单位 tick），
      * 避免与工作线程上的 `bW.a()` 抢单位表。
+     *
+     * 后台保活：切应用 / 锁屏后 GameView 的 Surface 被销毁，原版主循环在 `ae.k()` 之后
+     * 直接返回，`ae.l()`/`ae.a(float)` 不再执行，房间与对局随后超时掉线。联机期间无 Surface
+     * 时改为在引擎锁 `ai` 内只泵网络（不推进模拟、不绘制），回到前台后由原版追帧逻辑补齐。
      */
     @Inject("a", InjectMode.InsertBefore, "(FI)V")
     fun onMainLoop(deltaTime: Float, unused: Int): Any {
-        if (!KeepConnectedReload.active) return Unit
-        KeepConnectedReload.markGameTick()
+        if (KeepConnectedReload.active) {
+            KeepConnectedReload.markGameTick()
+            mainThreadChannel.tryReceive().getOrNull()?.invoke()
+            try {
+                val net = GameEngine.t().bU
+                net.l()
+                net.a(deltaTime)
+            } catch (e: Throwable) {
+                logger.warn("[MODSYNC] net-only pump failed: ${e.message}")
+            }
+            return InterruptResult.Unit
+        }
+
+        val engine = GameEngine.t()
+        val net = engine.bU ?: return Unit
+        if (!net.C) return Unit
+        val view = engine.ao ?: return Unit
+        if (view.getSurfaceExists()) return Unit
+
         mainThreadChannel.tryReceive().getOrNull()?.invoke()
         try {
-            val net = GameEngine.t().bU
-            net.l()
-            net.a(deltaTime)
+            synchronized(engine.ai) {
+                net.k()
+                net.l()
+                net.a(deltaTime)
+            }
         } catch (e: Throwable) {
-            logger.warn("[MODSYNC] net-only pump failed: ${e.message}")
+            logger.warn("[KEEPALIVE] background net pump failed: ${e.message}")
         }
+        return InterruptResult.Unit
+    }
+
+    /**
+     * 原版 `InGameActivity.onStop` → 本方法 → `d(false)`：700ms 后 `C()` 停掉游戏主线程，
+     * 联机对局随之断线。联机时只通知视图 `onParentStop`，保留主线程（音乐由
+     * `BackgroundKeepAlive` 暂停，回前台 `onResume` → `A()` 恢复）；单机仍走原版停线程以省电。
+     */
+    @Inject("a", InjectMode.InsertBefore, "(Landroid/app/Activity;Lcom/corrodinggames/rts/appFramework/ab;)V")
+    fun onActivityStop(activity: Activity?, view: ab?): Any {
+        if (!BackgroundKeepAlive.isNetworked()) return Unit
+        logger.info("[KEEPALIVE] keep game thread running after activity stop (networked)")
+        runCatching { view?.onParentStop() }
         return InterruptResult.Unit
     }
 }
