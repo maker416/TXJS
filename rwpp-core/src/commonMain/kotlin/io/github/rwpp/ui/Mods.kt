@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.rwpp.AppContext
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
 import io.github.rwpp.event.broadcastIn
@@ -57,6 +58,10 @@ import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.io.copyToWithProgress
 import io.github.rwpp.modDir
 import io.github.rwpp.platform.BackHandler
+import io.github.rwpp.platform.FileDropProbePhase
+import io.github.rwpp.platform.FileDropProbeReport
+import io.github.rwpp.platform.fileDropProbeTarget
+import io.github.rwpp.platform.formatForDisplay
 import io.github.rwpp.rwpp_core.generated.resources.*
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.ExpandedCard
@@ -299,6 +304,8 @@ fun ModsView(
     var oomCulpritMods by remember { mutableStateOf<List<String>>(emptyList()) }
     var showMemoryExhaustedDialog by remember { mutableStateOf(false) }
     var isReloading by remember { mutableStateOf(false) }
+    var fileDropProbeReport by remember { mutableStateOf<FileDropProbeReport?>(null) }
+    val appContext = koinInject<AppContext>()
 
     ModImportProgressDialog(importProgress)
 
@@ -1198,6 +1205,48 @@ fun ModsView(
         }
     }
 
+    /** 桌面拖放探测：仅展示 DataFlavor / 路径，不导入模组。 */
+    @Composable
+    fun FileDropProbeDialog() {
+        val report = fileDropProbeReport
+        AnimatedAlertDialog(
+            visible = report != null,
+            onDismissRequest = { fileDropProbeReport = null },
+            enableDismiss = true,
+        ) { dismiss ->
+            BorderCard(
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .widthIn(max = 560.dp)
+                    .wrapContentHeight(),
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        "拖放探测（调试）",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    SelectionContainer {
+                        Text(
+                            report?.formatForDisplay() ?: "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        RWTextButton(readI18n("common.ok"), onClick = dismiss)
+                    }
+                }
+            }
+        }
+    }
+
     /** 堆耗尽后的拦截对话框：指名导致 OOM 的元凶模组，并说明重载已锁定（防二次 OOM 闪退）。 */
     @Composable
     fun MemoryExhaustedDialog() {
@@ -1455,6 +1504,11 @@ fun ModsView(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .fileDropProbeTarget(enabled = appContext.isDesktop()) { report ->
+                    if (report.phase == FileDropProbePhase.Drop) {
+                        fileDropProbeReport = report
+                    }
+                }
         ) {
             val denseCards = maxWidth < 840.dp
             val compactMemory = maxHeight < 560.dp
@@ -1474,4 +1528,5 @@ fun ModsView(
     DeleteModConfirmDialog()
     FailedModsReloadDialog()
     MemoryExhaustedDialog()
+    FileDropProbeDialog()
 }
