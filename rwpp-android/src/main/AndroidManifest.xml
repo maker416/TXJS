@@ -28,6 +28,11 @@
     <uses-permission android:name="com.android.vending.CHECK_LICENSE"/>
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <!-- 联机后台保活：前台服务 + CPU / Wi-Fi 锁 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
             android:name=".android.MainApplication"
             android:appCategory="game"
@@ -50,6 +55,14 @@
                     android:name="android.support.FILE_PROVIDER_PATHS"
                     android:resource="@xml/provider_paths" />
         </provider>
+        <service
+                android:name="io.github.rwpp.android.KeepAliveService"
+                android:exported="false"
+                android:foregroundServiceType="specialUse">
+            <property
+                    android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                    android:value="Keeps a real-time multiplayer game session connected while the app is in the background"/>
+        </service>
         <activity
                 android:name="io.github.rwpp.android.LoadingScreen"
                 android:alwaysRetainTaskState="true"

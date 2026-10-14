@@ -597,6 +597,8 @@ importMap = "成功导入地图: {0}。"
 importSave = "成功导入存档: {0}。"
 importReplay = "成功导入回放: {0}。"
 unknownFileTypeError = "未知文件类型: {0}"
+keepAliveTitle = "联机保持中"
+keepAliveText = "切换应用或锁屏时将保持联机连接，点击返回游戏"
 
 [replays]
 title = "观看回放"

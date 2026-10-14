@@ -596,6 +596,8 @@ importMap = "Successfully import map: {0}."
 importSave = "Successfully import save: {0}."
 importReplay = "Successfully import replay: {0}."
 unknownFileTypeError = "Unknown file type: {0}."
+keepAliveTitle = "Staying connected"
+keepAliveText = "Your multiplayer session stays connected while the app is in the background. Tap to return."
 
 [replays]
 title = "Watch Replay"
