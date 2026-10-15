@@ -28,6 +28,12 @@ interface AppContext : KoinComponent {
         } == true
     }.getOrDefault(true)
 
+    /** Android 长期锁屏联机的电池优化状态；其它平台默认无需设置。 */
+    fun isBackgroundNetworkUnrestricted(): Boolean = true
+
+    /** 用户主动点击后打开系统后台运行设置。 */
+    fun openBackgroundNetworkSettings() {}
+
     fun externalStoragePath(path: String): String
 
     /**

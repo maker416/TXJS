@@ -15,6 +15,7 @@ import io.github.rwpp.game.ui.GUI
 import io.github.rwpp.game.units.UnitType
 import io.github.rwpp.game.world.World
 import org.koin.core.component.KoinComponent
+import java.io.Closeable
 
 interface Game : KoinComponent {
     /**
@@ -40,6 +41,12 @@ interface Game : KoinComponent {
      * 任何引擎调用迁入游戏线程前，必须逐点核实其线程依赖并真机验证。
      */
     fun post(action: () -> Unit)
+
+    /**
+     * 多人连接操作开始前申请平台保活，预同步也应包含在内；必须在 UI 线程申请。
+     * 完成/取消时在 finally 关闭，连接成功后由平台接手房间保活；允许嵌套申请。
+     */
+    fun acquireMultiplayerKeepAlive(): Closeable = Closeable {}
 
     /**
      * Start a mission game with specific difficulty.

@@ -341,6 +341,7 @@ fun SettingsView(
                                         SettingsSwitchComp("showMapPingsOnBattlefield")
                                         SettingsSwitchComp("showMapPingsOnMinimap")
                                         SettingsSwitchComp("showPlayerChatInGame")
+                                        if (appContext.isAndroid()) BackgroundConnectionSettings(appContext)
                                     }
 
                                     "rwpp-client" -> {
@@ -579,6 +580,35 @@ private fun SettingsSliderRW(
         configIO.getGameConfig(name),
         { configIO.setGameConfig(name, it) },
         0f..1f,
+    )
+}
+
+@Composable
+private fun BackgroundConnectionSettings(appContext: AppContext) {
+    var visible by remember { mutableStateOf(false) }
+    var unrestricted by remember { mutableStateOf(false) }
+    RWTextButton(readI18n("settings.backgroundConnection"), modifier = Modifier.padding(5.dp)) {
+        unrestricted = appContext.isBackgroundNetworkUnrestricted()
+        visible = true
+    }
+    if (visible) AlertDialog(
+        onDismissRequest = { visible = false },
+        title = { Text(readI18n("settings.backgroundConnection")) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(readI18n(if (unrestricted) "settings.backgroundConnectionAllowed" else "settings.backgroundConnectionRestricted"))
+                Text(readI18n("settings.backgroundConnectionHint"))
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                visible = false
+                appContext.openBackgroundNetworkSettings()
+            }) { Text(readI18n("settings.backgroundConnectionOpenSettings")) }
+        },
+        dismissButton = {
+            TextButton(onClick = { visible = false }) { Text(readI18n("common.close")) }
+        },
     )
 }
 

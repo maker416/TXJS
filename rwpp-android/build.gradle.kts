@@ -42,6 +42,14 @@ dependencies {
     val koinAnnotationsVersion = findProperty("koin.annotations.version") as String
     ksp("io.insert-koin:koin-ksp-compiler:$koinAnnotationsVersion")
     ksp(project(":rwpp-ksp"))
+    testImplementation(kotlin("test-junit"))
+    testImplementation("org.javassist:javassist:3.30.2-GA")
+    testImplementation("net.peanuuutz.tomlkt:tomlkt:0.3.7")
+}
+
+// 单元测试无需生成注入元数据；否则测试源的空扫描会覆盖主变体 build/generated/config.toml。
+tasks.matching { it.name.startsWith("ksp") && it.name.contains("UnitTest") }.configureEach {
+    enabled = false
 }
 
 val releaseKeystorePropertiesFile = rootProject.file("build/key/keystore.properties")

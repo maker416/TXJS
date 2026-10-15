@@ -11,44 +11,40 @@ import android.app.Activity
 import android.app.Application
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
+import android.os.Looper
+import android.os.PowerManager
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import io.github.rwpp.android.impl.GameEngine
 import io.github.rwpp.logger
 import io.github.rwpp.platform.LauncherMusic
+import java.io.Closeable
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Android 后台保活编排。
- *
- * 原版引擎在后台会掉线的两条链路：
- * 1. GameView 的 Surface 被销毁后，主循环 `a(float,int)` 在 `ae.k()` 之后直接返回，
- *    网络泵 `ae.a(float)`/`ae.l()` 不再执行（等待房间与对局都会命中）；
- * 2. 对局中 `InGameActivity.onStop` → `i.a(Activity, ab)` 起 700ms 定时器停掉游戏主线程。
- * 此外进程退到后台后没有前台服务，会被系统冻结 / CPU 休眠。
- *
- * 这里负责：前后台判定（按已 start 的 Activity 计数）、联网期间维持 [KeepAliveService]、
- * 退到后台时暂停背景音乐。主循环的补泵与停线程拦截在 `BaseEngineInject`。
+ * 在连接前申请前台服务，连接中的资源由独立 token 持有，连接成功后交接给引擎状态。
+ * 所有服务生命周期在 Main 串行处理；服务实例确认启动后才记为 RUNNING。
+ * 网络主循环与原版停线程定时器的保护见 BaseEngineInject / DeferredGameStopInject。
  */
 object BackgroundKeepAlive {
     private const val CHECK_INTERVAL_MS = 1000L
-
+    private val state = BackgroundKeepAliveState()
+    private val connectionIds = AtomicLong()
     private var startedActivities = 0
+    private var service: KeepAliveService? = null
+    private lateinit var appContext: Context
 
     @Volatile
-    var isAppInForeground: Boolean = false
+    var isAppInForeground = false
         private set
 
     @Volatile
-    private var serviceRunning = false
+    private var hasPendingConnection = false
 
-    private lateinit var appContext: Context
-
-    private val checkTask = object : Runnable {
-        override fun run() {
-            syncService()
-            uiHandler.postDelayed(this, CHECK_INTERVAL_MS)
-        }
-    }
+    private val checkTask = Runnable { syncService() }
 
     fun install(application: Application) {
         appContext = application.applicationContext
@@ -60,7 +56,6 @@ object BackgroundKeepAlive {
 
             override fun onActivityStopped(activity: Activity) {
                 startedActivities = (startedActivities - 1).coerceAtLeast(0)
-                // 横竖屏重建时会先 stop 再 start，不算真正退到后台
                 if (startedActivities == 0 && !activity.isChangingConfigurations) onBackground()
             }
 
@@ -70,53 +65,129 @@ object BackgroundKeepAlive {
             override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
             override fun onActivityDestroyed(activity: Activity) {}
         })
-        uiHandler.post(checkTask)
     }
 
-    /** 引擎已加载且处于联机（房间或对局）中。 */
+    /** 在预同步/Socket 连接开始前调用；允许嵌套，关闭旧 token 不会释放新连接。 */
+    fun acquireConnection(): Closeable {
+        val id = connectionIds.incrementAndGet()
+        val closed = AtomicBoolean()
+        onMain {
+            if (!closed.get()) {
+                state.beginConnection(id)
+                hasPendingConnection = state.hasPendingConnection
+                syncService()
+            }
+        }
+        return Closeable {
+            if (closed.compareAndSet(false, true)) onMain {
+                state.endConnection(id)
+                hasPendingConnection = state.hasPendingConnection
+                syncService()
+            }
+        }
+    }
+
+    /** C 也用于遭遇战/沙盒；G 才能将原版的本地单人服务器排除。 */
     fun isNetworked(): Boolean {
-        // 引擎 dex 加载前不得触碰游戏类，否则类解析失败可能被缓存
         if (!gameLoaded) return false
-        return runCatching { GameEngine.t()?.bU?.C == true }.getOrDefault(false)
+        return runCatching { GameEngine.t()?.bU?.let { it.C && !it.G } == true }.getOrDefault(false)
+    }
+
+    fun shouldKeepGameThreadRunning(): Boolean = hasPendingConnection || isNetworked()
+
+    /** 显式记录连接成功，覆盖第一次轮询之前就收到 relay 重定向、C 暂时变 false 的窗口。 */
+    fun onConnected() = onMain {
+        state.onConnected()
+        syncService()
+    }
+
+    /** 显式退房直接结束重连宽限期；连接 token 仍由原操作的 finally 释放。 */
+    fun onSessionEnded() = onMain {
+        state.onSessionEnded()
+        syncService()
+    }
+
+    internal fun acceptsServiceStart(id: Long): Boolean = state.acceptsStart(id)
+
+    internal fun onServiceReady(instance: KeepAliveService, id: Long) {
+        if (!state.onServiceReady(id)) {
+            instance.stopSelf()
+            return
+        }
+        service = instance
+        logger.info("[KEEPALIVE] foreground service ready, generation=$id")
+        syncService()
+    }
+
+    internal fun onServiceStartFailed(id: Long) {
+        state.onStartFailed(id, SystemClock.elapsedRealtime(), serviceCreated = true)
+    }
+
+    internal fun onServiceDestroyed(instance: KeepAliveService, id: Long) {
+        if (service === instance) service = null
+        state.onServiceDestroyed(id)
+        syncService()
     }
 
     private fun onForeground() {
         isAppInForeground = true
+        state.foreground = true
         logger.info("[KEEPALIVE] app -> foreground")
         syncService()
     }
 
     private fun onBackground() {
-        // 进房后 1s 轮询尚未拉起服务就立刻切走：趁仍记为前台时补一次（失败由 runCatching 兜住）
         syncService()
         isAppInForeground = false
+        state.foreground = false
         logger.info("[KEEPALIVE] app -> background, networked=${isNetworked()}")
         LauncherMusic.pause()
-        // 原版菜单/局内音乐由引擎自己的 MusicController 播放，退后台不会自动停；
-        // 回到前台时 MainActivity/InGameActivity 的 onResume 会经引擎 A() 恢复。
         if (gameLoaded) runCatching { GameEngine.t()?.bK?.d() }
+        if (shouldKeepGameThreadRunning()) logPowerConstraints()
         syncService()
     }
 
     private fun syncService() {
-        val networked = isNetworked()
-        if (networked && !serviceRunning) {
-            // Android 12+ 禁止后台启动前台服务：只在前台时启动（进房 / 开局必然在前台）
-            if (!isAppInForeground) return
-            runCatching {
-                ContextCompat.startForegroundService(appContext, Intent(appContext, KeepAliveService::class.java))
-                serviceRunning = true
-                logger.info("[KEEPALIVE] foreground service started")
-            }.onFailure { logger.warn("[KEEPALIVE] cannot start foreground service: ${it.message}") }
-        } else if (!networked && serviceRunning) {
-            runCatching { appContext.stopService(Intent(appContext, KeepAliveService::class.java)) }
-            serviceRunning = false
-            logger.info("[KEEPALIVE] foreground service stopped")
+        val now = SystemClock.elapsedRealtime()
+        val localSinglePlayer = gameLoaded && runCatching { GameEngine.t()?.bU?.G == true }.getOrDefault(false)
+        val needed = state.needsService(isNetworked(), localSinglePlayer, now)
+        if (needed) {
+            state.requestStart(now)?.let { id ->
+                runCatching {
+                    ContextCompat.startForegroundService(appContext, Intent(appContext, KeepAliveService::class.java)
+                        .putExtra(KeepAliveService.EXTRA_GENERATION, id))
+                }.onFailure {
+                    state.onStartFailed(id, now, serviceCreated = false)
+                    logger.warn("[KEEPALIVE] cannot start foreground service", it)
+                }
+            }
+        } else {
+            state.requestStop()?.let { id ->
+                runCatching { appContext.stopService(Intent(appContext, KeepAliveService::class.java)) }
+                    .onSuccess { stopped -> if (!stopped) state.onServiceDestroyed(id) }
+                    .onFailure {
+                        state.onStopFailed(id)
+                        logger.warn("[KEEPALIVE] cannot stop foreground service", it)
+                    }
+            }
+        }
+        service?.updateBackgroundState(needed && !isAppInForeground)
+        uiHandler.removeCallbacks(checkTask)
+        // 前台采样未知的引擎状态；后台只在会话或服务尚未结束时兜底，菜单退后台不常驻轮询。
+        if (isAppInForeground || needed || state.servicePhase != BackgroundKeepAliveState.ServicePhase.STOPPED) {
+            uiHandler.postDelayed(checkTask, CHECK_INTERVAL_MS)
         }
     }
 
-    /** 服务被系统停止（或启动失败）时回写状态，下次前台检查可重新拉起。 */
-    internal fun onServiceDestroyed() {
-        serviceRunning = false
+    private fun logPowerConstraints() {
+        runCatching {
+            val power = appContext.getSystemService(Context.POWER_SERVICE) as PowerManager
+            logger.info("[KEEPALIVE] batteryUnrestricted=${power.isIgnoringBatteryOptimizations(appContext.packageName)}, " +
+                "deviceIdle=${power.isDeviceIdleMode}, lowPowerStandby=${Build.VERSION.SDK_INT >= 33 && power.isLowPowerStandbyEnabled}")
+        }.onFailure { logger.warn("[KEEPALIVE] cannot query power restrictions", it) }
+    }
+
+    private fun onMain(action: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) action() else uiHandler.post { action() }
     }
 }

@@ -8,13 +8,20 @@
 package io.github.rwpp.android.impl
 
 import android.content.Context
+import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.os.Environment
+import android.os.PowerManager
+import android.provider.Settings as AndroidSettings
 import io.github.rwpp.AppContext
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.graphics.GL
 import io.github.rwpp.impl.BaseAppContextImpl
+import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.logger
+import io.github.rwpp.ui.UI
 import okhttp3.OkHttpClient
 import org.koin.core.annotation.Single
 import org.koin.core.component.get
@@ -43,6 +50,27 @@ class AppContextImpl : BaseAppContextImpl() {
         val network = manager.activeNetwork ?: return@runCatching false
         manager.getNetworkCapabilities(network)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
     }.getOrDefault(true)
+
+    override fun isBackgroundNetworkUnrestricted(): Boolean {
+        val context = get<Context>().applicationContext
+        return (context.getSystemService(Context.POWER_SERVICE) as PowerManager)
+            .isIgnoringBatteryOptimizations(context.packageName)
+    }
+
+    override fun openBackgroundNetworkSettings() {
+        val context = get<Context>().applicationContext
+        runCatching {
+            context.startActivity(Intent(AndroidSettings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.recoverCatching {
+            context.startActivity(Intent(AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure {
+            logger.warn("[KEEPALIVE] cannot open background settings", it)
+            UI.showWarning(readI18n("settings.backgroundConnectionSettingsFailed"))
+        }
+    }
+
     override fun externalStoragePath(path: String): String {
         return Environment.getExternalStorageDirectory().absolutePath + "/rustedWarfare/$path"
     }

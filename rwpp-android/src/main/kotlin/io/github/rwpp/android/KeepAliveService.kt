@@ -7,7 +7,6 @@
 
 package io.github.rwpp.android
 
-import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -20,6 +19,7 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import io.github.rwpp.R
@@ -27,55 +27,83 @@ import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.logger
 
 /**
- * 联机期间的前台服务：防止进程退到后台后被冻结，并持有 CPU / Wi-Fi 锁让网络泵在锁屏时继续运行。
+ * 联机期间的前台服务。仅在后台持有有期限、可续期的 CPU 锁，退出会话即释放。
+ * Android 14+ 不再申请不能在锁屏生效的 Wi-Fi 低延迟锁；系统省电限制由设置页说明。
  * 启停由 [BackgroundKeepAlive] 统一管理，本服务不做任何引擎调用。
  */
 class KeepAliveService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
+    private var generation = -1L
+    private var promoted = false
+    private var nextWakeRenewalMs = 0L
+    private var nextWifiAttemptMs = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    override fun onCreate() {
-        super.onCreate()
-        val type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
-        runCatching {
-            ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(), type)
-        }.onFailure {
-            logger.warn("[KEEPALIVE] startForeground failed: ${it.message}")
-            stopSelf()
-            return
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val id = intent?.getLongExtra(EXTRA_GENERATION, -1L) ?: -1L
+        if (!BackgroundKeepAlive.acceptsServiceStart(id)) {
+            if (!promoted) {
+                generation = id
+                stopSelf(startId)
+            }
+            return START_NOT_STICKY
         }
-        acquireLocks()
+        generation = id
+        if (!promoted) {
+            val type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
+            try {
+                ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(), type)
+                promoted = true
+            } catch (e: Exception) {
+                logger.warn("[KEEPALIVE] startForeground failed", e)
+                BackgroundKeepAlive.onServiceStartFailed(id)
+                stopSelf(startId)
+                return START_NOT_STICKY
+            }
+        }
+        BackgroundKeepAlive.onServiceReady(this, id)
+        return START_NOT_STICKY
     }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_NOT_STICKY
 
     override fun onDestroy() {
         releaseLocks()
-        BackgroundKeepAlive.onServiceDestroyed()
+        BackgroundKeepAlive.onServiceDestroyed(this, generation)
         super.onDestroy()
     }
 
-    @SuppressLint("WakelockTimeout")
+    internal fun updateBackgroundState(background: Boolean) {
+        if (background && promoted) acquireLocks() else releaseLocks()
+    }
+
     private fun acquireLocks() {
-        runCatching {
-            val power = getSystemService(Context.POWER_SERVICE) as PowerManager
-            wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "RWJS:multiplayer").apply {
-                setReferenceCounted(false)
-                acquire()
+        val now = SystemClock.elapsedRealtime()
+        if (now >= nextWakeRenewalMs) {
+            nextWakeRenewalMs = now + 30_000L
+            runCatching {
+                val lock = wakeLock ?: (getSystemService(Context.POWER_SERVICE) as PowerManager)
+                    .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "RWJS:multiplayer")
+                    .apply { setReferenceCounted(false) }.also { wakeLock = it }
+                lock.acquire(120_000L)
+            }.onFailure { logger.warn("[KEEPALIVE] wake lock unavailable", it) }
+        }
+        // 29..33 的 HIGH_PERF 可用于熄屏；34+ 会被映射成仅亮屏前台生效的 LOW_LATENCY。
+        if (Build.VERSION.SDK_INT < 34 && wifiLock == null && now >= nextWifiAttemptMs) {
+            nextWifiAttemptMs = now + 30_000L
+            runCatching {
+                val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                @Suppress("DEPRECATION")
+                val lock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "RWJS:multiplayer")
+                wifiLock = lock
+                lock.setReferenceCounted(false)
+                lock.acquire()
+            }.onFailure {
+                runCatching { wifiLock?.takeIf { lock -> lock.isHeld }?.release() }
+                wifiLock = null
+                logger.warn("[KEEPALIVE] wifi lock unavailable", it)
             }
-        }.onFailure { logger.warn("[KEEPALIVE] wake lock unavailable: ${it.message}") }
-        runCatching {
-            val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            @Suppress("DEPRECATION")
-            val mode = if (Build.VERSION.SDK_INT >= 29) WifiManager.WIFI_MODE_FULL_LOW_LATENCY
-            else WifiManager.WIFI_MODE_FULL_HIGH_PERF
-            wifiLock = wifi.createWifiLock(mode, "RWJS:multiplayer").apply {
-                setReferenceCounted(false)
-                acquire()
-            }
-        }.onFailure { logger.warn("[KEEPALIVE] wifi lock unavailable: ${it.message}") }
+        }
     }
 
     private fun releaseLocks() {
@@ -83,12 +111,14 @@ class KeepAliveService : Service() {
         runCatching { wifiLock?.takeIf { it.isHeld }?.release() }
         wakeLock = null
         wifiLock = null
+        nextWakeRenewalMs = 0L
+        nextWifiAttemptMs = 0L
     }
 
     private fun buildNotification(): Notification {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val title = i18nOr("android.keepAliveTitle", "联机保持中")
-        val text = i18nOr("android.keepAliveText", "切换应用或锁屏时将保持联机连接，点击返回游戏")
+        val text = i18nOr("android.keepAliveText", "正在连接或保持联机，点击返回游戏")
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, title, NotificationManager.IMPORTANCE_LOW).apply {
                 setShowBadge(false)
@@ -117,6 +147,7 @@ class KeepAliveService : Service() {
         runCatching { readI18n(path) }.getOrNull()?.takeIf { it.isNotBlank() } ?: fallback
 
     companion object {
+        internal const val EXTRA_GENERATION = "io.github.rwpp.keepalive.GENERATION"
         private const val CHANNEL_ID = "rwjs_keepalive"
         private const val NOTIFICATION_ID = 0x5257
     }

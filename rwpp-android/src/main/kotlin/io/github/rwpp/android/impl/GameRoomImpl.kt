@@ -558,6 +558,7 @@ class GameRoomImpl(private val game: GameImpl) : GameRoom {
         // MultiplayerRoomInject.onStartGame 的 !isGaming 守卫吞掉，导致玩家永远卡在战役室
         isGaming = false
         if (isConnecting) GameEngine.t().bU.b(reason)
+        BackgroundKeepAlive.onSessionEnded()
         roomMods = arrayOf()
         teamMode = null
         defeatedPlayerSet.clear()

@@ -111,6 +111,8 @@ class GameImpl : Game, CoroutineScope {
         mainThreadChannel.trySend(action)
     }
 
+    override fun acquireMultiplayerKeepAlive() = BackgroundKeepAlive.acquireConnection()
+
     override fun startNewMissionGame(difficulty: Difficulty, mission: Mission) {
         val t = GameEngine.t()
         GameEngine.t().bU.b("starting singleplayer")
@@ -127,19 +129,25 @@ class GameImpl : Game, CoroutineScope {
     }
 
     override fun hostStartWithPasswordAndMods(isPublic: Boolean, password: String?, useMods: Boolean) {
-        val t: k = GameEngine.t()
-        GameEngine.t().bU.b("starting new")
-        t.bU.n = password
-        t.bU.o = useMods
-        t.bU.q = isPublic
-        launch(Dispatchers.IO) {
-            initMap(true)
-            t.bU.t()
-            MapChangedEvent(gameRoom.selectedMap.displayName()).broadcastIn()
-            delay(100)
-            RefreshUIEvent().broadcastIn()
-            HostGameEvent().broadcastIn()
-            PlayerJoinEvent(gameRoom.localPlayer).broadcastIn()
+        val keepAlive = acquireMultiplayerKeepAlive()
+        try {
+            val t: k = GameEngine.t()
+            GameEngine.t().bU.b("starting new")
+            t.bU.n = password
+            t.bU.o = useMods
+            t.bU.q = isPublic
+            launch(Dispatchers.IO) {
+                initMap(true)
+                if (t.bU.t()) BackgroundKeepAlive.onConnected()
+                MapChangedEvent(gameRoom.selectedMap.displayName()).broadcastIn()
+                delay(100)
+                RefreshUIEvent().broadcastIn()
+                HostGameEvent().broadcastIn()
+                PlayerJoinEvent(gameRoom.localPlayer).broadcastIn()
+            }.invokeOnCompletion { keepAlive.close() }
+        } catch (e: Throwable) {
+            keepAlive.close()
+            throw e
         }
     }
 
@@ -162,6 +170,17 @@ class GameImpl : Game, CoroutineScope {
     }
 
     override suspend fun directJoinServer(address: String, uuid: String?, context: LoadingContext): Result<String> {
+        val keepAlive = withContext(NonCancellable + Dispatchers.Main.immediate) {
+            acquireMultiplayerKeepAlive()
+        }
+        return try {
+            connectToServer(address, uuid)
+        } finally {
+            keepAlive.close()
+        }
+    }
+
+    private suspend fun connectToServer(address: String, uuid: String?): Result<String> {
         val result = try {
             Result.success(joinController.connect(
                 prepare = {
@@ -189,6 +208,7 @@ class GameImpl : Game, CoroutineScope {
                     GameEngine.t().bU.b("Connection failed")
                     Result.failure(IOException("Connection failed."))
                 } else {
+                    BackgroundKeepAlive.onConnected()
                     PlayerJoinEvent(gameRoom.localPlayer).broadcastIn()
                     Result.success("")
                 }
