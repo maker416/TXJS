@@ -221,10 +221,9 @@ class ModManagerImpl : ModManager {
             while (KeepConnectedReload.active && !Thread.currentThread().isInterrupted) {
                 try {
                     if (KeepConnectedReload.isWatchdogDue()) {
-                        val net = GameEngine.t().bU
-                        net.l()
-                        net.a(KeepConnectedReload.WATCHDOG_DELTA)
-                        KeepConnectedReload.markGameTick()
+                        io.github.rwpp.android.NetworkOnlyPump.duringReload(
+                            KeepConnectedReload.WATCHDOG_DELTA, watchdog = true
+                        )
                     }
                     Thread.sleep(KeepConnectedReload.WATCHDOG_SLEEP_MS)
                 } catch (_: InterruptedException) {

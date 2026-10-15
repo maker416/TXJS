@@ -467,6 +467,12 @@ basicFog = "Basic Fog"
 losFog = "LOS Fog"
 
 [settings]
+backgroundConnection = "Background multiplayer"
+backgroundConnectionAllowed = "Battery optimization is disabled for this app."
+backgroundConnectionRestricted = "Battery optimization may interrupt multiplayer connections during prolonged screen lock."
+backgroundConnectionHint = "For prolonged screen lock, find this app in system settings and allow background activity. Power settings vary by device. Matches wait for the host while the host app is in the background."
+backgroundConnectionOpenSettings = "Open system settings"
+backgroundConnectionSettingsFailed = "Unable to open system settings. Check battery and background restrictions in app info."
 forumUrl = "Forum URL"
 setExternalFolder = "Set External Folder"
 manageAllFiles = "Manage All Files"
@@ -597,7 +603,7 @@ importSave = "Successfully import save: {0}."
 importReplay = "Successfully import replay: {0}."
 unknownFileTypeError = "Unknown file type: {0}."
 keepAliveTitle = "Staying connected"
-keepAliveText = "Your multiplayer session stays connected while the app is in the background. Tap to return."
+keepAliveText = "Connecting or keeping your multiplayer session active. Tap to return."
 
 [replays]
 title = "Watch Replay"

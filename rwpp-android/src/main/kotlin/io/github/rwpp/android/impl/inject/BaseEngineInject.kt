@@ -11,6 +11,8 @@ import android.app.Activity
 import com.corrodinggames.rts.appFramework.ab
 import com.corrodinggames.rts.game.i
 import io.github.rwpp.android.BackgroundKeepAlive
+import io.github.rwpp.android.BackgroundPumpCadence
+import io.github.rwpp.android.NetworkOnlyPump
 import io.github.rwpp.android._gameSpeed
 import io.github.rwpp.android.impl.GameEngine
 import io.github.rwpp.android.mainThreadChannel
@@ -26,6 +28,7 @@ import io.github.rwpp.logger
 @InjectClass(com.corrodinggames.rts.game.i::class)
 object BaseEngineInject {
     val room by lazy { appKoin.get<Game>().gameRoom }
+    private val backgroundCadence = BackgroundPumpCadence()
     @Inject("b", InjectMode.InsertBefore)
     fun onUpdate(deltaTime: Float) {
         mainThreadChannel.tryReceive().getOrNull()?.invoke()
@@ -44,18 +47,16 @@ object BaseEngineInject {
      * 避免与工作线程上的 `bW.a()` 抢单位表。
      *
      * 后台保活：切应用 / 锁屏后 GameView 的 Surface 被销毁，原版主循环在 `ae.k()` 之后
-     * 直接返回，`ae.l()`/`ae.a(float)` 不再执行，房间与对局随后超时掉线。联机期间无 Surface
-     * 时改为在引擎锁 `ai` 内只泵网络（不推进模拟、不绘制），回到前台后由原版追帧逻辑补齐。
+     * 直接返回，`ae.l()`/`ae.a(float)` 不再执行。多人会话在后台或无 Surface 时只泵网络，
+     * 后台频率为 20Hz；网络仍在游戏线程和 ai 锁内执行，等待在锁外，回前台恢复原版路径。
      */
     @Inject("a", InjectMode.InsertBefore, "(FI)V")
     fun onMainLoop(deltaTime: Float, unused: Int): Any {
         if (KeepConnectedReload.active) {
-            KeepConnectedReload.markGameTick()
+            backgroundCadence.reset()
             mainThreadChannel.tryReceive().getOrNull()?.invoke()
             try {
-                val net = GameEngine.t().bU
-                net.l()
-                net.a(deltaTime)
+                NetworkOnlyPump.duringReload(deltaTime)
             } catch (e: Throwable) {
                 logger.warn("[MODSYNC] net-only pump failed: ${e.message}")
             }
@@ -64,19 +65,29 @@ object BaseEngineInject {
 
         val engine = GameEngine.t()
         val net = engine.bU ?: return Unit
-        if (!net.C) return Unit
-        val view = engine.ao ?: return Unit
-        if (view.getSurfaceExists()) return Unit
+        if (!net.C || net.G || BackgroundKeepAlive.isAppInForeground && engine.ao?.getSurfaceExists() == true) {
+            backgroundCadence.reset()
+            return Unit
+        }
 
+        val startNanos = System.nanoTime()
+        val networkDelta = backgroundCadence.delta(startNanos, deltaTime)
         mainThreadChannel.tryReceive().getOrNull()?.invoke()
         try {
             synchronized(engine.ai) {
-                net.k()
-                net.l()
-                net.a(deltaTime)
+                NetworkOnlyPump.inBackground(engine, networkDelta)
             }
         } catch (e: Throwable) {
             logger.warn("[KEEPALIVE] background net pump failed: ${e.message}")
+        }
+        // 原版 GameThread 的 60/300Hz 限频仍保留；在锁外补足后台周期，避免空转唤醒。
+        if (!BackgroundKeepAlive.isAppInForeground && !KeepConnectedReload.active) {
+            val delay = backgroundCadence.remainingNanos(startNanos, System.nanoTime())
+            if (delay > 0L) try {
+                Thread.sleep(delay / 1_000_000L, (delay % 1_000_000L).toInt())
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
         }
         return InterruptResult.Unit
     }
@@ -88,8 +99,8 @@ object BaseEngineInject {
      */
     @Inject("a", InjectMode.InsertBefore, "(Landroid/app/Activity;Lcom/corrodinggames/rts/appFramework/ab;)V")
     fun onActivityStop(activity: Activity?, view: ab?): Any {
-        if (!BackgroundKeepAlive.isNetworked()) return Unit
-        logger.info("[KEEPALIVE] keep game thread running after activity stop (networked)")
+        if (!BackgroundKeepAlive.shouldKeepGameThreadRunning()) return Unit
+        logger.info("[KEEPALIVE] keep game thread running after activity stop (multiplayer/connecting)")
         runCatching { view?.onParentStop() }
         return InterruptResult.Unit
     }

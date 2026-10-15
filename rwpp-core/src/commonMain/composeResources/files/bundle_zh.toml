@@ -468,6 +468,12 @@ basicFog = "基础迷雾"
 losFog = "视野迷雾"
 
 [settings]
+backgroundConnection = "后台联机"
+backgroundConnectionAllowed = "已允许本应用不受电池优化限制。"
+backgroundConnectionRestricted = "电池优化仍可能中断长时间锁屏后的联机连接。"
+backgroundConnectionHint = "需要长时间锁屏联机时，可在系统设置中找到本应用并允许后台运行。不同设备的省电设置可能不同。房主切到后台后，对局会等待房主返回。"
+backgroundConnectionOpenSettings = "打开系统设置"
+backgroundConnectionSettingsFailed = "无法打开系统设置，请在应用信息中检查电池与后台运行限制。"
 forumUrl = "论坛网址"
 setExternalFolder = "设置外部文件权限"
 manageAllFiles = "设置管理所有文件"
@@ -598,7 +604,7 @@ importSave = "成功导入存档: {0}。"
 importReplay = "成功导入回放: {0}。"
 unknownFileTypeError = "未知文件类型: {0}"
 keepAliveTitle = "联机保持中"
-keepAliveText = "切换应用或锁屏时将保持联机连接，点击返回游戏"
+keepAliveText = "正在连接或保持联机，点击返回游戏"
 
 [replays]
 title = "观看回放"

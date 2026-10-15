@@ -28,6 +28,7 @@ import android.media.SoundPool
 import com.corrodinggames.rts.gameFramework.m.e
 import com.corrodinggames.rts.gameFramework.utility.o
 import io.github.rwpp.R
+import io.github.rwpp.android.BackgroundKeepAlive
 import io.github.rwpp.android.impl.GameEngine
 import io.github.rwpp.android.impl.getResourceFileName
 import io.github.rwpp.inject.*
@@ -66,6 +67,9 @@ object AssetInject {
 
 @InjectClass(com.corrodinggames.rts.gameFramework.bc::class)
 object MusicInject {
+    @Inject("b", InjectMode.InsertBefore, "()V")
+    fun onResume(): Any = EngineMusicInject.onResume()
+
     @Inject("a", InjectMode.InsertBefore)
     fun com.corrodinggames.rts.gameFramework.bc.redirectMusic(z: Boolean): Any {
         if (!File(resourceOutputDir).exists()) return Unit
@@ -85,7 +89,7 @@ object MusicInject {
             }
             a.setVolume(0.0f, 0.0f)
             a.setOnInfoListener { _, _, _ -> true }
-            a.setOnPreparedListener { a.start() }
+            a.setOnPreparedListener { if (BackgroundKeepAlive.isAppInForeground) a.start() }
             a.prepareAsync()
             return InterruptResult.Unit
         } catch (e: Exception) {
