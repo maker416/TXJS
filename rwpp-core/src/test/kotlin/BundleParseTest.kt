@@ -28,7 +28,14 @@ class BundleParseTest {
             val root = Toml.parseToTomlTable(File(bundleDir, name).readText())
             val settings = root["settings"] as TomlTable
             listOf("backgroundConnection", "backgroundConnectionAllowed", "backgroundConnectionRestricted",
-                "backgroundConnectionHint", "backgroundConnectionOpenSettings", "backgroundConnectionSettingsFailed")
+                "backgroundConnectionHint", "backgroundConnectionOpenSettings", "backgroundConnectionSettingsFailed",
+                "backgroundConnectionNotifications", "backgroundConnectionNotificationsAllowed",
+                "backgroundConnectionNotificationsDenied", "backgroundConnectionChannelDisabled",
+                "backgroundConnectionNotificationsHint", "backgroundConnectionRequestNotifications",
+                "backgroundConnectionNotificationSettings", "backgroundConnectionBattery", "backgroundConnectionRequestBattery",
+                "backgroundConnectionEntryHint", "backgroundConnectionSummary", "backgroundConnectionGranted",
+                "backgroundConnectionNotGranted", "backgroundConnectionEnable", "backgroundConnectionManage",
+                "backgroundConnectionManualHint", "backgroundConnectionManualStatus")
                 .forEach { key -> assertTrue(settings.containsKey(key), "settings.$key missing in $name") }
             val android = root["android"] as TomlTable
             listOf("keepAliveTitle", "keepAliveText").forEach { key ->

@@ -25,6 +25,7 @@ import androidx.core.app.ServiceCompat
 import io.github.rwpp.R
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.logger
+import io.github.rwpp.platform.KEEP_ALIVE_NOTIFICATION_CHANNEL_ID
 
 /**
  * 联机期间的前台服务。仅在后台持有有期限、可续期的 CPU 锁，退出会话即释放。
@@ -120,7 +121,7 @@ class KeepAliveService : Service() {
         val title = i18nOr("android.keepAliveTitle", "联机保持中")
         val text = i18nOr("android.keepAliveText", "正在连接或保持联机，点击返回游戏")
         manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, title, NotificationManager.IMPORTANCE_LOW).apply {
+            NotificationChannel(KEEP_ALIVE_NOTIFICATION_CHANNEL_ID, title, NotificationManager.IMPORTANCE_LOW).apply {
                 setShowBadge(false)
             }
         )
@@ -131,7 +132,7 @@ class KeepAliveService : Service() {
         val contentIntent = launch?.let {
             PendingIntent.getActivity(this, 0, it, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         }
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        return NotificationCompat.Builder(this, KEEP_ALIVE_NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_2)
             .setContentTitle(title)
             .setContentText(text)
@@ -148,7 +149,6 @@ class KeepAliveService : Service() {
 
     companion object {
         internal const val EXTRA_GENERATION = "io.github.rwpp.keepalive.GENERATION"
-        private const val CHANNEL_ID = "rwjs_keepalive"
         private const val NOTIFICATION_ID = 0x5257
     }
 }

@@ -40,6 +40,7 @@ import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.net.LatestVersionProfile
 import io.github.rwpp.net.Net
 import io.github.rwpp.platform.BackHandler
+import io.github.rwpp.platform.BackgroundConnectionSettingsEntry
 import io.github.rwpp.projectVersion
 import io.github.rwpp.utils.compareVersions
 import io.github.rwpp.widget.*
@@ -335,13 +336,13 @@ fun SettingsView(
                                     }
 
                                     "networking" -> SettingsGroup("networking") {
+                                        if (appContext.isAndroid()) BackgroundConnectionSettingsEntry()
                                         SettingsSwitchComp("udpInMultiplayer")
                                         SettingsSwitchComp("saveMultiplayerReplays", "saveReplays")
                                         SettingsSwitchComp("showChatAndPingShortcuts")
                                         SettingsSwitchComp("showMapPingsOnBattlefield")
                                         SettingsSwitchComp("showMapPingsOnMinimap")
                                         SettingsSwitchComp("showPlayerChatInGame")
-                                        if (appContext.isAndroid()) BackgroundConnectionSettings(appContext)
                                     }
 
                                     "rwpp-client" -> {
@@ -582,36 +583,6 @@ private fun SettingsSliderRW(
         0f..1f,
     )
 }
-
-@Composable
-private fun BackgroundConnectionSettings(appContext: AppContext) {
-    var visible by remember { mutableStateOf(false) }
-    var unrestricted by remember { mutableStateOf(false) }
-    RWTextButton(readI18n("settings.backgroundConnection"), modifier = Modifier.padding(5.dp)) {
-        unrestricted = appContext.isBackgroundNetworkUnrestricted()
-        visible = true
-    }
-    if (visible) AlertDialog(
-        onDismissRequest = { visible = false },
-        title = { Text(readI18n("settings.backgroundConnection")) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(readI18n(if (unrestricted) "settings.backgroundConnectionAllowed" else "settings.backgroundConnectionRestricted"))
-                Text(readI18n("settings.backgroundConnectionHint"))
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                visible = false
-                appContext.openBackgroundNetworkSettings()
-            }) { Text(readI18n("settings.backgroundConnectionOpenSettings")) }
-        },
-        dismissButton = {
-            TextButton(onClick = { visible = false }) { Text(readI18n("common.close")) }
-        },
-    )
-}
-
 
 @Composable
 private fun LazyItemScope.InGameAssistSettings(settings: Settings) {
