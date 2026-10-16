@@ -174,9 +174,9 @@ Gradle JVM 参数在根目录 `gradle.properties` 中定义（`-Xmx2048M`）。
 4. Windows 安装包需要 Inno Setup 6.5+（`ISCC.exe`），可通过 `INNO_SETUP_COMPILER` 指定编译器路径；构建入口为 `packaging/build.ps1 installer`。
 5. 若首次运行或注入配置变更，`rwpp-desktop` 会在启动时进入「应用注入配置」模式，完成后自动重启。
 
-### Git 工作树（worktree）规范（重要）
+### Git 工作树（worktree）使用指引
 
-**功能开发工作流（强制）**：任何功能/代码修改必须先在专用 worktree 中开发，禁止直接在主检出（`main` 分支所在目录）改动代码。标准流程：
+功能/代码修改可直接在当前检出目录（包括主检出）中进行，是否使用专用 worktree 按任务需要决定。选择使用 worktree 时，可参考以下流程：
 
 1. `git worktree add ../TXJS-<特性名> -b feature/<特性名>` 创建工作树；
 2. **立即**按下方一键同步命令同步本地必需文件（否则 Android 构建、签名、注入元数据生成会失败）；
