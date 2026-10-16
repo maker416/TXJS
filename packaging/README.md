@@ -15,6 +15,18 @@ $env:INNO_SETUP_COMPILER = 'C:\Tools\Inno Setup 6\ISCC.exe'
 
 游戏目录优先级：`RW_GAME_ROOT` → `packaging/game-root.local.txt` → 上例默认 Steam 目录。不要将游戏资源、本机路径或生成安装包提交进 Git。
 
+## 本机 debug 覆盖安装（不提交 game-root.local.txt）
+
+开发时只替换 `app\` 下若干 jar，不走完整安装包：
+
+```powershell
+.\packaging\debug-desktop-install.ps1   # 编译、结束 RWJS 进程、覆盖 jar，不启动
+.\packaging\debug-desktop-run.ps1       # 同上后再启动 RWJS.exe
+.\packaging\debug-desktop.ps1           # 兼容旧习惯，等同 run；-NoLaunch 等同 install
+```
+
+共享逻辑在 `packaging/Debug-RwjsLocal.ps1`；默认游戏目录 `D:\RWJS`，可用 `-GameRoot` 覆盖。
+
 仓库跟踪的发布脚本在构建后收集产物并生成 Gitee 分卷：
 
 ```powershell
