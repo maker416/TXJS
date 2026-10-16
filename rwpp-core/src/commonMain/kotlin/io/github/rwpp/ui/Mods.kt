@@ -306,7 +306,8 @@ fun ModsView(
     var modDropOverlayActive by remember { mutableStateOf(false) }
     var modDropPointerInRoot by remember { mutableStateOf(Offset.Unspecified) }
     val appContext = koinInject<AppContext>()
-    val canAcceptModFileDrop = appContext.isDesktop() &&
+    val canAcceptModFileDrop = LocalDialogInteractive.current &&
+        appContext.isDesktop() &&
         !isReloading &&
         importProgress == null
 
@@ -455,13 +456,23 @@ fun ModsView(
         updated = !updated
     }
 
-    fun importModFile(file: File) {
+    fun importModFile(file: File, ignoredRwmods: Int = 0) {
         if (isReloading || importProgress?.stage == ModImportStage.Importing) return
+
+        // 全局提示只有一个槽位，忽略数量必须随本次导入的最终结果一起显示。
+        fun showImportResult(message: String) {
+            val notice = if (ignoredRwmods > 0) {
+                message + "\n\n" + readI18n("mod.dropExtraRwmodIgnored", I18nType.RWPP, ignoredRwmods.toString())
+            } else {
+                message
+            }
+            UI.showWarning(notice)
+        }
 
         scope.launch {
             if (!file.extension.equals("rwmod", ignoreCase = true)) {
                 importProgress = null
-                UI.showWarning(readI18n("mod.loadInfo"))
+                showImportResult(readI18n("mod.loadInfo"))
                 return@launch
             }
 
@@ -474,7 +485,7 @@ fun ModsView(
             if (target.exists()) {
                 revealExistingMod(target)
                 importProgress = null
-                UI.showWarning(readI18n("mod.importAlreadyExists", I18nType.RWPP, file.name))
+                showImportResult(readI18n("mod.importAlreadyExists", I18nType.RWPP, file.name))
                 return@launch
             }
 
@@ -509,15 +520,15 @@ fun ModsView(
                     mods.add(UnloadedMod(target))
                     updated = !updated
                 }
-                UI.showWarning(readI18n("mod.importSuccess", I18nType.RWPP, file.name))
+                showImportResult(readI18n("mod.importSuccess", I18nType.RWPP, file.name))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: FileAlreadyExistsException) {
                 // 预检查与复制之间存在竞态（复制期间目标被其他流程创建），按重复导入处理。
                 revealExistingMod(target)
-                UI.showWarning(readI18n("mod.importAlreadyExists", I18nType.RWPP, file.name))
+                showImportResult(readI18n("mod.importAlreadyExists", I18nType.RWPP, file.name))
             } catch (e: Throwable) {
-                UI.showWarning(e.message ?: "Unknown error")
+                showImportResult(e.message ?: "Unknown error")
             } finally {
                 importProgress = null
             }
@@ -1475,15 +1486,8 @@ fun ModsView(
                     onDragPointerInRoot = { modDropPointerInRoot = it },
                     onFilesDropped = { files ->
                         val selection = analyzeRwmodFileDrop(files)
-                        selection.importCandidate?.let { importModFile(it) }
-                        if (selection.rwmodCount > 1) {
-                            UI.showWarning(
-                                readI18n(
-                                    "mod.dropExtraRwmodIgnored",
-                                    I18nType.RWPP,
-                                    (selection.rwmodCount - 1).toString(),
-                                )
-                            )
+                        selection.importCandidate?.let {
+                            importModFile(it, ignoredRwmods = (selection.rwmodCount - 1).coerceAtLeast(0))
                         }
                     },
                 )

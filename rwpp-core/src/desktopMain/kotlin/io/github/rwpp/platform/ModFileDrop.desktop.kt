@@ -10,8 +10,12 @@
 package io.github.rwpp.platform
 
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draganddrop.DragAndDropEvent
@@ -31,14 +35,28 @@ actual fun Modifier.modFileDropTarget(
     onDragPointerInRoot: (Offset) -> Unit,
     onFilesDropped: (List<File>) -> Unit,
 ): Modifier {
-    if (!enabled) return this
     return composed {
+        val accepting = rememberUpdatedState(enabled)
         val started = rememberUpdatedState(onDragStarted)
         val ended = rememberUpdatedState(onDragEnded)
         val pointer = rememberUpdatedState(onDragPointerInRoot)
         val dropped = rememberUpdatedState(onFilesDropped)
+        var dragActive by remember { mutableStateOf(false) }
+
+        fun endDrag() {
+            if (dragActive) {
+                dragActive = false
+                ended.value()
+            }
+        }
+
+        // 原生拖放不经过 pointerInput；禁用或移除目标时必须主动结束会话。
+        DisposableEffect(enabled) {
+            onDispose { endDrag() }
+        }
 
         fun emitPointer(event: DragAndDropEvent) {
+            if (!accepting.value || !dragActive) return
             val pos = dragEventPositionInRoot(event)
             if (pos != null) {
                 pointer.value(pos)
@@ -48,6 +66,8 @@ actual fun Modifier.modFileDropTarget(
         val target = remember {
             object : DragAndDropTarget {
                 override fun onStarted(event: DragAndDropEvent) {
+                    if (!accepting.value) return
+                    dragActive = true
                     started.value()
                     emitPointer(event)
                 }
@@ -61,22 +81,27 @@ actual fun Modifier.modFileDropTarget(
                 }
 
                 override fun onEnded(event: DragAndDropEvent) {
-                    ended.value()
+                    endDrag()
                 }
 
                 override fun onDrop(event: DragAndDropEvent): Boolean {
-                    val files = readDroppedFiles(event.awtTransferable)
-                    if (files.isNotEmpty()) {
-                        dropped.value(files)
+                    // 会话开始后页面仍可能退出/被覆盖，迟到的 drop 不能导入文件。
+                    if (!accepting.value || !dragActive) return false
+                    try {
+                        val files = readDroppedFiles(event.awtTransferable)
+                        if (files.isNotEmpty()) {
+                            dropped.value(files)
+                        }
+                        return files.isNotEmpty()
+                    } finally {
+                        endDrag()
                     }
-                    ended.value()
-                    return files.isNotEmpty()
                 }
             }
         }
         dragAndDropTarget(
             shouldStartDragAndDrop = { event ->
-                event.awtTransferable.isDataFlavorSupported(DataFlavor.javaFileListFlavor)
+                accepting.value && event.awtTransferable.isDataFlavorSupported(DataFlavor.javaFileListFlavor)
             },
             target = target,
         )
