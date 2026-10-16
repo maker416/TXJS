@@ -408,6 +408,7 @@ class BundleParseTest {
                 "sampling",
                 "javaHeap",
                 "processResident",
+                "totalPhysical",
                 "nativeHeap",
                 "unavailable",
                 "headroom",

@@ -22,6 +22,7 @@ class MemoryUsagePlatformTest {
         if (os.startsWith("windows") || os.startsWith("linux") || os.startsWith("mac")) {
             // Exercises the native ABI / proc parser rather than just testing a fake sample.
             assertTrue(assertNotNull(usage.processResidentBytes) > 0)
+            assertTrue(assertNotNull(usage.totalPhysicalBytes) > 0)
         }
     }
 }

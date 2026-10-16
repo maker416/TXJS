@@ -69,7 +69,7 @@ private val memoryUsageSamples = flow<MemoryUsage?> {
 )
 
 /**
- * 展示当前 Java 堆配额与进程实际驻留内存。采样状态只在本组件内读取，
+ * 展示当前 Java 堆配额、应用实际驻留内存与设备总物理内存。采样状态只在本组件内读取，
  * 每秒刷新不会使整个模组列表或加载视图重组，也不触碰引擎线程或主动触发 GC。
  */
 @Composable
@@ -171,6 +171,15 @@ internal fun MemoryUsageContent(
                 // 不限制行数：窄屏允许自然换行，不能截断内存数值或上限。
                 Text(
                     text = if (compact && nativeUsage != null) "$physicalUsage · $nativeUsage" else physicalUsage,
+                    modifier = Modifier.fillMaxWidth(),
+                    color = secondaryColor,
+                    style = numberStyle,
+                )
+                Text(
+                    text = readI18n(
+                        "memory.totalPhysical", I18nType.RWPP,
+                        sample.totalPhysicalBytes?.let(::formatMemoryBytes) ?: readI18n("memory.unavailable"),
+                    ),
                     modifier = Modifier.fillMaxWidth(),
                     color = secondaryColor,
                     style = numberStyle,

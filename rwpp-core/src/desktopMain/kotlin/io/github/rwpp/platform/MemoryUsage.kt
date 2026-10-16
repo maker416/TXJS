@@ -13,9 +13,11 @@ import com.sun.jna.Native
 import com.sun.jna.Platform
 import com.sun.jna.Pointer
 import com.sun.jna.win32.StdCallLibrary
+import com.sun.management.OperatingSystemMXBean
 import io.github.rwpp.core.MemoryUsage
 import io.github.rwpp.core.parseProcStatusResidentBytes
 import java.io.File
+import java.lang.management.ManagementFactory
 
 actual fun readMemoryUsage(): MemoryUsage {
     val runtime = Runtime.getRuntime()
@@ -24,7 +26,17 @@ actual fun readMemoryUsage(): MemoryUsage {
         heapUsedBytes = heapUsed,
         heapMaxBytes = runtime.maxMemory().coerceAtLeast(0),
         processResidentBytes = readResidentBytes(),
+        totalPhysicalBytes = readTotalPhysicalBytes(),
     )
+}
+
+private fun readTotalPhysicalBytes(): Long? = try {
+    (ManagementFactory.getOperatingSystemMXBean() as? OperatingSystemMXBean)
+        ?.totalMemorySize?.takeIf { it > 0 }
+} catch (_: Exception) {
+    null
+} catch (_: LinkageError) {
+    null
 }
 
 private fun readResidentBytes(): Long? = try {

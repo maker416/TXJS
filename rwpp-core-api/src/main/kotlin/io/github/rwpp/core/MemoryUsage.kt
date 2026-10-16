@@ -15,12 +15,15 @@ package io.github.rwpp.core
  * and native memory and shared pages. It must not be added to the heap figures.
  * [nativeHeapBytes] counts native heap allocations where the platform exposes them;
  * it is not all non-Java memory (for example, it does not account for all GPU memory).
+ * [totalPhysicalBytes] is system-visible device RAM, excluding swap / memory expansion;
+ * it is not the amount available to this application or its Java heap ceiling.
  */
 data class MemoryUsage(
     val heapUsedBytes: Long,
     val heapMaxBytes: Long,
     val processResidentBytes: Long? = null,
     val nativeHeapBytes: Long? = null,
+    val totalPhysicalBytes: Long? = null,
 ) {
     val heapUsageFraction: Float
         get() = if (heapMaxBytes > 0) {

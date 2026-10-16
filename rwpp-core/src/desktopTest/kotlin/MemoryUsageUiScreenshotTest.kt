@@ -73,6 +73,7 @@ class MemoryUsageUiScreenshotTest {
         heapMaxBytes = 512L * MiB,
         processResidentBytes = 1024L * MiB,
         nativeHeapBytes = 500L * MiB,
+        totalPhysicalBytes = 8192L * MiB,
     )
     private val critical = elevated.copy(heapUsedBytes = 470L * MiB)
 
@@ -105,7 +106,8 @@ class MemoryUsageUiScreenshotTest {
             waitForIdle()
             assertTextFits("420.0 MiB")
             assertTextFits("512.0 MiB")
-            assertTextFits("进程物理内存（RSS）：1.0 GiB")
+            assertTextFits("应用总内存占用（RSS）：1.0 GiB")
+            assertTextFits("设备总物理内存：8.0 GiB")
             assertTextFits("原生堆：500.0 MiB")
             assertTextFits(readI18n("memory.explanation"))
             assertTextFits(readI18n("memory.elevated"))
@@ -166,7 +168,8 @@ class MemoryUsageUiScreenshotTest {
             waitForIdle()
             assertTextFits("420.0 MiB")
             assertTextFits("512.0 MiB")
-            assertTextFits("进程物理内存（RSS）：1.0 GiB")
+            assertTextFits("应用总内存占用（RSS）：1.0 GiB")
+            assertTextFits("设备总物理内存：8.0 GiB")
             assertTextFits(readI18n("memory.elevated"))
             val panel = onNodeWithTag("memory-panel").fetchSemanticsNode().boundsInRoot
             assertTrue(panel.top >= 0f && panel.bottom <= 360f, "startup memory panel clipped: $panel")
@@ -197,7 +200,8 @@ class MemoryUsageUiScreenshotTest {
             waitForIdle()
             assertTextFits("470.0 MiB")
             assertTextFits("512.0 MiB")
-            assertTextFits("进程物理内存（RSS）：1.0 GiB")
+            assertTextFits("应用总内存占用（RSS）：1.0 GiB")
+            assertTextFits("设备总物理内存：8.0 GiB")
             assertTextFits(readI18n("memory.critical"))
             save("memory_loading_narrow_critical.png")
         }

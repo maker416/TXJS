@@ -97,6 +97,8 @@ compose.desktop {
 
             // Gson 的 SQL 类型探测需要真实 JDK 模块，避免从游戏 Android 占位库加载 java.sql。
             modules("jdk.unsupported", "java.sql")
+            // 内存面板通过 OperatingSystemMXBean 读取设备总物理内存。
+            modules("jdk.management")
 
             packageName = "RWJS"
             packageVersion = rootProject.version.toString()
