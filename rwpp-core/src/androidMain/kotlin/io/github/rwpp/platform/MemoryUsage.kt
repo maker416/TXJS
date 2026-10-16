@@ -7,9 +7,10 @@
 
 package io.github.rwpp.platform
 
+import android.app.ActivityManager
+import android.content.Context
 import android.os.Debug
-import android.system.Os
-import android.system.OsConstants
+import io.github.rwpp.appKoin
 import io.github.rwpp.core.MemoryUsage
 import io.github.rwpp.core.parseProcStatusResidentBytes
 import java.io.File
@@ -18,20 +19,21 @@ import java.io.IOException
 actual fun readMemoryUsage(): MemoryUsage {
     val runtime = Runtime.getRuntime()
     val heapUsed = (runtime.totalMemory() - runtime.freeMemory()).coerceAtLeast(0)
+    val physical = readPhysicalMemoryInfo()
     return MemoryUsage(
         heapUsedBytes = heapUsed,
         heapMaxBytes = runtime.maxMemory().coerceAtLeast(0),
         processResidentBytes = readResidentBytes(),
         nativeHeapBytes = Debug.getNativeHeapAllocatedSize().coerceAtLeast(0),
-        totalPhysicalBytes = readTotalPhysicalBytes(),
+        totalPhysicalBytes = physical?.totalMem?.takeIf { it > 0 },
+        availablePhysicalBytes = physical?.availMem?.takeIf { it >= 0 },
     )
 }
 
-private fun readTotalPhysicalBytes(): Long? = try {
-    // 系统可见的物理页总数，不含 swap；不依赖 Activity，启动加载时也能采样。
-    val pages = Os.sysconf(OsConstants._SC_PHYS_PAGES)
-    val pageSize = Os.sysconf(OsConstants._SC_PAGESIZE)
-    if (pages > 0 && pageSize > 0 && pages <= Long.MAX_VALUE / pageSize) pages * pageSize else null
+private fun readPhysicalMemoryInfo(): ActivityManager.MemoryInfo? = try {
+    // 一次查询同时取得总量和可用量；包含系统可回收内存，不用 MemFree 夸大占用。
+    val manager = appKoin.get<Context>().getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+    manager?.let { ActivityManager.MemoryInfo().also(it::getMemoryInfo) }
 } catch (_: Exception) {
     null
 }

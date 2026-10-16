@@ -23,6 +23,8 @@ class MemoryUsagePlatformTest {
             // Exercises the native ABI / proc parser rather than just testing a fake sample.
             assertTrue(assertNotNull(usage.processResidentBytes) > 0)
             assertTrue(assertNotNull(usage.totalPhysicalBytes) > 0)
+            assertTrue(assertNotNull(usage.availablePhysicalBytes) in 0..usage.totalPhysicalBytes!!)
+            assertTrue(assertNotNull(usage.physicalUsageFraction) in 0f..1f)
         }
     }
 }

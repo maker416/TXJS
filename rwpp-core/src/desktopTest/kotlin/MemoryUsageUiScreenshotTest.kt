@@ -34,9 +34,11 @@ import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertRangeInfoEquals
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -74,6 +76,7 @@ class MemoryUsageUiScreenshotTest {
         processResidentBytes = 1024L * MiB,
         nativeHeapBytes = 500L * MiB,
         totalPhysicalBytes = 8192L * MiB,
+        availablePhysicalBytes = 2048L * MiB,
     )
     private val critical = elevated.copy(heapUsedBytes = 470L * MiB)
 
@@ -107,7 +110,7 @@ class MemoryUsageUiScreenshotTest {
             assertTextFits("420.0 MiB")
             assertTextFits("512.0 MiB")
             assertTextFits("应用总内存占用（RSS）：1.0 GiB")
-            assertTextFits("设备总物理内存：8.0 GiB")
+            assertPhysicalMemoryFits()
             assertTextFits("原生堆：500.0 MiB")
             assertTextFits(readI18n("memory.explanation"))
             assertTextFits(readI18n("memory.elevated"))
@@ -169,7 +172,7 @@ class MemoryUsageUiScreenshotTest {
             assertTextFits("420.0 MiB")
             assertTextFits("512.0 MiB")
             assertTextFits("应用总内存占用（RSS）：1.0 GiB")
-            assertTextFits("设备总物理内存：8.0 GiB")
+            assertPhysicalMemoryFits()
             assertTextFits(readI18n("memory.elevated"))
             val panel = onNodeWithTag("memory-panel").fetchSemanticsNode().boundsInRoot
             assertTrue(panel.top >= 0f && panel.bottom <= 360f, "startup memory panel clipped: $panel")
@@ -201,10 +204,16 @@ class MemoryUsageUiScreenshotTest {
             assertTextFits("470.0 MiB")
             assertTextFits("512.0 MiB")
             assertTextFits("应用总内存占用（RSS）：1.0 GiB")
-            assertTextFits("设备总物理内存：8.0 GiB")
+            assertPhysicalMemoryFits()
             assertTextFits(readI18n("memory.critical"))
             save("memory_loading_narrow_critical.png")
         }
+
+    private fun ComposeUiTest.assertPhysicalMemoryFits() {
+        assertTextFits("物理内存：已用 6.0 GiB / 剩余 2.0 GiB / 总计 8.0 GiB")
+        onNodeWithTag("memory-physical-progress").assertIsDisplayed()
+            .assertRangeInfoEquals(ProgressBarRangeInfo(0.75f, 0f..1f))
+    }
 
     private fun ComposeUiTest.assertTextFits(text: String) {
         val node = onNodeWithText(text, substring = true, useUnmergedTree = true).assertIsDisplayed()

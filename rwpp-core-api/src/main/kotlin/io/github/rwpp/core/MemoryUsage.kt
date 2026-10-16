@@ -17,6 +17,8 @@ package io.github.rwpp.core
  * it is not all non-Java memory (for example, it does not account for all GPU memory).
  * [totalPhysicalBytes] is system-visible device RAM, excluding swap / memory expansion;
  * it is not the amount available to this application or its Java heap ceiling.
+ * [availablePhysicalBytes] is RAM the OS reports as available, including reclaimable
+ * memory where supported. Used physical memory is total minus available, not app RSS.
  */
 data class MemoryUsage(
     val heapUsedBytes: Long,
@@ -24,7 +26,21 @@ data class MemoryUsage(
     val processResidentBytes: Long? = null,
     val nativeHeapBytes: Long? = null,
     val totalPhysicalBytes: Long? = null,
+    val availablePhysicalBytes: Long? = null,
 ) {
+    val physicalUsedBytes: Long?
+        get() {
+            val total = totalPhysicalBytes?.takeIf { it > 0 } ?: return null
+            val available = availablePhysicalBytes?.takeIf { it in 0..total } ?: return null
+            return total - available
+        }
+
+    val physicalUsageFraction: Float?
+        get() {
+            val total = totalPhysicalBytes?.takeIf { it > 0 } ?: return null
+            return physicalUsedBytes?.let { (it.toDouble() / total).toFloat() }
+        }
+
     val heapUsageFraction: Float
         get() = if (heapMaxBytes > 0) {
             (heapUsedBytes.coerceAtLeast(0).toDouble() / heapMaxBytes)

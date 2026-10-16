@@ -26,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.core.MemoryUsage
@@ -162,6 +163,29 @@ internal fun MemoryUsageContent(
                     trackColor = contentColor.copy(alpha = 0.12f),
                 )
 
+                val physicalFraction = sample.physicalUsageFraction
+                Text(
+                    text = readI18n(
+                        "memory.physicalUsage", I18nType.RWPP,
+                        sample.physicalUsedBytes?.let(::formatMemoryBytes) ?: readI18n("memory.unavailable"),
+                        sample.availablePhysicalBytes?.takeIf { physicalFraction != null }
+                            ?.let(::formatMemoryBytes) ?: readI18n("memory.unavailable"),
+                        sample.totalPhysicalBytes?.let(::formatMemoryBytes) ?: readI18n("memory.unavailable"),
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    color = contentColor,
+                    style = numberStyle,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                if (physicalFraction != null) {
+                    LinearProgressIndicator(
+                        progress = { physicalFraction },
+                        modifier = Modifier.fillMaxWidth().height(3.dp).testTag("memory-physical-progress"),
+                        color = if (darkBackground) Color(0xFFA7D989) else scheme.primary,
+                        trackColor = contentColor.copy(alpha = 0.12f),
+                    )
+                }
+
                 val resident = sample.processResidentBytes?.let(::formatMemoryBytes)
                     ?: readI18n("memory.unavailable")
                 val physicalUsage = readI18n("memory.processResident", I18nType.RWPP, resident)
@@ -171,15 +195,6 @@ internal fun MemoryUsageContent(
                 // 不限制行数：窄屏允许自然换行，不能截断内存数值或上限。
                 Text(
                     text = if (compact && nativeUsage != null) "$physicalUsage · $nativeUsage" else physicalUsage,
-                    modifier = Modifier.fillMaxWidth(),
-                    color = secondaryColor,
-                    style = numberStyle,
-                )
-                Text(
-                    text = readI18n(
-                        "memory.totalPhysical", I18nType.RWPP,
-                        sample.totalPhysicalBytes?.let(::formatMemoryBytes) ?: readI18n("memory.unavailable"),
-                    ),
                     modifier = Modifier.fillMaxWidth(),
                     color = secondaryColor,
                     style = numberStyle,

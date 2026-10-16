@@ -22,17 +22,19 @@ import java.lang.management.ManagementFactory
 actual fun readMemoryUsage(): MemoryUsage {
     val runtime = Runtime.getRuntime()
     val heapUsed = (runtime.totalMemory() - runtime.freeMemory()).coerceAtLeast(0)
+    val physical = readPhysicalMemory()
     return MemoryUsage(
         heapUsedBytes = heapUsed,
         heapMaxBytes = runtime.maxMemory().coerceAtLeast(0),
         processResidentBytes = readResidentBytes(),
-        totalPhysicalBytes = readTotalPhysicalBytes(),
+        totalPhysicalBytes = physical?.first?.takeIf { it > 0 },
+        availablePhysicalBytes = physical?.second?.takeIf { it >= 0 },
     )
 }
 
-private fun readTotalPhysicalBytes(): Long? = try {
+private fun readPhysicalMemory(): Pair<Long, Long>? = try {
     (ManagementFactory.getOperatingSystemMXBean() as? OperatingSystemMXBean)
-        ?.totalMemorySize?.takeIf { it > 0 }
+        ?.let { it.totalMemorySize to it.freeMemorySize }
 } catch (_: Exception) {
     null
 } catch (_: LinkageError) {

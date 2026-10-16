@@ -13,6 +13,31 @@ import kotlin.test.assertNull
 
 class MemoryUsageTest {
     @Test
+    fun physicalMemoryUsesDeviceAvailableMemoryRatherThanAppRss() {
+        val usage = MemoryUsage(384, 512, processResidentBytes = 100, totalPhysicalBytes = 8000,
+            availablePhysicalBytes = 2000)
+        assertEquals(6000L, usage.physicalUsedBytes)
+        assertEquals(0.75f, usage.physicalUsageFraction)
+        assertEquals(0f, usage.copy(availablePhysicalBytes = 8000).physicalUsageFraction)
+        assertEquals(1f, usage.copy(availablePhysicalBytes = 0).physicalUsageFraction)
+        assertEquals(Long.MAX_VALUE, usage.copy(totalPhysicalBytes = Long.MAX_VALUE,
+            availablePhysicalBytes = 0).physicalUsedBytes)
+    }
+
+    @Test
+    fun missingOrInvalidPhysicalMemoryCannotShowAFakeEmptyBar() {
+        val usage = MemoryUsage(384, 512, totalPhysicalBytes = 8000, availablePhysicalBytes = 2000)
+        for (invalid in listOf(
+            usage.copy(totalPhysicalBytes = null), usage.copy(totalPhysicalBytes = 0),
+            usage.copy(totalPhysicalBytes = -1), usage.copy(availablePhysicalBytes = null),
+            usage.copy(availablePhysicalBytes = -1), usage.copy(availablePhysicalBytes = 8001),
+        )) {
+            assertNull(invalid.physicalUsedBytes)
+            assertNull(invalid.physicalUsageFraction)
+        }
+    }
+
+    @Test
     fun headroomUsesRuntimeCeilingInsteadOfCommittedHeap() {
         val usage = MemoryUsage(heapUsedBytes = 384, heapMaxBytes = 512)
         assertEquals(0.75f, usage.heapUsageFraction)
