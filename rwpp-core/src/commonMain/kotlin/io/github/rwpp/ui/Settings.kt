@@ -333,21 +333,6 @@ fun SettingsView(
 
                                     "developer" -> SettingsGroup("developer") {
                                         SettingsSwitchComp("showFps")
-                                        if (appContext.isDesktop()) {
-                                            val configIO = koinInject<ConfigIO>()
-                                            AccountDialogDebugState.ensureLoaded(configIO)
-                                            SettingsSwitchComp(
-                                                name = ACCOUNT_DIALOG_DEBUG_CONFIG_KEY,
-                                                labelName = readI18n(
-                                                    "settings.accountDialogDebugHud",
-                                                    I18nType.RWPP,
-                                                ),
-                                                defaultValue = AccountDialogDebugState.hudEnabled,
-                                                customConfigSettingAction = { enabled ->
-                                                    setAccountDialogDebugHudEnabled(configIO, enabled)
-                                                },
-                                            )
-                                        }
                                     }
 
                                     "networking" -> SettingsGroup("networking") {

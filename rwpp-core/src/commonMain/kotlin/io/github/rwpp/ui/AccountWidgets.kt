@@ -10,8 +10,6 @@ package io.github.rwpp.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,9 +40,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,8 +49,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
@@ -73,6 +67,7 @@ import io.github.rwpp.widget.BorderCard
 import org.koin.compose.koinInject
 import io.github.rwpp.widget.GeneralProportion
 import io.github.rwpp.widget.LargeProportion
+import io.github.rwpp.widget.LocalAccountAuthDialogEscape
 import io.github.rwpp.widget.WindowManager
 import io.github.rwpp.widget.autoClearFocus
 
@@ -333,14 +328,6 @@ internal fun AccountPrimaryButton(
     leadingIcon: (@Composable () -> Unit)? = null,
 ) {
     val appContext = koinInject<AppContext>()
-    val debugHud = rememberAccountDialogDebugEnabled()
-    val interactionSource = remember { MutableInteractionSource() }
-    val primaryHovered by interactionSource.collectIsHoveredAsState()
-    LaunchedEffect(primaryHovered, debugHud) {
-        if (debugHud) {
-            AccountDialogDebugMetrics.primaryButtonHovered = primaryHovered
-        }
-    }
     val shape = RoundedCornerShape(14.dp)
     val containerColor = if (enabled) {
         MaterialTheme.colorScheme.primary
@@ -382,7 +369,7 @@ internal fun AccountPrimaryButton(
                 .then(
                     if (enabled) {
                         Modifier.clickable(
-                            interactionSource = interactionSource,
+                            interactionSource = null,
                             indication = null,
                             onClick = onClick,
                         )
@@ -396,7 +383,6 @@ internal fun AccountPrimaryButton(
     } else {
         Surface(
             onClick = onClick,
-            interactionSource = interactionSource,
             modifier = modifier,
             enabled = enabled,
             shape = shape,
@@ -573,39 +559,30 @@ internal fun AccountAuthCard(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val appContext = koinInject<AppContext>()
-    val debugHud = rememberAccountDialogDebugEnabled()
-    AccountDialogDebugMetrics.desktopSkipsImePadding = appContext.isDesktop()
     val isSmall = LocalWindowManager.current == WindowManager.Small
-    BorderCard(
-        modifier = accountDialogCardModifier()
-            .onGloballyPositioned { coordinates ->
-                if (debugHud) {
-                    AccountDialogDebugMetrics.updateCardLayout(
-                        coordinates.positionInRoot().y,
-                        coordinates.size.height.toFloat(),
-                    )
-                }
-            },
-        backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-    ) {
-        val scrollModifier = if (scrollable) {
-            Modifier.verticalScroll(rememberScrollState())
-        } else {
-            Modifier
-        }
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(scrollModifier)
-                .then(if (appContext.isDesktop()) Modifier else Modifier.autoClearFocus())
-                .padding(
-                    horizontal = if (isSmall) 14.dp else 18.dp,
-                    vertical = if (isSmall) 12.dp else 16.dp,
-                ),
-            verticalArrangement = Arrangement.spacedBy(if (isSmall) 10.dp else 12.dp),
+    CompositionLocalProvider(LocalAccountAuthDialogEscape provides appContext.isDesktop()) {
+        BorderCard(
+            modifier = accountDialogCardModifier(),
+            backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
         ) {
-            AccountDialogDebugHud()
-            content()
+            val scrollModifier = if (scrollable) {
+                Modifier.verticalScroll(rememberScrollState())
+            } else {
+                Modifier
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(scrollModifier)
+                    .then(if (appContext.isDesktop()) Modifier else Modifier.autoClearFocus())
+                    .padding(
+                        horizontal = if (isSmall) 14.dp else 18.dp,
+                        vertical = if (isSmall) 12.dp else 16.dp,
+                    ),
+                verticalArrangement = Arrangement.spacedBy(if (isSmall) 10.dp else 12.dp),
+            ) {
+                content()
+            }
         }
     }
 }

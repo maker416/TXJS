@@ -53,6 +53,9 @@ import io.github.rwpp.widget.v2.bounceClick
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
+/** When true inside [io.github.rwpp.ui.AccountAuthCard], desktop text fields forward Esc to BackDispatcher. */
+internal val LocalAccountAuthDialogEscape = staticCompositionLocalOf { false }
+
 @Composable
 fun BorderCard(
     modifier: Modifier = Modifier,
@@ -251,10 +254,10 @@ fun RWSingleOutlinedTextField(
     focusRequester: FocusRequester? = null,
     visualTransformation: VisualTransformation = VisualTransformation.None,
     onFocusChanged: (FocusState) -> Unit = {},
-    broadcastEscapeOnDesktop: Boolean = false,
     onValueChange: (String) -> Unit
 ) {
     val appContext = koinInject<AppContext>()
+    val forwardEscapeOnDesktop = appContext.isDesktop() && LocalAccountAuthDialogEscape.current
     val escapeScope = rememberCoroutineScope()
     fun filterInput(raw: String): String =
         (if (raw.length <= lengthLimitCount
@@ -280,7 +283,7 @@ fun RWSingleOutlinedTextField(
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .onFocusChanged(onFocusChanged)
             .then(
-                if (appContext.isDesktop() && broadcastEscapeOnDesktop) {
+                if (forwardEscapeOnDesktop) {
                     Modifier.desktopEscapeToBackDispatcher(escapeScope)
                 } else {
                     Modifier
