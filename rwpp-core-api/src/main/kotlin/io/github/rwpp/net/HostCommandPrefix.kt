@@ -71,11 +71,22 @@ enum class HostCommandPrefix {
     T,
 }
 
-/** 测试用：R/Q 开房不在客户端弹「清空模组」、不本地 disableAllMods，只发 quick host 指令。 */
-fun quickHostSkipsClientVanillaModClear(prefix: HostCommandPrefix): Boolean =
-    prefix == HostCommandPrefix.Q || prefix == HostCommandPrefix.R
+/** `Q77182` / `R123` 等加入用短码，不是 UI 快速建房指令。 */
+fun isRoomJoinShortCode(address: String): Boolean =
+    roomCodeRegex.matchEntire(address.trim()) != null
 
-fun quickHostAddressSkipsClientVanillaModClear(address: String): Boolean {
-    val trimmed = address.trim()
-    return trimmed.startsWith("Q", ignoreCase = true) || trimmed.startsWith("R", ignoreCase = true)
-}
+/**
+ * Quick-host 原版房：不在客户端弹「清空模组」、不调用本地 disableAllMods，只发建房指令，由中继/引擎按原版处理。
+ *
+ * - **Q / R**：正式策略。
+ * - **T**：鱼雷可侧尚未完整手测 T 房开房链路，仍保留清模组；若验证后与 Q/R 一致，可在此对 [HostCommandPrefix.T] 返回 `true` 三前缀统一。
+ */
+fun quickHostSkipsClientVanillaModClear(prefix: HostCommandPrefix): Boolean =
+    when (prefix) {
+        HostCommandPrefix.Q, HostCommandPrefix.R -> true
+        HostCommandPrefix.T -> false
+    }
+
+/** 根据 [parseQuickHostCommandPrefix] 判断，避免把 `Q77182` 等加入短码误判为 quick-host。 */
+fun quickHostAddressSkipsClientVanillaModClear(address: String): Boolean =
+    parseQuickHostCommandPrefix(address)?.let(::quickHostSkipsClientVanillaModClear) == true
