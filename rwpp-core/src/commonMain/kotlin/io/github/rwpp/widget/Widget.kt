@@ -25,11 +25,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.FocusState
 import androidx.compose.ui.focus.focusRequester
@@ -53,8 +48,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.AppContext
 import io.github.rwpp.config.Settings
-import io.github.rwpp.event.broadcast
-import io.github.rwpp.event.events.KeyboardEvent
 import io.github.rwpp.ui.UI
 import io.github.rwpp.widget.v2.bounceClick
 import kotlinx.coroutines.launch
@@ -288,14 +281,7 @@ fun RWSingleOutlinedTextField(
             .onFocusChanged(onFocusChanged)
             .then(
                 if (appContext.isDesktop() && broadcastEscapeOnDesktop) {
-                    Modifier.onPreviewKeyEvent { event ->
-                        if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
-                            escapeScope.launch { KeyboardEvent(0x1B).broadcast() }
-                            true
-                        } else {
-                            false
-                        }
-                    }
+                    Modifier.desktopEscapeToBackDispatcher(escapeScope)
                 } else {
                     Modifier
                 },

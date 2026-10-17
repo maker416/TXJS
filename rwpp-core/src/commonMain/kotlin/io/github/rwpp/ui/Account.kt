@@ -65,6 +65,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.rwpp.AppContext
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
@@ -92,7 +93,9 @@ import io.github.rwpp.widget.ExitButton
 import io.github.rwpp.widget.RWSingleOutlinedTextField
 import io.github.rwpp.widget.WindowManager
 import io.github.rwpp.widget.autoClearFocus
+import io.github.rwpp.widget.desktopEscapeToBackDispatcher
 import io.github.rwpp.widget.v2.ExpandedCard
+import org.koin.compose.koinInject
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.painterResource
@@ -158,15 +161,31 @@ fun AccountView(onExit: () -> Unit) {
     val pageBackground = MaterialTheme.colorScheme.background.copy(
         alpha = (UI.backgroundTransparency + 0.2f).coerceAtLeast(0.88f),
     )
+    val appContext = koinInject<AppContext>()
+    val accountModalOpen = showNicknameDialog || showAvatarDialog || showChangeEmail ||
+        showLogoutConfirm || authKind != null
     val pageFocusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         pageFocusRequester.requestFocus()
+    }
+    // 弹窗内输入框 Esc 关闭后焦点常留在已卸载节点，桌面第二次 Esc 无法回到 BackHandler。
+    LaunchedEffect(accountModalOpen) {
+        if (appContext.isDesktop() && !accountModalOpen) {
+            pageFocusRequester.requestFocus()
+        }
     }
     Box(
         Modifier
             .fillMaxSize()
             .focusRequester(pageFocusRequester)
-            .focusable(),
+            .focusable()
+            .then(
+                if (appContext.isDesktop()) {
+                    Modifier.desktopEscapeToBackDispatcher(scope)
+                } else {
+                    Modifier
+                },
+            ),
     ) {
     ExpandedCard(
         modifier = Modifier.verticalScroll(rememberScrollState()).autoClearFocus(),

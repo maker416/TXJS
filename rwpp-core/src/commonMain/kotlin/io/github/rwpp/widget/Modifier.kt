@@ -19,6 +19,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import io.github.rwpp.event.broadcast
 import io.github.rwpp.event.events.KeyboardEvent
@@ -26,6 +27,16 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 /** UI 回调不能同步等事件订阅者：订阅者可能需要回到同一条 Main/EDT 线程。 */
+/** 桌面：Esc 转成 [KeyboardEvent]，供 BackHandler 分发（局部焦点不会冒泡到根布局）。 */
+internal fun Modifier.desktopEscapeToBackDispatcher(scope: CoroutineScope): Modifier = onPreviewKeyEvent { event ->
+    if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+        scope.launch { KeyboardEvent(0x1B).broadcast() }
+        true
+    } else {
+        false
+    }
+}
+
 internal fun Modifier.launcherKeyboardEvents(scope: CoroutineScope): Modifier = onKeyEvent { event ->
     if (event.type == KeyEventType.KeyDown) {
         scope.launch { KeyboardEvent(event.key.keyCode.toInt()).broadcast() }

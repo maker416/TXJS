@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -90,6 +91,7 @@ fun AnimatedTransitionDialog(
     val enableAnimations = koinInject<Settings>().enableAnimations
     val currentOnDismissRequest by rememberUpdatedState(onDismissRequest)
     val currentEnableDismiss by rememberUpdatedState(enableDismiss)
+    val focusManager = LocalFocusManager.current
 
     val helper = remember {
         AnimatedTransitionDialogHelper {
@@ -98,6 +100,12 @@ fun AnimatedTransitionDialog(
                 visibility.targetState = false
             }
         }
+    }
+    fun dismissAnimatedDialog() {
+        if (appContext.isDesktop()) {
+            focusManager.clearFocus()
+        }
+        helper.triggerAnimatedDismiss()
     }
     // 等动画真正结束再移除 Dialog；重复关闭不会重置计时，快速关闭也不会被延迟入场重新打开。
     LaunchedEffect(dismissRequested, visibility.isIdle, visibility.currentState) {
@@ -108,7 +116,7 @@ fun AnimatedTransitionDialog(
     if (dismissRequested && visibility.isIdle && !visibility.currentState) return
 
     BackHandler(currentEnableDismiss && !dismissRequested) {
-        helper.triggerAnimatedDismiss()
+        dismissAnimatedDialog()
     }
 
     val dialogSurface: @Composable () -> Unit = {
@@ -161,7 +169,7 @@ fun AnimatedTransitionDialog(
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
-                            onClick = { helper.triggerAnimatedDismiss() },
+                            onClick = { dismissAnimatedDialog() },
                         ),
                 )
             } else {
