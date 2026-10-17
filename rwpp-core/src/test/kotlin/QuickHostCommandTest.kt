@@ -8,8 +8,16 @@
 import io.github.rwpp.impl.BaseNetImpl
 import io.github.rwpp.net.HostCommandPrefix
 import io.github.rwpp.net.Packet
+import io.github.rwpp.net.QuickHostRoomOptions
+import io.github.rwpp.net.buildQuickHostCommand
+import io.github.rwpp.net.parseQuickHostCommandPrefix
+import io.github.rwpp.net.quickHostAddressSkipsClientVanillaModClear
+import io.github.rwpp.net.quickHostSkipsClientVanillaModClear
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class QuickHostCommandTest {
     private val net = object : BaseNetImpl() {
@@ -31,7 +39,33 @@ class QuickHostCommandTest {
     @Test
     fun qAndRHostingKeepTheirExistingCommands() {
         assertEquals("Qnews", net.buildQuickHostCommand(false))
+        assertEquals("Rnews", net.buildQuickHostCommand(false, prefix = HostCommandPrefix.R))
         assertEquals("QCM6666P10", net.buildQuickHostCommand(true, roomId = "6666", maxPlayer = 10))
         assertEquals("RmodsP20U500", net.buildQuickHostCommand(true, maxPlayer = 20, unitLimit = 500, prefix = HostCommandPrefix.R))
+    }
+
+    @Test
+    fun parseQuickHostPrefixAndVanillaModClearPolicy() {
+        assertEquals(HostCommandPrefix.Q, parseQuickHostCommandPrefix("QnewsP20C5000"))
+        assertEquals(HostCommandPrefix.R, parseQuickHostCommandPrefix("Rmods"))
+        assertEquals(HostCommandPrefix.T, parseQuickHostCommandPrefix("t.mxy.wang/news"))
+        assertNull(parseQuickHostCommandPrefix("Q77182"))
+        assertNull(parseQuickHostCommandPrefix("not-a-host"))
+
+        assertTrue(quickHostSkipsClientVanillaModClear(HostCommandPrefix.Q))
+        assertTrue(quickHostSkipsClientVanillaModClear(HostCommandPrefix.R))
+        assertFalse(quickHostSkipsClientVanillaModClear(HostCommandPrefix.T))
+
+        assertTrue(quickHostAddressSkipsClientVanillaModClear("Qnews"))
+        assertFalse(quickHostAddressSkipsClientVanillaModClear("t.mxy.wang/news"))
+        assertFalse(quickHostAddressSkipsClientVanillaModClear("Q77182"))
+    }
+
+    @Test
+    fun buildThenParseQuickHostPrefix() {
+        HostCommandPrefix.entries.forEach { prefix ->
+            val wire = buildQuickHostCommand(QuickHostRoomOptions(prefix = prefix, enableMods = false))
+            assertEquals(prefix, parseQuickHostCommandPrefix(wire))
+        }
     }
 }
