@@ -9,6 +9,7 @@ package io.github.rwpp.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -39,9 +40,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -59,9 +62,12 @@ import io.github.rwpp.account.RelativeTime
 import io.github.rwpp.coil.AccountAvatar
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.AppContext
 import io.github.rwpp.widget.BorderCard
+import org.koin.compose.koinInject
 import io.github.rwpp.widget.GeneralProportion
 import io.github.rwpp.widget.LargeProportion
+import io.github.rwpp.widget.LocalAccountAuthDialogEscape
 import io.github.rwpp.widget.WindowManager
 import io.github.rwpp.widget.autoClearFocus
 
@@ -321,16 +327,18 @@ internal fun AccountPrimaryButton(
     enabled: Boolean = true,
     leadingIcon: (@Composable () -> Unit)? = null,
 ) {
-    Surface(
-        onClick = onClick,
-        modifier = modifier,
-        enabled = enabled,
-        shape = RoundedCornerShape(14.dp),
-        color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer,
-        shadowElevation = 6.dp,
-    ) {
+    val appContext = koinInject<AppContext>()
+    val shape = RoundedCornerShape(14.dp)
+    val containerColor = if (enabled) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.surfaceContainer
+    }
+    val labelRow: @Composable () -> Unit = {
         Row(
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center,
         ) {
@@ -348,6 +356,40 @@ internal fun AccountPrimaryButton(
                 },
                 fontWeight = FontWeight.Bold,
             )
+        }
+    }
+    // 桌面 Dialog 居中：M3 Surface 悬停会抬升 shadow，卡片高度变化导致整窗上飘。
+    if (appContext.isDesktop()) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = modifier
+                .clip(shape)
+                .background(containerColor, shape)
+                .focusProperties { canFocus = false }
+                .then(
+                    if (enabled) {
+                        Modifier.clickable(
+                            interactionSource = null,
+                            indication = null,
+                            onClick = onClick,
+                        )
+                    } else {
+                        Modifier
+                    },
+                ),
+        ) {
+            labelRow()
+        }
+    } else {
+        Surface(
+            onClick = onClick,
+            modifier = modifier,
+            enabled = enabled,
+            shape = shape,
+            color = containerColor,
+            shadowElevation = 6.dp,
+        ) {
+            labelRow()
         }
     }
 }
@@ -492,6 +534,7 @@ internal fun AccountProfileHeroCard(
 
 @Composable
 internal fun accountDialogCardModifier(): Modifier {
+    val appContext = koinInject<AppContext>()
     val isSmall = LocalWindowManager.current == WindowManager.Small
     val maxHeight = with(LocalDensity.current) {
         LocalWindowInfo.current.containerSize.height.toDp() * 0.9f
@@ -500,8 +543,13 @@ internal fun accountDialogCardModifier(): Modifier {
         .fillMaxWidth(if (isSmall) LargeProportion() else GeneralProportion())
         .widthIn(min = if (isSmall) 0.dp else 280.dp, max = 420.dp)
         .heightIn(max = maxHeight)
-        .imePadding()
-        .navigationBarsPadding()
+        .then(
+            if (appContext.isDesktop()) {
+                Modifier
+            } else {
+                Modifier.imePadding().navigationBarsPadding()
+            },
+        )
 }
 
 /** 账号弹窗统一卡片容器：圆角、限宽限高、小屏可滚动、IME 避让。 */
@@ -510,27 +558,31 @@ internal fun AccountAuthCard(
     scrollable: Boolean,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val appContext = koinInject<AppContext>()
     val isSmall = LocalWindowManager.current == WindowManager.Small
-    BorderCard(
-        modifier = accountDialogCardModifier(),
-        backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-    ) {
-        val scrollModifier = if (scrollable) {
-            Modifier.verticalScroll(rememberScrollState())
-        } else {
-            Modifier
+    CompositionLocalProvider(LocalAccountAuthDialogEscape provides appContext.isDesktop()) {
+        BorderCard(
+            modifier = accountDialogCardModifier(),
+            backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+        ) {
+            val scrollModifier = if (scrollable) {
+                Modifier.verticalScroll(rememberScrollState())
+            } else {
+                Modifier
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(scrollModifier)
+                    .then(if (appContext.isDesktop()) Modifier else Modifier.autoClearFocus())
+                    .padding(
+                        horizontal = if (isSmall) 14.dp else 18.dp,
+                        vertical = if (isSmall) 12.dp else 16.dp,
+                    ),
+                verticalArrangement = Arrangement.spacedBy(if (isSmall) 10.dp else 12.dp),
+            ) {
+                content()
+            }
         }
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(scrollModifier)
-                .autoClearFocus()
-                .padding(
-                    horizontal = if (isSmall) 14.dp else 18.dp,
-                    vertical = if (isSmall) 12.dp else 16.dp,
-                ),
-            verticalArrangement = Arrangement.spacedBy(if (isSmall) 10.dp else 12.dp),
-            content = content,
-        )
     }
 }

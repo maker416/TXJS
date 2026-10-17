@@ -37,17 +37,24 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import io.github.rwpp.AppContext
 import io.github.rwpp.config.Settings
 import io.github.rwpp.ui.UI
 import io.github.rwpp.widget.v2.bounceClick
+import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
+
+/** When true inside [io.github.rwpp.ui.AccountAuthCard], desktop text fields forward Esc to BackDispatcher. */
+internal val LocalAccountAuthDialogEscape = staticCompositionLocalOf { false }
 
 @Composable
 fun BorderCard(
@@ -249,42 +256,92 @@ fun RWSingleOutlinedTextField(
     onFocusChanged: (FocusState) -> Unit = {},
     onValueChange: (String) -> Unit
 ) {
+    val appContext = koinInject<AppContext>()
+    val forwardEscapeOnDesktop = appContext.isDesktop() && LocalAccountAuthDialogEscape.current
+    val escapeScope = rememberCoroutineScope()
+    fun filterInput(raw: String): String =
+        (if (raw.length <= lengthLimitCount
+            && (!typeInNumberOnly || !typeInOnlyInteger || raw.all { s -> s.isDigit() })
+        ) {
+            raw
+        } else {
+            ""
+        }).run {
+            if (contains("\n")) split("\n").last() else this
+        }
+
     // modifier 直接作用于输入框，保留 Row 的 weight、点击与焦点约束。
     @Composable
     fun Field(fieldModifier: Modifier) {
-        OutlinedTextField(
-            label = {
-                Text(
-                    label,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            },
-            textStyle = MaterialTheme.typography.bodyLarge,
-            colors = RWOutlinedTextColors,
-            value = value,
-            enabled = enabled,
-            singleLine = true,
-            modifier = fieldModifier
-                .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-                .onFocusChanged(onFocusChanged),
-            trailingIcon = trailingIcon,
-            leadingIcon = leadingIcon,
-            onValueChange = {
-                onValueChange(
-                    (if(it.length <= lengthLimitCount
-                        && (!typeInNumberOnly || !typeInOnlyInteger || it.all { s -> s.isDigit() }))
-                        it
-                    else "").run {
-                        if (contains("\n"))
-                            split("\n").last()
-                        else this
-                    }
-                )
-            },
-            visualTransformation = visualTransformation,
-            keyboardOptions = KeyboardOptions(keyboardType = if(typeInNumberOnly) KeyboardType.Number else KeyboardType.Text)
+        val labelContent: @Composable () -> Unit = {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+        }
+        val keyboardOptions = KeyboardOptions(
+            keyboardType = if (typeInNumberOnly) KeyboardType.Number else KeyboardType.Text,
         )
+        val fieldModifierWithFocus = fieldModifier
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .onFocusChanged(onFocusChanged)
+            .then(
+                if (forwardEscapeOnDesktop) {
+                    Modifier.desktopEscapeToBackDispatcher(escapeScope)
+                } else {
+                    Modifier
+                },
+            )
 
+        if (appContext.isDesktop()) {
+            // 桌面 Dialog 内 String 状态 OutlinedTextField 常不绘制光标；保留 selection 的 TextFieldValue 可恢复。
+            var textFieldValue by remember {
+                mutableStateOf(TextFieldValue(value, TextRange(value.length)))
+            }
+            SideEffect {
+                if (textFieldValue.text != value) {
+                    textFieldValue = TextFieldValue(
+                        text = value,
+                        selection = TextRange(value.length.coerceIn(0, value.length)),
+                    )
+                }
+            }
+            OutlinedTextField(
+                label = labelContent,
+                textStyle = MaterialTheme.typography.bodyLarge,
+                colors = RWOutlinedTextColors,
+                value = textFieldValue,
+                enabled = enabled,
+                singleLine = true,
+                modifier = fieldModifierWithFocus,
+                trailingIcon = trailingIcon,
+                leadingIcon = leadingIcon,
+                onValueChange = { incoming ->
+                    val filtered = filterInput(incoming.text)
+                    val selection = if (incoming.text == filtered) {
+                        incoming.selection
+                    } else {
+                        TextRange(filtered.length.coerceIn(0, filtered.length))
+                    }
+                    textFieldValue = TextFieldValue(filtered, selection)
+                    onValueChange(filtered)
+                },
+                visualTransformation = visualTransformation,
+                keyboardOptions = keyboardOptions,
+            )
+        } else {
+            OutlinedTextField(
+                label = labelContent,
+                textStyle = MaterialTheme.typography.bodyLarge,
+                colors = RWOutlinedTextColors,
+                value = value,
+                enabled = enabled,
+                singleLine = true,
+                modifier = fieldModifierWithFocus,
+                trailingIcon = trailingIcon,
+                leadingIcon = leadingIcon,
+                onValueChange = { onValueChange(filterInput(it)) },
+                visualTransformation = visualTransformation,
+                keyboardOptions = keyboardOptions,
+            )
+        }
     }
     if (appendedContent == null) {
         Field(modifier)

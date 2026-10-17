@@ -10,12 +10,15 @@ package io.github.rwpp.ui
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -54,6 +57,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -61,6 +66,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.rwpp.AppContext
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
@@ -88,7 +94,9 @@ import io.github.rwpp.widget.ExitButton
 import io.github.rwpp.widget.RWSingleOutlinedTextField
 import io.github.rwpp.widget.WindowManager
 import io.github.rwpp.widget.autoClearFocus
+import io.github.rwpp.widget.desktopEscapeToBackDispatcher
 import io.github.rwpp.widget.v2.ExpandedCard
+import org.koin.compose.koinInject
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.painterResource
@@ -154,10 +162,52 @@ fun AccountView(onExit: () -> Unit) {
     val pageBackground = MaterialTheme.colorScheme.background.copy(
         alpha = (UI.backgroundTransparency + 0.2f).coerceAtLeast(0.88f),
     )
-    ExpandedCard(
-        modifier = Modifier.verticalScroll(rememberScrollState()).autoClearFocus(),
-        backgroundColor = pageBackground,
+    val appContext = koinInject<AppContext>()
+    val accountModalOpen = showNicknameDialog || showAvatarDialog || showChangeEmail ||
+        showLogoutConfirm || authKind != null
+    val pageFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        pageFocusRequester.requestFocus()
+    }
+    // 弹窗内输入框 Esc 关闭后焦点常留在已卸载节点，桌面第二次 Esc 无法回到 BackHandler。
+    LaunchedEffect(accountModalOpen) {
+        if (appContext.isDesktop() && !accountModalOpen) {
+            pageFocusRequester.requestFocus()
+        }
+    }
+    val pageBlankInteraction = remember { MutableInteractionSource() }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .focusRequester(pageFocusRequester)
+            .focusable()
+            .then(
+                if (appContext.isDesktop()) {
+                    Modifier.desktopEscapeToBackDispatcher(scope)
+                } else {
+                    Modifier
+                },
+            ),
     ) {
+        if (appContext.isDesktop()) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = pageBlankInteraction,
+                        indication = null,
+                        onClick = { pageFocusRequester.requestFocus() },
+                    ),
+            )
+        }
+        ExpandedCard(
+            modifier = Modifier
+                .verticalScroll(rememberScrollState())
+                .autoClearFocus(
+                    restoreFocus = if (appContext.isDesktop()) pageFocusRequester else null,
+                ),
+            backgroundColor = pageBackground,
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -327,6 +377,7 @@ fun AccountView(onExit: () -> Unit) {
                 }
             }
         }
+    }
     }
 }
 
