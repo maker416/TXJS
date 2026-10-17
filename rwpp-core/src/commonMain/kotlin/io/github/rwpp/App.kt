@@ -188,6 +188,23 @@ fun App(
     val keyboardController = LocalSoftwareKeyboardController.current
     val interactionSource = remember { MutableInteractionSource() }
 
+    // 桌面 ESC 经 KeyboardEvent → BackHandler；焦点若在 GL 画布上则收不到键。桌面：用户页/设置页拉回 Compose；移动端仍含好友页。
+    LaunchedEffect(
+        showAccountView,
+        showFriendsView,
+        showSettingsView,
+        appContext.isDesktop(),
+    ) {
+        val requestLauncherFocus = if (appContext.isDesktop()) {
+            showAccountView || showSettingsView
+        } else {
+            showAccountView || showFriendsView
+        }
+        if (requestLauncherFocus) {
+            globalFocusRequester.requestFocus()
+        }
+    }
+
     RWPPTheme {
         BoxWithConstraints(
             modifier = Modifier

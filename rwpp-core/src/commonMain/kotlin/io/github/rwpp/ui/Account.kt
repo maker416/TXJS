@@ -10,11 +10,13 @@ package io.github.rwpp.ui
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -54,6 +56,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -154,6 +158,16 @@ fun AccountView(onExit: () -> Unit) {
     val pageBackground = MaterialTheme.colorScheme.background.copy(
         alpha = (UI.backgroundTransparency + 0.2f).coerceAtLeast(0.88f),
     )
+    val pageFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        pageFocusRequester.requestFocus()
+    }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .focusRequester(pageFocusRequester)
+            .focusable(),
+    ) {
     ExpandedCard(
         modifier = Modifier.verticalScroll(rememberScrollState()).autoClearFocus(),
         backgroundColor = pageBackground,
@@ -327,6 +341,7 @@ fun AccountView(onExit: () -> Unit) {
                 }
             }
         }
+    }
     }
 }
 
@@ -801,6 +816,7 @@ fun AccountLoginDialog(
                     label = readI18n("account.email", I18nType.RWPP),
                     value = email,
                     enabled = !submitting,
+                    broadcastEscapeOnDesktop = true,
                     modifier = Modifier.fillMaxWidth(),
                     leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
                     onValueChange = { email = it },
@@ -851,6 +867,7 @@ fun AccountLoginDialog(
                     label = readI18n("account.identifier", I18nType.RWPP),
                     value = username,
                     enabled = !submitting,
+                    broadcastEscapeOnDesktop = true,
                     modifier = Modifier.fillMaxWidth(),
                     leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
                     onValueChange = onUsernameChange,
@@ -859,6 +876,7 @@ fun AccountLoginDialog(
                     label = readI18n("account.password", I18nType.RWPP),
                     value = password,
                     enabled = !submitting,
+                    broadcastEscapeOnDesktop = true,
                     modifier = Modifier.fillMaxWidth(),
                     leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
                     visualTransformation = PasswordVisualTransformation(),
@@ -1048,6 +1066,7 @@ fun AccountRegisterDialog(
                 label = readI18n("account.username", I18nType.RWPP),
                 value = username,
                 enabled = !submitting,
+                broadcastEscapeOnDesktop = true,
                 modifier = Modifier.fillMaxWidth(),
                 leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
                 onValueChange = onUsernameChange,
@@ -1056,6 +1075,7 @@ fun AccountRegisterDialog(
                 label = readI18n("account.nicknameOptional", I18nType.RWPP),
                 value = nickname,
                 enabled = !submitting,
+                broadcastEscapeOnDesktop = true,
                 modifier = Modifier.fillMaxWidth(),
                 leadingIcon = { Icon(Icons.Default.Face, contentDescription = null) },
                 onValueChange = { nickname = it },
@@ -1064,6 +1084,7 @@ fun AccountRegisterDialog(
                 label = readI18n("account.email", I18nType.RWPP),
                 value = email,
                 enabled = !submitting,
+                broadcastEscapeOnDesktop = true,
                 modifier = Modifier.fillMaxWidth(),
                 leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
                 onValueChange = { email = it },
@@ -1077,6 +1098,7 @@ fun AccountRegisterDialog(
                     label = readI18n("account.code", I18nType.RWPP),
                     value = code,
                     enabled = !submitting,
+                    broadcastEscapeOnDesktop = true,
                     modifier = Modifier.weight(1f),
                     onValueChange = { if (it.length <= 6) code = it.filter { ch -> ch.isDigit() } },
                 )
@@ -1115,6 +1137,7 @@ fun AccountRegisterDialog(
                 label = readI18n("account.password", I18nType.RWPP),
                 value = password,
                 enabled = !submitting,
+                broadcastEscapeOnDesktop = true,
                 modifier = Modifier.fillMaxWidth(),
                 leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
                 visualTransformation = PasswordVisualTransformation(),
@@ -1124,6 +1147,7 @@ fun AccountRegisterDialog(
                 label = readI18n("account.confirmPassword", I18nType.RWPP),
                 value = confirmPassword,
                 enabled = !submitting,
+                broadcastEscapeOnDesktop = true,
                 modifier = Modifier.fillMaxWidth(),
                 leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
                 visualTransformation = PasswordVisualTransformation(),
@@ -1243,6 +1267,7 @@ private fun AccountForgotDialog(
                 label = readI18n("account.email", I18nType.RWPP),
                 value = email,
                 enabled = !submitting,
+                broadcastEscapeOnDesktop = true,
                 modifier = Modifier.fillMaxWidth(),
                 leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
                 onValueChange = { email = it },
@@ -1256,6 +1281,7 @@ private fun AccountForgotDialog(
                     label = readI18n("account.code", I18nType.RWPP),
                     value = code,
                     enabled = !submitting,
+                    broadcastEscapeOnDesktop = true,
                     modifier = Modifier.weight(1f),
                     onValueChange = { if (it.length <= 6) code = it.filter { ch -> ch.isDigit() } },
                 )
@@ -1292,6 +1318,7 @@ private fun AccountForgotDialog(
                 label = readI18n("account.newPassword", I18nType.RWPP),
                 value = password,
                 enabled = !submitting,
+                broadcastEscapeOnDesktop = true,
                 modifier = Modifier.fillMaxWidth(),
                 visualTransformation = PasswordVisualTransformation(),
                 leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
@@ -1301,6 +1328,7 @@ private fun AccountForgotDialog(
                 label = readI18n("account.confirmPassword", I18nType.RWPP),
                 value = confirm,
                 enabled = !submitting,
+                broadcastEscapeOnDesktop = true,
                 modifier = Modifier.fillMaxWidth(),
                 visualTransformation = PasswordVisualTransformation(),
                 leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
@@ -1393,8 +1421,12 @@ private fun ChangeNicknameDialog(
                 label = readI18n("account.nickname", I18nType.RWPP),
                 value = nickname,
                 enabled = !submitting,
+                broadcastEscapeOnDesktop = true,
                 modifier = Modifier.fillMaxWidth(),
                 leadingIcon = { Icon(Icons.Default.Face, contentDescription = null) },
+                onFocusChanged = {
+                    AccountDialogDebugMetrics.nicknameFieldFocused = it.isFocused
+                },
                 onValueChange = { nickname = it },
             )
             if (error.isNotBlank()) {
@@ -1868,6 +1900,7 @@ private fun ChangeEmailDialog(
                     label = readI18n("account.newEmail", I18nType.RWPP),
                     value = email,
                     enabled = !submitting,
+                    broadcastEscapeOnDesktop = true,
                     modifier = Modifier.fillMaxWidth(),
                     leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
                     onValueChange = { email = it },
