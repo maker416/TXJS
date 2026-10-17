@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -174,6 +175,7 @@ fun AccountView(onExit: () -> Unit) {
             pageFocusRequester.requestFocus()
         }
     }
+    val pageBlankInteraction = remember { MutableInteractionSource() }
     Box(
         Modifier
             .fillMaxSize()
@@ -187,10 +189,25 @@ fun AccountView(onExit: () -> Unit) {
                 },
             ),
     ) {
-    ExpandedCard(
-        modifier = Modifier.verticalScroll(rememberScrollState()).autoClearFocus(),
-        backgroundColor = pageBackground,
-    ) {
+        if (appContext.isDesktop()) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = pageBlankInteraction,
+                        indication = null,
+                        onClick = { pageFocusRequester.requestFocus() },
+                    ),
+            )
+        }
+        ExpandedCard(
+            modifier = Modifier
+                .verticalScroll(rememberScrollState())
+                .autoClearFocus(
+                    restoreFocus = if (appContext.isDesktop()) pageFocusRequester else null,
+                ),
+            backgroundColor = pageBackground,
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

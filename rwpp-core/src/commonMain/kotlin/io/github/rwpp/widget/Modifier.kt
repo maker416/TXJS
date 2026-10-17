@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.input.key.Key
@@ -46,7 +47,7 @@ internal fun Modifier.launcherKeyboardEvents(scope: CoroutineScope): Modifier = 
 }
 
 @Composable
-fun Modifier.autoClearFocus() = composed {
+fun Modifier.autoClearFocus(restoreFocus: FocusRequester? = null) = composed {
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     val interactionSource = remember { MutableInteractionSource() }
@@ -57,5 +58,6 @@ fun Modifier.autoClearFocus() = composed {
     ) {
         keyboardController?.hide()
         focusManager.clearFocus()
+        restoreFocus?.requestFocus()
     }
 }
