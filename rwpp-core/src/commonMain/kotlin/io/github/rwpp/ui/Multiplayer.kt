@@ -59,6 +59,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import io.github.rwpp.AppContext
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.RoomIdentityController
@@ -75,6 +77,10 @@ import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.logger
 import io.github.rwpp.net.Net
 import io.github.rwpp.net.HostCommandPrefix
+import io.github.rwpp.net.QuickHostLimits
+import io.github.rwpp.net.QuickHostRoomOptions
+import io.github.rwpp.net.quickHostAddressSkipsClientVanillaModClear
+import io.github.rwpp.net.quickHostSkipsClientVanillaModClear
 import io.github.rwpp.net.roomListApiBasesWithDefaultFallback
 import io.github.rwpp.net.MOD_SYNC_ROOM_TYPE
 import io.github.rwpp.net.RoomDescription
@@ -409,9 +415,11 @@ fun MultiplayerView(
                         // 旧断线清理会清空 hostSyncRequested，必须在开始屏障之后提交本次选项。
                         ModSyncController.hostSyncRequested = pendingHostTransferMods
                         if (!pendingHostEnableMods) {
-                            val cleared = Logic.disableAllModsBeforeHosting()
-                            if (cleared) {
-                                message(readI18n("multiplayer.modsClearedForVanillaHost"))
+                            if (!quickHostAddressSkipsClientVanillaModClear(serverAddress)) {
+                                val cleared = Logic.disableAllModsBeforeHosting()
+                                if (cleared) {
+                                    message(readI18n("multiplayer.modsClearedForVanillaHost"))
+                                }
                             }
                         } else {
                             val disabled = Logic.disableNetworkModsBeforeHosting()
@@ -477,6 +485,90 @@ fun MultiplayerView(
     }
 
     @Composable
+    fun VanillaHostClearModsConfirm(
+        visible: Boolean,
+        onDismiss: () -> Unit,
+        onConfirm: () -> Unit,
+    ) {
+        val appContext = koinInject<AppContext>()
+        @Composable
+        fun ConfirmCard() {
+            BorderCard(
+                modifier = Modifier
+                    .fillMaxWidth(LargeProportion())
+                    .widthIn(max = 480.dp)
+                    .padding(10.dp),
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 360.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 18.dp, vertical = 16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = null,
+                            modifier = Modifier.size(40.dp),
+                            tint = Color(0xFFFF9800),
+                        )
+                        Text(
+                            readI18n("multiplayer.vanillaHostClearModsTitle"),
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            textAlign = TextAlign.Center,
+                        )
+                        HorizontalDivider(
+                            thickness = 2.dp,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                        )
+                        Text(
+                            readI18n("multiplayer.vanillaHostClearModsMessage").trimIndent(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                    ) {
+                        RWTextButton(readI18n("common.cancel"), modifier = Modifier.padding(4.dp), onClick = onDismiss)
+                        RWTextButton(
+                            readI18n("multiplayer.vanillaHostClearModsAccept"),
+                            modifier = Modifier.padding(4.dp),
+                            onClick = onConfirm,
+                        )
+                    }
+                }
+            }
+        }
+        if (!visible) return
+        if (appContext.isDesktop()) {
+            // 嵌在内联开房弹窗里时 fillMaxSize 遮罩只有卡片大小，确认层改用独立 Dialog。
+            Dialog(
+                onDismissRequest = onDismiss,
+                properties = DialogProperties(usePlatformDefaultWidth = false),
+            ) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    ConfirmCard()
+                }
+            }
+        } else {
+            AnimatedAlertDialog(visible, onDismissRequest = onDismiss) {
+                ConfirmCard()
+            }
+        }
+    }
+
+    @Composable
     fun HostGameDialog(
         visible: Boolean,
         onDismissRequest: () -> Unit,
@@ -518,13 +610,17 @@ fun MultiplayerView(
                 dismiss()
                 pendingHostTransferMods = transferMod && enableMods
                 serverAddress = net.buildQuickHostCommand(
-                    enableMods = enableMods,
-                    roomId = if (hostPrefix != HostCommandPrefix.R) roomId.ifBlank { null } else null,
-                    maxPlayer = maxPlayer,
-                    unitLimit = unitLimit,
-                    credits = credits,
-                    speedMultiplier = speedMultiplier,
-                    prefix = hostPrefix,
+                    QuickHostRoomOptions(
+                        prefix = hostPrefix,
+                        enableMods = enableMods,
+                        roomId = if (hostPrefix != HostCommandPrefix.R) roomId.ifBlank { null } else null,
+                        limits = QuickHostLimits(
+                            maxPlayer = maxPlayer,
+                            unitLimit = unitLimit,
+                            credits = credits,
+                            speedMultiplier = speedMultiplier,
+                        ),
+                    ),
                 )
                 pendingHostEnableMods = enableMods
                 pendingHostSession = true
@@ -1028,8 +1124,9 @@ fun MultiplayerView(
                     horizontalArrangement = Arrangement.End,
                 ) {
                     RWTextButton(readI18n("multiplayer.host"), modifier = Modifier.padding(4.dp)) {
-                        // 未勾选「启动模组」但引擎仍有已加载模组：先提醒，确认后再清空重载并开房
-                        if (!enableMods && hasEnabledMods) {
+                        val needsVanillaClearConfirm = !enableMods && hasEnabledMods &&
+                            !quickHostSkipsClientVanillaModClear(hostPrefix)
+                        if (needsVanillaClearConfirm) {
                             showVanillaHostConfirm = true
                         } else {
                             beginHost()
@@ -1038,68 +1135,14 @@ fun MultiplayerView(
                 }
             }
 
-            AnimatedAlertDialog(
+            VanillaHostClearModsConfirm(
                 visible = showVanillaHostConfirm,
-                onDismissRequest = { showVanillaHostConfirm = false },
-            ) { confirmDismiss ->
-                BorderCard(
-                    modifier = Modifier
-                        .fillMaxWidth(LargeProportion())
-                        .widthIn(max = 480.dp)
-                        .padding(10.dp),
-                ) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 360.dp)
-                                .verticalScroll(rememberScrollState())
-                                .padding(horizontal = 18.dp, vertical = 16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            Icon(
-                                Icons.Default.Warning,
-                                contentDescription = null,
-                                modifier = Modifier.size(40.dp),
-                                tint = Color(0xFFFF9800),
-                            )
-                            Text(
-                                readI18n("multiplayer.vanillaHostClearModsTitle"),
-                                style = MaterialTheme.typography.headlineSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                textAlign = TextAlign.Center,
-                            )
-                            HorizontalDivider(
-                                thickness = 2.dp,
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                            )
-                            Text(
-                                readI18n("multiplayer.vanillaHostClearModsMessage").trimIndent(),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
-                        ) {
-                            RWTextButton(readI18n("common.cancel"), modifier = Modifier.padding(4.dp)) {
-                                confirmDismiss()
-                            }
-                            RWTextButton(
-                                readI18n("multiplayer.vanillaHostClearModsAccept"),
-                                modifier = Modifier.padding(4.dp),
-                            ) {
-                                confirmDismiss()
-                                beginHost()
-                            }
-                        }
-                    }
-                }
-            }
+                onDismiss = { showVanillaHostConfirm = false },
+                onConfirm = {
+                    showVanillaHostConfirm = false
+                    beginHost()
+                },
+            )
         }
     }
 
@@ -1660,14 +1703,6 @@ fun MultiplayerView(
     var hostDialogVisible by remember { mutableStateOf(false) }
     var filterSurfaceDialogVisible by remember { mutableStateOf(false) }
 
-    FilterSurfaceDialog(filterSurfaceDialogVisible) { filterSurfaceDialogVisible = false }
-    HostGameDialog(hostDialogVisible, { hostDialogVisible = false }) {
-        // 不调 onExit()：多人列表留在返回栈中，退出房间时 navigateBack 能回到列表
-        onOpenRoomView()
-        game.setUserName(userName)
-    }
-
-
     Scaffold(
         containerColor = Color.Transparent,
         bottomBar = {
@@ -1932,6 +1967,13 @@ fun MultiplayerView(
 //                        }
 //                    }
 //                }
+    }
+
+    FilterSurfaceDialog(filterSurfaceDialogVisible) { filterSurfaceDialogVisible = false }
+    HostGameDialog(hostDialogVisible, { hostDialogVisible = false }) {
+        // 不调 onExit()：多人列表留在返回栈中，退出房间时 navigateBack 能回到列表
+        onOpenRoomView()
+        game.setUserName(userName)
     }
 }
 

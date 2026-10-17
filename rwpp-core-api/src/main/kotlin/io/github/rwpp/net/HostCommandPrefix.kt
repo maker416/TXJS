@@ -70,3 +70,12 @@ enum class HostCommandPrefix {
     /** T-series: t.mxy.wang/news / mods / C / CM; join via [T_ROOM_ADDRESS_PREFIX]. */
     T,
 }
+
+/** 测试用：R/Q 开房不在客户端弹「清空模组」、不本地 disableAllMods，只发 quick host 指令。 */
+fun quickHostSkipsClientVanillaModClear(prefix: HostCommandPrefix): Boolean =
+    prefix == HostCommandPrefix.Q || prefix == HostCommandPrefix.R
+
+fun quickHostAddressSkipsClientVanillaModClear(address: String): Boolean {
+    val trimmed = address.trim()
+    return trimmed.startsWith("Q", ignoreCase = true) || trimmed.startsWith("R", ignoreCase = true)
+}

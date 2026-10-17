@@ -31,6 +31,7 @@ class QuickHostCommandTest {
     @Test
     fun qAndRHostingKeepTheirExistingCommands() {
         assertEquals("Qnews", net.buildQuickHostCommand(false))
+        assertEquals("Rnews", net.buildQuickHostCommand(false, prefix = HostCommandPrefix.R))
         assertEquals("QCM6666P10", net.buildQuickHostCommand(true, roomId = "6666", maxPlayer = 10))
         assertEquals("RmodsP20U500", net.buildQuickHostCommand(true, maxPlayer = 20, unitLimit = 500, prefix = HostCommandPrefix.R))
     }
