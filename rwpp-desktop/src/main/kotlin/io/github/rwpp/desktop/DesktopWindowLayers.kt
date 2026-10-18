@@ -11,6 +11,8 @@ import javassist.ClassPool
 import javassist.CtNewMethod
 import javassist.LoaderClassPath
 import javassist.bytecode.Opcode
+import javassist.expr.ExprEditor
+import javassist.expr.MethodCall
 import org.slf4j.LoggerFactory
 import java.awt.Rectangle
 import java.lang.invoke.MethodHandles
@@ -24,6 +26,7 @@ import javax.swing.SwingUtilities
  * 上游按每帧绘制范围移动/缩放原生窗口；缩放动画、阴影与异步缩略图会不断改变该范围，
  * 还会在 Skiko 记录绘制指令时触发窗口 resize。将可聚焦弹窗固定为宿主视口，内容仍照常布局、
  * 动画和接收输入；非聚焦浏览器悬浮控件保留小窗口，避免挡住网页其余区域。
+ * 所有弹层取消系统级置顶，靠 JDialog 的 owner 关系位于游戏上方并跟随游戏最小化。
  *
  * 修改发生在类首次定义前，无需 javaagent、额外 JDK 模块或逐帧反射。升级 Compose 时必须重新
  * 验证此兼容处理；字节码形态不匹配时保留原库并记录警告，不生成部分修改的类。
@@ -52,6 +55,21 @@ internal object DesktopWindowLayers {
                 // 校验下面依赖的内部 ABI；在 defineClass 之前完成全部修改和验证。
                 check(layer.getDeclaredField("layerWindow").type.name == JDialog::class.java.name)
                 check(layer.getDeclaredField("mediator").type.name == "androidx.compose.ui.scene.ComposeSceneMediator")
+
+                // 上游默认 alwaysOnTop=true 会让地图弹窗盖住其他应用。owner 关系已保证
+                // 弹层高于游戏（包括 Chromium 子窗口），首次显示前即取消系统级置顶。
+                var topmostOverrides = 0
+                layer.declaredConstructors.forEach { constructor ->
+                    constructor.instrument(object : ExprEditor() {
+                        override fun edit(call: MethodCall) {
+                            if (call.methodName != "setAlwaysOnTop") return
+                            check(call.signature == "(Z)V" && call.method.declaringClass.name == "java.awt.Window")
+                            call.replace("{ \$proceed(false); }")
+                            topmostOverrides++
+                        }
+                    })
+                }
+                check(topmostOverrides == 1) { "Unexpected Compose window-layer topmost setup: $topmostOverrides calls" }
 
                 layer.getDeclaredMethod("onDrawBoundsChanged").setBody(
                     """
@@ -122,7 +140,7 @@ internal object DesktopWindowLayers {
                 layer.detach()
             }
             installed = true
-            log.info("[UI] Native popup/dialog windows now use stable host viewports")
+            log.info("[UI] Native popup/dialog windows use stable host viewports without system-wide always-on-top")
             true
         } catch (failure: Exception) {
             log.warn("[UI] Could not install stable native window viewports; using the original Compose layers", failure)

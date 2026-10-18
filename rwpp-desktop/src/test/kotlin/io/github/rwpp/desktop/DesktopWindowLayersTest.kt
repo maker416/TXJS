@@ -18,6 +18,9 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
+import com.sun.jna.Native
+import com.sun.jna.Pointer
+import com.sun.jna.win32.StdCallLibrary
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
 import io.github.rwpp.widget.AnimatedAlertDialog
@@ -26,6 +29,7 @@ import org.junit.Assume.assumeTrue
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
 import org.koin.dsl.module
+import java.awt.Frame
 import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
 import java.awt.Window
@@ -106,6 +110,8 @@ class DesktopWindowLayersTest {
             do {
                 onEdt {
                     val overlay = visibleLayers(owner).single()
+                    assertFalse(overlay.isAlwaysOnTop, "Browser overlays must not float above other applications")
+                    assertEquals(owner, overlay.owner)
                     val middle = panel.locationOnScreen.apply { translate(panel.width / 2, panel.height / 2) }
                     assertTrue(overlay.width < panel.width / 2 && overlay.height < panel.height / 2)
                     assertFalse(overlay.bounds.contains(middle), "Floating browser controls must not cover the native webpage")
@@ -209,6 +215,7 @@ class DesktopWindowLayersTest {
             settleAndCheckViewport(frame, panel)
             onEdt { expanded.value = false }
             await { visibleLayers(frame).size == 1 }
+            checkApplicationWindowOrderAndMinimize(frame, panel)
             onEdt { dismiss() }
             await { visibleLayers(frame).isEmpty() }
             onEdt { assertTrue(frame.isEnabled) }
@@ -231,10 +238,70 @@ class DesktopWindowLayersTest {
         do {
             onEdt {
                 val expected = Rectangle(panel.locationOnScreen, panel.size)
-                visibleLayers(frame).forEach { assertEquals(expected, it.bounds, "Native layer must match the host viewport") }
+                visibleLayers(frame).forEach {
+                    assertEquals(expected, it.bounds, "Native layer must match the host viewport")
+                    assertEquals(frame, it.owner, "Layers must belong to the game window")
+                    assertFalse(it.isAlwaysOnTop, "A game popup must not be a system-wide topmost window")
+                }
             }
             Thread.sleep(10)
         } while (System.nanoTime() < until)
+    }
+
+    private fun checkApplicationWindowOrderAndMinimize(frame: JFrame, panel: ComposePanel) {
+        var otherApplication: JFrame? = null
+        val layers = mutableListOf<Window>()
+        try {
+            onEdt {
+                layers.addAll(visibleLayers(frame))
+                assertTrue(layers.isNotEmpty())
+                otherApplication = JFrame("RWJS unrelated application window regression").apply {
+                    isAutoRequestFocus = false
+                    bounds = frame.bounds
+                    isVisible = true
+                }
+                // 把无 owner 的普通窗口放到普通窗口层最前面，检查真实 Win32 层级。
+                // 不依赖前台焦点权限，也不通过合成 Alt-Tab 操作用户的其他应用。
+                assertTrue(User32.INSTANCE.SetWindowPos(
+                    Native.getWindowPointer(otherApplication), null, 0, 0, 0, 0,
+                    0x0001 or 0x0002 or 0x0010, // SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
+                ))
+            }
+            await { layers.all { isAbove(otherApplication!!, it) } }
+            onEdt { frame.toFront() }
+            await { layers.all { isAbove(it, frame) } }
+            onEdt { frame.extendedState = Frame.ICONIFIED }
+            await {
+                User32.INSTANCE.IsIconic(Native.getWindowPointer(frame)) &&
+                    layers.all { !User32.INSTANCE.IsWindowVisible(Native.getWindowPointer(it)) }
+            }
+            onEdt { frame.extendedState = Frame.NORMAL }
+            await {
+                !User32.INSTANCE.IsIconic(Native.getWindowPointer(frame)) &&
+                    layers.all { User32.INSTANCE.IsWindowVisible(Native.getWindowPointer(it)) }
+            }
+            settleAndCheckViewport(frame, panel)
+        } finally {
+            onEdt { otherApplication?.dispose() }
+        }
+    }
+
+    private fun isAbove(first: Window, second: Window): Boolean {
+        val target = Native.getWindowPointer(first)
+        return generateSequence(User32.INSTANCE.GetWindow(Native.getWindowPointer(second), 3)) {
+            User32.INSTANCE.GetWindow(it, 3) // GW_HWNDPREV
+        }.take(1024).any { it == target }
+    }
+
+    private interface User32 : StdCallLibrary {
+        fun GetWindow(window: Pointer, command: Int): Pointer?
+        fun SetWindowPos(window: Pointer, insertAfter: Pointer?, x: Int, y: Int, cx: Int, cy: Int, flags: Int): Boolean
+        fun IsIconic(window: Pointer): Boolean
+        fun IsWindowVisible(window: Pointer): Boolean
+
+        companion object {
+            val INSTANCE: User32 by lazy { Native.load("user32", User32::class.java) }
+        }
     }
 
     private fun visibleLayers(frame: JFrame): List<Window> = frame.ownedWindows.filter { it.isVisible }
