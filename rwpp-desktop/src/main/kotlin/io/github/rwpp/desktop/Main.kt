@@ -158,6 +158,7 @@ fun main(array: Array<String>) {
     }
 
     logger = LoggerFactory.getLogger(packageName)
+    DesktopWindowLayers.install()
     native = array.contains("-native")
 
     logger.info("[START] RWJS {} native={}", projectVersion, native)

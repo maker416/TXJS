@@ -69,6 +69,9 @@ dependencies {
 
 tasks.test {
     systemProperty("rwjs.test.libDir", rootProject.file("lib").absolutePath)
+    providers.gradleProperty("rwjs.test.uiScale").orNull?.let {
+        systemProperty("sun.java2d.uiScale", it)
+    }
 }
 
 sourceSets.main {

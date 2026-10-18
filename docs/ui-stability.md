@@ -15,6 +15,7 @@
 | 高 DPI 窗口尺寸来回变化 | CardLayout 写逻辑尺寸，Canvas resize 回调再写物理尺寸 | NativeCanvasCardLayout 单次布局直接使用最终物理尺寸 |
 | 挂件闪动或替换不更新 | 每次定位都 pack，挂件引用不是 Compose State | 内容尺寸变化才 pack，挂件替换触发重组，AWT 操作统一 EDT |
 | 地图选择挤压、错位 | 固定五列、图片与长名称改变行高、筛选 index 回传错误 | 自适应列、固定卡片行高、保留源 index、宽窄屏工具栏 |
+| 桌面地图弹窗/下拉菜单晃动，Skiko 可能崩溃 | Compose 1.10.1 WINDOW 弹层按每帧绘制范围调整 native 窗口，动画与阴影触发绘制期间 resize | Windows 启动时安装固定宿主视口兼容处理，移除逐帧绘制范围录制，宿主 resize 排到绘制结束后 |
 | 地图载入失败后无反馈 | 列表/名称解析异常中断界面 | 显示错误并允许刷新重试，保留原调用线程 |
 | 玩家列表滚动时列宽抽动 | 滚动状态动画改变 end padding | 固定预留滚动条位置 |
 | 玩家改名、换队后行反复重建 | 行 key 包含可变昵称、槽位与排序 index | 每个列表按玩家引用分配唯一 Long key，离开的映射及时释放 |
@@ -33,6 +34,24 @@
 `LauncherInteractionUiTest` 验证退出动画期间新页面关闭按钮的实际指针命中、账号/好友叠层、原生弹窗销毁；`SharedWidgetInteractionTest` 验证正文覆盖下关闭按钮、取消按压后再次点击、带权重输入框焦点与编辑；`MapSelectionUiTest` 验证宽窄屏地图布局、源 index、刷新与错误恢复、聊天按键；`NativeCanvasCardLayoutTest` 验证重复布局、切卡和 DPI 切换。既有导航、会话生命周期、主题与账号界面测试同时运行。
 
 地图截图由测试保存到 `rwpp-core/build/reports/ui-stability/`；使用真实 Compose 组件和测试地图数据，不代表真实 Android 设备或完整游戏会话的验证。
+
+## Windows 原生弹层视口
+
+`rwpp-desktop/DesktopWindowLayers.kt` 在第一个 `ComposePanel` 创建前，为当前固定的 Compose 1.10.1 安装兼容处理。可聚焦的原生 `Dialog` / `Popup` 窗口覆盖宿主 Compose 视口，内容与命中范围继续由 Compose 管理；地图空列表、缩略图、阴影及缩放动画不再改变 native 窗口边界。保留 `compose.layers.type=WINDOW`，资源浏览器上的弹窗与悬浮控件仍能覆盖 Chromium 原生子窗口。**非聚焦的浏览器悬浮控件保留按实际内容裁剪的小窗口**，其 resize 同样延后执行，避免扩大鼠标拦截区挡住网页。
+
+兼容处理在类首次定义前使用现有 Javassist 依赖修改 `WindowComposeSceneLayer`，启动后无需反射或 javaagent。可聚焦弹层不再逐帧录制绘制范围，非聚焦悬浮控件仍按实际内容裁剪。内部字段类型、绘制范围录制调用的签名与数量均在定义类前校验；不兼容或类已提前加载时记录 `[UI]` 警告并使用原库。升级 Compose 时必须重新验证此入口，不能仅凭编译成功认定仍生效。可见窗口的尺寸更新通过 EDT 合并执行；已销毁窗口不执行迟到更新。
+
+`DesktopWindowLayersTest` 使用真实 Swing、Skiko 和 WINDOW 弹层，覆盖入场动画、下拉菜单、空列表切换、宿主 resize/move、关闭后迟到更新，以及非聚焦悬浮控件保留小窗口。缩放回归可执行：
+
+```powershell
+.\gradlew.bat :rwpp-desktop:test --tests io.github.rwpp.desktop.DesktopWindowLayersTest -Prwjs.test.uiScale=1
+.\gradlew.bat :rwpp-desktop:test --tests io.github.rwpp.desktop.DesktopWindowLayersTest -Prwjs.test.uiScale=1.5
+.\gradlew.bat :rwpp-desktop:test --tests io.github.rwpp.desktop.DesktopWindowLayersTest -Prwjs.test.uiScale=2
+```
+
+该测试在非 Windows 或无图形环境时跳过；共享 Compose 离屏测试不覆盖这条 native 窗口路径。
+
+验证范围：真实地图组件连续 12 次切换地图类型时，未检测到弹窗内容位置变化，也未发生 Skiko 崩溃。仍可测到原生下拉窗口开关时的短暂停顿，采样主要落在 AWT 透明窗口刷新及 Skiko Direct3D 设备创建/释放路径；固定视口不能消除这些开销，不能据此宣称完整客户端已无卡顿。原始录像的问题在更新后的完整客户端中暂未复现，仍需在完整房间、真实存档及浏览器页面中人工验收。
 
 ## 人工验收
 
