@@ -70,20 +70,11 @@ fun buildQuickHostCommand(options: QuickHostRoomOptions): String {
     return base + options.limits.appendSuffix()
 }
 
-private val quickHostLimitSuffixRegex = Regex("""(?:P\d+|U\d+|C\d+|Z\d+)*$""")
-
-/** 去掉 P/U/C/Z 后缀后的 quick-host 主体（news / mods / C… / CM…）。 */
-internal fun quickHostStem(body: String): String? {
-    val stem = body.replace(quickHostLimitSuffixRegex, "")
-    return when {
-        stem.equals("news", ignoreCase = true) -> stem
-        stem.equals("mods", ignoreCase = true) -> stem
-        stem.startsWith("CM", ignoreCase = true) && stem.length > 2 -> stem
-        stem.startsWith("C", ignoreCase = true) && stem.length > 1 &&
-            !stem.startsWith("CM", ignoreCase = true) -> stem
-        else -> null
-    }
-}
+// C 既是自定义房号前缀，也是资金后缀，必须先匹配完整主体，不能直接从末尾剥离 C 数字。
+private val quickHostBodyRegex = Regex(
+    """(?:news|mods|CM\d+|C\d+)(?:P\d+|U\d+|C\d+|Z\d+)*""",
+    RegexOption.IGNORE_CASE,
+)
 
 /**
  * 从引擎 quick-host 连接串解析 [HostCommandPrefix]；无法识别或是加入短码时返回 null。
@@ -92,12 +83,12 @@ fun parseQuickHostCommandPrefix(address: String): HostCommandPrefix? {
     val trimmed = address.trim()
     if (trimmed.startsWith(T_ROOM_ADDRESS_PREFIX, ignoreCase = true)) {
         val path = trimmed.substring(T_ROOM_ADDRESS_PREFIX.length)
-        return if (quickHostStem(path) != null) HostCommandPrefix.T else null
+        return if (quickHostBodyRegex.matches(path)) HostCommandPrefix.T else null
     }
     if (isRoomJoinShortCode(trimmed)) return null
     return when (trimmed.firstOrNull()?.uppercaseChar()) {
-        'Q' -> quickHostStem(trimmed.drop(1))?.let { HostCommandPrefix.Q }
-        'R' -> quickHostStem(trimmed.drop(1))?.let { HostCommandPrefix.R }
+        'Q' -> HostCommandPrefix.Q.takeIf { quickHostBodyRegex.matches(trimmed.drop(1)) }
+        'R' -> HostCommandPrefix.R.takeIf { quickHostBodyRegex.matches(trimmed.drop(1)) }
         else -> null
     }
 }

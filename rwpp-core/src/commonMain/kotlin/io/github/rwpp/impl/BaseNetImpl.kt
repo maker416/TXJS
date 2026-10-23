@@ -96,8 +96,18 @@ abstract class BaseNetImpl : Net {
         }
     }
 
-    override fun buildQuickHostCommand(options: QuickHostRoomOptions): String =
-        io.github.rwpp.net.buildQuickHostCommand(options)
+    // 保留旧公开方法的 JVM 入口；options 重载仍通过它分派给扩展覆写。
+    override fun buildQuickHostCommand(
+        enableMods: Boolean,
+        roomId: String?,
+        maxPlayer: Int?,
+        unitLimit: Int?,
+        credits: Int?,
+        speedMultiplier: Int?,
+        prefix: HostCommandPrefix,
+    ): String = super<Net>.buildQuickHostCommand(
+        enableMods, roomId, maxPlayer, unitLimit, credits, speedMultiplier, prefix,
+    )
 }
 
 

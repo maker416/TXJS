@@ -61,8 +61,16 @@ interface Net : KoinComponent, Initialization {
      */
     val roomListHostProtocol: MutableMap<String, (maxPlayer: Int, enableMods: Boolean, isPublic: Boolean) -> String>
 
-    /** @see buildQuickHostCommand */
-    fun buildQuickHostCommand(options: QuickHostRoomOptions): String
+    /** 保留旧实现的分派路径，使扩展覆写的旧签名也适用于 options 调用。 */
+    fun buildQuickHostCommand(options: QuickHostRoomOptions): String = buildQuickHostCommand(
+        options.enableMods,
+        options.roomId,
+        options.limits.maxPlayer,
+        options.limits.unitLimit,
+        options.limits.credits,
+        options.limits.speedMultiplier,
+        options.prefix,
+    )
 
     fun buildQuickHostCommand(
         enableMods: Boolean,
@@ -72,7 +80,7 @@ interface Net : KoinComponent, Initialization {
         credits: Int? = null,
         speedMultiplier: Int? = null,
         prefix: HostCommandPrefix = HostCommandPrefix.Q,
-    ): String = buildQuickHostCommand(
+    ): String = io.github.rwpp.net.buildQuickHostCommand(
         QuickHostRoomOptions(
             prefix = prefix,
             enableMods = enableMods,

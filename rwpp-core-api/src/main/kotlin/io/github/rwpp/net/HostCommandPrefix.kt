@@ -77,6 +77,8 @@ fun isRoomJoinShortCode(address: String): Boolean =
 
 /**
  * Quick-host 原版房：不在客户端弹「清空模组」、不调用本地 disableAllMods，只发建房指令，由中继/引擎按原版处理。
+ * 原版 BecomeServer 包的 mods 标志控制当前房间的激活单位集合（桌面 ad.c(au) → ag.b(o)，
+ * Android ae.a(bi) 同样处理）；无需改写用户的模组启用配置或重新解析资源。
  *
  * - **Q / R**：正式策略。
  * - **T**：鱼雷可侧尚未完整手测 T 房开房链路，仍保留清模组；若验证后与 Q/R 一致，可在此对 [HostCommandPrefix.T] 返回 `true` 三前缀统一。
