@@ -318,7 +318,9 @@ fun MultiplayerView(
     var mapNameFilter by remember { mutableStateOf(instance.mapNameFilter) }
     var creatorNameFilter by remember { mutableStateOf(instance.creatorNameFilter) }
     var playerLimitRange by remember { mutableStateOf(instance.playerLimitRangeFrom..instance.playerLimitRangeTo) }
-    var joinServerAddress by rememberSaveable { mutableStateOf(instance.joinServerAddress) }
+    var joinServerAddress by rememberSaveable {
+        mutableStateOf(instance.joinServerAddress.takeIf { io.github.rwpp.net.isSingleLineJoinAddress(it) } ?: "")
+    }
     var joinHistory by remember { mutableStateOf(NetworkJoinHistory.load(configIO)) }
     var roomLabelFilterSelection by remember {
         mutableStateOf(instance.roomLabelFilterSelection.toSet())
@@ -416,6 +418,10 @@ fun MultiplayerView(
                     ModSyncController.awaitJoinEntryCleanup()
                     if(address.isBlank()) {
                         message("That server no longer exists")
+                        return@beginSession false
+                    }
+                    if (!io.github.rwpp.net.isSingleLineJoinAddress(address)) {
+                        message(readI18n("multiplayer.invalidJoinAddress"))
                         return@beginSession false
                     }
                     address = roomJoinAddressForId(address)

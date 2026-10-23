@@ -19,6 +19,15 @@ import kotlin.test.assertTrue
 
 class RoomAddressTest {
     @Test
+    fun directAddressesRejectHiddenLogLines() {
+        assertTrue(isSingleLineJoinAddress("192.168.1.2"))
+        assertTrue(isSingleLineJoinAddress("192.168.1.2:5123"))
+        assertTrue(isSingleLineJoinAddress("Q77182"))
+        listOf("\n", "\r", "\r\n", "\u2028", "\u2029", "\u0000").forEach {
+            assertFalse(isSingleLineJoinAddress("192.168.1.2:5123${it}at android.net.SSLCertificateSocketFactory..."))
+        }
+    }
+    @Test
     fun tRoomDetailsExposeTheDomainJoinAddress() {
         val details = "Room: T77182\nStarting Credits: 4000"
         assertEquals("t.mxy.wang/77182", extractRoomJoinAddress(details))
