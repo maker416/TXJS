@@ -9,6 +9,7 @@ package io.github.rwpp.ui
 
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.logger
+import io.github.rwpp.net.isSingleLineJoinAddress
 
 /** 多人直连地址历史（最多 [MAX_ENTRIES] 条，新的在前）。 */
 internal object NetworkJoinHistory {
@@ -19,13 +20,15 @@ internal object NetworkJoinHistory {
     fun load(configIO: ConfigIO): List<String> {
         val raw = runCatching { configIO.readSingleConfig(CONFIG_GROUP, CONFIG_KEY) }.getOrNull()
         if (raw.isNullOrBlank()) return emptyList()
-        return raw.lineSequence().map { it.trim() }.filter { it.isNotEmpty() && it.none(Char::isWhitespace) }
+        // 先按连接入口的规则拒绝控制字符，避免 trim 掩盖旧记录中的制表符等异常内容。
+        return raw.lineSequence().filter(::isSingleLineJoinAddress)
+            .map { it.trim() }.filter { it.none(Char::isWhitespace) }
             .distinct().take(MAX_ENTRIES).toList()
     }
 
     fun record(configIO: ConfigIO, address: String): List<String> {
         val trimmed = address.trim()
-        if (!io.github.rwpp.net.isSingleLineJoinAddress(address)) return load(configIO)
+        if (!isSingleLineJoinAddress(address)) return load(configIO)
         val updated = (listOf(trimmed) + load(configIO).filter { it != trimmed }).take(MAX_ENTRIES)
         // 历史不是连接的前置条件：磁盘写入失败仍允许本次直连继续。
         runCatching { configIO.saveSingleConfig(CONFIG_GROUP, CONFIG_KEY, updated.joinToString("\n")) }
