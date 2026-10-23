@@ -17,6 +17,28 @@ import kotlin.reflect.KClass
 import kotlin.test.*
 
 class NetworkJoinHistoryTest {
+    @Test
+    fun pastedLogIsNotRecordedAndStackFramesAreNotOfferedAsAddresses() {
+        val config = TestConfigIO()
+        NetworkJoinHistory.record(config, "192.168.1.2:5123")
+        assertEquals(listOf("192.168.1.2:5123"), NetworkJoinHistory.record(
+            config, "192.168.1.2:5123\nat android.net.SSLCertificateSocketFactory...",
+        ))
+        config.saveSingleConfig("io.github.rwpp.networkJoinHistory", "addresses",
+            "192.168.1.2:5123\nat android.net.SSLCertificateSocketFactory...\nQ1234")
+        assertEquals(listOf("192.168.1.2:5123", "Q1234"), NetworkJoinHistory.load(config))
+    }
+
+    @Test
+    fun oldHistoryRejectsControlCharactersBeforeTrimming() {
+        val config = TestConfigIO()
+        config.saveSingleConfig(
+            "io.github.rwpp.networkJoinHistory", "addresses",
+            listOf("R123\u0000", "192.168.1.2\u007f:5123", "\tQ5678", "R9012\u0085", " Q1234 ").joinToString("\n"),
+        )
+        assertEquals(listOf("Q1234"), NetworkJoinHistory.load(config))
+    }
+
     @BeforeTest
     fun setup() {
         logger = LoggerFactory.getLogger("NetworkJoinHistoryTest")
