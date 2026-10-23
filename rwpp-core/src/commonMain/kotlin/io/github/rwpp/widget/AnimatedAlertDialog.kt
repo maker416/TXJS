@@ -12,22 +12,27 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
-import io.github.rwpp.AppContext
 import io.github.rwpp.config.Settings
 import io.github.rwpp.platform.BackHandler
+import io.github.rwpp.platform.BackHandlerScope
 import org.koin.compose.koinInject
 
 internal const val ANIMATION_TIME = 200L
@@ -78,34 +83,42 @@ internal fun AnimatedScaleInTransition(
     )
 }
 
+/** 保留扩展已经编译使用的原签名。 */
 @Composable
 fun AnimatedTransitionDialog(
     onDismissRequest: () -> Unit,
     enableDismiss: Boolean,
     contentAlignment: Alignment = Alignment.Center,
+    content: @Composable (AnimatedTransitionDialogHelper) -> Unit,
+) = AnimatedTransitionDialog(onDismissRequest, enableDismiss, contentAlignment, inlineDesktop = false, content)
+
+/**
+ * [inlineDesktop] 仅由桌面账号页在整窗根 Box 下显式开启；普通调用和嵌套弹层必须保留原生窗口。
+ */
+@Composable
+fun AnimatedTransitionDialog(
+    onDismissRequest: () -> Unit,
+    enableDismiss: Boolean,
+    contentAlignment: Alignment = Alignment.Center,
+    inlineDesktop: Boolean,
     content: @Composable (AnimatedTransitionDialogHelper) -> Unit
 ) {
-    val appContext = koinInject<AppContext>()
     val visibility = remember { MutableTransitionState(false).apply { targetState = true } }
     var dismissRequested by remember { mutableStateOf(false) }
     val enableAnimations = koinInject<Settings>().enableAnimations
     val currentOnDismissRequest by rememberUpdatedState(onDismissRequest)
     val currentEnableDismiss by rememberUpdatedState(enableDismiss)
-    val focusManager = LocalFocusManager.current
+    val modalFocus = remember { FocusRequester() }
+    val escapeScope = rememberCoroutineScope()
 
     val helper = remember {
         AnimatedTransitionDialogHelper {
             if (!dismissRequested) {
+                if (inlineDesktop) modalFocus.requestFocus()
                 dismissRequested = true
                 visibility.targetState = false
             }
         }
-    }
-    fun dismissAnimatedDialog() {
-        if (appContext.isDesktop()) {
-            focusManager.clearFocus()
-        }
-        helper.triggerAnimatedDismiss()
     }
     // 等动画真正结束再移除 Dialog；重复关闭不会重置计时，快速关闭也不会被延迟入场重新打开。
     LaunchedEffect(dismissRequested, visibility.isIdle, visibility.currentState) {
@@ -115,8 +128,12 @@ fun AnimatedTransitionDialog(
     // 即使调用方没有立即复位 visible，也不能留下看不见、仍吞掉鼠标/触摸的原生窗口。
     if (dismissRequested && visibility.isIdle && !visibility.currentState) return
 
-    BackHandler(currentEnableDismiss && !dismissRequested) {
-        dismissAnimatedDialog()
+    // 模态框在忙碌和退出动画期间仍独占返回，避免下一次 Esc 关闭底层页面。
+    BackHandler(true) {
+        if (currentEnableDismiss && !dismissRequested) helper.triggerAnimatedDismiss()
+    }
+    if (inlineDesktop) {
+        LaunchedEffect(Unit) { modalFocus.requestFocus() }
     }
 
     val dialogSurface: @Composable () -> Unit = {
@@ -125,13 +142,8 @@ fun AnimatedTransitionDialog(
             Box(
                 contentAlignment = contentAlignment,
                 modifier = Modifier
-                    .then(
-                        if (appContext.isDesktop()) {
-                            Modifier.fillMaxSize()
-                        } else {
-                            Modifier
-                        },
-                    )
+                    .onPreviewKeyEvent { !interactive }
+                    .focusProperties { canFocus = interactive }
                     .pointerInput(Unit) {
                         awaitPointerEventScope {
                             while (true) {
@@ -148,38 +160,47 @@ fun AnimatedTransitionDialog(
                     exit = if (enableAnimations) fadeOut(tween(ANIMATION_TIME.toInt())) +
                         scaleOut(tween(ANIMATION_TIME.toInt()), targetScale = 0.96f) else ExitTransition.None,
                 ) {
-                    content(helper)
+                    BackHandlerScope(enabled = { !dismissRequested }) {
+                        content(helper)
+                    }
                 }
             }
         }
     }
 
-    if (appContext.isDesktop()) {
-        // RWJS 主 UI 在透明 ComposePanel 内；独立 Dialog 子窗口里 TextField 光标常不绘制，改为同窗口遮罩。
+    if (inlineDesktop) {
+        // 仅供账号页根 Box 下的弹窗显式使用；普通/嵌套调用继续使用原生 Dialog，
+        // 不能用局部 fillMaxSize/zIndex 冒充整窗模态层（尤其桌面原生浏览器上方）。
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .zIndex(DESKTOP_INLINE_DIALOG_Z_INDEX),
+                .zIndex(DESKTOP_INLINE_DIALOG_Z_INDEX)
+                .focusProperties { onExit = { cancelFocusChange() } }
+                .focusGroup(),
         ) {
-            if (currentEnableDismiss) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.55f))
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClick = { dismissAnimatedDialog() },
-                        ),
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.55f)),
-                )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .focusProperties { canFocus = false }
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {
+                            if (currentEnableDismiss && !dismissRequested) helper.triggerAnimatedDismiss()
+                        },
+                    ),
+            )
+            Box(
+                Modifier.fillMaxSize()
+                    .desktopEscapeToBackDispatcher(escapeScope)
+                    .onPreviewKeyEvent { dismissRequested }
+                    .focusRequester(modalFocus)
+                    .focusable(),
+                contentAlignment = contentAlignment,
+            ) {
+                dialogSurface()
             }
-            dialogSurface()
         }
     } else {
         Dialog(
@@ -205,15 +226,29 @@ class AnimatedTransitionDialogHelper(
     }
 }
 
+/** 保留扩展已经编译使用的原签名。 */
 @Composable
 fun AnimatedAlertDialog(
     visible: Boolean,
     onDismissRequest: () -> Unit,
     enableDismiss: Boolean = true,
+    content: @Composable (dismiss: () -> Unit) -> Unit,
+) = AnimatedAlertDialog(visible, onDismissRequest, enableDismiss, inlineDesktop = false, content)
+
+@Composable
+fun AnimatedAlertDialog(
+    visible: Boolean,
+    onDismissRequest: () -> Unit,
+    enableDismiss: Boolean = true,
+    inlineDesktop: Boolean,
     content: @Composable (dismiss: () -> Unit) -> Unit
 ) {
     if (visible && LocalDialogInteractive.current) {
-        AnimatedTransitionDialog(onDismissRequest = onDismissRequest, enableDismiss = enableDismiss) { animatedTransitionDialogHelper ->
+        AnimatedTransitionDialog(
+            onDismissRequest = onDismissRequest,
+            enableDismiss = enableDismiss,
+            inlineDesktop = inlineDesktop,
+        ) { animatedTransitionDialogHelper ->
             content(animatedTransitionDialogHelper::triggerAnimatedDismiss)
         }
     }

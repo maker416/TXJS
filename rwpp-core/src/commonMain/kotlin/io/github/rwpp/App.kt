@@ -210,13 +210,14 @@ fun App(
             modifier = Modifier
                 .then(sizeModifier)
                 .focusRequester(globalFocusRequester)
+                .launcherKeyboardEvents(appScope)
                 .clickable(
                     interactionSource,
                     null
                 ) {
                     globalFocusRequester.requestFocus()
                     keyboardController?.hide()
-                }.launcherKeyboardEvents(appScope)
+                }
         ) {
             CompositionLocalProvider(
                 LocalTextSelectionColors provides RWSelectionColors,

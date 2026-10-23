@@ -27,8 +27,7 @@ import io.github.rwpp.event.events.KeyboardEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
-/** UI 回调不能同步等事件订阅者：订阅者可能需要回到同一条 Main/EDT 线程。 */
-/** 桌面：Esc 转成 [KeyboardEvent]，供 BackHandler 分发（局部焦点不会冒泡到根布局）。 */
+/** 桌面 Esc 在输入控件消费前交给返回分派；异步广播，避免事件订阅者回到 Main/EDT 时死锁。 */
 internal fun Modifier.desktopEscapeToBackDispatcher(scope: CoroutineScope): Modifier = onPreviewKeyEvent { event ->
     if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
         scope.launch { KeyboardEvent(0x1B).broadcast() }
@@ -38,6 +37,7 @@ internal fun Modifier.desktopEscapeToBackDispatcher(scope: CoroutineScope): Modi
     }
 }
 
+/** UI 回调不能同步等事件订阅者：订阅者可能需要回到同一条 Main/EDT 线程。 */
 internal fun Modifier.launcherKeyboardEvents(scope: CoroutineScope): Modifier = onKeyEvent { event ->
     if (event.type == KeyEventType.KeyDown) {
         scope.launch { KeyboardEvent(event.key.keyCode.toInt()).broadcast() }
@@ -47,7 +47,10 @@ internal fun Modifier.launcherKeyboardEvents(scope: CoroutineScope): Modifier = 
 }
 
 @Composable
-fun Modifier.autoClearFocus(restoreFocus: FocusRequester? = null) = composed {
+fun Modifier.autoClearFocus() = autoClearFocus(null)
+
+@Composable
+fun Modifier.autoClearFocus(restoreFocus: FocusRequester?) = composed {
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     val interactionSource = remember { MutableInteractionSource() }

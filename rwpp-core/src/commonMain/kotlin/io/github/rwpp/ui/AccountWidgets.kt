@@ -44,7 +44,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -358,24 +358,19 @@ internal fun AccountPrimaryButton(
             )
         }
     }
-    // 桌面 Dialog 居中：M3 Surface 悬停会抬升 shadow，卡片高度变化导致整窗上飘。
+    // 桌面使用固定背景，避免悬停阴影扩展弹层绘制边界；保留按钮焦点与语义。
     if (appContext.isDesktop()) {
         Box(
             contentAlignment = Alignment.Center,
             modifier = modifier
                 .clip(shape)
                 .background(containerColor, shape)
-                .focusProperties { canFocus = false }
-                .then(
-                    if (enabled) {
-                        Modifier.clickable(
-                            interactionSource = null,
-                            indication = null,
-                            onClick = onClick,
-                        )
-                    } else {
-                        Modifier
-                    },
+                .clickable(
+                    enabled = enabled,
+                    role = Role.Button,
+                    interactionSource = null,
+                    indication = null,
+                    onClick = onClick,
                 ),
         ) {
             labelRow()

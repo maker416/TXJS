@@ -46,15 +46,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import io.github.rwpp.AppContext
 import io.github.rwpp.config.Settings
 import io.github.rwpp.ui.UI
 import io.github.rwpp.widget.v2.bounceClick
-import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
 /** When true inside [io.github.rwpp.ui.AccountAuthCard], desktop text fields forward Esc to BackDispatcher. */
 internal val LocalAccountAuthDialogEscape = staticCompositionLocalOf { false }
+
+/** 保留未被过滤的光标、选区与输入法预编辑区；过滤改变文本后才提交并移到末尾。 */
+internal fun accountTextFieldEdit(incoming: TextFieldValue, filtered: String): TextFieldValue =
+    if (incoming.text == filtered) incoming else TextFieldValue(filtered, TextRange(filtered.length))
 
 @Composable
 fun BorderCard(
@@ -256,8 +258,7 @@ fun RWSingleOutlinedTextField(
     onFocusChanged: (FocusState) -> Unit = {},
     onValueChange: (String) -> Unit
 ) {
-    val appContext = koinInject<AppContext>()
-    val forwardEscapeOnDesktop = appContext.isDesktop() && LocalAccountAuthDialogEscape.current
+    val forwardEscapeOnDesktop = LocalAccountAuthDialogEscape.current
     val escapeScope = rememberCoroutineScope()
     fun filterInput(raw: String): String =
         (if (raw.length <= lengthLimitCount
@@ -290,7 +291,7 @@ fun RWSingleOutlinedTextField(
                 },
             )
 
-        if (appContext.isDesktop()) {
+        if (forwardEscapeOnDesktop) {
             // 桌面 Dialog 内 String 状态 OutlinedTextField 常不绘制光标；保留 selection 的 TextFieldValue 可恢复。
             var textFieldValue by remember {
                 mutableStateOf(TextFieldValue(value, TextRange(value.length)))
@@ -299,7 +300,7 @@ fun RWSingleOutlinedTextField(
                 if (textFieldValue.text != value) {
                     textFieldValue = TextFieldValue(
                         text = value,
-                        selection = TextRange(value.length.coerceIn(0, value.length)),
+                        selection = TextRange(value.length),
                     )
                 }
             }
@@ -315,12 +316,7 @@ fun RWSingleOutlinedTextField(
                 leadingIcon = leadingIcon,
                 onValueChange = { incoming ->
                     val filtered = filterInput(incoming.text)
-                    val selection = if (incoming.text == filtered) {
-                        incoming.selection
-                    } else {
-                        TextRange(filtered.length.coerceIn(0, filtered.length))
-                    }
-                    textFieldValue = TextFieldValue(filtered, selection)
+                    textFieldValue = accountTextFieldEdit(incoming, filtered)
                     onValueChange(filtered)
                 },
                 visualTransformation = visualTransformation,

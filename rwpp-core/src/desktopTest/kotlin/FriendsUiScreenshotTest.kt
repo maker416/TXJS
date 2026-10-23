@@ -13,7 +13,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toAwtImage
-import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.test.*
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onRoot
@@ -52,6 +53,7 @@ import java.awt.image.BufferedImage
 import java.io.File
 import java.lang.reflect.Proxy
 import javax.imageio.ImageIO
+import kotlin.test.assertEquals
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -91,6 +93,29 @@ class FriendsUiScreenshotTest {
         AccountSession.resetForTests()
         runCatching { stopKoin() }
         koinInit = false
+    }
+
+    @Test
+    fun desktopAccountEscapeClosesLoginBeforeAccountAndRestoresFocus() = runDesktopComposeUiTest(width = 800, height = 600) {
+        AccountSession.applyLoggedOutPreview()
+        FriendsSession.clear()
+        var exits = 0
+        setContent {
+            ScreenshotTheme(windowManager = WindowManager.Middle) {
+                AccountView(onExit = { exits++ })
+            }
+        }
+        onNodeWithText("登录").performClick()
+        val username = onNode(hasSetTextAction() and hasText("账号或邮箱"))
+        username.performClick()
+        username.performTextInput("player")
+        username.performKeyInput { pressKey(Key.Escape) }
+        waitForIdle()
+        onAllNodes(hasSetTextAction()).assertCountEquals(0)
+        runOnIdle { assertEquals(0, exits) }
+        onRoot().performKeyInput { pressKey(Key.Escape) }
+        waitForIdle()
+        runOnIdle { assertEquals(1, exits) }
     }
 
     @Test

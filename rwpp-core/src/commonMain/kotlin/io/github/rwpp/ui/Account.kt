@@ -180,14 +180,14 @@ fun AccountView(onExit: () -> Unit) {
         Modifier
             .fillMaxSize()
             .focusRequester(pageFocusRequester)
-            .focusable()
             .then(
                 if (appContext.isDesktop()) {
                     Modifier.desktopEscapeToBackDispatcher(scope)
                 } else {
                     Modifier
                 },
-            ),
+            )
+            .focusable(),
     ) {
         if (appContext.isDesktop()) {
             Box(
@@ -281,6 +281,7 @@ fun AccountView(onExit: () -> Unit) {
     }
 
     AccountLoginDialog(
+        inlineDesktop = appContext.isDesktop(),
         visible = authKind == AccountAuthKind.Login,
         username = draftUsername,
         onUsernameChange = { draftUsername = it },
@@ -290,6 +291,7 @@ fun AccountView(onExit: () -> Unit) {
     )
 
     AccountRegisterDialog(
+        inlineDesktop = appContext.isDesktop(),
         visible = authKind == AccountAuthKind.Register,
         username = draftUsername,
         onUsernameChange = { draftUsername = it },
@@ -298,28 +300,33 @@ fun AccountView(onExit: () -> Unit) {
     )
 
     AccountForgotDialog(
+        inlineDesktop = appContext.isDesktop(),
         visible = authKind == AccountAuthKind.Forgot,
         onDismiss = { if (authKind == AccountAuthKind.Forgot) authKind = null },
         onBackToLogin = { authKind = AccountAuthKind.Login },
     )
 
     ChangeNicknameDialog(
+        inlineDesktop = appContext.isDesktop(),
         visible = showNicknameDialog,
         current = user?.nickname.orEmpty(),
         onDismiss = { showNicknameDialog = false },
     )
 
     AccountAvatarDialog(
+        inlineDesktop = appContext.isDesktop(),
         visible = showAvatarDialog,
         onDismiss = { showAvatarDialog = false },
     )
 
     ChangeEmailDialog(
+        inlineDesktop = appContext.isDesktop(),
         visible = showChangeEmail,
         onDismiss = { showChangeEmail = false },
     )
 
     AnimatedAlertDialog(
+        inlineDesktop = appContext.isDesktop(),
         visible = showLogoutConfirm,
         onDismissRequest = { if (!loggingOut) showLogoutConfirm = false },
         enableDismiss = !loggingOut,
@@ -809,6 +816,17 @@ fun AccountLoginDialog(
     onDismiss: () -> Unit,
     onSwitchToRegister: () -> Unit,
     onForgot: () -> Unit,
+) = AccountLoginDialog(visible, username, onUsernameChange, onDismiss, inlineDesktop = false, onSwitchToRegister, onForgot)
+
+@Composable
+fun AccountLoginDialog(
+    visible: Boolean,
+    username: String,
+    onUsernameChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    inlineDesktop: Boolean,
+    onSwitchToRegister: () -> Unit,
+    onForgot: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val isSmall = LocalWindowManager.current == WindowManager.Small
@@ -830,6 +848,7 @@ fun AccountLoginDialog(
     }
 
     AnimatedAlertDialog(
+        inlineDesktop = inlineDesktop,
         visible = visible,
         onDismissRequest = { if (!submitting) onDismiss() },
         enableDismiss = !submitting,
@@ -1057,6 +1076,16 @@ fun AccountRegisterDialog(
     onUsernameChange: (String) -> Unit,
     onDismiss: () -> Unit,
     onSwitchToLogin: () -> Unit,
+) = AccountRegisterDialog(visible, username, onUsernameChange, onDismiss, inlineDesktop = false, onSwitchToLogin)
+
+@Composable
+fun AccountRegisterDialog(
+    visible: Boolean,
+    username: String,
+    onUsernameChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    inlineDesktop: Boolean,
+    onSwitchToLogin: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var password by remember(visible) { mutableStateOf("") }
@@ -1078,6 +1107,7 @@ fun AccountRegisterDialog(
     }
 
     AnimatedAlertDialog(
+        inlineDesktop = inlineDesktop,
         visible = visible,
         onDismissRequest = { if (!submitting) onDismiss() },
         enableDismiss = !submitting,
@@ -1253,6 +1283,7 @@ private fun AccountForgotDialog(
     visible: Boolean,
     onDismiss: () -> Unit,
     onBackToLogin: () -> Unit,
+    inlineDesktop: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
     var email by remember(visible) { mutableStateOf("") }
@@ -1273,6 +1304,7 @@ private fun AccountForgotDialog(
     }
 
     AnimatedAlertDialog(
+        inlineDesktop = inlineDesktop,
         visible = visible,
         onDismissRequest = { if (!submitting) onDismiss() },
         enableDismiss = !submitting,
@@ -1416,6 +1448,7 @@ private fun ChangeNicknameDialog(
     visible: Boolean,
     current: String,
     onDismiss: () -> Unit,
+    inlineDesktop: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
     var nickname by remember(visible) { mutableStateOf(current) }
@@ -1423,6 +1456,7 @@ private fun ChangeNicknameDialog(
     var submitting by remember(visible) { mutableStateOf(false) }
 
     AnimatedAlertDialog(
+        inlineDesktop = inlineDesktop,
         visible = visible,
         onDismissRequest = { if (!submitting) onDismiss() },
         enableDismiss = !submitting,
@@ -1715,6 +1749,7 @@ private fun PointLedgersDialog(
 private fun AccountAvatarDialog(
     visible: Boolean,
     onDismiss: () -> Unit,
+    inlineDesktop: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
     var confirmingDelete by remember(visible) { mutableStateOf(false) }
@@ -1724,6 +1759,7 @@ private fun AccountAvatarDialog(
     val hasAvatar = AccountSession.user?.hasAvatar == true
 
     AnimatedAlertDialog(
+        inlineDesktop = inlineDesktop,
         visible = visible,
         onDismissRequest = { if (!busy) onDismiss() },
         enableDismiss = !busy,
@@ -1871,6 +1907,7 @@ private fun AccountAvatarDialog(
 private fun ChangeEmailDialog(
     visible: Boolean,
     onDismiss: () -> Unit,
+    inlineDesktop: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
     var email by remember(visible) { mutableStateOf("") }
@@ -1890,6 +1927,7 @@ private fun ChangeEmailDialog(
     }
 
     AnimatedAlertDialog(
+        inlineDesktop = inlineDesktop,
         visible = visible,
         onDismissRequest = { if (!submitting) onDismiss() },
         enableDismiss = !submitting,
