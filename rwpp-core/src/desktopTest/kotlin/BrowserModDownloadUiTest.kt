@@ -10,6 +10,7 @@ package io.github.rwpp.ui
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -127,12 +128,48 @@ class BrowserModDownloadUiTest {
         runOnIdle { assertFalse(transfer.started.get()) }
         onNodeWithText("下载并解压").performClick()
         runOnIdle { transfer.release.complete(Unit) }
-        waitUntil(timeoutMillis = 5000) { File(mapDirectory, "maps/folder/map.tmx").exists() }
+        waitUntil(timeoutMillis = 5000) {
+            onAllNodesWithText("已解压到地图目录，共 1 张地图，可在自定义地图中选择。").fetchSemanticsNodes().isNotEmpty()
+        }
         onNodeWithText("已解压到地图目录，共 1 张地图，可在自定义地图中选择。").assertIsDisplayed()
         runOnIdle {
             assertEquals("preview", File(mapDirectory, "maps/folder/map_map.png").readText())
             assertTrue(directory.listFiles()!!.isEmpty())
         }
+    }
+
+    @Test fun mapThumbnailDownloadsAutomaticallyIntoTheMapFolder() = runDesktopComposeUiTest(width = 360, height = 720) {
+        val bytes = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 1, 2, 3)
+        val transfer = ControlledTransfer(bytes)
+        val browser = EmbeddedBrowserState("https://resources.example")
+        browser.offerModDownload(BrowserModDownload("New 混乱街区_map.png", null, transfer))
+        var refreshes = 0
+        setContent { MaterialTheme { BrowserModDownloadDialog(browser, onMapsInstalled = { refreshes++ },
+            mapDirectory = { mapDirectory }, directory = { directory }) } }
+        waitUntil(timeoutMillis = 5000) { transfer.started.get() }
+        onNodeWithText("正在下载地图缩略图").assertIsDisplayed()
+        runOnIdle { transfer.release.complete(Unit) }
+        val thumbnail = File(mapDirectory, "New 混乱街区_map.png")
+        waitUntil(timeoutMillis = 5000) { onAllNodesWithText("地图缩略图已保存").fetchSemanticsNodes().isNotEmpty() }
+        onNodeWithText("地图缩略图已保存").assertIsDisplayed()
+        runOnIdle {
+            kotlin.test.assertContentEquals(bytes, thumbnail.readBytes())
+            assertTrue(directory.listFiles()!!.isEmpty())
+            assertTrue(mapDirectory.listFiles()!!.none { it.extension == "part" })
+            assertEquals(1, refreshes)
+        }
+    }
+
+    @Test fun cancellingAutomaticThumbnailDownloadRemovesThePartialFile() = runDesktopComposeUiTest {
+        val transfer = ControlledTransfer(byteArrayOf(1, 2, 3))
+        val browser = EmbeddedBrowserState("https://resources.example")
+        browser.offerModDownload(BrowserModDownload("level_map.png", null, transfer))
+        setContent { MaterialTheme { BrowserModDownloadDialog(browser,
+            mapDirectory = { mapDirectory }, directory = { directory }) } }
+        waitUntil(timeoutMillis = 5000) { transfer.started.get() }
+        onNodeWithText("取消").performClick()
+        waitUntil(timeoutMillis = 5000) { mapDirectory.listFiles()!!.isEmpty() }
+        runOnIdle { assertTrue(transfer.cancelled.get()); assertEquals(null, browser.modDownload) }
     }
 
     @Test fun completeModZipRequiresTwoChoicesAndIsSavedAsRwmod() = runDesktopComposeUiTest(width = 360, height = 720) {

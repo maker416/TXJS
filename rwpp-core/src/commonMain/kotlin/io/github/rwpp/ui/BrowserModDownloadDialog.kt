@@ -78,7 +78,11 @@ private fun ModDownloadDialog(download: BrowserModDownload, modDirectory: () -> 
 ) {
     val scope = rememberCoroutineScope()
     val type = remember(download) { browserResourceType(download.fileName) }
-    var kind by remember { mutableStateOf(if (type == BrowserResourceType.Map) BrowserResourceInstallKind.Map else BrowserResourceInstallKind.Mod) }
+    var kind by remember { mutableStateOf(when (type) {
+        BrowserResourceType.Map -> BrowserResourceInstallKind.Map
+        BrowserResourceType.MapThumbnail -> BrowserResourceInstallKind.MapThumbnail
+        else -> BrowserResourceInstallKind.Mod
+    }) }
     var stage by remember { mutableStateOf(if (type == BrowserResourceType.Zip) DownloadStage.ChooseZipType else DownloadStage.Confirm) }
     var received by remember { mutableStateOf(0L) }
     var total by remember { mutableStateOf(download.totalBytes) }
@@ -90,6 +94,11 @@ private fun ModDownloadDialog(download: BrowserModDownload, modDirectory: () -> 
     val lastProgress = remember { AtomicLong(0) }
     val scrollState = rememberScrollState()
     LaunchedEffect(stage) { scrollState.scrollTo(0) }
+    val messagePrefix = when (kind) {
+        BrowserResourceInstallKind.Mod -> "browser.mod"
+        BrowserResourceInstallKind.MapThumbnail -> "browser.mapThumbnail"
+        else -> "browser.map"
+    }
 
     fun close() {
         if (stage == DownloadStage.Installing) return
@@ -159,6 +168,11 @@ private fun ModDownloadDialog(download: BrowserModDownload, modDirectory: () -> 
         }
     }
 
+    // 下载图片名包含 map 时直接保存到地图目录，无需再次选择类型或确认。
+    LaunchedEffect(download) {
+        if (type == BrowserResourceType.MapThumbnail) begin()
+    }
+
     Dialog(onDismissRequest = ::close, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         BorderCard(Modifier.padding(16.dp).widthIn(max = 480.dp).fillMaxWidth(),
             backgroundColor = MaterialTheme.colorScheme.surface) {
@@ -167,11 +181,11 @@ private fun ModDownloadDialog(download: BrowserModDownload, modDirectory: () -> 
                     DownloadStage.ChooseZipType -> "browser.zipTypeTitle"
                     DownloadStage.ConfirmZipMod -> "browser.zipModTitle"
                     DownloadStage.Unsupported -> "browser.modCollectionUnsupportedTitle"
-                    DownloadStage.Confirm -> if (kind == BrowserResourceInstallKind.Mod) "browser.modInstallTitle" else "browser.mapInstallTitle"
-                    DownloadStage.Downloading -> if (kind == BrowserResourceInstallKind.Mod) "browser.modDownloading" else "browser.mapDownloading"
-                    DownloadStage.Installing -> if (kind == BrowserResourceInstallKind.Mod) "browser.modInstalling" else "browser.mapInstalling"
-                    DownloadStage.Complete -> if (kind == BrowserResourceInstallKind.Mod) "browser.modInstalled" else "browser.mapInstalled"
-                    DownloadStage.Failed -> if (kind == BrowserResourceInstallKind.Mod) "browser.modDownloadFailed" else "browser.mapDownloadFailed"
+                    DownloadStage.Confirm -> "${messagePrefix}InstallTitle"
+                    DownloadStage.Downloading -> "${messagePrefix}Downloading"
+                    DownloadStage.Installing -> "${messagePrefix}Installing"
+                    DownloadStage.Complete -> "${messagePrefix}Installed"
+                    DownloadStage.Failed -> "${messagePrefix}DownloadFailed"
                 }), style = MaterialTheme.typography.titleLarge)
                 Text(installedName, style = MaterialTheme.typography.bodyMedium)
                 when (stage) {
@@ -198,6 +212,7 @@ private fun ModDownloadDialog(download: BrowserModDownload, modDirectory: () -> 
                         BrowserResourceInstallKind.Mod -> "browser.modInstallConfirm"
                         BrowserResourceInstallKind.Map -> "browser.mapInstallConfirm"
                         BrowserResourceInstallKind.MapPack -> "browser.mapPackInstallConfirm"
+                        BrowserResourceInstallKind.MapThumbnail -> "browser.mapThumbnailInstallConfirm"
                     }))
                     DownloadStage.Downloading -> {
                         val expected = total
@@ -216,6 +231,7 @@ private fun ModDownloadDialog(download: BrowserModDownload, modDirectory: () -> 
                             BrowserResourceInstallKind.Mod -> "browser.modInstalledHint"
                             BrowserResourceInstallKind.Map -> "browser.mapInstalledHint"
                             BrowserResourceInstallKind.MapPack -> "browser.mapPackInstalledHint"
+                            BrowserResourceInstallKind.MapThumbnail -> "browser.mapThumbnailInstalledHint"
                         }, I18nType.RWPP, installedMapCount.toString()))
                         Text(installedPath, style = MaterialTheme.typography.bodySmall)
                     }

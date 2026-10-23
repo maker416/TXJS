@@ -26,12 +26,14 @@ data class BrowserModDownload(
     val transfer: BrowserModTransfer,
 )
 
-enum class BrowserResourceType { Mod, Map, Zip }
+enum class BrowserResourceType { Mod, Map, Zip, MapThumbnail }
 
 fun browserResourceType(fileName: String): BrowserResourceType? = when (fileName.substringAfterLast('.', "").lowercase()) {
     "rwmod" -> BrowserResourceType.Mod
     "tmx" -> BrowserResourceType.Map
     "zip" -> BrowserResourceType.Zip
+    "png", "jpg", "jpeg", "webp", "gif", "bmp" ->
+        BrowserResourceType.MapThumbnail.takeIf { fileName.substringBeforeLast('.').contains("map", ignoreCase = true) }
     else -> null
 }
 
@@ -48,7 +50,11 @@ fun browserResourceFileName(url: String, contentDisposition: String? = null, sug
     val base = name.substringAfterLast('/').substringAfterLast('\\')
     val type = browserResourceType(base) ?: return null
     val extension = base.substringAfterLast('.').lowercase()
-    val fallback = when (type) { BrowserResourceType.Mod -> "mod"; BrowserResourceType.Map -> "map"; BrowserResourceType.Zip -> "resource" }
+    val fallback = when (type) {
+        BrowserResourceType.Mod -> "mod"
+        BrowserResourceType.Map, BrowserResourceType.MapThumbnail -> "map"
+        BrowserResourceType.Zip -> "resource"
+    }
     return "${browserResourceStem(base.substringBeforeLast('.'), fallback)}.$extension"
 }
 

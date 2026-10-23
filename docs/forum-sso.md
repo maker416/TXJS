@@ -27,10 +27,11 @@ go run ./cmd/forum-bridge --mode allow-sso --source-app-code TXJS_APP_CODE --app
 
 ## 资源下载与分类安装
 
-Android GeckoView 与桌面 JCEF 按响应文件名（优先于 URL）识别 `.rwmod`、`.tmx`、`.zip`，大小写不敏感。下载保持浏览器自身的登录态；确认前不写入资源文件。
+Android GeckoView 与桌面 JCEF 按响应文件名（优先于 URL）识别 `.rwmod`、`.tmx`、`.zip` 和文件名包含 `map` 的图片，大小写不敏感。下载保持浏览器自身的登录态；模组、地图和 ZIP 确认前不写入资源文件。
 
 - `.rwmod`：按模组处理，确认后保存到模组目录，并提示到模组管理中启用。
 - `.tmx`：按地图处理，确认后保存到引擎实际扫描的自定义地图目录（Desktop `mods/maps/`，Android `rustedWarfare/maps/`），并提示安装完成。
+- 地图配套缩略图：文件名包含 `map` 的 `.png`、`.jpg`、`.jpeg`、`.webp`、`.gif`、`.bmp` 图片下载自动保存到同一地图目录，无需二次确认。例如 `New 混乱街区_map.png` 保留原名及图片格式。同名文件另存，下载中可取消，完成后刷新地图列表；普通网页内嵌图片加载不触发下载。
 - `.zip`：先选择地图包或模组。地图包说明会自动解压，确认后解压到地图目录中的独立文件夹，保留地图、缩略图、tileset 等资源的相对路径；地图列表补采样子目录中的 TMX。
 - ZIP 模组：再次确认是否为完整单个模组。完整模组原样保存并将后缀改为 `.rwmod`，使引擎与模组管理器识别；选择整合包时立即拒绝并取消传输。包含多个 `mod-info.txt`、多个 `.rwmod`，或无模组描述文件但包含多个 ZIP 的明显整合包也会被拒绝；不把完整模组附带的 ZIP 资源误判为整合包。
 

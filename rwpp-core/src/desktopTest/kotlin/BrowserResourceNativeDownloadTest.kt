@@ -33,10 +33,11 @@ import kotlin.test.assertTrue
 
 /** 单独运行，避免其它 native 测试销毁全局 Chromium：RWJS_BROWSER_NATIVE_TEST=1。 */
 class BrowserResourceNativeDownloadTest {
-    @Test fun nativeTmxAndZipDownloadsUseTheConfirmedResourceInstaller() {
+    @Test fun nativeResourceDownloadsUseTheResourceInstaller() {
         assumeTrue(System.getenv("RWJS_BROWSER_NATIVE_TEST") == "1")
         val directory = Files.createTempDirectory("browser-native-resources-").toFile()
         val map = "<map width=\"1\" height=\"1\"/>".toByteArray()
+        val thumbnail = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 1, 2, 3)
         val archive = ByteArrayOutputStream().also { output ->
             ZipOutputStream(output).use { zip ->
                 zip.putNextEntry(ZipEntry("nested/map.tmx")); zip.write(map); zip.closeEntry()
@@ -56,6 +57,17 @@ class BrowserResourceNativeDownloadTest {
                 exchange.sendResponseHeaders(200, archive.size.toLong())
                 exchange.responseBody.use { it.write(archive) }; exchange.close()
             }
+            createContext("/preview_map.png") { exchange ->
+                exchange.responseHeaders.add("Content-Type", "image/png")
+                exchange.sendResponseHeaders(200, thumbnail.size.toLong())
+                exchange.responseBody.use { it.write(thumbnail) }; exchange.close()
+            }
+            createContext("/thumbnail") { exchange ->
+                exchange.responseHeaders.add("Content-Type", "image/png")
+                exchange.responseHeaders.add("Content-Disposition", "attachment; filename=level_MAP.PNG")
+                exchange.sendResponseHeaders(200, thumbnail.size.toLong())
+                exchange.responseBody.use { it.write(thumbnail) }; exchange.close()
+            }
             start()
         }
         var frame: JFrame? = null
@@ -64,6 +76,8 @@ class BrowserResourceNativeDownloadTest {
             for ((path, name, kind) in listOf(
                 Triple("direct.tmx", "direct.tmx", BrowserResourceInstallKind.Map),
                 Triple("download?id=1", "maps.zip", BrowserResourceInstallKind.MapPack),
+                Triple("preview_map.png", "preview_map.png", BrowserResourceInstallKind.MapThumbnail),
+                Triple("thumbnail?id=1", "level_MAP.png", BrowserResourceInstallKind.MapThumbnail),
             )) {
                 val state = EmbeddedBrowserState("http://127.0.0.1:${server.address.port}/$path")
                 activeState = state
@@ -80,13 +94,13 @@ class BrowserResourceNativeDownloadTest {
                     assertEquals(name, download.fileName)
                     val targetDirectory = File(directory, path.substringBefore('.').substringBefore('?'))
                     delay(200)
-                    assertTrue(!targetDirectory.exists(), "Resource files require confirmation")
+                    assertTrue(!targetDirectory.exists(), "The browser delegates installation to the resource dialog")
                     val partial = BrowserResourceFiles.createPartial(targetDirectory)
                     try {
                         withTimeout(15_000) { download.transfer.download(partial) { _, _ -> } }
                         val installed = BrowserResourceFiles.install(partial, targetDirectory, download.fileName, kind)
-                        val installedMap = if (kind == BrowserResourceInstallKind.Map) installed.file else File(installed.file, "nested/map.tmx")
-                        assertContentEquals(map, installedMap.readBytes())
+                        val installedFile = if (kind == BrowserResourceInstallKind.MapPack) File(installed.file, "nested/map.tmx") else installed.file
+                        assertContentEquals(if (kind == BrowserResourceInstallKind.MapThumbnail) thumbnail else map, installedFile.readBytes())
                     } finally { partial.delete() }
                 }
                 SwingUtilities.invokeAndWait { frame?.dispose() }

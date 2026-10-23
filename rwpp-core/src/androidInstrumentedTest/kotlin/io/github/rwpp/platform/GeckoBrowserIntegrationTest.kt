@@ -44,7 +44,7 @@ class GeckoBrowserTestActivity : ComponentActivity() {
 
 @RunWith(AndroidJUnit4::class)
 class GeckoBrowserIntegrationTest {
-    private class Fixture(private val mode: String = "login") : AutoCloseable {
+    private class Fixture(private val mode: String = "login", private val downloadName: String = "protected.rwmod") : AutoCloseable {
         val server = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
         val received = AtomicReference<String?>()
         val cookie = AtomicReference<String?>()
@@ -98,7 +98,8 @@ class GeckoBrowserIntegrationTest {
                             val download = path == "/protected.rwmod"
                             val bytes = if (download) byteArrayOf(1, 2, 3, 4) else html.toByteArray()
                             it.getOutputStream().apply {
-                                val contentType = if (download) "application/octet-stream\r\nContent-Disposition: attachment; filename=protected.rwmod" else "text/html; charset=utf-8"
+                                val mime = if (downloadName.endsWith(".png", ignoreCase = true)) "image/png" else "application/octet-stream"
+                                val contentType = if (download) "$mime\r\nContent-Disposition: attachment; filename=$downloadName" else "text/html; charset=utf-8"
                                 write("HTTP/1.1 200 OK\r\nContent-Type: $contentType\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray())
                                 write(bytes)
                                 flush()
@@ -138,7 +139,15 @@ class GeckoBrowserIntegrationTest {
     @Test fun packagedExtensionSubmitsGuestNull() { checkHandoff(null) }
 
     @Test fun authenticatedDownloadUsesGeckoResponseStream() = runBlocking {
-        Fixture("download").use { fixture ->
+        checkAuthenticatedDownload("protected.rwmod", "protected.rwmod")
+    }
+
+    @Test fun authenticatedMapThumbnailDownloadUsesTheResponseFilename() = runBlocking {
+        checkAuthenticatedDownload("level_MAP.PNG", "level_MAP.png")
+    }
+
+    private suspend fun checkAuthenticatedDownload(responseName: String, expectedName: String) {
+        Fixture("download", responseName).use { fixture ->
             val bootstrap = "${fixture.base}/sso/client"
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             val intent = Intent(context, GeckoBrowserTestActivity::class.java).putExtra("bootstrap", bootstrap)
@@ -151,7 +160,7 @@ class GeckoBrowserIntegrationTest {
                     Thread.sleep(100)
                 }
                 val response = requireNotNull(download) { "Gecko must offer the authenticated attachment" }
-                assertEquals("protected.rwmod", response.fileName)
+                assertEquals(expectedName, response.fileName)
                 assertTrue(fixture.cookie.get().orEmpty().contains("gecko_download=authenticated"))
                 val target = File.createTempFile("gecko-response-", ".part", context.cacheDir)
                 try {

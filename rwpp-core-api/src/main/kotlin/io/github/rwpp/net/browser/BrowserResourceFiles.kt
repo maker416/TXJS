@@ -18,7 +18,7 @@ import javax.xml.parsers.SAXParserFactory
 import org.xml.sax.SAXException
 import org.xml.sax.helpers.DefaultHandler
 
-enum class BrowserResourceInstallKind { Mod, Map, MapPack }
+enum class BrowserResourceInstallKind { Mod, Map, MapPack, MapThumbnail }
 enum class BrowserResourceInstallError { ModCollection, NoMaps, UnsafeArchive, ArchiveTooLarge, InvalidMap }
 class BrowserResourceInstallException(val reason: BrowserResourceInstallError) : IOException(reason.name)
 
@@ -51,6 +51,12 @@ object BrowserResourceFiles {
                 require(browserResourceType(fileName) == BrowserResourceType.Map)
                 validateMap(partial)
                 BrowserResourceInstallation(commit(partial, root, fileName), 1)
+            }
+            BrowserResourceInstallKind.MapThumbnail -> {
+                require(browserResourceType(fileName) == BrowserResourceType.MapThumbnail)
+                if (partial.length() == 0L) throw IOException("Empty map thumbnail")
+                // 缩略图与地图放在同一目录，保留原名和图片内容供引擎按文件名查找。
+                BrowserResourceInstallation(commit(partial, root, fileName))
             }
             BrowserResourceInstallKind.MapPack -> {
                 require(browserResourceType(fileName) == BrowserResourceType.Zip)

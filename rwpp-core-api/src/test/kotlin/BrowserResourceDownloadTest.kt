@@ -45,6 +45,45 @@ class BrowserResourceDownloadTest {
         }
     }
 
+    @Test fun mapImagesAreRecognizedFromTheFilenameInsteadOfTheUrlDirectoryOrMimeType() {
+        assertEquals("New 混乱街区_map.png", browserResourceFileName("https://example.com/download",
+            "attachment; filename=\"New 混乱街区_map.PNG\""))
+        for (extension in listOf("PNG", "JPG", "JPEG", "WEBP", "GIF", "BMP")) {
+            assertEquals("level_MAP.${extension.lowercase()}",
+                browserResourceFileName("https://example.com/level_MAP.$extension?token=secret"))
+        }
+        assertEquals(BrowserResourceType.MapThumbnail, browserResourceType("MapPreview.png"))
+        assertEquals("level_map.jpg", browserResourceFileName("blob:https://example.com/id", suggestedName = "level_map.JPG"))
+        assertNull(browserResourceFileName("https://example.com/map/avatar.png"))
+        assertNull(browserResourceFileName("https://example.com/download?name=level_map.png"))
+        assertNull(browserResourceFileName("https://example.com/level_map.png", "attachment; filename=avatar.png"))
+        assertNull(browserResourceFileName("https://example.com/level_map.svg"))
+        assertNull(browserResourceFileName("https://example.com/level_map.ini"))
+    }
+
+    @Test fun standaloneThumbnailKeepsItsNameAndBytesBesideTheMapWithoutOverwriting() = inDirectory { maps ->
+        val mapFile = File(maps, "New 混乱街区.tmx").apply { writeBytes(map) }
+        val name = "New 混乱街区_map.png"
+        val bytes = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 1, 2, 3)
+        val installed = BrowserResourceFiles.install(BrowserResourceFiles.createPartial(maps).apply { writeBytes(bytes) },
+            maps, name, BrowserResourceInstallKind.MapThumbnail)
+        assertEquals(File(maps, name), installed.file)
+        assertContentEquals(bytes, installed.file.readBytes())
+        assertContentEquals(map, mapFile.readBytes())
+        assertEquals(0, installed.mapCount)
+        val second = BrowserResourceFiles.install(BrowserResourceFiles.createPartial(maps).apply { writeBytes(byteArrayOf(4, 5)) },
+            maps, name, BrowserResourceInstallKind.MapThumbnail)
+        assertEquals("New 混乱街区_map (2).png", second.file.name)
+        assertContentEquals(bytes, installed.file.readBytes())
+        val empty = BrowserResourceFiles.createPartial(maps)
+        try {
+            assertFailsWith<IOException> {
+                BrowserResourceFiles.install(empty, maps, "empty_map.png", BrowserResourceInstallKind.MapThumbnail)
+            }
+            assertFalse(File(maps, "empty_map.png").exists())
+        } finally { empty.delete() }
+    }
+
     @Test fun mapPackPreservesNestedMapsAndCompanionResourcesAndIsVisibleToTheEngine() = inDirectory { root ->
         val maps = File(root, "maps")
         val bytes = archive("folder/one.TMX" to map, "folder/one_map.png" to byteArrayOf(1, 2),

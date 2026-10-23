@@ -117,7 +117,8 @@ class BundleParseTest {
                 "mapInstallTitle", "mapInstallConfirm", "mapPackInstallConfirm", "mapPackDownloadInstall",
                 "mapDownloading", "mapInstalling", "mapInstalled", "mapInstalledHint", "mapPackInstalledHint",
                 "mapDownloadFailed", "installErrorNoMaps", "installErrorUnsafeArchive", "installErrorArchiveTooLarge",
-                "installErrorInvalidMap").forEach {
+                "installErrorInvalidMap", "mapThumbnailInstallTitle", "mapThumbnailInstallConfirm", "mapThumbnailDownloading",
+                "mapThumbnailInstalling", "mapThumbnailInstalled", "mapThumbnailInstalledHint", "mapThumbnailDownloadFailed").forEach {
                 assertTrue(browser.containsKey(it), "browser.$it missing in $name")
             }
         }
