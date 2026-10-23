@@ -59,8 +59,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import io.github.rwpp.AppContext
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.RoomIdentityController
@@ -330,7 +328,7 @@ fun MultiplayerView(
     var isConnecting by remember { mutableStateOf(false) }
     /** 本次连接是否为开房（而非加入他人房间）；开房前需禁用网络缓存模组。 */
     var pendingHostSession by remember { mutableStateOf(false) }
-    /** 本次开房是否勾选了「启动模组」；未勾选时 Loading 阶段会清空全部已加载模组。 */
+    /** 本次开房是否勾选了「启动模组」；仅 T 原版房在 Loading 阶段清空客户端模组。 */
     var pendingHostEnableMods by remember { mutableStateOf(false) }
     var pendingHostTransferMods by remember { mutableStateOf(false) }
 
@@ -490,7 +488,6 @@ fun MultiplayerView(
         onDismiss: () -> Unit,
         onConfirm: () -> Unit,
     ) {
-        val appContext = koinInject<AppContext>()
         @Composable
         fun ConfirmCard() {
             BorderCard(
@@ -547,24 +544,8 @@ fun MultiplayerView(
                 }
             }
         }
-        if (!visible) return
-        if (appContext.isDesktop()) {
-            // 嵌在内联开房弹窗里时 fillMaxSize 遮罩只有卡片大小，确认层改用独立 Dialog。
-            Dialog(
-                onDismissRequest = onDismiss,
-                properties = DialogProperties(usePlatformDefaultWidth = false),
-            ) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    ConfirmCard()
-                }
-            }
-        } else {
-            AnimatedAlertDialog(visible, onDismissRequest = onDismiss) {
-                ConfirmCard()
-            }
+        AnimatedAlertDialog(visible, onDismissRequest = onDismiss) {
+            ConfirmCard()
         }
     }
 

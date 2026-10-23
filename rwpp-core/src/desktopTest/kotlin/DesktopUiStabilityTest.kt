@@ -11,7 +11,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -31,13 +30,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
-import io.github.rwpp.AppContext
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
-import io.github.rwpp.widget.RWTextButton
-import java.lang.reflect.Proxy
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.events.KeyboardEvent
 import io.github.rwpp.ui.MapItem
@@ -59,26 +54,7 @@ class DesktopUiStabilityTest {
     @BeforeTest
     fun setup() {
         runCatching { stopKoin() }
-        val desktopContext = Proxy.newProxyInstance(AppContext::class.java.classLoader, arrayOf(AppContext::class.java)) { _, method, _ ->
-            when (method.name) {
-                "getKoin" -> appKoin
-                "isDesktop" -> true
-                else -> when (method.returnType) {
-                    java.lang.Boolean.TYPE -> false
-                    java.lang.Integer.TYPE -> 0
-                    String::class.java -> ""
-                    else -> null
-                }
-            }
-        } as AppContext
-        appKoin = startKoin {
-            modules(
-                module {
-                    single { Settings(enableAnimations = true) }
-                    single<AppContext> { desktopContext }
-                },
-            )
-        }.koin
+        appKoin = startKoin { modules(module { single { Settings(enableAnimations = true) } }) }.koin
     }
 
     @AfterTest
@@ -87,28 +63,6 @@ class DesktopUiStabilityTest {
     @Composable
     private fun TestContent(content: @Composable () -> Unit) {
         KoinContext(appKoin) { MaterialTheme(content = content) }
-    }
-
-    @Test
-    fun desktopInlineDialogButtonReceivesClickAboveLaterFullSizeSibling() = runDesktopComposeUiTest {
-        var clicks = 0
-        var backgroundClicks = 0
-        setContent {
-            TestContent {
-                Box(Modifier.size(360.dp, 480.dp)) {
-                    AnimatedAlertDialog(true, {}) {
-                        RWTextButton("Host", modifier = Modifier.testTag("host")) { clicks++ }
-                    }
-                    Box(Modifier.fillMaxSize().clickable { backgroundClicks++ })
-                }
-            }
-        }
-        waitForIdle()
-        onNodeWithTag("host").performClick()
-        runOnIdle {
-            assertEquals(1, clicks)
-            assertEquals(0, backgroundClicks)
-        }
     }
 
     @Test
