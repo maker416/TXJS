@@ -335,7 +335,7 @@ fun MultiplayerView(
     var editingServerConfig by remember { mutableStateOf<ServerConfig?>(null) }
     var showServerInfoConfig by remember { mutableStateOf(false) }
 
-    var selectedRoomDescription by remember { mutableStateOf<RoomDescription?>(null) }
+    val roomJoinContext = remember { MultiplayerRoomJoinContext() }
     var showJoinRequestDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -360,24 +360,33 @@ fun MultiplayerView(
     }
 
     // 好友邀请卡片一键加入：消费 pendingInviteJoin，走下方既有 LoadingView 加入链路
-    //（selectedRoomDescription 保持 null，等价于直连 IP 加入，preJoinSync 按直连处理）
+    //（清除列表房描述，等价于直连 IP 加入，preJoinSync 按直连处理）
     LaunchedEffect(UI.pendingInviteJoin) {
         val invite = UI.pendingInviteJoin ?: return@LaunchedEffect
         UI.pendingInviteJoin = null
+        roomJoinContext.beginConnection()
         pendingHostSession = false
         serverAddress = invite.address
         isConnecting = true
     }
 
-    JoinServerRequestDialog(showJoinRequestDialog, { showJoinRequestDialog = false },
-       selectedRoomDescription, blacklists
-    ) { dismiss ->
+    JoinServerRequestDialog(showJoinRequestDialog, {
+        showJoinRequestDialog = false
+        roomJoinContext.dismissSelection()
+    }, roomJoinContext.selectedRoom, blacklists) onJoin@{ dismiss ->
+        val room = roomJoinContext.selectedRoom ?: return@onJoin
+        roomJoinContext.beginConnection(room)
         pendingHostSession = false
-        serverAddress = selectedRoomDescription!!.addressProvider()
+        serverAddress = room.addressProvider()
         isConnecting = true
         dismiss()
     }
 
+    // 在启动 Loading 协程前捕获；列表确认的延迟关闭回调和后续请求都不能改写本次地址/房描述。
+    val connectionRequest = roomJoinContext.snapshotConnection(serverAddress)
+    val hostSession = pendingHostSession
+    val hostEnableMods = pendingHostEnableMods
+    val hostTransferMods = pendingHostTransferMods
     LoadingView(
         isConnecting,
         onLoaded = {
@@ -392,6 +401,8 @@ fun MultiplayerView(
         onLoadingFinished = { isConnecting = false },
         cancellable = true,
     ) {
+        var address = connectionRequest.address
+        val capturedRoomDescription = connectionRequest.room
         // 新的加入/开房会话开始：等待可能挂起的退房清理完成，保证旧会话先拆后建（GameSessionController）
         // 等待旧退房清理与预同步之前就申请保活；切回 IO 时取消也不能丢弃资源句柄。
         val keepAlive = withContext(NonCancellable + Dispatchers.Main.immediate) {
@@ -403,17 +414,17 @@ fun MultiplayerView(
                 var opened = false
                 try {
                     ModSyncController.awaitJoinEntryCleanup()
-                    if(serverAddress.isBlank()) {
+                    if(address.isBlank()) {
                         message("That server no longer exists")
                         return@beginSession false
                     }
-                    serverAddress = roomJoinAddressForId(serverAddress)
+                    address = roomJoinAddressForId(address)
 
-                    if (pendingHostSession) {
+                    if (hostSession) {
                         // 旧断线清理会清空 hostSyncRequested，必须在开始屏障之后提交本次选项。
-                        ModSyncController.hostSyncRequested = pendingHostTransferMods
-                        if (!pendingHostEnableMods) {
-                            if (!quickHostAddressSkipsClientVanillaModClear(serverAddress)) {
+                        ModSyncController.hostSyncRequested = hostTransferMods
+                        if (!hostEnableMods) {
+                            if (!quickHostAddressSkipsClientVanillaModClear(address)) {
                                 val cleared = Logic.disableAllModsBeforeHosting()
                                 if (cleared) {
                                     message(readI18n("multiplayer.modsClearedForVanillaHost"))
@@ -428,7 +439,7 @@ fun MultiplayerView(
                     } else {
                         // 加入者：连接前只跑带外同步轻量段（查清单/登记 Presence 供房主握手放行）；
                         // 下载与重载在进房成功后由 ModSyncController 在房间内后台完成，期间可正常聊天
-                        if (!ModSyncController.preJoinSync(selectedRoomDescription, serverAddress, this)) {
+                        if (!ModSyncController.preJoinSync(capturedRoomDescription, address, this)) {
                             return@beginSession false
                         }
                     }
@@ -436,23 +447,20 @@ fun MultiplayerView(
                     message("connecting...")
 
                     game.setUserName(userName)
-                    configIO.setGameConfig("lastNetworkIP", serverAddress)
+                    configIO.setGameConfig("lastNetworkIP", address)
 
-                    // selectedRoomDescription 随后即清空，先捕获供身份公示推导候选 key
-                    val capturedRoomDescription = selectedRoomDescription
                     val result = game.directJoinServer(
-                        serverAddress,
+                        address,
                         capturedRoomDescription?.joinRelayUuid(),
                         this,
                     )
-                    selectedRoomDescription = null
                     if(result.isSuccess) {
                         // 房间身份公示（带外机制）：暂存候选 key 与玩家名快照；
                         // 房主走 quickHost 指令串产不出 key，靠进房后 roomDetails 短码补充
                         joined = true
                         val accepted = withContext(Dispatchers.Main.immediate) {
                             if (!UI.showMultiplayerView || !isConnecting) false else {
-                                RoomIdentityController.onJoiningRoom(serverAddress, capturedRoomDescription)
+                                RoomIdentityController.onJoiningRoom(address, capturedRoomDescription)
                                 onOpenRoomView()
                                 opened = true
                                 true
@@ -461,7 +469,7 @@ fun MultiplayerView(
                         if (!accepted) return@beginSession false
                         // 进房成功：joining Presence 转为 synced 并保活，驱动行内徽章（无同步记录时为空操作）
                         ModSyncController.onJoinedRoom()
-                        JoinGameEvent(serverAddress).broadcastIn()
+                        JoinGameEvent(address).broadcastIn()
                         true
                     } else {
                         message(result.exceptionOrNull()!!.message!!)
@@ -589,6 +597,7 @@ fun MultiplayerView(
 
             fun beginHost() {
                 dismiss()
+                roomJoinContext.beginConnection()
                 pendingHostTransferMods = transferMod && enableMods
                 serverAddress = net.buildQuickHostCommand(
                     QuickHostRoomOptions(
@@ -1207,6 +1216,7 @@ fun MultiplayerView(
                 Card(
                     onClick = {
                         val ip = serverData.config.ip
+                        roomJoinContext.beginConnection()
                         pendingHostSession = false
                         serverAddress = ip
                         configIO.setGameConfig("lastNetworkIP", ip)
@@ -1431,6 +1441,7 @@ fun MultiplayerView(
                     null,
                     modifier = Modifier.clickable {
                         if(joinServerAddress.isNotBlank()) {
+                            roomJoinContext.beginConnection()
                             pendingHostSession = false
                             serverAddress = joinServerAddress
                             isConnecting = true
@@ -1705,6 +1716,7 @@ fun MultiplayerView(
                 ) {
                     val lastIp = configIO.getGameConfig<String?>("lastNetworkIP")
                     if (lastIp != null) {
+                        roomJoinContext.beginConnection()
                         pendingHostSession = false
                         serverAddress = lastIp
                         isConnecting = true
@@ -1850,7 +1862,7 @@ fun MultiplayerView(
                                     }
                                 }
                                 roomCardRows(realList, roomColumns, settings.enableAnimations) { room ->
-                                    selectedRoomDescription = room
+                                    roomJoinContext.selectedRoom = room
                                     showJoinRequestDialog = true
                                 }
                                 ServerList(allServerData)
@@ -1887,6 +1899,7 @@ fun MultiplayerView(
                     onJoinServer = {
                         if (joinServerAddress.isNotBlank()) {
                             joinHistory = NetworkJoinHistory.record(configIO, joinServerAddress)
+                            roomJoinContext.beginConnection()
                             pendingHostSession = false
                             serverAddress = joinServerAddress
                             isConnecting = true
