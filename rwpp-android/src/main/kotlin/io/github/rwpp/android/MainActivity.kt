@@ -10,6 +10,7 @@ package io.github.rwpp.android
 import android.Manifest
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
@@ -67,6 +68,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // 最近任务也可能直接恢复主页；先走完整初始化，避免 GameView 构造器在 UI 线程隐式创建引擎。
+        if (!gameLoaded) {
+            startActivity(Intent(this, LoadingScreen::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+            finish()
+            return
+        }
 
         //koinApplication.androidContext(this)
         appKoin.declare(this, secondaryTypes = listOf(Context::class, Activity::class))

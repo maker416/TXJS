@@ -68,6 +68,7 @@
         <activity
                 android:name="io.github.rwpp.android.LoadingScreen"
                 android:alwaysRetainTaskState="true"
+                android:launchMode="singleTop"
                 android:screenOrientation="landscape"
                 android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden"
                 android:exported="true">
@@ -100,10 +101,10 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
-        <activity
+        <!-- 原版的进程恢复兜底仍会显式打开这两个组件；统一交给极速版初始化，禁止再运行原版启动页和菜单。 -->
+        <activity-alias
                 android:name="com.corrodinggames.rts.appFramework.IntroScreen"
-                android:screenOrientation="behind"
-                android:configChanges="screenSize|orientation|keyboardHidden"
+                android:targetActivity="io.github.rwpp.android.LoadingScreen"
                 android:exported="true">
             <intent-filter>
                 <action
@@ -111,17 +112,16 @@
                 <category
                         android:name="android.intent.category.DEFAULT"/>
             </intent-filter>
-        </activity>
+        </activity-alias>
         <activity
                 android:name="io.github.rwpp.android.impl.CustomInGameActivity"
                 android:screenOrientation="behind"
                 android:exported="true"
                 android:configChanges="fontScale|uiMode|screenLayout|orientation|navigation|keyboardHidden|keyboard|touchscreen|locale|mnc|mcc"/>
-        <activity
+        <activity-alias
                 android:name="com.corrodinggames.rts.appFramework.MainMenuActivity"
-                android:screenOrientation="behind"
-                android:exported="true"
-                android:configChanges="screenSize|orientation|keyboardHidden"/>
+                android:targetActivity="io.github.rwpp.android.LoadingScreen"
+                android:exported="true"/>
         <activity
                 android:name="com.corrodinggames.rts.appFramework.SettingsActivity"
                 android:screenOrientation="behind"
