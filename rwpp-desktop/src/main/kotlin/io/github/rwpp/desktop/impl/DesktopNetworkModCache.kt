@@ -49,26 +49,39 @@ class DesktopNetworkModCache(
             }
         }
         val key = loadOrCreateKey(cacheRoot)
-        cacheRoot.listFiles { file -> file.extension == CACHE_EXTENSION }.orEmpty().forEach { cacheFile ->
-            val entry = try {
-                readEnvelope(cacheFile, key)
+        // 只读有界文件头来安排新旧顺序，文件头在 GCM 认证前不可信，不能直接进入索引。
+        val candidates = cacheRoot.listFiles { file -> file.extension == CACHE_EXTENSION }.orEmpty().mapNotNull { file ->
+            try {
+                val header = file.inputStream().use { parseHeader(it.readNBytes(MAX_HEADER_BYTES)) }
+                file to header
             } catch (e: Exception) {
-                cacheLogger.warn("Invalid network mod cache: {}", cacheFile.name, e)
+                cacheLogger.warn("Invalid network mod cache: {}", file.name, e)
+                NetworkModCacheFiles.deleteOrQuarantine(cacheRoot, file)
                 null
             }
-            if (entry == null || NetworkModCacheFiles.isExpired(entry.createdAtMillis, now)) {
+        }
+        val restoredNames = mutableSetOf<String>()
+        candidates.sortedByDescending { it.second.createdAtMillis }.forEach { (cacheFile, header) ->
+            // 每个文件仍完整解密、验 SHA-256；把本轮验证出的明文直接写成工作副本，
+            // 避免 activatePrepared 再读、再解密、再校验一次，也不在内存中保留全部模组。
+            val bytes = try {
+                readEnvelopeBytes(cacheFile, key, header.descriptor, header.createdAtMillis)
+            } catch (e: Exception) {
+                cacheLogger.warn("Invalid network mod cache: {}", cacheFile.name, e)
                 NetworkModCacheFiles.deleteOrQuarantine(cacheRoot, cacheFile)
                 return@forEach
             }
+            if (NetworkModCacheFiles.isExpired(header.createdAtMillis, now)) {
+                NetworkModCacheFiles.deleteOrQuarantine(cacheRoot, cacheFile)
+                return@forEach
+            }
+            val entry = DesktopEntry(header.descriptor, cacheFile, header.createdAtMillis)
             entries[entry.descriptor.cacheKey()] = entry
-        }
-        entries.values.groupBy { it.descriptor.name }.forEach { (_, group) ->
-            val latest = group.maxByOrNull { it.createdAtMillis } ?: return@forEach
+            if (!restoredNames.add(entry.descriptor.name)) return@forEach
             try {
-                // 初始化期间不能回调公开 activate()，它会再次进入 prepareStartup()。
-                activatePrepared(latest.descriptor)
+                NetworkModCacheFiles.atomicWrite(NetworkModCacheFiles.activeFile(workRoot, entry.descriptor), bytes, workRoot)
             } catch (e: Exception) {
-                cacheLogger.warn("Failed to restore network mod cache: {}", latest.descriptor.name, e)
+                cacheLogger.warn("Failed to restore network mod cache: {}", entry.descriptor.name, e)
             }
         }
         prepared = true
@@ -159,18 +172,18 @@ class DesktopNetworkModCache(
         return header + encrypted
     }
 
-    private fun readEnvelope(file: File, key: ByteArray): DesktopEntry {
-        val bytes = file.readBytes()
-        val parsed = parseHeader(bytes)
-        val plain = decrypt(bytes, parsed, key)
-        require(parsed.descriptor.matches(plain)) { "Desktop cache hash mismatch: ${file.name}" }
-        return DesktopEntry(parsed.descriptor, file, parsed.createdAtMillis)
-    }
-
-    private fun readEnvelopeBytes(file: File, key: ByteArray, descriptor: NetworkModDescriptor): ByteArray {
+    private fun readEnvelopeBytes(
+        file: File,
+        key: ByteArray,
+        descriptor: NetworkModDescriptor,
+        createdAtMillis: Long? = null,
+    ): ByteArray {
         val bytes = file.readBytes()
         val parsed = parseHeader(bytes)
         require(parsed.descriptor == descriptor) { "Desktop cache descriptor mismatch: ${file.name}" }
+        require(createdAtMillis == null || parsed.createdAtMillis == createdAtMillis) {
+            "Desktop cache changed during startup: ${file.name}"
+        }
         val plain = decrypt(bytes, parsed, key)
         require(descriptor.matches(plain)) { "Desktop cache hash mismatch: ${file.name}" }
         return plain
@@ -244,5 +257,8 @@ class DesktopNetworkModCache(
         private const val CIPHER = "AES/GCM/NoPadding"
         private const val MAGIC = 0x52574d43 // RWMC
         private const val FORMAT_VERSION = 1
+        // magic/version/nonce/createdAt/nameLength/name/payloadSize/UTF hash + 至少一个密文字节。
+        private const val MAX_HEADER_BYTES =
+            4 + 1 + 1 + NONCE_SIZE_BYTES + 8 + 4 + NetworkModDescriptor.MAX_NAME_LENGTH * 4 + 8 + 2 + 64 + 1
     }
 }

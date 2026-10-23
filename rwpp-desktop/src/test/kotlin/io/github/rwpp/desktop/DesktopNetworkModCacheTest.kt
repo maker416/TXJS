@@ -13,7 +13,11 @@ import io.github.rwpp.desktop.impl.DesktopNetworkModCache
 import io.github.rwpp.game.mod.NetworkModCacheFiles
 import io.github.rwpp.game.mod.NetworkModDescriptor
 import java.io.File
+import java.nio.ByteBuffer
 import java.nio.file.Files
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import kotlin.test.*
 
 class DesktopNetworkModCacheTest {
@@ -49,6 +53,61 @@ class DesktopNetworkModCacheTest {
         assertNotNull(restarted.find(descriptor))
         assertFalse(corrupt.exists())
         assertTrue(NetworkModCacheFiles.activeFile(File(root, "mods/units"), descriptor).isFile)
+    }
+
+    @Test fun newestAuthenticatedVersionWinsAndOlderVersionCanStillBeActivated() = withRoot { root, context ->
+        val now = System.currentTimeMillis()
+        val cache = DesktopNetworkModCache(context)
+        val old = storeAt(root, cache, "same", "old".toByteArray(), now - 2_000)
+        val newest = storeAt(root, cache, "same", "new".toByteArray(), now - 1_000)
+        val restarted = DesktopNetworkModCache(context)
+        restarted.prepareStartup()
+        val work = File(root, "mods/units")
+        assertEquals("new", NetworkModCacheFiles.activeFile(work, newest).readText())
+        assertFalse(NetworkModCacheFiles.activeFile(work, old).exists())
+        assertNotNull(restarted.find(old))
+        assertEquals("old", restarted.activate(old).payloadFile.readText())
+        assertFalse(NetworkModCacheFiles.activeFile(work, newest).exists())
+    }
+
+    @Test fun corruptNewestFallsBackAndExpiredEntriesAreRemoved() = withRoot { root, context ->
+        val now = System.currentTimeMillis()
+        val cache = DesktopNetworkModCache(context)
+        val old = storeAt(root, cache, "same", "old".toByteArray(), now - 2_000)
+        val corrupt = storeAt(root, cache, "same", "new".toByteArray(), now - 1_000)
+        val corruptFile = cache.find(corrupt)!!.payloadFile
+        corruptFile.writeBytes(corruptFile.readBytes().apply { this[lastIndex] = (this[lastIndex].toInt() xor 1).toByte() })
+        val expired = storeAt(root, cache, "expired", byteArrayOf(1), now - io.github.rwpp.game.mod.NETWORK_MOD_CACHE_TTL_MILLIS)
+        val restarted = DesktopNetworkModCache(context)
+        restarted.prepareStartup()
+        assertEquals("old", NetworkModCacheFiles.activeFile(File(root, "mods/units"), old).readText())
+        assertNull(restarted.find(corrupt))
+        assertNull(restarted.find(expired))
+        assertFalse(corruptFile.exists())
+    }
+
+    @Test fun maximumUtf8NameAndEmptyPayloadSurviveHeaderProbe() = withRoot { root, context ->
+        val descriptor = NetworkModDescriptor.fromBytes("模".repeat(NetworkModDescriptor.MAX_NAME_LENGTH), byteArrayOf())
+        DesktopNetworkModCache(context).storeVerified(descriptor, byteArrayOf())
+        val restarted = DesktopNetworkModCache(context)
+        restarted.prepareStartup()
+        assertNotNull(restarted.find(descriptor))
+        assertContentEquals(byteArrayOf(), NetworkModCacheFiles.activeFile(File(root, "mods/units"), descriptor).readBytes())
+    }
+
+    /** 固定认证时间戳，避免依赖 sleep 或文件系统时间分辨率来测试版本排序和 TTL。 */
+    private fun storeAt(root: File, cache: DesktopNetworkModCache, name: String, bytes: ByteArray, createdAt: Long): NetworkModDescriptor {
+        val descriptor = NetworkModDescriptor.fromBytes(name, bytes)
+        val file = cache.storeVerified(descriptor, bytes).payloadFile
+        val envelope = file.readBytes()
+        val header = envelope.copyOfRange(0, envelope.size - bytes.size - 16)
+        ByteBuffer.wrap(header).putLong(18, createdAt)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(File(root, ".rwpp/network-mod-cache/cache.key").readBytes(), "AES"),
+            GCMParameterSpec(128, header.copyOfRange(6, 18)))
+        cipher.updateAAD(header)
+        file.writeBytes(header + cipher.doFinal(bytes))
+        return descriptor
     }
 
     private fun withRoot(test: (File, AppContext) -> Unit) {

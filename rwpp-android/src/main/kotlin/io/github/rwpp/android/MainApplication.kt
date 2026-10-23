@@ -24,6 +24,7 @@ import io.github.rwpp.app.PermissionHelper
 import io.github.rwpp.app.InstallArtifactMaintenance
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
+import io.github.rwpp.core.StartupTiming
 import io.github.rwpp.CoreImplModule
 import io.github.rwpp.config.ConfigModule
 import io.github.rwpp.game.audio.GameSoundPool
@@ -51,6 +52,7 @@ class MainApplication : Application() {
                 ?.firstOrNull { it.pid == Process.myPid() }?.processName
         }
         if (processName != null && processName != packageName) return
+        StartupTiming.start()
         koinApplication = startKoin {
             androidLogger()
             modules(ConfigModule().module, CoreImplModule().module, AndroidModule().module)
@@ -118,12 +120,12 @@ class MainApplication : Application() {
 
         BackgroundKeepAlive.install(this)
 
-        onInit()
+        StartupTiming.measure("android.application") { onInit() }
     }
 
     fun onInit() {
         if (!init) {
-            appKoin.get<ConfigIO>().readAllConfig()
+            StartupTiming.measure("android.config") { appKoin.get<ConfigIO>().readAllConfig() }
             val permissionHelper = appKoin.get<PermissionHelper>()
             val hasPermission = permissionHelper.hasManageFilePermission()
             Builder.outputDir = generatedLibDir
@@ -138,13 +140,15 @@ class MainApplication : Application() {
             runCatching { maintenance.cleanTemporaryFiles(installationChanged) }
                 .onFailure { logger.warn("Cannot clean abandoned update/upload files", it) }
             init = true
-            requireReloadingLib = Builder.prepareReloadingLib() || !File(dexFolder, "classes.dex").exists()
+            requireReloadingLib = StartupTiming.measure("android.injectCheck") {
+                Builder.prepareReloadingLib() || !File(dexFolder, "classes.dex").exists()
+            }
             logger.info("hasPermission: $hasPermission, requireReloadingLib: $requireReloadingLib, generatedLibDir: $generatedLibDir, dexExists: ${File(dexFolder, "classes.dex").exists()}")
             if (!requireReloadingLib) {
                 // 加载阶段：在全新进程的启动早期干净加载已构建好的 DEX，并校验其确实可用。
                 // 任何游戏类被真正触达之前必须完成加载（GameSoundPoolImpl 仅在方法体内引用游戏类，安全）。
                 val loadResult = runCatching {
-                    loadDex(this, "${dexFolder.absolutePath}/classes.dex")
+                    StartupTiming.measure("android.dexLoad") { loadDex(this, "${dexFolder.absolutePath}/classes.dex") }
                     // 校验：尝试解析一个已知游戏类，确认注入后的 DEX 真正加载成功。
                     Class.forName("com.corrodinggames.rts.gameFramework.k", false, classLoader)
                 }

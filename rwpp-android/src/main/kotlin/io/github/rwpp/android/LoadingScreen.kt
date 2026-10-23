@@ -33,6 +33,7 @@ import io.github.rwpp.app.PermissionHelper
 import io.github.rwpp.app.InstallArtifactMaintenance
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
+import io.github.rwpp.core.StartupTiming
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.GameLoadedEvent
 import io.github.rwpp.game.mod.NetworkModCache
@@ -75,7 +76,7 @@ class LoadingScreen : ComponentActivity() {
         if (networkModCachePrepared) return
         synchronized(LoadingScreen::class.java) {
             if (networkModCachePrepared) return
-            appKoin.get<NetworkModCache>().prepareStartup()
+            StartupTiming.measure("android.networkModCache") { appKoin.get<NetworkModCache>().prepareStartup() }
             networkModCachePrepared = true
         }
     }
@@ -204,7 +205,9 @@ class LoadingScreen : ComponentActivity() {
                                                         buildState = buildState.prepareDone()
                                                     }
 
-                                                    Builder.init(GameLibraries.`android-game-lib`, tempJar)
+                                                    StartupTiming.measure("android.injectBuild") {
+                                                        Builder.init(GameLibraries.`android-game-lib`, tempJar)
+                                                    }
 
                                                     withContext(Dispatchers.Main) {
                                                         buildState = buildState.applyDone()
@@ -213,9 +216,11 @@ class LoadingScreen : ComponentActivity() {
                                                     val libPath = "$generatedLibDir/android-game-lib.jar"
                                                     logger?.logging("compiling dex: $libPath")
                                                     logger?.logging("Saving dex to ${dexFolder.absolutePath}/classes.dex")
-                                                    val dex = DexFile()
-                                                    dex.addJarFile(libPath)
-                                                    dex.writeFile("${dexFolder.absolutePath}/classes.dex")
+                                                    StartupTiming.measure("android.dexBuild") {
+                                                        val dex = DexFile()
+                                                        dex.addJarFile(libPath)
+                                                        dex.writeFile("${dexFolder.absolutePath}/classes.dex")
+                                                    }
                                                     logger?.logging("Successfully compile dex")
                                                     logGeneratedArtifactState()
 
@@ -302,7 +307,7 @@ class LoadingScreen : ComponentActivity() {
                                                 engineInitError = error
                                                 return@withContext false
                                             }
-                                            appKoin.get<AppContext>().init()
+                                            StartupTiming.measure("android.app") { appKoin.get<AppContext>().init() }
                                             runCatching {
                                                 val mapsDir = File(
                                                     appKoin.get<AppContext>().externalStoragePath("maps")
@@ -335,7 +340,7 @@ class LoadingScreen : ComponentActivity() {
                                                         loadingThread
                                                         prepareDefaultStorageType()
                                                         prepareNetworkModCacheForStartup()
-                                                        engineImpl.a(this@LoadingScreen as Context)
+                                                        StartupTiming.measure("android.engine") { engineImpl.a(this@LoadingScreen as Context) }
                                                         val configIO = appKoin.get<ConfigIO>()
                                                         if (!configIO.getGameConfig<Boolean>("hasSelectedAStorageType")) {
                                                             configIO.setGameConfig("hasSelectedAStorageType", true)
@@ -355,6 +360,7 @@ class LoadingScreen : ComponentActivity() {
 
                                         if (engineInitSuccess) {
                                             gameLoaded = true
+                                            StartupTiming.mark("android.engineReady")
                                             GameLoadedEvent().broadcastIn()
                                             openMainActivity()
                                         } else {

@@ -11,6 +11,7 @@ import io.github.rwpp.AppContext
 import io.github.rwpp.appKoin
 import io.github.rwpp.core.Initialization
 import io.github.rwpp.core.Logic
+import io.github.rwpp.core.StartupTiming
 import io.github.rwpp.scripts.Scripts
 import io.github.rwpp.ui.IUserInterface
 import io.github.rwpp.ui.UI
@@ -27,10 +28,12 @@ abstract class BaseAppContextImpl : AppContext {
     }
 
     override fun init() {
-        Logic.init()
-        Scripts.init()
-        UI.init()
+        StartupTiming.measure("app.logic") { Logic.init() }
+        StartupTiming.measure("app.scripts") { Scripts.init() }
+        StartupTiming.measure("app.ui") { UI.init() }
         appKoin.declare(UI, secondaryTypes = listOf(IUserInterface::class))
-        getKoin().getAll<Initialization>().forEach(Initialization::init)
+        getKoin().getAll<Initialization>().forEach { initializer ->
+            StartupTiming.measure("app.${initializer.javaClass.simpleName}") { initializer.init() }
+        }
     }
 }
