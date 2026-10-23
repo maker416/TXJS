@@ -75,6 +75,7 @@ class MainActivity : ComponentActivity() {
             ActivityResultContracts.StartActivityForResult()
         ) {
             isGaming = false
+            io.github.rwpp.core.MatchStartController.gate.reset()
             gameOver = false
             QuitGameEvent().broadcastIn()
             isSinglePlayerGame = false
@@ -238,6 +239,7 @@ class MainActivity : ComponentActivity() {
          * 普通退房/onResume 在保连接重载期间必须跳过，否则会和单位表重建撞车。
          */
         fun runActivityResume(forceWhileReloading: Boolean = false) {
+            if (io.github.rwpp.game.GameStartSafety.requiresRestart) return
             if (!forceWhileReloading &&
                 (KeepConnectedReload.active || KeepConnectedReload.shouldRefreshMenuAfterAbort)
             ) {

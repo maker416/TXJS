@@ -28,11 +28,13 @@ import java.io.IOException
 abstract class AbstractGame : Game {
 
     override fun hostNewSinglePlayer(sandbox: Boolean) {
+        if (!io.github.rwpp.core.MatchStartController.ensureCanStart()) return
         post { initializeSinglePlayer(sandbox) }
     }
 
     /** 只能在桌面游戏线程调用，初始化完成后才允许选择存档。 */
     protected fun initializeSinglePlayer(sandbox: Boolean) {
+        io.github.rwpp.game.GameStartSafety.requireCanReload()
         com.corrodinggames.rts.game.n.F()
 
 //            val root = ScriptEngine.getInstance().root
@@ -95,6 +97,7 @@ abstract class AbstractGame : Game {
         password: String?,
         useMods: Boolean,
     ) {
+        if (!io.github.rwpp.core.MatchStartController.ensureCanStart()) return
         val B = GameEngine.B()
         B.bX.b("starting new")
         B.bX.n = password

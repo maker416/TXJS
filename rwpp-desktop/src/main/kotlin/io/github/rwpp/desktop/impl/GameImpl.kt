@@ -43,7 +43,6 @@ import io.github.rwpp.desktop.gameSessionManager
 import io.github.rwpp.desktop.native
 import io.github.rwpp.desktop.singlePlayer
 import io.github.rwpp.event.GlobalEventChannel
-import io.github.rwpp.event.events.StartGameEvent
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.GameRoom
 import io.github.rwpp.game.base.Difficulty
@@ -129,14 +128,7 @@ class GameImpl : AbstractGame() {
         // 重载边界的未知采样不能假定退局；保留已知局身份并停计，避免重复 hash/局数。
         lastPlaytimeState.copy(active = false, reliable = false)
     }.also { lastPlaytimeState = it }
-    override val gameRoom: GameRoom = object : AbstractGameRoom() {
-        override fun startGame() {
-            gameSessionManager.startGame(
-                if (singlePlayer) GameStartMode.Skirmish() else GameStartMode.Multiplayer
-            )
-            super.startGame()
-        }
-    }
+    override val gameRoom: GameRoom = object : AbstractGameRoom() {}
 
     override val gui: GUI
         get() = GameEngine.B().bS as GUI
@@ -147,6 +139,7 @@ class GameImpl : AbstractGame() {
     }
 
     override suspend fun loadSavedGame(map: GameMap) {
+        if (!io.github.rwpp.core.MatchStartController.ensureCanStart()) return
         require(map.mapType == MapType.SavedGame)
         DesktopGameThreadDispatcher(::post, { Thread.currentThread() === gameThread }).run {
             // 同一个游戏线程任务内完成三步，避免默认地图初始化覆盖刚选中的存档。
@@ -199,6 +192,9 @@ class GameImpl : AbstractGame() {
                         // bW.a() 期间的 Loading units/mods 对话框不当成踢人。
                         // 引擎可能拆成 title="Loading units" + message="123 (name)"，拼回弹窗同款格式。
                         loadingMessage = composeEngineLoadingMessage(p0, p1)
+                    } else if (io.github.rwpp.core.MatchStartController.gate.busy) {
+                        // 开局恢复统一提示并清理，不能先把加载中的房间当作被踢硬跳转。
+                        logger.warn("[GAMESTART] engine message: {}: {}", p0, p1)
                     } else {
                         UI.showWarning("$p0: $p1", true)
                     }
@@ -390,14 +386,10 @@ class GameImpl : AbstractGame() {
             },
             onReturnToMenu = {
                 gameOver = false
+                io.github.rwpp.core.MatchStartController.gate.reset()
             }
         )
 
-        GlobalEventChannel.filter(StartGameEvent::class).subscribeAlways {
-            gameSessionManager.startGame(
-                if (singlePlayer) GameStartMode.Skirmish() else GameStartMode.Multiplayer
-            )
-        }
         desktopEngineLoaded = true
     }
 

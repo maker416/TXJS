@@ -53,6 +53,7 @@ import io.github.rwpp.config.Settings
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
 import io.github.rwpp.core.GameSessionController
+import io.github.rwpp.core.MatchStartController
 import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.core.ModPlaytimeController
 import io.github.rwpp.core.RoomSnapshotStore
@@ -452,7 +453,11 @@ fun App(
                 ) {
                     val roomDisposed = remember { CompletableDeferred<Unit>() }
                     DisposableEffect(Unit) {
-                        onDispose { roomDisposed.complete(Unit) }
+                        GameSessionController.attachRoomView(roomDisposed)
+                        onDispose {
+                            roomDisposed.complete(Unit)
+                            GameSessionController.detachRoomView(roomDisposed)
+                        }
                     }
                     MultiplayerRoomView(isSinglePlayerGame) {
                         if (roomExitInProgress || launcherPage != LauncherPage.Room) return@MultiplayerRoomView
@@ -526,6 +531,21 @@ fun App(
                     AccountView(onExit = {
                         showAccountView = false
                     })
+                }
+
+                val matchStart by MatchStartController.gate.state.collectAsState()
+                AnimatedAlertDialog(
+                    visible = matchStart.busy && launcherPage == LauncherPage.Room,
+                    onDismissRequest = {},
+                    enableDismiss = false,
+                ) {
+                    BorderCard(Modifier.widthIn(max = 420.dp).padding(20.dp)) {
+                        Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            CircularProgressIndicator()
+                            Text(readI18n("multiplayer.room.startLoading"))
+                        }
+                    }
                 }
 
                 var warningDialogVisible by remember { mutableStateOf(false) }

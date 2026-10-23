@@ -11,6 +11,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.rwpp.platform.checkUiThread
+import io.github.rwpp.game.Game
+import io.github.rwpp.ui.LauncherPage
+import io.github.rwpp.ui.resetNavigation
+import io.github.rwpp.logger
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -19,6 +23,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 
@@ -31,18 +36,61 @@ object GameSessionController {
     enum class SessionPhase { IDLE, STARTING, IN_ROOM, CLOSING }
 
     private val lifecycle = SessionLifecycle(Dispatchers.Main.immediate)
+    private var roomViewDisposed: Deferred<Unit>? = null
     val sessionPhase: SessionPhase get() = lifecycle.sessionPhase
 
     /** 返回 null 表示已有开始请求；action 只会在旧退房完整结束后执行。 */
-    suspend fun <T> beginSession(action: suspend () -> T): T? = lifecycle.beginSession(action)
+    suspend fun <T> beginSession(action: suspend () -> T): T? {
+        if (!MatchStartController.ensureCanStart()) return null
+        return lifecycle.beginSession(action)
+    }
+
+    fun attachRoomView(disposed: Deferred<Unit>) {
+        checkUiThread()
+        roomViewDisposed = disposed
+    }
+
+    fun detachRoomView(disposed: Deferred<Unit>) {
+        checkUiThread()
+        if (roomViewDisposed === disposed) roomViewDisposed = null
+    }
+
+    /** 加载失败后复用真实页面销毁和断线订阅者屏障，不把提示当作退房。 */
+    fun closeFailedStart(game: Game, reason: String, onFinished: () -> Unit) {
+        checkUiThread()
+        val disposed = roomViewDisposed
+        val singlePlayer = game.gameRoom.isSinglePlayerGame
+        scheduleClose {
+            try {
+                disposed?.await()
+                if (io.github.rwpp.game.mod.KeepConnectedReload.active || ModSyncController.isInRoomSyncInProgress() ||
+                    ModSyncController.cancellingReload) {
+                    ModSyncController.cancelInRoomSync()
+                    // 复用同步取消的原版回落；不能在单位表仍重建时刷新菜单或放行新会话。
+                    while (io.github.rwpp.game.mod.KeepConnectedReload.active || ModSyncController.cancellingReload) delay(25)
+                }
+                if (!singlePlayer) game.cancelJoinServer()
+                game.onBanUnits(emptyList())
+                game.gameRoom.disconnectAndWait(reason)
+            } catch (error: Exception) {
+                logger.error("[GAMESTART] failed to finish room cleanup", error)
+                throw error
+            } finally {
+                onFinished()
+            }
+        }
+        resetNavigation(if (singlePlayer) LauncherPage.SinglePlayer else LauncherPage.Multiplayer)
+    }
 
     fun onRoomOpened() {
         checkUiThread()
+        // 读档入口会先请求开局再登记房间；不能在此作废已经排队的同一会话。
         lifecycle.onRoomOpened()
     }
 
     fun onExternalSessionEnd() {
         checkUiThread()
+        MatchStartController.gate.reset()
         lifecycle.onExternalSessionEnd()
     }
 

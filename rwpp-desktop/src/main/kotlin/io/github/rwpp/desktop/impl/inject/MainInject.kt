@@ -12,9 +12,11 @@ package io.github.rwpp.desktop.impl.inject
 import com.corrodinggames.rts.gameFramework.l
 import com.corrodinggames.rts.java.Main
 import io.github.rwpp.desktop.GameEngine
+import io.github.rwpp.desktop.AbstractGameRoom
+import io.github.rwpp.appKoin
+import io.github.rwpp.game.Game
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.RefreshUIEvent
-import io.github.rwpp.event.events.StartGameEvent
 import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
@@ -29,14 +31,11 @@ object MainInject {
 
     @Inject("b", InjectMode.Override)
     fun Main.onStartGame() {
-        val f = Reflect.get<com.corrodinggames.rts.gameFramework.utility.aj>(this, "f")!!
-        f.a(Runnable
-        {
+        (appKoin.get<Game>().gameRoom as AbstractGameRoom).onEngineStart {
             val B: l = GameEngine.B()
             com.corrodinggames.rts.appFramework.n::class.java.getDeclaredMethod("r").invoke(null)
             if(B.bL == null || !B.bL.W) {
-                B.bX.af()
-                return@Runnable
+                error("Map loading did not complete")
             }
             B.bX.bd = true
             B.bH = false
@@ -47,11 +46,9 @@ object MainInject {
             com.corrodinggames.librocket.a.a().f()
             if(p.c != null) {
                 p.c.root.resumeNonMenu()
-                return@Runnable
+            } else {
+                GameEngine.T()
             }
-            GameEngine.T()
-        })
-
-        StartGameEvent().broadcastIn()
+        }
     }
 }

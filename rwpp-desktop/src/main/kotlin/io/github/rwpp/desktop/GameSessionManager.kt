@@ -33,6 +33,7 @@ class GameSessionManager(
     var isHost: Boolean by mutableStateOf(false)
 
     fun startGame(mode: GameStartMode) {
+        if (!io.github.rwpp.core.MatchStartController.ensureCanStart()) return
         logger.info("[GameSession] startGame({}) — currentMode={} (thread={})",
             gameStartModeSummary(mode), displaySwitcher.currentMode.value, Thread.currentThread().name)
         displaySwitcher.switchTo(DisplayMode.Game)

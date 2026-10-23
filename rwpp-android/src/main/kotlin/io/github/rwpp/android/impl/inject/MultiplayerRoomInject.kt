@@ -9,7 +9,6 @@ package io.github.rwpp.android.impl.inject
 
 import com.corrodinggames.rts.appFramework.MultiplayerBattleroomActivity
 import com.corrodinggames.rts.gameFramework.h.a
-import io.github.rwpp.android.isGaming
 import io.github.rwpp.android.questionOption
 import io.github.rwpp.appKoin
 import io.github.rwpp.event.broadcastIn
@@ -31,7 +30,7 @@ object MultiplayerRoomInject {
 
     @Inject("startGame", InjectMode.Override)
     fun onStartGame() {
-        if(!isGaming) appKoin.get<Game>().gameRoom.startGame()
+        (appKoin.get<Game>().gameRoom as io.github.rwpp.android.impl.GameRoomImpl).onEngineStart()
     }
 
     @Inject("askPasswordInternal", InjectMode.InsertBefore)

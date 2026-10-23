@@ -38,6 +38,8 @@ interface GameRoom {
     var teamLock: Boolean
     val mods: Array<String>
     val isStartGame: Boolean
+    /** 等待室进入对局的请求、加载或恢复仍在进行中。 */
+    val isStartingGame: Boolean get() = false
     var teamMode: TeamMode?
     val isSinglePlayerGame: Boolean
 

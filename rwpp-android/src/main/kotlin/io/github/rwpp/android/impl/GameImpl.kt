@@ -114,6 +114,7 @@ class GameImpl : Game, CoroutineScope {
     override fun acquireMultiplayerKeepAlive() = BackgroundKeepAlive.acquireConnection()
 
     override fun startNewMissionGame(difficulty: Difficulty, mission: Mission) {
+        if (!io.github.rwpp.core.MatchStartController.ensureCanStart()) return
         val t = GameEngine.t()
         GameEngine.t().bU.b("starting singleplayer")
         t.bN.aiDifficulty = difficulty.ordinal - 2
@@ -124,11 +125,17 @@ class GameImpl : Game, CoroutineScope {
         gameLauncher.launch(intent)
     }
 
+    override suspend fun loadSavedGame(map: GameMap) {
+        if (!io.github.rwpp.core.MatchStartController.ensureCanStart()) return
+        super<Game>.loadSavedGame(map)
+    }
+
     override suspend fun load(context: LoadingContext) {
         initMap()
     }
 
     override fun hostStartWithPasswordAndMods(isPublic: Boolean, password: String?, useMods: Boolean) {
+        if (!io.github.rwpp.core.MatchStartController.ensureCanStart()) return
         val keepAlive = acquireMultiplayerKeepAlive()
         try {
             val t: k = GameEngine.t()
@@ -152,6 +159,7 @@ class GameImpl : Game, CoroutineScope {
     }
 
     override fun hostNewSinglePlayer(sandbox: Boolean) {
+        if (!io.github.rwpp.core.MatchStartController.ensureCanStart()) return
         val t = GameEngine.t()
         GameEngine.t().bU.b("starting singleplayer")
         LevelSelectActivity.loadSinglePlayerMapRaw("skirmish/[z;p10]Crossing Large (10p).tmx", true, 3, 1, true, true)
@@ -421,6 +429,7 @@ class GameImpl : Game, CoroutineScope {
     }
 
     override fun watchReplay(replay: Replay) {
+        if (!io.github.rwpp.core.MatchStartController.ensureCanStart()) return
         val loaded = runCatching {
             GameEngine.t().bY.b(replay.name)
         }.onFailure { e ->
@@ -451,6 +460,7 @@ class GameImpl : Game, CoroutineScope {
     }
 
     override fun continueGame() {
+        if (!io.github.rwpp.core.MatchStartController.ensureCanStart()) return
         val intent = Intent(get(), CustomInGameActivity::class.java)
         intent.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
         gameLauncher.launch(intent)

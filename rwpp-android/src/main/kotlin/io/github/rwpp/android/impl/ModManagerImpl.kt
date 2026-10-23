@@ -45,6 +45,7 @@ class ModManagerImpl : ModManager {
     }
 
     override suspend fun modReload(forceImmediate: Boolean, enabledByFileName: Map<String, Boolean>?) {
+        io.github.rwpp.game.GameStartSafety.requireCanReload()
         if (!isReloadingMods.compareAndSet(false, true)) {
             logger.info("[MODSYNC] modReload skipped: already reloading (forceImmediate=$forceImmediate)")
             return
@@ -124,6 +125,7 @@ class ModManagerImpl : ModManager {
      * 不把 `bW.a()` 投进 `i.a(float,int)`，否则主循环被占满网络保活停摆。
      */
     override suspend fun modReloadKeepConnected(enabledByFileName: Map<String, Boolean>?) {
+        io.github.rwpp.game.GameStartSafety.requireCanReload()
         if (!isReloadingMods.compareAndSet(false, true)) {
             logger.info("[MODSYNC] modReloadKeepConnected skipped: already reloading")
             return
@@ -244,6 +246,7 @@ class ModManagerImpl : ModManager {
      * t.f() 停主循环会导致保活泵 ae.l() 停摆连接超时；t.q() 会清空玩家数组摧毁房间状态）。
      */
     private fun runKeepConnectedReloadCore(enabledByFileName: Map<String, Boolean>?) {
+        io.github.rwpp.game.GameStartSafety.requireCanReload()
         try {
             val t = GameEngine.t()
             t.bW.d()
@@ -261,6 +264,7 @@ class ModManagerImpl : ModManager {
      * 默认应在游戏主线程执行；forceImmediate 时为绕过主循环在调用线程直接执行。
      */
     private fun runReloadCore(enabledByFileName: Map<String, Boolean>?) {
+        io.github.rwpp.game.GameStartSafety.requireCanReload()
         val runtime = Runtime.getRuntime()
         logger.info(
             "[MODSYNC] reload heap before: used=${(runtime.totalMemory() - runtime.freeMemory()) / 1048576}MB" +
@@ -320,6 +324,7 @@ class ModManagerImpl : ModManager {
     }
 
     override suspend fun modReregister() {
+        io.github.rwpp.game.GameStartSafety.requireCanReload()
         val latch = CountDownLatch(1)
         game.post {
             GameEngine.t().bW.a(false, false)
@@ -335,6 +340,7 @@ class ModManagerImpl : ModManager {
     }
 
     override suspend fun modSaveChange(enabledByFileName: Map<String, Boolean>?) {
+        io.github.rwpp.game.GameStartSafety.requireCanReload()
         val latch = CountDownLatch(1)
         game.post {
             try {

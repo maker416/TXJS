@@ -23,6 +23,17 @@ class BundleParseTest {
     private val bundleNames = listOf("bundle_zh.toml", "bundle_en.toml")
 
     @Test
+    fun matchStartRecoveryKeysExistInAllBundles() {
+        bundleNames.forEach { name ->
+            val root = Toml.parseToTomlTable(File(bundleDir, name).readText())
+            val room = (root["multiplayer"] as TomlTable)["room"] as TomlTable
+            listOf("startMapLoadFailed", "startPrepareFailed", "startMemoryExhausted", "startLoading").forEach {
+                assertTrue(room.containsKey(it), "multiplayer.room.$it missing in $name")
+            }
+        }
+    }
+
+    @Test
     fun backgroundConnectionKeysExistInAllBundles() {
         bundleNames.forEach { name ->
             val root = Toml.parseToTomlTable(File(bundleDir, name).readText())

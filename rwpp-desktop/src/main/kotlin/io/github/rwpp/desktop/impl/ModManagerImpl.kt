@@ -48,6 +48,7 @@ class ModManagerImpl : ModManager {
     }
 
     override suspend fun modReload(forceImmediate: Boolean, enabledByFileName: Map<String, Boolean>?) {
+        io.github.rwpp.game.GameStartSafety.requireCanReload()
         if (!isReloadingMods.compareAndSet(false, true)) {
             logger.info("[MODSYNC] modReload skipped: already reloading (forceImmediate=$forceImmediate)")
             return
@@ -76,6 +77,7 @@ class ModManagerImpl : ModManager {
      * 不把 `bZ.a()` 投进 `i.b(float,int)`，否则主循环被占满网络保活停摆。
      */
     override suspend fun modReloadKeepConnected(enabledByFileName: Map<String, Boolean>?) {
+        io.github.rwpp.game.GameStartSafety.requireCanReload()
         if (!isReloadingMods.compareAndSet(false, true)) {
             logger.info("[MODSYNC] modReloadKeepConnected skipped: already reloading")
             return
@@ -223,6 +225,7 @@ class ModManagerImpl : ModManager {
      * 停主循环会导致网络保活停摆连接超时；场景重建会清空玩家数组摧毁房间状态）。
      */
     private fun runKeepConnectedReloadCore(enabledByFileName: Map<String, Boolean>?) {
+        io.github.rwpp.game.GameStartSafety.requireCanReload()
         try {
             saveModSelection(enabledByFileName)
             reloadUnitsWithSelection(enabledByFileName)
@@ -238,6 +241,7 @@ class ModManagerImpl : ModManager {
      * 必须在持有主窗口 GL 上下文的游戏线程执行。
      */
     private fun runReloadCore(enabledByFileName: Map<String, Boolean>?) {
+        io.github.rwpp.game.GameStartSafety.requireCanReload()
         val runtime = Runtime.getRuntime()
         logger.info(
             "[MODSYNC] reload heap before: used=${(runtime.totalMemory() - runtime.freeMemory()) / 1048576}MB" +
@@ -309,6 +313,7 @@ class ModManagerImpl : ModManager {
     }
 
     override suspend fun modReregister() {
+        io.github.rwpp.game.GameStartSafety.requireCanReload()
         gameThreadDispatcher.run {
             DesktopReloadGlContext.requireOwnerContext()
             GameEngine.B().bZ.a(false, false)
@@ -316,6 +321,7 @@ class ModManagerImpl : ModManager {
     }
 
     override suspend fun modSaveChange(enabledByFileName: Map<String, Boolean>?) {
+        io.github.rwpp.game.GameStartSafety.requireCanReload()
         gameThreadDispatcher.run {
             DesktopReloadGlContext.requireOwnerContext()
             val b = GameEngine.B()

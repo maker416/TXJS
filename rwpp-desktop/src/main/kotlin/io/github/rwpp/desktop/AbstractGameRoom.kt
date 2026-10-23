@@ -7,6 +7,18 @@
 
 package io.github.rwpp.desktop
 
+import io.github.rwpp.core.MatchStartController
+import io.github.rwpp.core.ModSyncController
+import io.github.rwpp.desktop.impl.GameImpl
+import io.github.rwpp.game.GameStartSafety
+import io.github.rwpp.game.MatchStartGate
+import io.github.rwpp.game.recoverableStartCause
+import io.github.rwpp.game.mod.KeepConnectedReload
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+
 import com.corrodinggames.rts.game.units.custom.logicBooleans.VariableScope
 import com.corrodinggames.rts.gameFramework.e
 import com.corrodinggames.rts.gameFramework.j.c
@@ -146,6 +158,9 @@ abstract class AbstractGameRoom  : GameRoom {
         get() = GameEngine.B().bX.B
     override val isStartGame: Boolean
         get() = isGaming
+    override val isStartingGame: Boolean get() = MatchStartController.gate.busy
+    private var rollbackStartMap: ((Boolean) -> Unit)? = null
+    private val startScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     override var teamMode: TeamMode? = null
     override val isSinglePlayerGame: Boolean
         get() = singlePlayer
@@ -352,10 +367,14 @@ abstract class AbstractGameRoom  : GameRoom {
     }
 
     override suspend fun disconnectAndWait(reason: String) {
-        disconnectRoom(reason).broadcast()
+        val event = DesktopGameThreadDispatcher(GameImpl.container::post,
+            { Thread.currentThread() === GameImpl.gameThread }).run { disconnectRoom(reason) }
+        event.broadcast()
     }
 
     private fun disconnectRoom(reason: String): DisconnectEvent {
+        MatchStartController.gate.reset()
+        rollbackStartMap = null
         singlePlayer = false
         bannedUnitList = listOf()
         roomMods = arrayOf()
@@ -391,26 +410,120 @@ abstract class AbstractGameRoom  : GameRoom {
     }
 
     override fun startGame() {
-        val B = GameEngine.B()
-        gameOver = false
-        isGaming = true
-
-        if (isHost || singlePlayer) {
-            if (gameMapTransformer != null) {
-                val xmlMap = XMLMap(selectedMap)
-                gameMapTransformer!!.invoke(xmlMap)
-                val path = "$mapDir/generated_${mapIndex++}.tmx"
-                val file = xmlMap.saveToFile(path)
-                lastMapPath = lastMapPath ?: B.bX.az
-                B.bX.az = path
-                io.github.rwpp.event.GlobalEventChannel.filter(io.github.rwpp.event.events.DisconnectEvent::class)
-                    .subscribeOnce {
-                        file.delete()
+        val attempt = MatchStartController.request() ?: return
+        // 排队和未开始超时复用已有 GL 线程分派器，不在 EDT 做引擎写操作。
+        startScope.launch {
+            try {
+                DesktopGameThreadDispatcher(GameImpl.container::post,
+                    { Thread.currentThread() === GameImpl.gameThread }).run {
+                    if (!MatchStartController.gate.isCurrent(attempt)) return@run
+                    try {
+                        val B = GameEngine.B()
+                        check(isConnecting && (isHost || singlePlayer)) { "Room is no longer hosted" }
+                        check(!B.bX.aW) { "Engine has already started this room" }
+                        MatchStartController.gate.describe(attempt, displayMapName)
+                        prepareStartMap()
+                        gameOver = false
+                        if (!MatchStartController.gate.sending(attempt)) return@run
+                        MatchStartController.trace(attempt, "send")
+                        if (!B.bX.ae()) failStart(attempt, IllegalStateException("Start packet was not sent"), true)
+                    } catch (error: Throwable) {
+                        failStart(attempt, error)
                     }
-                B.bX.ay.a = com.corrodinggames.rts.gameFramework.j.ai.entries[1]
-                updateUI()
+                }
+            } catch (error: Throwable) {
+                // 分派器仅在任务尚未开始时超时，不再投递给已经无响应的游戏线程。
+                val cause = recoverableStartCause(error)
+                val failure = MatchStartController.gate.fail(attempt, memoryExhausted = cause is OutOfMemoryError)
+                if (failure != null) {
+                    if (cause is OutOfMemoryError) GameStartSafety.markMemoryExhausted()
+                    MatchStartController.recover(appKoin.get<Game>(), attempt, failure, cause)
+                }
             }
-            B.bX.ae()
+        }
+    }
+
+    private fun prepareStartMap() {
+        val transform = gameMapTransformer ?: return
+        val B = GameEngine.B()
+        val previousPath = B.bX.az
+        val previousType = B.bX.ay.a
+        val previousName = B.bX.ay.b
+        val previousLastPath = lastMapPath
+        val file = File("$mapDir/generated_${mapIndex++}.tmx")
+        var listener: io.github.rwpp.event.Listener<DisconnectEvent>? = null
+        rollbackStartMap = { notify ->
+            listener?.complete()
+            B.bX.az = previousPath
+            B.bX.ay.a = previousType
+            B.bX.ay.b = previousName
+            lastMapPath = previousLastPath
+            file.delete()
+            if (notify) updateUI()
+        }
+        val xmlMap = XMLMap(selectedMap)
+        transform(xmlMap)
+        xmlMap.saveToFile(file.path)
+        lastMapPath = lastMapPath ?: previousPath
+        B.bX.az = file.path
+        B.bX.ay.a = com.corrodinggames.rts.gameFramework.j.ai.entries[1]
+        listener = io.github.rwpp.event.GlobalEventChannel.filter(DisconnectEvent::class).subscribeOnce { file.delete() }
+        updateUI()
+    }
+
+    /** Main 的原版成功回调；房主与加入者共用，重复回调不能再次加载地图。 */
+    fun onEngineStart(load: () -> Unit) {
+        if (!isConnecting || !GameEngine.B().bX.aW) return
+        val attempt = MatchStartController.gate.beginLoading() ?: return
+        GameImpl.container.post {
+            if (!MatchStartController.gate.isCurrent(attempt)) return@post
+            MatchStartController.gate.runLoading(attempt, {
+                check(isConnecting && GameEngine.B().bX.aW) { "Room ended before map loading" }
+                check(MatchStartController.ensureCanStart()) { "Restart required" }
+                check(!KeepConnectedReload.active && !ModSyncController.isInRoomSyncInProgress() &&
+                    !ModSyncController.cancellingReload) { "Mod synchronization is still active" }
+                MatchStartController.gate.describe(attempt, displayMapName)
+                MatchStartController.trace(attempt, "load")
+                load()
+                check(singlePlayer || isConnecting && GameEngine.B().bX.aW) { "Connection ended during map loading" }
+            }, {
+                MatchStartController.present(attempt, {
+                    check(singlePlayer || isConnecting && GameEngine.B().bX.aW) { "Connection ended before presentation" }
+                    gameSessionManager.startGame(if (singlePlayer) GameStartMode.Skirmish() else GameStartMode.Multiplayer)
+                }, { failStartOnGameThread(attempt, it) })
+            }, { failStart(attempt, it) })
+        }
+    }
+
+    private fun failStartOnGameThread(attempt: MatchStartGate.Attempt, error: Throwable) {
+        if (!MatchStartController.gate.isCurrent(attempt)) return
+        GameImpl.container.post { failStart(attempt, error) }
+    }
+
+    private fun failStart(attempt: MatchStartGate.Attempt, error: Throwable, knownUnsent: Boolean = false) {
+        val cause = recoverableStartCause(error)
+        var failure = MatchStartController.gate.fail(attempt, knownUnsent, cause is OutOfMemoryError) ?: return
+        if (cause is OutOfMemoryError) GameStartSafety.markMemoryExhausted()
+        try {
+            rollbackStartMap?.invoke(failure.keepRoom)
+        } catch (rollbackError: Exception) {
+            io.github.rwpp.logger.warn("[GAMESTART] map rollback failed", rollbackError)
+            failure = failure.copy(keepRoom = false)
+        } finally {
+            rollbackStartMap = null
+        }
+        if (!failure.keepRoom) {
+            val B = GameEngine.B()
+            B.bG = false
+            B.bI = false
+            B.bH = false
+            B.bX.aW = false
+            B.bX.bd = false
+            B.bX.bc = true
+            gameOver = false
+        }
+        MatchStartController.recover(appKoin.get<Game>(), attempt, failure, cause) {
+            displaySwitcher.switchTo(DisplayMode.Menu)
         }
     }
 

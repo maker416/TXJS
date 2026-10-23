@@ -31,7 +31,7 @@ class XMLMap(val map: GameMap) {
         private set
     val objects: List<MapObject>
         get() = _objects
-    val document: Document = factory.newDocumentBuilder().parse(map.openInputStream())
+    val document: Document = map.openInputStream().use { factory.newDocumentBuilder().parse(it) }
 
     init {
         root = document.firstChild as Element
@@ -150,11 +150,11 @@ class XMLMap(val map: GameMap) {
         if (!file.exists()) {
             file.createNewFile()
         }
-        val writer = java.io.FileWriter(path)
         val transformer = javax.xml.transform.TransformerFactory.newInstance().newTransformer()
         transformer.setOutputProperty(javax.xml.transform.OutputKeys.INDENT, "no")
-        transformer.transform(javax.xml.transform.dom.DOMSource(document), javax.xml.transform.stream.StreamResult(writer))
-        writer.close()
+        java.io.FileWriter(path).use { writer ->
+            transformer.transform(javax.xml.transform.dom.DOMSource(document), javax.xml.transform.stream.StreamResult(writer))
+        }
         return file
     }
 

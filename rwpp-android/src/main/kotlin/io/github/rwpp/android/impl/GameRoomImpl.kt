@@ -19,6 +19,7 @@ import com.corrodinggames.rts.gameFramework.j.c
 import com.corrodinggames.rts.gameFramework.k
 import io.github.rwpp.android.*
 import io.github.rwpp.core.Logic
+import io.github.rwpp.core.MatchStartController
 import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.broadcast
@@ -26,9 +27,11 @@ import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.DisconnectEvent
 import io.github.rwpp.event.events.MapChangedEvent
 import io.github.rwpp.event.events.PlayerJoinEvent
-import io.github.rwpp.event.events.StartGameEvent
 import io.github.rwpp.game.ConnectingPlayer
 import io.github.rwpp.game.GameRoom
+import io.github.rwpp.game.GameStartSafety
+import io.github.rwpp.game.MatchStartGate
+import io.github.rwpp.game.recoverableStartCause
 import io.github.rwpp.game.Player
 import io.github.rwpp.game.mod.KeepConnectedReload
 import io.github.rwpp.game.map.*
@@ -40,6 +43,9 @@ import io.github.rwpp.net.packets.GamePacket
 import io.github.rwpp.ui.UI
 import io.github.rwpp.utils.Reflect
 import org.koin.core.component.get
+import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 
 class GameRoomImpl(private val game: GameImpl) : GameRoom {
@@ -121,6 +127,8 @@ class GameRoomImpl(private val game: GameImpl) : GameRoom {
         get() = roomMods
     override val isStartGame: Boolean
         get() = isGaming
+    override val isStartingGame: Boolean get() = MatchStartController.gate.busy
+    private var rollbackStartMap: ((Boolean) -> Unit)? = null
     override var teamMode: TeamMode? = null
     override val isSinglePlayerGame: Boolean
         get() = io.github.rwpp.android.isSinglePlayerGame
@@ -549,10 +557,13 @@ class GameRoomImpl(private val game: GameImpl) : GameRoom {
     }
 
     override suspend fun disconnectAndWait(reason: String) {
-        disconnectRoom(reason).broadcast()
+        val event = withContext(Dispatchers.Main.immediate) { disconnectRoom(reason) }
+        event.broadcast()
     }
 
     private fun disconnectRoom(reason: String): DisconnectEvent {
+        MatchStartController.gate.reset()
+        rollbackStartMap = null
         io.github.rwpp.android.isSinglePlayerGame = false
         // 断开后必定已不在对局中。isGaming 若滞留为 true，之后任何房间的开局都会被
         // MultiplayerRoomInject.onStartGame 的 !isGaming 守卫吞掉，导致玩家永远卡在战役室
@@ -568,7 +579,7 @@ class GameRoomImpl(private val game: GameImpl) : GameRoom {
         lastMapPath = null
 
         // 保连接重载 / 取消回落期间禁止立刻 i.q()：单位表还在工作线程上改。
-        if (!KeepConnectedReload.active &&
+        if (!GameStartSafety.requiresRestart && !KeepConnectedReload.active &&
             !KeepConnectedReload.shouldRefreshMenuAfterAbort &&
             !ModSyncController.cancellingReload
         ) {
@@ -587,60 +598,116 @@ class GameRoomImpl(private val game: GameImpl) : GameRoom {
     }
 
     override fun startGame() {
+        val attempt = MatchStartController.request() ?: return
         uiHandler.post {
-            val t: k = GameEngine.t()
-            gameOver = false
-            defeatedPlayerSet.clear()
-            isGaming = true
-
-            if(isHost || isSinglePlayerGame) {
-                if (gameMapTransformer != null) {
-                    val xmlMap = XMLMap(selectedMap)
-                    gameMapTransformer!!.invoke(xmlMap)
-                    val path = "$mapDir/generated_${mapIndex++}.tmx"
-                    val file = xmlMap.saveToFile(path)
-                    lastMapPath = lastMapPath ?: GameEngine.t().bU.aB
-                    GameEngine.t().bU.aB = path
-                    GlobalEventChannel.filter(DisconnectEvent::class).subscribeOnce {
-                        file.delete()
-                    }
-                    GameEngine.t().bU.aA.a = com.corrodinggames.rts.gameFramework.j.at.entries[1]
-                    updateUI()
-                }
+            if (!MatchStartController.gate.isCurrent(attempt)) return@post
+            try {
+                val t = GameEngine.t()
+                check(isConnecting && (isHost || isSinglePlayerGame)) { "Room is no longer hosted" }
+                check(!t.bU.aY && !isGaming) { "Engine has already started this room" }
+                MatchStartController.gate.describe(attempt, displayMapName)
+                prepareStartMap()
+                gameOver = false
+                defeatedPlayerSet.clear()
+                if (!MatchStartController.gate.sending(attempt)) return@post
+                MatchStartController.trace(attempt, "send")
                 t.bU.q()
                 t.bU.n()
-                t.bU.a(null, false)
+                if (!t.bU.a(null, false)) failStart(attempt, IllegalStateException("Start packet was not sent"), true)
+                // 只有引擎 V() -> MultiplayerBattleroomActivity.startGame() 的成功回调能启动加载。
+            } catch (error: Throwable) {
+                failStart(attempt, error)
             }
-            Reflect.set(t.bU, "bI", false)
-            t.bU.bv = 0
-            t.bU.bu = 0
-            MultiplayerBattleroomActivity.startGameCommon()
-            if(t.bI != null && t.bI.X) {
+        }
+    }
+
+    private fun prepareStartMap() {
+        val transform = gameMapTransformer ?: return
+        val net = GameEngine.t().bU
+        val previousPath = net.aB
+        val previousType = net.aA.a
+        val previousName = net.aA.b
+        val previousLastPath = lastMapPath
+        val file = File("$mapDir/generated_${mapIndex++}.tmx")
+        var listener: io.github.rwpp.event.Listener<DisconnectEvent>? = null
+        rollbackStartMap = { notify ->
+            listener?.complete()
+            net.aB = previousPath
+            net.aA.a = previousType
+            net.aA.b = previousName
+            lastMapPath = previousLastPath
+            file.delete()
+            if (notify) updateUI()
+        }
+        val xmlMap = XMLMap(selectedMap)
+        transform(xmlMap)
+        xmlMap.saveToFile(file.path)
+        lastMapPath = lastMapPath ?: previousPath
+        net.aB = file.path
+        net.aA.a = com.corrodinggames.rts.gameFramework.j.at.entries[1]
+        listener = GlobalEventChannel.filter(DisconnectEvent::class).subscribeOnce { file.delete() }
+        updateUI()
+    }
+
+    /** 原版成功回调的唯一加载入口，保持 Android UI 线程及原版引擎监视锁约定。 */
+    fun onEngineStart() {
+        if (!isConnecting || !GameEngine.t().bU.aY) return
+        val attempt = MatchStartController.gate.beginLoading() ?: return
+        uiHandler.post {
+            if (!MatchStartController.gate.isCurrent(attempt)) return@post
+            MatchStartController.gate.runLoading(attempt, {
+                val t = GameEngine.t()
+                check(isConnecting && t.bU.aY) { "Room ended before map loading" }
+                check(MatchStartController.ensureCanStart()) { "Restart required" }
+                check(!KeepConnectedReload.active && !ModSyncController.isInRoomSyncInProgress() &&
+                    !ModSyncController.cancellingReload) { "Mod synchronization is still active" }
+                MatchStartController.gate.describe(attempt, displayMapName)
+                MatchStartController.trace(attempt, "load")
+                Reflect.set(t.bU, "bI", false)
+                t.bU.bv = 0
+                t.bU.bu = 0
+                MultiplayerBattleroomActivity.startGameCommon()
+                check(t.bI != null && t.bI.X) { "Map loading did not complete" }
+                check(isSinglePlayerGame || isConnecting && t.bU.aY) { "Connection ended during map loading" }
                 t.bU.bf = true
+            }, {
+                val t = GameEngine.t()
                 val intent = Intent(game.get(), CustomInGameActivity::class.java)
                 intent.putExtra("level", t.di)
-                gameLauncher.launch(intent)
-                StartGameEvent().broadcastIn()
-                return@post
-            }
-            //d("Not starting multiplayer game because map failed to load")
-            val aeVar = t.bU
-            aeVar.be = true
-            //d("onStartGameFailed")
-            // 开局失败，必须复位 isGaming：本次没有启动 CustomInGameActivity，
-            // gameLauncher 回调不会触发，否则标志将永远滞留为 true
-            isGaming = false
-            if(!aeVar.D) {
-                // 走完整的 disconnect 清理（房间状态、模组传输状态、DisconnectEvent），
-                // 并提示用户、退出已死掉的房间界面，而不是让玩家对着断线的战役室干等
-                val reason = readI18n("multiplayer.room.startMapLoadFailed")
-                disconnect(reason)
-                UI.showWarning(reason, true)
-                return@post
-            }
-            aeVar.aY = false
-            aeVar.h("Map load failed.")
+                MatchStartController.present(attempt, {
+                    check(isSinglePlayerGame || isConnecting && t.bU.aY) { "Connection ended before presentation" }
+                    gameLauncher.launch(intent)
+                    isGaming = true
+                }, { failStart(attempt, it) })
+            }, { failStart(attempt, it) })
         }
+    }
+
+    private fun failStart(attempt: MatchStartGate.Attempt, error: Throwable, knownUnsent: Boolean = false) {
+        val cause = recoverableStartCause(error)
+        var failure = MatchStartController.gate.fail(attempt, knownUnsent, cause is OutOfMemoryError) ?: return
+        if (cause is OutOfMemoryError) GameStartSafety.markMemoryExhausted()
+        try {
+            rollbackStartMap?.invoke(failure.keepRoom)
+        } catch (rollbackError: Exception) {
+            io.github.rwpp.logger.warn("[GAMESTART] map rollback failed", rollbackError)
+            failure = failure.copy(keepRoom = false)
+        } finally {
+            rollbackStartMap = null
+        }
+        isGaming = false
+        if (!failure.keepRoom) {
+            val t = GameEngine.t()
+            synchronized(t) {
+                t.bD = false
+                t.bF = false
+                t.bE = false
+                t.bU.aY = false
+                t.bU.bf = false
+                t.bU.be = true
+            }
+        }
+        MatchStartController.recover(game, attempt, failure, cause)
     }
 
     private fun getMapRealPath(map: GameMap): String {

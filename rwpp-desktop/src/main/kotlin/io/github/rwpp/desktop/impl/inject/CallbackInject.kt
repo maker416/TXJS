@@ -53,6 +53,7 @@ object CallbackInject {
 
     @Inject("b", InjectMode.Override)
     fun com.corrodinggames.librocket.a.noMainMenu() {
+        if (io.github.rwpp.game.GameStartSafety.requiresRestart) return
         GameEngine.B()?.a(null as Activity?, this.c, true)
     }
 }
