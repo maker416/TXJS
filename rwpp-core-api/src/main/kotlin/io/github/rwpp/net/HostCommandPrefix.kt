@@ -17,6 +17,10 @@ const val R_ROOM_JOIN_PORT = 5123
 const val T_ROOM_ADDRESS_PREFIX = "t.mxy.wang/"
 const val T_ROOM_JOIN_PORT = 5123
 
+/** 地址只允许一行；不能把日志或多行粘贴内容交给原版端口解析器。 */
+fun isSingleLineJoinAddress(address: String): Boolean =
+    address.isNotBlank() && address.none { it.isISOControl() || it == '\u2028' || it == '\u2029' }
+
 private val roomCodeRegex = Regex("""^([QRT])(\d+)(?::\d+)?$""", RegexOption.IGNORE_CASE)
 private val tRoomAddressRegex = Regex(
     """^t\.mxy\.wang(?::5123)?/(\d+)(?::5123)?$""",

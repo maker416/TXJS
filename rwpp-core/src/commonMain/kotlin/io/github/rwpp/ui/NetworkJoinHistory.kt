@@ -19,13 +19,13 @@ internal object NetworkJoinHistory {
     fun load(configIO: ConfigIO): List<String> {
         val raw = runCatching { configIO.readSingleConfig(CONFIG_GROUP, CONFIG_KEY) }.getOrNull()
         if (raw.isNullOrBlank()) return emptyList()
-        return raw.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }
+        return raw.lineSequence().map { it.trim() }.filter { it.isNotEmpty() && it.none(Char::isWhitespace) }
             .distinct().take(MAX_ENTRIES).toList()
     }
 
     fun record(configIO: ConfigIO, address: String): List<String> {
         val trimmed = address.trim()
-        if (trimmed.isEmpty()) return load(configIO)
+        if (!io.github.rwpp.net.isSingleLineJoinAddress(address)) return load(configIO)
         val updated = (listOf(trimmed) + load(configIO).filter { it != trimmed }).take(MAX_ENTRIES)
         // 历史不是连接的前置条件：磁盘写入失败仍允许本次直连继续。
         runCatching { configIO.saveSingleConfig(CONFIG_GROUP, CONFIG_KEY, updated.joinToString("\n")) }
