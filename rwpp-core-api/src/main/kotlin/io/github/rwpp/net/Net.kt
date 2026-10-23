@@ -61,17 +61,17 @@ interface Net : KoinComponent, Initialization {
      */
     val roomListHostProtocol: MutableMap<String, (maxPlayer: Int, enableMods: Boolean, isPublic: Boolean) -> String>
 
-    /**
-     * Build a quick-host command string.
-     * @param enableMods whether to enable mods.
-     * @param roomId optional room ID for private rooms ([prefix]C/[prefix]CM).
-     * @param maxPlayer max player count (P suffix).
-     * @param unitLimit unit limit (U parameter).
-     * @param credits initial credits (C parameter).
-     * @param speedMultiplier game speed multiplier (Z parameter).
-     * @param prefix command family: Q (default), R, or T (t.mxy.wang/).
-     * @return a command string like "QnewsP20C5000Z5", "QCM6666P10", "RnewsP10U500", or "t.mxy.wang/news".
-     */
+    /** 保留旧实现的分派路径，使扩展覆写的旧签名也适用于 options 调用。 */
+    fun buildQuickHostCommand(options: QuickHostRoomOptions): String = buildQuickHostCommand(
+        options.enableMods,
+        options.roomId,
+        options.limits.maxPlayer,
+        options.limits.unitLimit,
+        options.limits.credits,
+        options.limits.speedMultiplier,
+        options.prefix,
+    )
+
     fun buildQuickHostCommand(
         enableMods: Boolean,
         roomId: String? = null,
@@ -80,7 +80,14 @@ interface Net : KoinComponent, Initialization {
         credits: Int? = null,
         speedMultiplier: Int? = null,
         prefix: HostCommandPrefix = HostCommandPrefix.Q,
-    ): String
+    ): String = io.github.rwpp.net.buildQuickHostCommand(
+        QuickHostRoomOptions(
+            prefix = prefix,
+            enableMods = enableMods,
+            roomId = roomId,
+            limits = QuickHostLimits(maxPlayer, unitLimit, credits, speedMultiplier),
+        ),
+    )
 
     /**
      * Send a packet to the server.

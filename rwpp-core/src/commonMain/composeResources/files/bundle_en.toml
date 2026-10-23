@@ -3,6 +3,7 @@ title = "Missions"
 type = "Mission Type"
 
 [multiplayer]
+invalidJoinAddress = "The address contains line breaks or control characters. Clear it and enter a single-line IP, hostname or room code."
 host = "Host new game"
 replay = "Watch Replay"
 joinLastGame = "Join the last game"

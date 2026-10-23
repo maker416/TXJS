@@ -17,6 +17,10 @@ const val R_ROOM_JOIN_PORT = 5123
 const val T_ROOM_ADDRESS_PREFIX = "t.mxy.wang/"
 const val T_ROOM_JOIN_PORT = 5123
 
+/** 地址只允许一行；不能把日志或多行粘贴内容交给原版端口解析器。 */
+fun isSingleLineJoinAddress(address: String): Boolean =
+    address.isNotBlank() && address.none { it.isISOControl() || it == '\u2028' || it == '\u2029' }
+
 private val roomCodeRegex = Regex("""^([QRT])(\d+)(?::\d+)?$""", RegexOption.IGNORE_CASE)
 private val tRoomAddressRegex = Regex(
     """^t\.mxy\.wang(?::5123)?/(\d+)(?::5123)?$""",
@@ -70,3 +74,25 @@ enum class HostCommandPrefix {
     /** T-series: t.mxy.wang/news / mods / C / CM; join via [T_ROOM_ADDRESS_PREFIX]. */
     T,
 }
+
+/** `Q77182` / `R123` 等加入用短码，不是 UI 快速建房指令。 */
+fun isRoomJoinShortCode(address: String): Boolean =
+    roomCodeRegex.matchEntire(address.trim()) != null
+
+/**
+ * Quick-host 原版房：不在客户端弹「清空模组」、不调用本地 disableAllMods，只发建房指令，由中继/引擎按原版处理。
+ * 原版 BecomeServer 包的 mods 标志控制当前房间的激活单位集合（桌面 ad.c(au) → ag.b(o)，
+ * Android ae.a(bi) 同样处理）；无需改写用户的模组启用配置或重新解析资源。
+ *
+ * - **Q / R**：正式策略。
+ * - **T**：鱼雷可侧尚未完整手测 T 房开房链路，仍保留清模组；若验证后与 Q/R 一致，可在此对 [HostCommandPrefix.T] 返回 `true` 三前缀统一。
+ */
+fun quickHostSkipsClientVanillaModClear(prefix: HostCommandPrefix): Boolean =
+    when (prefix) {
+        HostCommandPrefix.Q, HostCommandPrefix.R -> true
+        HostCommandPrefix.T -> false
+    }
+
+/** 根据 [parseQuickHostCommandPrefix] 判断，避免把 `Q77182` 等加入短码误判为 quick-host。 */
+fun quickHostAddressSkipsClientVanillaModClear(address: String): Boolean =
+    parseQuickHostCommandPrefix(address)?.let(::quickHostSkipsClientVanillaModClear) == true

@@ -3,6 +3,7 @@ title = "战役"
 type = "战役类型"
 
 [multiplayer]
+invalidJoinAddress = "连接地址包含换行或控制字符，请清空输入框后重新输入单行 IP、域名或房间号。"
 host = "创建房间"
 replay = "观看回放"
 joinLastGame = "加入上一次游戏"
