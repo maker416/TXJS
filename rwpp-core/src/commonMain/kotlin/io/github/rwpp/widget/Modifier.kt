@@ -13,17 +13,29 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import io.github.rwpp.event.broadcast
 import io.github.rwpp.event.events.KeyboardEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+
+/** 桌面 Esc 在输入控件消费前交给返回分派；异步广播，避免事件订阅者回到 Main/EDT 时死锁。 */
+internal fun Modifier.desktopEscapeToBackDispatcher(scope: CoroutineScope): Modifier = onPreviewKeyEvent { event ->
+    if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+        scope.launch { KeyboardEvent(0x1B).broadcast() }
+        true
+    } else {
+        false
+    }
+}
 
 /** UI 回调不能同步等事件订阅者：订阅者可能需要回到同一条 Main/EDT 线程。 */
 internal fun Modifier.launcherKeyboardEvents(scope: CoroutineScope): Modifier = onKeyEvent { event ->
@@ -35,7 +47,10 @@ internal fun Modifier.launcherKeyboardEvents(scope: CoroutineScope): Modifier = 
 }
 
 @Composable
-fun Modifier.autoClearFocus() = composed {
+fun Modifier.autoClearFocus() = autoClearFocus(null)
+
+@Composable
+fun Modifier.autoClearFocus(restoreFocus: FocusRequester?) = composed {
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     val interactionSource = remember { MutableInteractionSource() }
@@ -46,5 +61,6 @@ fun Modifier.autoClearFocus() = composed {
     ) {
         keyboardController?.hide()
         focusManager.clearFocus()
+        restoreFocus?.requestFocus()
     }
 }

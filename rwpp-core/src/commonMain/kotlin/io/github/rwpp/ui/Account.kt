@@ -10,12 +10,15 @@ package io.github.rwpp.ui
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -54,6 +57,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -61,6 +66,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.rwpp.AppContext
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
@@ -88,7 +94,9 @@ import io.github.rwpp.widget.ExitButton
 import io.github.rwpp.widget.RWSingleOutlinedTextField
 import io.github.rwpp.widget.WindowManager
 import io.github.rwpp.widget.autoClearFocus
+import io.github.rwpp.widget.desktopEscapeToBackDispatcher
 import io.github.rwpp.widget.v2.ExpandedCard
+import org.koin.compose.koinInject
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.painterResource
@@ -154,10 +162,52 @@ fun AccountView(onExit: () -> Unit) {
     val pageBackground = MaterialTheme.colorScheme.background.copy(
         alpha = (UI.backgroundTransparency + 0.2f).coerceAtLeast(0.88f),
     )
-    ExpandedCard(
-        modifier = Modifier.verticalScroll(rememberScrollState()).autoClearFocus(),
-        backgroundColor = pageBackground,
+    val appContext = koinInject<AppContext>()
+    val accountModalOpen = showNicknameDialog || showAvatarDialog || showChangeEmail ||
+        showLogoutConfirm || authKind != null
+    val pageFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        pageFocusRequester.requestFocus()
+    }
+    // 弹窗内输入框 Esc 关闭后焦点常留在已卸载节点，桌面第二次 Esc 无法回到 BackHandler。
+    LaunchedEffect(accountModalOpen) {
+        if (appContext.isDesktop() && !accountModalOpen) {
+            pageFocusRequester.requestFocus()
+        }
+    }
+    val pageBlankInteraction = remember { MutableInteractionSource() }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .focusRequester(pageFocusRequester)
+            .then(
+                if (appContext.isDesktop()) {
+                    Modifier.desktopEscapeToBackDispatcher(scope)
+                } else {
+                    Modifier
+                },
+            )
+            .focusable(),
     ) {
+        if (appContext.isDesktop()) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = pageBlankInteraction,
+                        indication = null,
+                        onClick = { pageFocusRequester.requestFocus() },
+                    ),
+            )
+        }
+        ExpandedCard(
+            modifier = Modifier
+                .verticalScroll(rememberScrollState())
+                .autoClearFocus(
+                    restoreFocus = if (appContext.isDesktop()) pageFocusRequester else null,
+                ),
+            backgroundColor = pageBackground,
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -231,6 +281,7 @@ fun AccountView(onExit: () -> Unit) {
     }
 
     AccountLoginDialog(
+        inlineDesktop = appContext.isDesktop(),
         visible = authKind == AccountAuthKind.Login,
         username = draftUsername,
         onUsernameChange = { draftUsername = it },
@@ -240,6 +291,7 @@ fun AccountView(onExit: () -> Unit) {
     )
 
     AccountRegisterDialog(
+        inlineDesktop = appContext.isDesktop(),
         visible = authKind == AccountAuthKind.Register,
         username = draftUsername,
         onUsernameChange = { draftUsername = it },
@@ -248,28 +300,33 @@ fun AccountView(onExit: () -> Unit) {
     )
 
     AccountForgotDialog(
+        inlineDesktop = appContext.isDesktop(),
         visible = authKind == AccountAuthKind.Forgot,
         onDismiss = { if (authKind == AccountAuthKind.Forgot) authKind = null },
         onBackToLogin = { authKind = AccountAuthKind.Login },
     )
 
     ChangeNicknameDialog(
+        inlineDesktop = appContext.isDesktop(),
         visible = showNicknameDialog,
         current = user?.nickname.orEmpty(),
         onDismiss = { showNicknameDialog = false },
     )
 
     AccountAvatarDialog(
+        inlineDesktop = appContext.isDesktop(),
         visible = showAvatarDialog,
         onDismiss = { showAvatarDialog = false },
     )
 
     ChangeEmailDialog(
+        inlineDesktop = appContext.isDesktop(),
         visible = showChangeEmail,
         onDismiss = { showChangeEmail = false },
     )
 
     AnimatedAlertDialog(
+        inlineDesktop = appContext.isDesktop(),
         visible = showLogoutConfirm,
         onDismissRequest = { if (!loggingOut) showLogoutConfirm = false },
         enableDismiss = !loggingOut,
@@ -327,6 +384,7 @@ fun AccountView(onExit: () -> Unit) {
                 }
             }
         }
+    }
     }
 }
 
@@ -758,6 +816,17 @@ fun AccountLoginDialog(
     onDismiss: () -> Unit,
     onSwitchToRegister: () -> Unit,
     onForgot: () -> Unit,
+) = AccountLoginDialog(visible, username, onUsernameChange, onDismiss, inlineDesktop = false, onSwitchToRegister, onForgot)
+
+@Composable
+fun AccountLoginDialog(
+    visible: Boolean,
+    username: String,
+    onUsernameChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    inlineDesktop: Boolean,
+    onSwitchToRegister: () -> Unit,
+    onForgot: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val isSmall = LocalWindowManager.current == WindowManager.Small
@@ -779,6 +848,7 @@ fun AccountLoginDialog(
     }
 
     AnimatedAlertDialog(
+        inlineDesktop = inlineDesktop,
         visible = visible,
         onDismissRequest = { if (!submitting) onDismiss() },
         enableDismiss = !submitting,
@@ -1006,6 +1076,16 @@ fun AccountRegisterDialog(
     onUsernameChange: (String) -> Unit,
     onDismiss: () -> Unit,
     onSwitchToLogin: () -> Unit,
+) = AccountRegisterDialog(visible, username, onUsernameChange, onDismiss, inlineDesktop = false, onSwitchToLogin)
+
+@Composable
+fun AccountRegisterDialog(
+    visible: Boolean,
+    username: String,
+    onUsernameChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    inlineDesktop: Boolean,
+    onSwitchToLogin: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var password by remember(visible) { mutableStateOf("") }
@@ -1027,6 +1107,7 @@ fun AccountRegisterDialog(
     }
 
     AnimatedAlertDialog(
+        inlineDesktop = inlineDesktop,
         visible = visible,
         onDismissRequest = { if (!submitting) onDismiss() },
         enableDismiss = !submitting,
@@ -1202,6 +1283,7 @@ private fun AccountForgotDialog(
     visible: Boolean,
     onDismiss: () -> Unit,
     onBackToLogin: () -> Unit,
+    inlineDesktop: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
     var email by remember(visible) { mutableStateOf("") }
@@ -1222,6 +1304,7 @@ private fun AccountForgotDialog(
     }
 
     AnimatedAlertDialog(
+        inlineDesktop = inlineDesktop,
         visible = visible,
         onDismissRequest = { if (!submitting) onDismiss() },
         enableDismiss = !submitting,
@@ -1365,6 +1448,7 @@ private fun ChangeNicknameDialog(
     visible: Boolean,
     current: String,
     onDismiss: () -> Unit,
+    inlineDesktop: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
     var nickname by remember(visible) { mutableStateOf(current) }
@@ -1372,6 +1456,7 @@ private fun ChangeNicknameDialog(
     var submitting by remember(visible) { mutableStateOf(false) }
 
     AnimatedAlertDialog(
+        inlineDesktop = inlineDesktop,
         visible = visible,
         onDismissRequest = { if (!submitting) onDismiss() },
         enableDismiss = !submitting,
@@ -1664,6 +1749,7 @@ private fun PointLedgersDialog(
 private fun AccountAvatarDialog(
     visible: Boolean,
     onDismiss: () -> Unit,
+    inlineDesktop: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
     var confirmingDelete by remember(visible) { mutableStateOf(false) }
@@ -1673,6 +1759,7 @@ private fun AccountAvatarDialog(
     val hasAvatar = AccountSession.user?.hasAvatar == true
 
     AnimatedAlertDialog(
+        inlineDesktop = inlineDesktop,
         visible = visible,
         onDismissRequest = { if (!busy) onDismiss() },
         enableDismiss = !busy,
@@ -1820,6 +1907,7 @@ private fun AccountAvatarDialog(
 private fun ChangeEmailDialog(
     visible: Boolean,
     onDismiss: () -> Unit,
+    inlineDesktop: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
     var email by remember(visible) { mutableStateOf("") }
@@ -1839,6 +1927,7 @@ private fun ChangeEmailDialog(
     }
 
     AnimatedAlertDialog(
+        inlineDesktop = inlineDesktop,
         visible = visible,
         onDismissRequest = { if (!submitting) onDismiss() },
         enableDismiss = !submitting,
