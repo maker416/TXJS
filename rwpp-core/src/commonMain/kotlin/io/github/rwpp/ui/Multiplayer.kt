@@ -75,6 +75,10 @@ import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.logger
 import io.github.rwpp.net.Net
 import io.github.rwpp.net.HostCommandPrefix
+import io.github.rwpp.net.QuickHostLimits
+import io.github.rwpp.net.QuickHostRoomOptions
+import io.github.rwpp.net.quickHostAddressSkipsClientVanillaModClear
+import io.github.rwpp.net.quickHostSkipsClientVanillaModClear
 import io.github.rwpp.net.roomListApiBasesWithDefaultFallback
 import io.github.rwpp.net.MOD_SYNC_ROOM_TYPE
 import io.github.rwpp.net.RoomDescription
@@ -326,14 +330,14 @@ fun MultiplayerView(
     var isConnecting by remember { mutableStateOf(false) }
     /** 本次连接是否为开房（而非加入他人房间）；开房前需禁用网络缓存模组。 */
     var pendingHostSession by remember { mutableStateOf(false) }
-    /** 本次开房是否勾选了「启动模组」；未勾选时 Loading 阶段会清空全部已加载模组。 */
+    /** 本次开房是否勾选了「启动模组」；仅 T 原版房在 Loading 阶段清空客户端模组。 */
     var pendingHostEnableMods by remember { mutableStateOf(false) }
     var pendingHostTransferMods by remember { mutableStateOf(false) }
 
     var editingServerConfig by remember { mutableStateOf<ServerConfig?>(null) }
     var showServerInfoConfig by remember { mutableStateOf(false) }
 
-    var selectedRoomDescription by remember { mutableStateOf<RoomDescription?>(null) }
+    val roomJoinContext = remember { MultiplayerRoomJoinContext() }
     var showJoinRequestDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -358,24 +362,33 @@ fun MultiplayerView(
     }
 
     // 好友邀请卡片一键加入：消费 pendingInviteJoin，走下方既有 LoadingView 加入链路
-    //（selectedRoomDescription 保持 null，等价于直连 IP 加入，preJoinSync 按直连处理）
+    //（清除列表房描述，等价于直连 IP 加入，preJoinSync 按直连处理）
     LaunchedEffect(UI.pendingInviteJoin) {
         val invite = UI.pendingInviteJoin ?: return@LaunchedEffect
         UI.pendingInviteJoin = null
+        roomJoinContext.beginConnection()
         pendingHostSession = false
         serverAddress = invite.address
         isConnecting = true
     }
 
-    JoinServerRequestDialog(showJoinRequestDialog, { showJoinRequestDialog = false },
-       selectedRoomDescription, blacklists
-    ) { dismiss ->
+    JoinServerRequestDialog(showJoinRequestDialog, {
+        showJoinRequestDialog = false
+        roomJoinContext.dismissSelection()
+    }, roomJoinContext.selectedRoom, blacklists) onJoin@{ dismiss ->
+        val room = roomJoinContext.selectedRoom ?: return@onJoin
+        roomJoinContext.beginConnection(room)
         pendingHostSession = false
-        serverAddress = selectedRoomDescription!!.addressProvider()
+        serverAddress = room.addressProvider()
         isConnecting = true
         dismiss()
     }
 
+    // 在启动 Loading 协程前捕获；列表确认的延迟关闭回调和后续请求都不能改写本次地址/房描述。
+    val connectionRequest = roomJoinContext.snapshotConnection(serverAddress)
+    val hostSession = pendingHostSession
+    val hostEnableMods = pendingHostEnableMods
+    val hostTransferMods = pendingHostTransferMods
     LoadingView(
         isConnecting,
         onLoaded = {
@@ -390,6 +403,8 @@ fun MultiplayerView(
         onLoadingFinished = { isConnecting = false },
         cancellable = true,
     ) {
+        var address = connectionRequest.address
+        val capturedRoomDescription = connectionRequest.room
         // 新的加入/开房会话开始：等待可能挂起的退房清理完成，保证旧会话先拆后建（GameSessionController）
         // 等待旧退房清理与预同步之前就申请保活；切回 IO 时取消也不能丢弃资源句柄。
         val keepAlive = withContext(NonCancellable + Dispatchers.Main.immediate) {
@@ -401,23 +416,25 @@ fun MultiplayerView(
                 var opened = false
                 try {
                     ModSyncController.awaitJoinEntryCleanup()
-                    if(serverAddress.isBlank()) {
+                    if(address.isBlank()) {
                         message("That server no longer exists")
                         return@beginSession false
                     }
-                    if (!io.github.rwpp.net.isSingleLineJoinAddress(serverAddress)) {
+                    if (!io.github.rwpp.net.isSingleLineJoinAddress(address)) {
                         message(readI18n("multiplayer.invalidJoinAddress"))
                         return@beginSession false
                     }
-                    serverAddress = roomJoinAddressForId(serverAddress)
+                    address = roomJoinAddressForId(address)
 
-                    if (pendingHostSession) {
+                    if (hostSession) {
                         // 旧断线清理会清空 hostSyncRequested，必须在开始屏障之后提交本次选项。
-                        ModSyncController.hostSyncRequested = pendingHostTransferMods
-                        if (!pendingHostEnableMods) {
-                            val cleared = Logic.disableAllModsBeforeHosting()
-                            if (cleared) {
-                                message(readI18n("multiplayer.modsClearedForVanillaHost"))
+                        ModSyncController.hostSyncRequested = hostTransferMods
+                        if (!hostEnableMods) {
+                            if (!quickHostAddressSkipsClientVanillaModClear(address)) {
+                                val cleared = Logic.disableAllModsBeforeHosting()
+                                if (cleared) {
+                                    message(readI18n("multiplayer.modsClearedForVanillaHost"))
+                                }
                             }
                         } else {
                             val disabled = Logic.disableNetworkModsBeforeHosting()
@@ -428,7 +445,7 @@ fun MultiplayerView(
                     } else {
                         // 加入者：连接前只跑带外同步轻量段（查清单/登记 Presence 供房主握手放行）；
                         // 下载与重载在进房成功后由 ModSyncController 在房间内后台完成，期间可正常聊天
-                        if (!ModSyncController.preJoinSync(selectedRoomDescription, serverAddress, this)) {
+                        if (!ModSyncController.preJoinSync(capturedRoomDescription, address, this)) {
                             return@beginSession false
                         }
                     }
@@ -436,23 +453,20 @@ fun MultiplayerView(
                     message("connecting...")
 
                     game.setUserName(userName)
-                    configIO.setGameConfig("lastNetworkIP", serverAddress)
+                    configIO.setGameConfig("lastNetworkIP", address)
 
-                    // selectedRoomDescription 随后即清空，先捕获供身份公示推导候选 key
-                    val capturedRoomDescription = selectedRoomDescription
                     val result = game.directJoinServer(
-                        serverAddress,
+                        address,
                         capturedRoomDescription?.joinRelayUuid(),
                         this,
                     )
-                    selectedRoomDescription = null
                     if(result.isSuccess) {
                         // 房间身份公示（带外机制）：暂存候选 key 与玩家名快照；
                         // 房主走 quickHost 指令串产不出 key，靠进房后 roomDetails 短码补充
                         joined = true
                         val accepted = withContext(Dispatchers.Main.immediate) {
                             if (!UI.showMultiplayerView || !isConnecting) false else {
-                                RoomIdentityController.onJoiningRoom(serverAddress, capturedRoomDescription)
+                                RoomIdentityController.onJoiningRoom(address, capturedRoomDescription)
                                 onOpenRoomView()
                                 opened = true
                                 true
@@ -461,7 +475,7 @@ fun MultiplayerView(
                         if (!accepted) return@beginSession false
                         // 进房成功：joining Presence 转为 synced 并保活，驱动行内徽章（无同步记录时为空操作）
                         ModSyncController.onJoinedRoom()
-                        JoinGameEvent(serverAddress).broadcastIn()
+                        JoinGameEvent(address).broadcastIn()
                         true
                     } else {
                         message(result.exceptionOrNull()!!.message!!)
@@ -479,6 +493,73 @@ fun MultiplayerView(
             } ?: false
         } finally {
             keepAlive.close()
+        }
+    }
+
+    @Composable
+    fun VanillaHostClearModsConfirm(
+        visible: Boolean,
+        onDismiss: () -> Unit,
+        onConfirm: () -> Unit,
+    ) {
+        @Composable
+        fun ConfirmCard() {
+            BorderCard(
+                modifier = Modifier
+                    .fillMaxWidth(LargeProportion())
+                    .widthIn(max = 480.dp)
+                    .padding(10.dp),
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 360.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 18.dp, vertical = 16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = null,
+                            modifier = Modifier.size(40.dp),
+                            tint = Color(0xFFFF9800),
+                        )
+                        Text(
+                            readI18n("multiplayer.vanillaHostClearModsTitle"),
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            textAlign = TextAlign.Center,
+                        )
+                        HorizontalDivider(
+                            thickness = 2.dp,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                        )
+                        Text(
+                            readI18n("multiplayer.vanillaHostClearModsMessage").trimIndent(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                    ) {
+                        RWTextButton(readI18n("common.cancel"), modifier = Modifier.padding(4.dp), onClick = onDismiss)
+                        RWTextButton(
+                            readI18n("multiplayer.vanillaHostClearModsAccept"),
+                            modifier = Modifier.padding(4.dp),
+                            onClick = onConfirm,
+                        )
+                    }
+                }
+            }
+        }
+        AnimatedAlertDialog(visible, onDismissRequest = onDismiss) {
+            ConfirmCard()
         }
     }
 
@@ -522,15 +603,20 @@ fun MultiplayerView(
 
             fun beginHost() {
                 dismiss()
+                roomJoinContext.beginConnection()
                 pendingHostTransferMods = transferMod && enableMods
                 serverAddress = net.buildQuickHostCommand(
-                    enableMods = enableMods,
-                    roomId = if (hostPrefix != HostCommandPrefix.R) roomId.ifBlank { null } else null,
-                    maxPlayer = maxPlayer,
-                    unitLimit = unitLimit,
-                    credits = credits,
-                    speedMultiplier = speedMultiplier,
-                    prefix = hostPrefix,
+                    QuickHostRoomOptions(
+                        prefix = hostPrefix,
+                        enableMods = enableMods,
+                        roomId = if (hostPrefix != HostCommandPrefix.R) roomId.ifBlank { null } else null,
+                        limits = QuickHostLimits(
+                            maxPlayer = maxPlayer,
+                            unitLimit = unitLimit,
+                            credits = credits,
+                            speedMultiplier = speedMultiplier,
+                        ),
+                    ),
                 )
                 pendingHostEnableMods = enableMods
                 pendingHostSession = true
@@ -1034,8 +1120,9 @@ fun MultiplayerView(
                     horizontalArrangement = Arrangement.End,
                 ) {
                     RWTextButton(readI18n("multiplayer.host"), modifier = Modifier.padding(4.dp)) {
-                        // 未勾选「启动模组」但引擎仍有已加载模组：先提醒，确认后再清空重载并开房
-                        if (!enableMods && hasEnabledMods) {
+                        val needsVanillaClearConfirm = !enableMods && hasEnabledMods &&
+                            !quickHostSkipsClientVanillaModClear(hostPrefix)
+                        if (needsVanillaClearConfirm) {
                             showVanillaHostConfirm = true
                         } else {
                             beginHost()
@@ -1044,68 +1131,14 @@ fun MultiplayerView(
                 }
             }
 
-            AnimatedAlertDialog(
+            VanillaHostClearModsConfirm(
                 visible = showVanillaHostConfirm,
-                onDismissRequest = { showVanillaHostConfirm = false },
-            ) { confirmDismiss ->
-                BorderCard(
-                    modifier = Modifier
-                        .fillMaxWidth(LargeProportion())
-                        .widthIn(max = 480.dp)
-                        .padding(10.dp),
-                ) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 360.dp)
-                                .verticalScroll(rememberScrollState())
-                                .padding(horizontal = 18.dp, vertical = 16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            Icon(
-                                Icons.Default.Warning,
-                                contentDescription = null,
-                                modifier = Modifier.size(40.dp),
-                                tint = Color(0xFFFF9800),
-                            )
-                            Text(
-                                readI18n("multiplayer.vanillaHostClearModsTitle"),
-                                style = MaterialTheme.typography.headlineSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                textAlign = TextAlign.Center,
-                            )
-                            HorizontalDivider(
-                                thickness = 2.dp,
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                            )
-                            Text(
-                                readI18n("multiplayer.vanillaHostClearModsMessage").trimIndent(),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
-                        ) {
-                            RWTextButton(readI18n("common.cancel"), modifier = Modifier.padding(4.dp)) {
-                                confirmDismiss()
-                            }
-                            RWTextButton(
-                                readI18n("multiplayer.vanillaHostClearModsAccept"),
-                                modifier = Modifier.padding(4.dp),
-                            ) {
-                                confirmDismiss()
-                                beginHost()
-                            }
-                        }
-                    }
-                }
-            }
+                onDismiss = { showVanillaHostConfirm = false },
+                onConfirm = {
+                    showVanillaHostConfirm = false
+                    beginHost()
+                },
+            )
         }
     }
 
@@ -1189,6 +1222,7 @@ fun MultiplayerView(
                 Card(
                     onClick = {
                         val ip = serverData.config.ip
+                        roomJoinContext.beginConnection()
                         pendingHostSession = false
                         serverAddress = ip
                         configIO.setGameConfig("lastNetworkIP", ip)
@@ -1413,6 +1447,7 @@ fun MultiplayerView(
                     null,
                     modifier = Modifier.clickable {
                         if(joinServerAddress.isNotBlank()) {
+                            roomJoinContext.beginConnection()
                             pendingHostSession = false
                             serverAddress = joinServerAddress
                             isConnecting = true
@@ -1666,14 +1701,6 @@ fun MultiplayerView(
     var hostDialogVisible by remember { mutableStateOf(false) }
     var filterSurfaceDialogVisible by remember { mutableStateOf(false) }
 
-    FilterSurfaceDialog(filterSurfaceDialogVisible) { filterSurfaceDialogVisible = false }
-    HostGameDialog(hostDialogVisible, { hostDialogVisible = false }) {
-        // 不调 onExit()：多人列表留在返回栈中，退出房间时 navigateBack 能回到列表
-        onOpenRoomView()
-        game.setUserName(userName)
-    }
-
-
     Scaffold(
         containerColor = Color.Transparent,
         bottomBar = {
@@ -1695,6 +1722,7 @@ fun MultiplayerView(
                 ) {
                     val lastIp = configIO.getGameConfig<String?>("lastNetworkIP")
                     if (lastIp != null) {
+                        roomJoinContext.beginConnection()
                         pendingHostSession = false
                         serverAddress = lastIp
                         isConnecting = true
@@ -1840,7 +1868,7 @@ fun MultiplayerView(
                                     }
                                 }
                                 roomCardRows(realList, roomColumns, settings.enableAnimations) { room ->
-                                    selectedRoomDescription = room
+                                    roomJoinContext.selectedRoom = room
                                     showJoinRequestDialog = true
                                 }
                                 ServerList(allServerData)
@@ -1877,6 +1905,7 @@ fun MultiplayerView(
                     onJoinServer = {
                         if (joinServerAddress.isNotBlank()) {
                             joinHistory = NetworkJoinHistory.record(configIO, joinServerAddress)
+                            roomJoinContext.beginConnection()
                             pendingHostSession = false
                             serverAddress = joinServerAddress
                             isConnecting = true
@@ -1938,6 +1967,13 @@ fun MultiplayerView(
 //                        }
 //                    }
 //                }
+    }
+
+    FilterSurfaceDialog(filterSurfaceDialogVisible) { filterSurfaceDialogVisible = false }
+    HostGameDialog(hostDialogVisible, { hostDialogVisible = false }) {
+        // 不调 onExit()：多人列表留在返回栈中，退出房间时 navigateBack 能回到列表
+        onOpenRoomView()
+        game.setUserName(userName)
     }
 }
 

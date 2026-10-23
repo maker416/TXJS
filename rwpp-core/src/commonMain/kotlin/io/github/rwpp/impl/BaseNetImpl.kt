@@ -96,6 +96,7 @@ abstract class BaseNetImpl : Net {
         }
     }
 
+    // 保留旧公开方法的 JVM 入口；options 重载仍通过它分派给扩展覆写。
     override fun buildQuickHostCommand(
         enableMods: Boolean,
         roomId: String?,
@@ -104,26 +105,9 @@ abstract class BaseNetImpl : Net {
         credits: Int?,
         speedMultiplier: Int?,
         prefix: HostCommandPrefix,
-    ): String {
-        val commandPrefix = when (prefix) {
-            HostCommandPrefix.Q -> "Q"
-            HostCommandPrefix.R -> "R"
-            HostCommandPrefix.T -> T_ROOM_ADDRESS_PREFIX
-        }
-        val base = when {
-            roomId != null && enableMods -> "${commandPrefix}CM$roomId"
-            roomId != null -> "${commandPrefix}C$roomId"
-            enableMods -> "${commandPrefix}mods"
-            else -> "${commandPrefix}news"
-        }
-        val params = buildString {
-            maxPlayer?.let { append("P$it") }
-            unitLimit?.let { append("U$it") }
-            credits?.let { append("C$it") }
-            speedMultiplier?.let { append("Z$it") }
-        }
-        return base + params
-    }
+    ): String = super<Net>.buildQuickHostCommand(
+        enableMods, roomId, maxPlayer, unitLimit, credits, speedMultiplier, prefix,
+    )
 }
 
 
