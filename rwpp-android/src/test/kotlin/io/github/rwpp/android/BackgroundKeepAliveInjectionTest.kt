@@ -13,6 +13,7 @@ import io.github.rwpp.inject.GameLibraries
 import io.github.rwpp.inject.InterruptResult
 import io.github.rwpp.inject.RootInfo
 import io.github.rwpp.inject.runtime.InjectApi
+import javassist.bytecode.analysis.Analyzer
 import javassist.ClassPool
 import javassist.expr.ExprEditor
 import javassist.expr.MethodCall
@@ -29,9 +30,16 @@ class BackgroundKeepAliveInjectionTest {
         val root = Toml.decodeFromString(RootInfo.serializer(), File("build/generated/config.toml").readText())
         val prefix = "io.github.rwpp.android.impl.inject."
         val expected = setOf("BaseEngineInject.onMainLoop", "BaseEngineInject.onActivityStop",
-            "DeferredGameStopInject.onDeferredStop", "MusicInject.onResume", "EngineMusicPreparedInject.onPrepared")
+            "DeferredGameStopInject.onDeferredStop", "MusicInject.onResume", "EngineMusicPreparedInject.onPrepared", "SelectLoadInject.parseDeepSelect")
         val hooks = root.injectInfos.filter { it.path.removePrefix(prefix) in expected }
         assertEquals(expected, hooks.map { it.path.removePrefix(prefix) }.toSet())
+        val select = hooks.single { it.path.endsWith("SelectLoadInject.parseDeepSelect") }
+        assertTrue(select.hasReceiver)
+        assertEquals("com.corrodinggames.rts.game.units.custom.logicBooleans.LogicString\$Select", select.className)
+        assertEquals("setArgumentsRaw", select.methodName)
+        assertEquals("(Ljava/lang/String;Lcom/corrodinggames/rts/game/units/custom/l;Ljava/lang/String;)V", select.methodDesc)
+        assertEquals(io.github.rwpp.inject.InjectMode.InsertBefore, select.injectMode)
+        assertEquals(false, select.returnClassIsVoid)
 
         val previousIncludes = GameLibraries.includes.toSet()
         try {
@@ -44,6 +52,8 @@ class BackgroundKeepAliveInjectionTest {
                 InjectApi.injectMethod(hook.className, hook.hasReceiver, hook.methodName, hook.methodDesc,
                     hook.injectMode, hook.path, hook.returnClassIsVoid, hook.pathType)
             }
+            val selectTarget = pool.get(select.className)
+            Analyzer().analyze(selectTarget, selectTarget.getMethod(select.methodName, select.methodDesc).methodInfo)
             hooks.map { it.className }.distinct().forEach { name ->
                 assertTrue(pool.get(name).toBytecode().isNotEmpty(), "Cannot emit injected $name")
             }

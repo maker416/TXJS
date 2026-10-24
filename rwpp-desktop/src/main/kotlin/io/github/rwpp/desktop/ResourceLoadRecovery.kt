@@ -18,7 +18,9 @@ internal fun chooseDesktopRecovery() {
     val failed = ModLoadSafety.previousFailure() ?: return
     val show = {
         val panel = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
-        panel.add(JLabel("上次资源加载未完成。请选择本轮组合，文件和原启用配置不会被删除或覆盖。"))
+        panel.add(JLabel(if (failed.failure == "temporary-recovery")
+            "上次使用了临时恢复组合，原有启用配置尚未更改。请选择本轮模组。"
+            else "上次资源加载未完成。请选择本轮组合，文件和原启用配置不会被删除或覆盖。"))
         if (failed.mod.isNotEmpty()) panel.add(JLabel("最后处理：${failed.mod}"))
         val boxes = recoveryModFiles(listOf(File(modDir))).map { file ->
             file to JCheckBox(file.name, false).also(panel::add)

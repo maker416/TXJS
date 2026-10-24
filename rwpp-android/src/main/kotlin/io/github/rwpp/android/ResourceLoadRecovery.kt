@@ -54,7 +54,9 @@ internal fun Activity.showResourceRecovery(onContinue: () -> Unit) {
         setPadding(0, 12, 0, 12); column.addView(this)
     }
     label("资源加载恢复")
-    label(if (GameStartSafety.memoryExhausted || previous?.failure == "memory")
+    label(if (previous?.failure == "temporary-recovery")
+        "上次使用了临时恢复组合，原有启用配置尚未更改。请选择本次启动的模组。"
+        else if (GameStartSafety.memoryExhausted || previous?.failure == "memory")
         "上次资源加载内存不足。请减少本轮启用的模组。文件和原有启用配置都会保留。"
         else "上次资源加载未完成。可能是加载失败或进程被关闭；可减少本轮启用的模组后再启动。")
     if (!previous?.mod.isNullOrBlank()) label("最后处理：${previous?.mod}")

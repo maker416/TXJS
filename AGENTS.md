@@ -454,6 +454,7 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 - **KSP 增量编译**：根目录 `gradle.properties` 中显式设置了 `ksp.incremental=false`，因为注入元数据变更通常需要全量重新生成。
 - **JitPack 构建**：通过检测 `JITPACK` 环境变量排除 app 模块，仅发布 library（`rwpp-core-api`、`rwpp-core`）。
 - **模组资源加载与 OOM 恢复**：两端由 `ModLoadSafety` 统一包住启动和重载，在单位及表达式解析入口检查实际 Java 堆余量，GC 后仍不足则中止并抛 `ModLoadFailure`，禁止吞掉失败后继续地图刷新或上报 synced。`GameStartSafety` 锁定本进程的开局/重载，退出不保存损坏注册表；预写小型加载日志让下次启动进入原生恢复页，临时减少本轮模组但保留文件与原有启用配置。Android 队列重载必须在原始帧开始前消费，并在执行后再次检查闸门，禁止失败后继续同一帧读取单位表。PC 缓存采用分块认证和文件流，旧 v1 缓存保留并按未命中重取。详见 `docs/mod-load-safety.md`。
+- **深层模组表达式**：`SelectChainParser` 与两端 `SelectLoadInject` 仅优化严格匹配的深 select else 链，用区间扫描与迭代组装减少递归长子串保留，保留原版 AST、解析顺序、类型校验和短路求值；不支持的语法回退。改动须跑真实引擎差分与注入字节码验证。`am.bM()` 仅覆盖内置单位，验证模组一致性应另比 `custom.l.d` 的 `M`/`H`。实测边界见 `docs/mod-memory-recovery-validation.md`。
 - **HiDPI**：LWJGL2 在 `Display.setParent` 模式下直接以 Canvas 组件尺寸创建原生渲染子窗口，系统缩放 >100% 时需补偿到物理像素。桌面端 `NativeCanvasCardLayout` 在同一次布局中直接设置 Canvas 物理尺寸（容器逻辑尺寸 × 当前显示器缩放比例），其余 Compose 卡片保持逻辑尺寸。`Main.kt` 的 `syncGameCanvasSizeToNative()` 只请求重做此布局，窗口 resize/move、`graphicsConfiguration` 更新和全屏切换均复用它。**禁止恢复 Canvas 自身 resize 回调回写尺寸**：普通 CardLayout 与回调反复改写逻辑/物理尺寸会形成反馈，导致界面抽搐。回归测试 `NativeCanvasCardLayoutTest` 覆盖重复布局、切卡与跨屏缩放。
 
 - **关闭按钮与界面稳定性**：共用 `ExitButton` 保持 48dp 命中区并置于正文之上；新增标题/工具栏须为其预留区域。`LauncherOverlayHost` 活动层在退出层之上，退出层不接收点击和返回，其原生弹窗立即撤销。不可关闭的进度弹窗必须显式 `enableDismiss=false`。房间玩家列表始终预留滚动条宽度，禁止按滚动状态动画改变列宽；地图卡片保持固定行高并使用自适应列数。回归与人工检查见 `docs/ui-stability.md`。

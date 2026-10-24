@@ -17,9 +17,16 @@ import kotlin.test.*
 class DesktopModLoadSafetyInjectionTest {
     @Test fun generatedBudgetAndRecoveryHooksApplyToTheRealEngine() {
         val root = Toml.decodeFromString(RootInfo.serializer(), File("build/generated/config.toml").readText())
-        val names = listOf("checkUnitLoadBudget", "stopWrappedMemoryFailure", "checkExpressionBudget", "preserveSelectionDuringRecovery")
+        val names = listOf("checkUnitLoadBudget", "stopWrappedMemoryFailure", "checkExpressionBudget", "preserveSelectionDuringRecovery", "parseDeepSelect")
         val hooks = root.injectInfos.filter { hook -> names.any { hook.path.endsWith(".$it") } }
-        assertEquals(4, hooks.size)
+        assertEquals(5, hooks.size)
+        val select = hooks.single { it.path.endsWith("SelectLoadInject.parseDeepSelect") }
+        assertTrue(select.hasReceiver)
+        assertEquals("com.corrodinggames.rts.game.units.custom.logicBooleans.LogicString\$Select", select.className)
+        assertEquals("setArgumentsRaw", select.methodName)
+        assertEquals("(Ljava/lang/String;Lcom/corrodinggames/rts/game/units/custom/l;Ljava/lang/String;)V", select.methodDesc)
+        assertEquals(io.github.rwpp.inject.InjectMode.InsertBefore, select.injectMode)
+        assertFalse(select.returnClassIsVoid)
         val previous = GameLibraries.includes.toSet()
         try {
             GameLibraries.includes.clear()

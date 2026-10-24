@@ -14,6 +14,12 @@ v2 存放在 `.rwpp/network-mod-cache-v2/`。旧 v1 加密缓存留在原位置�
 
 ## 资源加载保护
 
+### 深层 select 表达式
+
+`SelectChainParser` 优化至少 32 层、语法严格匹配的 `select(condition, yes, select(...))` 链。一次扫描记录括号位置，使用原字符串区间解析各条件和分支，逆序组装原版 `LogicString.Select` 节点，避免每层递归同时保留越来越长的子串。解析顺序、返回类型检查和 `validateAndOptimize` 保持原版调用；普通表达式及无法证明兼容的语法回退原版。两端 `SelectLoadInject` 只挂在 `setArgumentsRaw`，不引入新的表达式类型或网络格式。
+
+实际旧版“安绒宁静”包含 1,539 层 select。Android 压力快照中约 350 MiB 是字符数组；优化后该模组单独启动和重载通过。原版客户端也能加载此模组，因此不能把所有峰值失败归因于文件太大。完整实测和边界见[验证报告](mod-memory-recovery-validation.md)。
+
 `ModLoadSafety` 包住启动、普通重载、保连接重载和辅助重载。在单位与表达式解析入口检查实际 Java 堆余量，保留 `maxHeap / 10`，下限 32 MiB、上限 128 MiB。达到阈值先执行 GC 再判断；每次低余量都重新判断，不能把整轮只允许一次 GC 当作预算，否则长期解析产生的可回收对象会造成误拦。
 
 仍无足够余量时用预分配、无堆栈的内部信号中止解析，外层转成 `ModLoadFailure(memoryExhausted=true)`。原引擎包装的 OOM 也检查 cause 链。普通资源加载失败使用不同失败类型。失败不允许继续刷新地图、校验损坏注册表或上报同步成功，等待解析退出后关闭连接并清理 Presence，不再进行第二次原版回落加载。
@@ -46,4 +52,4 @@ Android 使用原生控件、PC 使用 Swing，在解析引擎单位前读取恢
 
 Android `ResourceFailureFrameTest` 直接调用真实帧注入函数：队列内设置失败后，同一帧必须返回中断，不能接触引擎或继续单位更新。PC 注入测试将生成的预算/恢复配置应用到真实游戏 JAR 并验证字节码。
 
-实测记录见本次修复的验证报告；有限次数连续重载不能排除所有模组组合或对局状态下的内存泄漏。
+实测记录见[本次修复的验证报告](mod-memory-recovery-validation.md)；有限次数连续重载不能排除所有模组组合或对局状态下的内存泄漏。
