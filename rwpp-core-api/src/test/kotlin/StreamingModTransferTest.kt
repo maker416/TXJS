@@ -86,6 +86,38 @@ class StreamingModTransferTest {
         } finally { root.deleteRecursively() }
     }
 
+    @Test fun failedPublicationPreservesExistingPayload() {
+        val root = Files.createTempDirectory("mod-publish").toFile()
+        try {
+            val target = File(root, "payload").apply { writeText("original") }
+            assertFailsWith<IOException> {
+                NetworkModCacheFiles.writeAtomic(target, root) { it.write(data); throw IOException("disk failure") }
+            }
+            assertEquals("original", target.readText())
+            assertEquals(listOf(target), root.listFiles()!!.toList())
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test fun swappingAuthenticatedChunksIsRejected() {
+        val root = Files.createTempDirectory("mod-chunk-order").toFile()
+        try {
+            val plain = ByteArray(3 * 1024 * 1024) { (it % 251).toByte() }
+            val source = File(root, "source").apply { writeBytes(plain) }
+            val descriptor = NetworkModDescriptor.fromBytes("three-chunks", plain)
+            val encrypted = File(root, "encrypted")
+            val key = ByteArray(32)
+            encrypted.outputStream().use { ChunkedModEnvelope.write(source, descriptor, 42, key, it) }
+            val bytes = encrypted.readBytes()
+            val headerEnd = java.nio.ByteBuffer.wrap(bytes).int + 4
+            val chunkSize = 1024 * 1024 + 16
+            val first = bytes.copyOfRange(headerEnd, headerEnd + chunkSize)
+            bytes.copyInto(bytes, headerEnd, headerEnd + chunkSize, headerEnd + 2 * chunkSize)
+            first.copyInto(bytes, headerEnd + chunkSize)
+            encrypted.writeBytes(bytes)
+            assertFails { ChunkedModEnvelope.read(encrypted, key) }
+        } finally { root.deleteRecursively() }
+    }
+
     private fun withServer(test: suspend (MockWebServer, ModSyncClient, File) -> Unit) = runBlocking {
         val server = MockWebServer().apply { start() }
         val root = Files.createTempDirectory("mod-download").toFile()

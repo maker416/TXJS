@@ -44,6 +44,7 @@ class ModLoadSafetyTest {
             val directory = File(root, "folder").apply { mkdir() }
             File(root, ".incomplete.rwmod").writeText("")
             File(root, "readme.txt").writeText("")
+            File(root, "units.zip").writeText("An archive containing mods is not an engine-scanned mod")
             assertEquals(setOf(mod, directory), recoveryModFiles(listOf(root, root)).toSet())
         } finally { root.deleteRecursively() }
     }

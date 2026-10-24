@@ -56,7 +56,7 @@ fun modLoadReserveBytes(maxHeap: Long): Long = (maxHeap / 10).coerceIn(32L shl 2
 /** Recovery lists containers only. It deliberately does not inflate archives or initialize the engine. */
 fun recoveryModFiles(roots: List<File>): List<File> = roots.flatMap { root ->
     root.listFiles().orEmpty().filter {
-        !it.name.startsWith('.') && (it.isDirectory || it.extension.equals("rwmod", true) || it.extension.equals("zip", true))
+        !it.name.startsWith('.') && (it.isDirectory || it.extension.equals("rwmod", true))
     }.toList()
 }.distinctBy { it.canonicalPath }.sortedBy { it.name.lowercase() }
 
@@ -65,7 +65,6 @@ object ModLoadSafety {
     @Volatile private var journal: ModLoadJournal? = null
     @Volatile private var active: ModLoadJournalEntry? = null
     @Volatile private var recoverySelection: Map<String, Boolean>? = null
-    @Volatile private var collected = false
     @Volatile private var peakUsed = 0L
     val loading: Boolean get() = active != null
     val suppressSelectionSave: Boolean get() = recoverySelection != null || GameStartSafety.requiresRestart
@@ -94,7 +93,9 @@ object ModLoadSafety {
         val reserve = modLoadReserveBytes(runtime.maxMemory())
         fun remaining() = runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())
         if (remaining() >= reserve) return
-        if (!collected) { collected = true; System.gc() }
+        // Every low-water crossing can be temporary parser garbage. A once-per-load GC would
+        // falsely reject small live registries during long or repeated parses.
+        System.gc()
         if (remaining() < reserve) abortMemory()
     }
 
@@ -113,6 +114,15 @@ object ModLoadSafety {
         throw StopModLoading
     }
 
+    /** Transfer/setup failures outside parsing must also leave evidence for the next process. */
+    fun recordMemoryFailure(stage: String) {
+        GameStartSafety.markMemoryExhausted()
+        runCatching {
+            val entry = active ?: ModLoadJournalEntry(UUID.randomUUID().toString(), session, stage, "", "")
+            journal?.write(entry.copy(failure = "memory"))
+        }
+    }
+
     fun <T> run(stage: String, block: () -> T): T {
         val entry = ModLoadJournalEntry(UUID.randomUUID().toString(), session, stage, "", "")
         synchronized(this) {
@@ -120,7 +130,6 @@ object ModLoadSafety {
             check(active == null) { "Another resource load is still running" }
             active = entry
         }
-        collected = false
         peakUsed = 0
         val before = Runtime.getRuntime().let { it.totalMemory() - it.freeMemory() }
         reportHeap(stage, "begin", before)

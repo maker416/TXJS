@@ -352,6 +352,8 @@ object ModSyncController {
             startHeartbeat(key, secret)
         } catch (e: CancellationException) {
             throw e
+        } catch (e: OutOfMemoryError) {
+            stopAfterTransferMemoryFailure("host-transfer")
         } catch (e: Exception) {
             logger.error("[MODSYNC-HOST] host session failed: ${e.stackTraceToString()}")
             setHostState(HostSyncState.Error(e.message ?: e.javaClass.simpleName))
@@ -504,6 +506,9 @@ object ModSyncController {
             return true
         } catch (e: CancellationException) {
             logger.info("[MODSYNC] pre-join sync cancelled by user")
+            return false
+        } catch (e: OutOfMemoryError) {
+            stopAfterTransferMemoryFailure("pre-join-transfer")
             return false
         } catch (e: Exception) {
             logger.error("[MODSYNC] pre-join sync failed: ${e.stackTraceToString()}")
@@ -843,11 +848,7 @@ object ModSyncController {
                 GameSessionController.closeFailedResourceLoad(appKoin.get<Game>())
             }
         } catch (e: OutOfMemoryError) {
-            GameStartSafety.markMemoryExhausted()
-            withContext(NonCancellable + Dispatchers.Main.immediate) {
-                cancellingReload = false
-                GameSessionController.closeFailedResourceLoad(appKoin.get<Game>())
-            }
+            stopAfterTransferMemoryFailure("room-transfer")
         } catch (e: Exception) {
             logger.error("[MODSYNC] in-room sync failed: ${e.stackTraceToString()}")
             failInRoom(readI18n("modSync.syncFailed"), readI18n("modSync.syncFailedDetail", I18nType.RWPP, e.message.orEmpty()))
@@ -1209,9 +1210,26 @@ object ModSyncController {
         return matches
     }
 
-    private fun transferDirectory(): File = File(
-        appKoin.get<AppContext>().internalStoragePath(".rwpp/mod-transfer")
-    ).apply { check(isDirectory || mkdirs()) { "Cannot create mod transfer directory" } }
+    private val transferRoot by lazy {
+        File(appKoin.get<AppContext>().internalStoragePath(".rwpp/mod-transfer")).apply {
+            check(isDirectory || mkdirs()) { "Cannot create mod transfer directory" }
+            // Once per process, before any transfer starts. Remove only our interrupted staging files.
+            listFiles().orEmpty().filter {
+                it.isFile && it.name.endsWith(".tmp") &&
+                    (it.name.startsWith("mod-upload-") || it.name.startsWith("mod-download-"))
+            }.forEach { it.delete() }
+        }
+    }
+
+    private fun transferDirectory(): File = transferRoot
+
+    private suspend fun stopAfterTransferMemoryFailure(stage: String) {
+        io.github.rwpp.game.mod.ModLoadSafety.recordMemoryFailure(stage)
+        withContext(NonCancellable + Dispatchers.Main.immediate) {
+            cancellingReload = false
+            GameSessionController.closeFailedResourceLoad(appKoin.get<Game>())
+        }
+    }
 
     private fun resolveDisplayName(): String {
         val raw = runCatching {

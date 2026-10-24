@@ -21,6 +21,20 @@ import javax.crypto.spec.SecretKeySpec
 import kotlin.test.*
 
 class DesktopNetworkModCacheTest {
+    @Test fun corruptReplacementKeepsPreviousActiveVersion() = withRoot { root, context ->
+        val cache = DesktopNetworkModCache(context)
+        val old = NetworkModDescriptor.fromBytes("same", "old".toByteArray())
+        cache.storeVerified(old, "old".toByteArray())
+        val oldFile = cache.activate(old).payloadFile
+        val next = NetworkModDescriptor.fromBytes("same", "new".toByteArray())
+        val encrypted = cache.storeVerified(next, "new".toByteArray()).payloadFile
+        encrypted.writeBytes(encrypted.readBytes().apply { this[lastIndex] = (this[lastIndex].toInt() xor 1).toByte() })
+        assertFails { cache.activate(next) }
+        assertEquals("old", oldFile.readText())
+        assertFalse(NetworkModCacheFiles.activeFile(File(root, "mods/units"), next).exists())
+        assertFalse(File(root, "mods/units").listFiles().orEmpty().any { it.name.endsWith(NetworkModCacheFiles.TEMP_SUFFIX) })
+    }
+
     @Test fun restartRestoresEncryptedEntriesAndEngineVisibleFiles() = withRoot { root, context ->
         val payloads = listOf("first mod", "second mod").map { it.toByteArray() }
         val descriptors = payloads.mapIndexed { i, bytes -> NetworkModDescriptor.fromBytes("fixture-$i", bytes) }

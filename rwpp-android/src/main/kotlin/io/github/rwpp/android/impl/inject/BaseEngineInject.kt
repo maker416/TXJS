@@ -30,8 +30,8 @@ object BaseEngineInject {
     val room by lazy { appKoin.get<Game>().gameRoom }
     private val backgroundCadence = BackgroundPumpCadence()
     @Inject("b", InjectMode.InsertBefore)
-    fun onUpdate(deltaTime: Float) {
-        mainThreadChannel.tryReceive().getOrNull()?.invoke()
+    fun onUpdate(deltaTime: Float): Any {
+        if (io.github.rwpp.game.GameStartSafety.requiresRestart || KeepConnectedReload.active) return InterruptResult.Unit
         if (room.isHost && _gameSpeed != 1f) {
             GameEngine.t().bU.K = 1f / _gameSpeed
             GameEngine.t().bU.M = 1f / _gameSpeed
@@ -40,6 +40,7 @@ object BaseEngineInject {
             GameEngine.t().bU.M = 1f
             (GameEngine.t() as i).G = 1f
         }
+        return Unit
     }
 
     /**
@@ -52,13 +53,13 @@ object BaseEngineInject {
      */
     @Inject("a", InjectMode.InsertBefore, "(FI)V")
     fun onMainLoop(deltaTime: Float, unused: Int): Any {
-        if (io.github.rwpp.game.GameStartSafety.requiresRestart) {
-            mainThreadChannel.tryReceive().getOrNull()?.invoke()
-            return InterruptResult.Unit
-        }
+        if (io.github.rwpp.game.GameStartSafety.requiresRestart) return InterruptResult.Unit
+        // Consume before entering the original frame, not halfway through b(float).
+        // A failed queued reload destroys the old registry; even this frame must be skipped.
+        mainThreadChannel.tryReceive().getOrNull()?.invoke()
+        if (io.github.rwpp.game.GameStartSafety.requiresRestart) return InterruptResult.Unit
         if (KeepConnectedReload.active) {
             backgroundCadence.reset()
-            mainThreadChannel.tryReceive().getOrNull()?.invoke()
             try {
                 NetworkOnlyPump.duringReload(deltaTime)
             } catch (e: Throwable) {
@@ -76,7 +77,6 @@ object BaseEngineInject {
 
         val startNanos = System.nanoTime()
         val networkDelta = backgroundCadence.delta(startNanos, deltaTime)
-        mainThreadChannel.tryReceive().getOrNull()?.invoke()
         try {
             synchronized(engine.ai) {
                 NetworkOnlyPump.inBackground(engine, networkDelta)

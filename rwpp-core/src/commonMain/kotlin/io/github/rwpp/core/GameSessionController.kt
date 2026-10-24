@@ -96,9 +96,10 @@ object GameSessionController {
             disposed?.await()
             while (io.github.rwpp.game.mod.ModLoadSafety.loading ||
                 io.github.rwpp.game.mod.KeepConnectedReload.active) delay(25)
-            ModSyncController.clearRoomPresence().join()
+            val presenceCleanup = ModSyncController.clearRoomPresence()
             game.cancelJoinServer()
-            game.gameRoom.disconnectAndWait("Resource loading failed; restart required")
+            try { game.gameRoom.disconnectAndWait("Resource loading failed; restart required") }
+            finally { presenceCleanup.join() }
         }
         resetNavigation(LauncherPage.MainMenu)
     }
