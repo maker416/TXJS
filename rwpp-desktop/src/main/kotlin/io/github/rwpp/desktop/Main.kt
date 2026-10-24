@@ -58,6 +58,7 @@ import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.CoreImplModule
 import io.github.rwpp.config.ConfigModule
 import io.github.rwpp.config.Settings
+import io.github.rwpp.core.StartupTiming
 import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.broadcastIn
@@ -149,6 +150,7 @@ private fun resolveLauncherExePath(): String {
 }
 
 fun main(array: Array<String>) {
+    StartupTiming.start()
     // 必须在 SLF4J 创建 ConsoleAppender 之前接管输出，否则启动器日志仍写旧 stderr。
     DesktopRuntimeLog.initialize()
     // 独立窗口浮层才能覆盖 Chromium 原生子窗口，资源页悬浮球不会被网页遮挡。
@@ -169,18 +171,20 @@ fun main(array: Array<String>) {
             modules(ConfigModule().module, CoreImplModule().module, DesktopModule().module)
     }.koin
 
-    appKoin.get<ConfigIO>().readAllConfig()
+    StartupTiming.measure("desktop.config") { appKoin.get<ConfigIO>().readAllConfig() }
     Builder.outputDir = generatedLibDir
     Builder.logger = defaultBuildLogger
-    requireReloadingLib = Builder.prepareReloadingLib()
+    requireReloadingLib = StartupTiming.measure("desktop.injectCheck") { Builder.prepareReloadingLib() }
 
     io.github.rwpp.game.mod.ModLoadSafety.configure(File("resource-load.properties"))
     if (!requireReloadingLib) {
         chooseDesktopRecovery()
         val app = appKoin.get<AppContext>()
-        app.init()
+        StartupTiming.measure("desktop.app") { app.init() }
         val networkModCache = appKoin.get<NetworkModCache>()
-        try { io.github.rwpp.game.mod.ModLoadSafety.run("cache-preparation") { networkModCache.prepareStartup() } }
+        try { io.github.rwpp.game.mod.ModLoadSafety.run("cache-preparation") {
+            StartupTiming.measure("desktop.networkModCache") { networkModCache.prepareStartup() }
+        } }
         catch (failure: io.github.rwpp.game.mod.ModLoadFailure) {
             showDesktopResourceFailure(failure.message.orEmpty())
             return
@@ -208,6 +212,7 @@ fun main(array: Array<String>) {
             .displayMode
             .run { Dimension(width, height) }
 
+    StartupTiming.mark("desktop.beforeWindow")
     swingApplication()
 }
 
@@ -225,7 +230,9 @@ fun swingApplication() = SwingUtilities.invokeLater {
             withContext(Dispatchers.IO) {
                 if (requireReloadingLib) {
                     runCatching {
-                        Builder.init(GameLibraries.`game-lib`, File(System.getProperty("user.dir"), "game-lib.jar"))
+                        StartupTiming.measure("desktop.injectBuild") {
+                            Builder.init(GameLibraries.`game-lib`, File(System.getProperty("user.dir"), "game-lib.jar"))
+                        }
 
                         Builder.logger?.info("Apply config successfully. Now you can restart game to take effect. (已成功应用配置，请重启游戏以生效。)")
                         if (native) {
@@ -239,10 +246,11 @@ fun swingApplication() = SwingUtilities.invokeLater {
                 } else {
                     try {
                         val game = appKoin.get<Game>()
-                        game.load { message = it }
+                        StartupTiming.measure("desktop.engine") { game.load { message = it } }
                         withContext(Dispatchers.Main.immediate) {
                             GameLoadedEvent().broadcastIn()
                             isLoading = false
+                            StartupTiming.mark("desktop.menuReady")
                             logger.info("[START] game initialization completed")
                         }
                     } catch (error: CancellationException) {

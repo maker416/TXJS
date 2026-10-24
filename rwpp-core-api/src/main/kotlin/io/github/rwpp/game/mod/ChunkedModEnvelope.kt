@@ -25,6 +25,13 @@ object ChunkedModEnvelope {
     data class Metadata(val descriptor: NetworkModDescriptor, val createdAtMillis: Long)
     private data class Header(val metadata: Metadata, val noncePrefix: ByteArray)
 
+    /** Unauthenticated ordering hint only. Never index or activate this until read() verifies all chunks. */
+    fun peekMetadata(file: File): Metadata = DataInputStream(file.inputStream().buffered()).use { input ->
+        val size = input.readInt()
+        require(size in 1..4096) { "Invalid encrypted mod header size" }
+        decode(ByteArray(size).also(input::readFully)).metadata
+    }
+
     fun write(file: File, descriptor: NetworkModDescriptor, createdAtMillis: Long, key: ByteArray, output: OutputStream) {
         require(descriptor.matches(file)) { "Payload changed before encryption" }
         val header = Header(Metadata(descriptor, createdAtMillis), ByteArray(8).also(random::nextBytes))

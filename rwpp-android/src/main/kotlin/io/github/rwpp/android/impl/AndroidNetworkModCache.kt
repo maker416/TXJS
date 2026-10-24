@@ -30,19 +30,24 @@ class AndroidNetworkModCache(
         val cacheRoot = root.apply { mkdirs() }
         entries.clear()
 
-        cacheRoot.listFiles().orEmpty().forEach { file ->
+        // 一次快照、一次解析；不能为每个活动模组重新扫描并解析全部 .meta（O(n²)）。
+        val files = cacheRoot.listFiles().orEmpty()
+        val metadata = files.filter {
+            it.extension == NetworkModCacheFiles.META_EXTENSION && !it.name.contains(NetworkModCacheFiles.QUARANTINE_MARKER)
+        }.associateWith(NetworkModCacheFiles::readMetadata)
+        val managedPayloads = metadata.values.mapNotNull { it?.payloadName }.toHashSet()
+        files.forEach { file ->
             when {
                 file.name.endsWith(NetworkModCacheFiles.TEMP_SUFFIX) -> NetworkModCacheFiles.deleteOrQuarantine(cacheRoot, file)
                 file.name.contains(NetworkModCacheFiles.QUARANTINE_MARKER) -> NetworkModCacheFiles.deleteOrQuarantine(cacheRoot, file)
-                file.name.endsWith(NetworkModCacheFiles.ACTIVE_SUFFIX) && !hasMetadataForPayload(cacheRoot, file.name) -> {
+                file.name.endsWith(NetworkModCacheFiles.ACTIVE_SUFFIX) && file.name !in managedPayloads -> {
                     // Legacy or orphan network mod: it has no descriptor/createdAt, so do not let engine scan it.
                     NetworkModCacheFiles.deleteOrQuarantine(cacheRoot, file)
                 }
             }
         }
 
-        cacheRoot.listFiles { file -> file.extension == NetworkModCacheFiles.META_EXTENSION }.orEmpty().forEach { meta ->
-            val parsed = NetworkModCacheFiles.readMetadata(meta)
+        metadata.forEach { (meta, parsed) ->
             if (parsed == null || NetworkModCacheFiles.isExpired(parsed.createdAtMillis, now)) {
                 parsed?.let { NetworkModCacheFiles.deleteOrQuarantine(cacheRoot, File(cacheRoot, it.payloadName)) }
                 NetworkModCacheFiles.deleteOrQuarantine(cacheRoot, meta)
@@ -141,8 +146,4 @@ class AndroidNetworkModCache(
                 }
             }
     }
-
-    private fun hasMetadataForPayload(cacheRoot: File, payloadName: String): Boolean =
-        cacheRoot.listFiles { file -> file.extension == NetworkModCacheFiles.META_EXTENSION }.orEmpty()
-            .any { NetworkModCacheFiles.readMetadata(it)?.payloadName == payloadName }
 }

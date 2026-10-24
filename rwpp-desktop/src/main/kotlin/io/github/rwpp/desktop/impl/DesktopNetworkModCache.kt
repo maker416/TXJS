@@ -43,27 +43,49 @@ class DesktopNetworkModCache(
             }
         }
         val key = loadOrCreateKey(cacheRoot)
-        cacheRoot.listFiles { file -> file.extension == CACHE_EXTENSION }.orEmpty().forEach { cacheFile ->
-            val entry = try {
-                readEnvelope(cacheFile, key)
+        // 只读有界文件头来安排新旧顺序，文件头在 GCM 认证前不可信，不能直接进入索引。
+        val candidates = cacheRoot.listFiles { file -> file.extension == CACHE_EXTENSION }.orEmpty().mapNotNull { file ->
+            try {
+                val header = ChunkedModEnvelope.peekMetadata(file)
+                file to header
             } catch (e: Exception) {
-                cacheLogger.warn("Invalid network mod cache: {}", cacheFile.name, e)
+                cacheLogger.warn("Invalid network mod cache: {}", file.name, e)
+                NetworkModCacheFiles.deleteOrQuarantine(cacheRoot, file)
                 null
             }
-            if (entry == null || NetworkModCacheFiles.isExpired(entry.createdAtMillis, now)) {
+        }
+        val restoredNames = mutableSetOf<String>()
+        candidates.sortedByDescending { it.second.createdAtMillis }.forEach { (cacheFile, header) ->
+            // 每个文件仍完整解密、验 SHA-256；把本轮验证出的明文直接写成工作副本，
+            // 避免 activatePrepared 再读、再解密、再校验一次，也不在内存中保留全部模组。
+            val expired = NetworkModCacheFiles.isExpired(header.createdAtMillis, now)
+            val restore = !expired && header.descriptor.name !in restoredNames
+            try {
+                if (restore) {
+                    NetworkModCacheFiles.writeAtomic(NetworkModCacheFiles.activeFile(workRoot, header.descriptor), workRoot) { output ->
+                        val verified = ChunkedModEnvelope.read(cacheFile, key, output, header.descriptor)
+                        require(verified == header) { "Desktop cache changed during startup" }
+                    }
+                } else {
+                    require(ChunkedModEnvelope.read(cacheFile, key, expected = header.descriptor) == header) {
+                        "Desktop cache changed during startup"
+                    }
+                }
+            } catch (e: Exception) {
+                cacheLogger.warn("Failed to validate/restore network mod cache: {}", cacheFile.name, e)
+                // A local write failure must not delete the encrypted original.
+                if (e is IllegalArgumentException || e is javax.crypto.BadPaddingException || e is java.io.EOFException) {
+                    NetworkModCacheFiles.deleteOrQuarantine(cacheRoot, cacheFile)
+                }
+                return@forEach
+            }
+            if (expired) {
                 NetworkModCacheFiles.deleteOrQuarantine(cacheRoot, cacheFile)
                 return@forEach
             }
+            val entry = DesktopEntry(header.descriptor, cacheFile, header.createdAtMillis)
             entries[entry.descriptor.cacheKey()] = entry
-        }
-        entries.values.groupBy { it.descriptor.name }.forEach { (_, group) ->
-            val latest = group.maxByOrNull { it.createdAtMillis } ?: return@forEach
-            try {
-                // 初始化期间不能回调公开 activate()，它会再次进入 prepareStartup()。
-                activatePrepared(latest.descriptor)
-            } catch (e: Exception) {
-                cacheLogger.warn("Failed to restore network mod cache: {}", latest.descriptor.name, e)
-            }
+            if (restore) restoredNames.add(entry.descriptor.name)
         }
         prepared = true
     }
@@ -162,11 +184,6 @@ class DesktopNetworkModCache(
         val key = ByteArray(KEY_SIZE_BYTES).also { random.nextBytes(it) }
         NetworkModCacheFiles.atomicWrite(keyFile, key, root)
         return key
-    }
-
-    private fun readEnvelope(file: File, key: ByteArray): DesktopEntry {
-        val metadata = ChunkedModEnvelope.read(file, key)
-        return DesktopEntry(metadata.descriptor, file, metadata.createdAtMillis)
     }
 
     private data class DesktopEntry(
