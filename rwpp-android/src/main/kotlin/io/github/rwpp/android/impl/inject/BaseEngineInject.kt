@@ -52,6 +52,10 @@ object BaseEngineInject {
      */
     @Inject("a", InjectMode.InsertBefore, "(FI)V")
     fun onMainLoop(deltaTime: Float, unused: Int): Any {
+        if (io.github.rwpp.game.GameStartSafety.requiresRestart) {
+            mainThreadChannel.tryReceive().getOrNull()?.invoke()
+            return InterruptResult.Unit
+        }
         if (KeepConnectedReload.active) {
             backgroundCadence.reset()
             mainThreadChannel.tryReceive().getOrNull()?.invoke()

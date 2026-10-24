@@ -19,7 +19,7 @@ class RwInternalGameImpl(str: String) : u(str) {
 
     override fun render(container: GameContainer?, graphics: Graphics?) {
         // 共享 GL 工作线程重建单位表时，游戏线程继续 update/网络 tick，但不读单位绘制表。
-        if (!KeepConnectedReload.active) super.render(container, graphics)
+        if (!KeepConnectedReload.active && !io.github.rwpp.game.GameStartSafety.requiresRestart) super.render(container, graphics)
     }
 
     override fun update(p0: GameContainer?, p1: Int) {

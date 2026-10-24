@@ -22,7 +22,7 @@ import io.github.rwpp.utils.Reflect
 import io.github.rwpp.core.LoadingContext
 import io.github.rwpp.event.events.HostSinglePlayerGameEvent
 import io.github.rwpp.event.events.PlayerJoinEvent
-import kotlinx.coroutines.channels.Channel
+import io.github.rwpp.net.CallbackConnection
 import java.io.IOException
 
 abstract class AbstractGame : Game {
@@ -126,37 +126,38 @@ abstract class AbstractGame : Game {
         val relayUuid = io.github.rwpp.net.sanitizeJoinRelayUuid(uuid)
         if(relayUuid == null) l.B().bQ.lastNetworkIP = trim
         l.B().bX.bw = relayUuid
-        var result: Result<String>? = null
-        val resultChannel = Channel<Unit>(1)
-        threadConnector = l.B().bX.a(trim, true) {
-            result = if(threadConnector!!.e != null) {
-                rcnOption = null
-                Result.failure(IOException("Connection failed: ${threadConnector!!.e}."))
-            } else Result.success("")
-            resultChannel.trySend(Unit)
+        val attempt = CallbackConnection<com.corrodinggames.rts.gameFramework.j.an> { connector ->
+            connector.a()
+            runCatching { connector.g?.close() }
         }
-
-        resultChannel.receive()
-
-        if(result!!.isSuccess) {
-            try {
-                l.B().bX.b("staring new")
-                l.B().bX.a(threadConnector!!.g)
-                PlayerJoinEvent(gameRoom.localPlayer).broadcastIn()
-                RefreshUIEvent().broadcastIn(delay = 200L)
-            } catch(e: IOException) {
-                logger.error(e.stackTraceToString())
-                result = Result.failure(IOException("Connection failed"))
+        joinAttempt = attempt
+        try {
+            return attempt.connect(
+                start = { complete -> l.B().bX.a(trim, true) { complete() } },
+            ) { connector ->
+                if (connector.e != null) {
+                    rcnOption = null
+                    Result.failure(IOException("Connection failed: ${connector.e}."))
+                } else {
+                    try {
+                        l.B().bX.b("starting new")
+                        l.B().bX.a(connector.g)
+                        PlayerJoinEvent(gameRoom.localPlayer).broadcastIn()
+                        RefreshUIEvent().broadcastIn(delay = 200L)
+                        Result.success("")
+                    } catch (error: IOException) {
+                        runCatching { connector.g?.close() }
+                        Result.failure(IOException("Connection failed", error))
+                    }
+                }
             }
+        } finally {
+            if (joinAttempt === attempt) joinAttempt = null
         }
-
-        threadConnector = null
-
-        return result!!
     }
 
     override fun cancelJoinServer() {
-        threadConnector?.a()
+        joinAttempt?.cancel()
         rcnOption = null
     }
 
@@ -232,5 +233,5 @@ abstract class AbstractGame : Game {
             .replace("\"", "&quot;").replace("\${", "$ {") + "'"
     }
 
-    private var threadConnector: com.corrodinggames.rts.gameFramework.j.an? = null
+    @Volatile private var joinAttempt: CallbackConnection<com.corrodinggames.rts.gameFramework.j.an>? = null
 }

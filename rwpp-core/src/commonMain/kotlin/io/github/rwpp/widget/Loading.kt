@@ -120,13 +120,10 @@ fun LoadingView(
     // 必须持有可取消的 Job：关闭对话框时立刻 cancel，避免退出动画期间后台仍跑完
     // preJoinSync / directJoinServer 导致「取消后仍进房」。
     var loadJob by remember { mutableStateOf<Job?>(null) }
-    var loadFinished by remember { mutableStateOf(false) }
 
     fun cancelLoadIfRunning() {
-        if (!loadFinished) {
-            loadJob?.cancel()
-            loadJob = null
-        }
+        loadJob?.cancel()
+        loadJob = null
     }
 
     AnimatedAlertDialog(
@@ -155,7 +152,6 @@ fun LoadingView(
                 val job = launch(Dispatchers.IO) {
                     try {
                         val result = loadContent(LoadingContext { loadingMessage = it })
-                        loadFinished = true
                         withContext(Dispatchers.Main.immediate) {
                             when (result) {
                                 true -> {

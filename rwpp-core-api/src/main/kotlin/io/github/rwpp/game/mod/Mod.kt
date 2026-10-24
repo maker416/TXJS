@@ -10,6 +10,8 @@ package io.github.rwpp.game.mod
 import io.github.rwpp.internalModDir
 import io.github.rwpp.modDir
 import java.io.File
+import java.io.OutputStream
+import io.github.rwpp.io.zipFolderTo
 
 enum class ModSourceType {
     RwMod,
@@ -90,4 +92,14 @@ interface Mod {
     fun getSize(): Long
 
     fun getBytes(): ByteArray
+
+    /** Streaming payload; legacy external implementations with virtual paths retain getBytes compatibility. */
+    fun writePayloadTo(output: OutputStream) {
+        val source = File(path)
+        when {
+            source.isDirectory -> source.zipFolderTo(output)
+            source.isFile -> source.inputStream().use { it.copyTo(output, 64 * 1024) }
+            else -> output.write(getBytes())
+        }
+    }
 }

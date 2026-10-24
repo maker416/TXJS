@@ -14,6 +14,14 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import io.github.rwpp.io.ExternalFileType
+import io.github.rwpp.io.externalFileType
+import io.github.rwpp.io.copyImportedFile
 import io.github.rwpp.app.PermissionHelper
 import io.github.rwpp.appKoin
 import io.github.rwpp.extensionPath
@@ -41,11 +49,12 @@ class ExternalHelperActivity : AppCompatActivity() {
             lateinit var endsAction: () -> Unit
 
             if (dataString != null) {
-                val fileName = getFileName(intent.data!!)!!
+                val fileName = getFileName(intent.data!!) ?: error("Document has no file name")
+                val fileType = externalFileType(fileName)
                 var destFileName = fileName
 
                 val path =
-                    if (dataString.endsWith(".rwres") || dataString.endsWith(".rwext") || dataString.endsWith(".jar")) {
+                    if (fileType == ExternalFileType.Extension) {
                         endsAction = {
                             UI.showExtensionView = true
                             UI.showWarning(
@@ -53,7 +62,7 @@ class ExternalHelperActivity : AppCompatActivity() {
                             )
                         }
                         extensionPath
-                    } else if (dataString.endsWith(".rwmod")) {
+                    } else if (fileType == ExternalFileType.Mod) {
                         endsAction = {
                             UI.showModsView = true
                             UI.showWarning(
@@ -61,18 +70,14 @@ class ExternalHelperActivity : AppCompatActivity() {
                             )
                         }
                         "/storage/emulated/0/rustedWarfare/units/"
-                    } else if (dataString.endsWith(".rwsave")) {
+                    } else if (fileType == ExternalFileType.Save) {
                         endsAction = {
                             UI.showWarning(
                                 readI18n("android.importSave", I18nType.RWPP, fileName)
                             )
                         }
                         "/storage/emulated/0/rustedWarfare/saves/"
-                    } else if (fileName.endsWith(".replay", ignoreCase = true) ||
-                        fileName.endsWith(".reply", ignoreCase = true) ||
-                        dataString.endsWith(".replay", ignoreCase = true) ||
-                        dataString.endsWith(".reply", ignoreCase = true)
-                    ) {
+                    } else if (fileType == ExternalFileType.Replay) {
                         endsAction = {
                             UI.showReplayView = true
                             UI.showWarning(
@@ -81,7 +86,7 @@ class ExternalHelperActivity : AppCompatActivity() {
                         }
                         destFileName = replayImportTargetName(fileName)
                         replayDir
-                    } else if (dataString.endsWith(".tmx")) {
+                    } else if (fileType == ExternalFileType.Map) {
                         endsAction = {
                             UI.pendingModsMapsTab = ModsMapsTab.Maps
                             UI.showModsView = true
@@ -98,30 +103,42 @@ class ExternalHelperActivity : AppCompatActivity() {
                     }
 
                 if (path != null) {
-                    appKoin.get<PermissionHelper>().requestManageFilePermission {
-                        contentResolver.openInputStream(intent.data!!).use {
-                            val file = File(path, destFileName)
-                            if (!file.exists()) {
-                                file.parentFile?.mkdirs()
-                                file.createNewFile()
+                    appKoin.get<PermissionHelper>().requestManageFilePermission { granted ->
+                        if (!granted) {
+                            UI.showWarning("未获得文件访问权限，未导入文件。")
+                            finishImport()
+                        } else lifecycleScope.launch {
+                            try {
+                                withContext(Dispatchers.IO) {
+                                    val input = contentResolver.openInputStream(intent.data!!)
+                                        ?: error("Cannot open document")
+                                    input.use { copyImportedFile(it, File(path), destFileName) }
+                                }
+                                endsAction()
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (error: Exception) {
+                                UI.showWarning("无法导入文件: ${error.message}")
+                            } finally {
+                                finishImport()
                             }
-
-                            file.writeBytes(it!!.readBytes())
                         }
                     }
+                    return
 
-                    endsAction()
                 }
             }
 
-            if (gameLoaded) {
-                finish()
-            } else {
-                startActivityForResult(Intent(this, LoadingScreen::class.java), 0)
-            }
+            finishImport()
         } catch (e: Exception) {
             UI.showWarning("无法导入文件: "+ e.message.toString())
+            finishImport()
         }
+    }
+
+    private fun finishImport() {
+        if (!gameLoaded) startActivity(Intent(this, LoadingScreen::class.java))
+        finish()
     }
 
     @SuppressLint("Range")
@@ -130,7 +147,8 @@ class ExternalHelperActivity : AppCompatActivity() {
         if (uri.scheme == "content") {
             contentResolver.query(uri, null, null, null, null).use { cursor ->
                 if (cursor != null && cursor.moveToFirst()) {
-                    result = cursor.getString(cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME))
+                    val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (index >= 0) result = cursor.getString(index)?.takeIf { it.isNotBlank() }
                 }
             }
         }

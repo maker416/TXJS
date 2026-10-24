@@ -43,7 +43,7 @@ class DesktopNetworkModCacheTest {
         val bytes = "valid mod".toByteArray()
         val descriptor = NetworkModDescriptor.fromBytes("valid", bytes)
         DesktopNetworkModCache(context).storeVerified(descriptor, bytes)
-        val corrupt = File(root, ".rwpp/network-mod-cache/broken.rwcache").apply { writeText("broken") }
+        val corrupt = File(root, ".rwpp/network-mod-cache-v2/broken.rwcache").apply { writeText("broken") }
         val restarted = DesktopNetworkModCache(context)
         restarted.prepareStartup()
         assertNotNull(restarted.find(descriptor))

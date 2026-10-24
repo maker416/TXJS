@@ -8,6 +8,7 @@
 package io.github.rwpp.io
 
 import java.io.ByteArrayOutputStream
+import java.io.OutputStream
 import java.io.File
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -29,6 +30,19 @@ fun File.zipFolderToByte(): ByteArray {
     byteOut.close()
     zipOut.close()
     return bytes
+}
+
+/** Same deterministic ZIP bytes as zipFolderToByte, without retaining the archive in heap. */
+fun File.zipFolderTo(output: OutputStream) {
+    // The caller owns output; finish the ZIP without closing the caller's stream.
+    val zip = ZipOutputStream(object : java.io.FilterOutputStream(output) {
+        override fun close() { flush() }
+        override fun write(bytes: ByteArray, offset: Int, length: Int) = out.write(bytes, offset, length)
+    })
+    zip.use {
+        it.setLevel(1)
+        zipRecursive(this, Paths.get(absolutePath), it)
+    }
 }
 
 private fun zipRecursive(sourceFile: File, base: Path, zip: ZipOutputStream) {

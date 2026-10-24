@@ -95,6 +95,10 @@ class AppContextImpl : BaseAppContextImpl() {
      *   thread is occupied with config saving.
      */
     override fun exit() {
+        if (io.github.rwpp.game.GameStartSafety.requiresRestart) {
+            exitAfterResourceFailure()
+            return
+        }
         if (exiting) return
         exiting = true
         logger.info("[EXIT] requested on thread=${Thread.currentThread().name}", Throwable("PC exit request origin"))
@@ -137,5 +141,11 @@ class AppContextImpl : BaseAppContextImpl() {
                 Runtime.getRuntime().halt(0)
             }.apply { isDaemon = true; name = "rwpp-exit-watchdog" }.start()
         }
+    }
+
+    override fun exitAfterResourceFailure() {
+        System.out.flush()
+        System.err.flush()
+        Runtime.getRuntime().halt(0)
     }
 }

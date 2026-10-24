@@ -53,6 +53,28 @@ tasks.kotlinSourcesJar {
     archiveClassifier.set("sources")
 }
 
+tasks.test { exclude("**/ModLoadSafety*ProcessTest.class") }
+
+val resourceLoadSafetyTest by tasks.registering(Test::class) {
+    description = "Verify irreversible resource failures in isolated JVMs"
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    include("**/ModLoadSafety*ProcessTest.class")
+    maxHeapSize = "96m"
+    forkEvery = 1
+}
+tasks.check { dependsOn(resourceLoadSafetyTest) }
+
+tasks.register<Test>("lowMemoryModTransferTest") {
+    description = "Verify mod transfer/cache operations under a 96 MiB Java heap"
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    maxHeapSize = "96m"
+    filter { includeTestsMatching("ModTransferMemoryTest") }
+}
+
 if (findProject(":rwpp-mod-heap-tool") != null) {
     tasks.register("estimateModHeap") {
         group = "rwpp"

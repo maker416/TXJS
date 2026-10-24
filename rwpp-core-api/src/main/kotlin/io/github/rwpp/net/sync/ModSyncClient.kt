@@ -21,8 +21,10 @@ import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okio.BufferedSink
-import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.IOException
+import java.io.RandomAccessFile
+import java.security.MessageDigest
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
@@ -41,6 +43,8 @@ private val OCTET_STREAM_MEDIA_TYPE = "application/octet-stream".toMediaType()
  * 网络层失败（连接失败、超时、下载数据不完整）时为 null。
  */
 class ModSyncException(message: String, val statusCode: Int?) : IOException(message)
+
+private class InvalidBlob(message: String) : IOException(message)
 
 /**
  * 模组同步服务器（Go 端 relaymod）的 HTTP 客户端。
@@ -156,6 +160,37 @@ class ModSyncClient(
         }) { }
     }
 
+    /** Upload an immutable snapshot; retries reopen the file instead of retaining it in memory. */
+    suspend fun uploadFile(sha256: String, secret: String, file: File, onProgress: (Float) -> Unit = {}) {
+        val size = file.length()
+        val context = currentCoroutineContext()
+        val body = object : RequestBody() {
+            override fun contentType() = OCTET_STREAM_MEDIA_TYPE
+            override fun contentLength() = size
+            override fun writeTo(sink: BufferedSink) {
+                val buffer = ByteArray(BUFFER_SIZE)
+                var sent = 0L
+                file.inputStream().use { input ->
+                    while (true) {
+                        context.ensureActive()
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        sink.write(buffer, 0, count)
+                        sent += count
+                        if (sent > size) throw IOException("Upload snapshot changed")
+                        onProgress(if (size == 0L) 1f else sent.toFloat() / size)
+                    }
+                }
+                if (sent != size) throw IOException("Upload snapshot changed")
+                onProgress(1f)
+            }
+        }
+        withFailover("$API_PREFIX/files/$sha256", {
+            header(SECRET_HEADER, secret)
+            put(body)
+        }) { }
+    }
+
     /**
      * 查询房间同步清单。对应 `GET /rooms/{key}`。
      *
@@ -252,118 +287,128 @@ class ModSyncClient(
     private fun enc(value: String): String =
         URLEncoder.encode(value, "UTF-8")
 
-    /**
-     * 下载模组 blob。对应 `GET /files/{sha256}`。
-     *
-     * 流式读入内存并按缓冲区回调进度；完成后校验字节数与 [expectedSize] 一致，
-     * 不一致抛 [ModSyncException]（不做 failover）。**SHA-256 校验由调用方对返回字节复核。**
-     *
-     * 中途超时/断流会带着已收字节用 HTTP Range 续传（relaymod `ServeContent` 支持 206），
-     * 避免大文件卡在 20% 后从头再下。进度回调约 200ms 一次，减轻 UI 线程压力。
-     *
-     * @param onProgress 按缓冲区回调下载进度（0..1）；[expectedSize] <= 0 时不回调进度。
-     */
+    /** Legacy in-memory API. Application transfers use [downloadFileTo]. */
+    @Deprecated("Use downloadFileTo to avoid retaining a whole mod in heap")
     suspend fun downloadFile(
         sha256: String,
         expectedSize: Long,
         onProgress: (Float) -> Unit = {},
     ): ByteArray {
-        val output = ByteArrayOutputStream(
-            if (expectedSize in 1..Int.MAX_VALUE) expectedSize.toInt() else BLOB_BUFFER_SIZE
-        )
-        var downloaded = 0L
-        var lastError: IOException? = null
-        var lastProgressAt = 0L
-        var lastLogAt = 0L
-        fun emitProgress(force: Boolean = false) {
-            if (expectedSize <= 0) return
-            val now = System.currentTimeMillis()
-            if (!force && now - lastProgressAt < PROGRESS_THROTTLE_MS) return
-            lastProgressAt = now
-            onProgress((downloaded.toFloat() / expectedSize).coerceIn(0f, 1f))
-        }
-        val waitCtx = currentCoroutineContext()
-        for (attempt in 0 until BLOB_DOWNLOAD_ATTEMPTS) {
-            waitCtx.ensureActive()
-            try {
-                executeBlob(
-                    "$API_PREFIX/files/$sha256",
-                    {
-                        get()
-                        if (downloaded in 1 until expectedSize) {
-                            header("Range", "bytes=$downloaded-")
-                        }
-                    },
-                ) { response ->
-                    when (response.code) {
-                        200 -> {
-                            if (downloaded > 0) {
-                                logger.info("[MODSYNC] blob server ignored Range, restarting $sha256")
+        val file = File.createTempFile("rwpp-blob-", ".tmp")
+        return try { downloadFileTo(sha256, expectedSize, file, onProgress).readBytes() }
+        finally { file.delete() }
+    }
+
+    /**
+     * Download into a fresh staging file with bounded memory, Range resume and SHA-256 validation.
+     * The caller owns a successful file; any failure/cancellation deletes this staging file.
+     */
+    suspend fun downloadFileTo(
+        sha256: String,
+        expectedSize: Long,
+        target: File,
+        onProgress: (Float) -> Unit = {},
+    ): File = withContext(Dispatchers.IO) {
+        require(expectedSize >= 0 && sha256.matches(Regex("[0-9a-fA-F]{64}")))
+        require(!target.exists() || target.length() == 0L) { "Download requires a fresh staging file" }
+        val context = currentCoroutineContext()
+        var completed = false
+        try {
+            RandomAccessFile(target, "rw").use { output ->
+                var downloaded = 0L
+                var lastError: IOException? = null
+                var lastProgress = 0L
+                val buffer = ByteArray(BUFFER_SIZE)
+                for (attempt in 0 until BLOB_DOWNLOAD_ATTEMPTS) {
+                    context.ensureActive()
+                    try {
+                        executeBlob("$API_PREFIX/files/$sha256", {
+                            get()
+                            header("Accept-Encoding", "identity")
+                            if (downloaded > 0) header("Range", "bytes=$downloaded-")
+                        }) { response ->
+                            val endExclusive = when (response.code) {
+                                200 -> {
+                                    output.setLength(0)
+                                    output.seek(0)
+                                    downloaded = 0
+                                    expectedSize
+                                }
+                                206 -> {
+                                    val range = Regex("bytes ([0-9]+)-([0-9]+)/([0-9]+)")
+                                        .matchEntire(response.header("Content-Range").orEmpty())
+                                        ?: throw InvalidBlob("Invalid Content-Range")
+                                    val start = range.groupValues[1].toLongOrNull()
+                                    val end = range.groupValues[2].toLongOrNull()
+                                    val total = range.groupValues[3].toLongOrNull()
+                                    if (start != downloaded || end == null || end < downloaded ||
+                                        total != expectedSize || end >= expectedSize) {
+                                        throw InvalidBlob("Content-Range does not match the requested mod")
+                                    }
+                                    output.seek(downloaded)
+                                    end + 1
+                                }
+                                else -> throw InvalidBlob("Unexpected blob HTTP ${response.code}")
                             }
-                            output.reset()
-                            downloaded = 0L
+                            val body = response.body ?: throw InvalidBlob("Empty blob response")
+                            if (body.contentLength() >= 0 && body.contentLength() != endExclusive - downloaded) {
+                                throw InvalidBlob("Blob Content-Length does not match manifest/range")
+                            }
+                            body.byteStream().use { input ->
+                                while (true) {
+                                    context.ensureActive()
+                                    val count = input.read(buffer)
+                                    if (count < 0) break
+                                    if (count.toLong() > endExclusive - downloaded) throw InvalidBlob("Blob exceeds declared size")
+                                    // Local disk failure is terminal, not a network retry.
+                                    try { output.write(buffer, 0, count) }
+                                    catch (error: IOException) { throw InvalidBlob("Cannot write mod staging file: ${error.message}") }
+                                    downloaded += count
+                                    val now = System.currentTimeMillis()
+                                    if (expectedSize > 0 && now - lastProgress >= PROGRESS_THROTTLE_MS) {
+                                        lastProgress = now
+                                        onProgress((downloaded.toDouble() / expectedSize).toFloat())
+                                    }
+                                }
+                            }
+                            if (downloaded != endExclusive) throw IOException("Truncated blob response")
                         }
-                        206 -> { /* 续传，追加 */ }
-                        else -> if (!response.isSuccessful) {
-                            throw response.toModSyncException()
-                        }
-                    }
-                    val body = response.body ?: throw ModSyncException("同步服务器返回了空的下载内容", response.code)
-                    val buffer = ByteArray(BLOB_BUFFER_SIZE)
-                    body.byteStream().use { input ->
+                        if (downloaded != expectedSize) throw IOException("Incomplete blob: $downloaded/$expectedSize")
+                        output.seek(0)
+                        val digest = MessageDigest.getInstance("SHA-256")
                         while (true) {
-                            waitCtx.ensureActive()
-                            val read = input.read(buffer)
-                            if (read == -1) break
-                            output.write(buffer, 0, read)
-                            downloaded += read
-                            emitProgress()
-                            val now = System.currentTimeMillis()
-                            if (now - lastLogAt >= DOWNLOAD_LOG_MS) {
-                                lastLogAt = now
-                                logger.info(
-                                    "[MODSYNC] downloading $sha256 $downloaded/$expectedSize " +
-                                        "(attempt ${attempt + 1}/$BLOB_DOWNLOAD_ATTEMPTS)"
-                                )
-                            }
+                            context.ensureActive()
+                            val count = output.read(buffer)
+                            if (count < 0) break
+                            digest.update(buffer, 0, count)
                         }
+                        val actual = digest.digest().joinToString("") { "%02x".format(it) }
+                        if (!actual.equals(sha256, ignoreCase = true)) throw InvalidBlob("Mod SHA-256 mismatch")
+                        context.ensureActive()
+                        onProgress(1f)
+                        completed = true
+                        return@withContext target
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: InvalidBlob) {
+                        throw error
+                    } catch (error: ModSyncException) {
+                        if (error.statusCode == 416) {
+                            output.setLength(0)
+                            output.seek(0)
+                            downloaded = 0
+                        } else if (error.statusCode != null && error.statusCode in 400..499) throw error
+                        lastError = error
+                    } catch (error: IOException) {
+                        context.ensureActive()
+                        lastError = error
                     }
                 }
-                val result = output.toByteArray()
-                if (result.size.toLong() != expectedSize) {
-                    throw ModSyncException(
-                        "下载字节数 ${result.size} 与清单声明的 $expectedSize 不一致（sha256=$sha256）",
-                        null
-                    )
-                }
-                emitProgress(force = true)
-                return result
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: ModSyncException) {
-                if (e.statusCode == 416) {
-                    logger.warn("[MODSYNC] Range 416, restarting $sha256 from 0")
-                    output.reset()
-                    downloaded = 0L
-                    lastError = e
-                    continue
-                }
-                if (e.statusCode != null && e.statusCode in 400..499) throw e
-                lastError = e
-                logger.warn(
-                    "[MODSYNC] download attempt ${attempt + 1}/$BLOB_DOWNLOAD_ATTEMPTS failed " +
-                        "at $downloaded/$expectedSize: ${e.message}"
-                )
-            } catch (e: IOException) {
-                waitCtx.ensureActive()
-                lastError = e
-                logger.warn(
-                    "[MODSYNC] download attempt ${attempt + 1}/$BLOB_DOWNLOAD_ATTEMPTS failed " +
-                        "at $downloaded/$expectedSize: ${e.message}"
-                )
+                throw lastError ?: IOException("Mod download failed")
             }
+        } finally {
+            if (!completed) target.delete()
         }
-        throw lastError ?: ModSyncException("下载模组失败（sha256=$sha256）", null)
     }
 
     private fun progressRequestBody(bytes: ByteArray, onProgress: (Float) -> Unit): RequestBody =
@@ -489,8 +534,6 @@ class ModSyncClient(
     private companion object {
         val EMPTY_BODY: RequestBody = ByteArray(0).toRequestBody(null, 0, 0)
         const val BLOB_DOWNLOAD_ATTEMPTS = 3
-        const val BLOB_BUFFER_SIZE = 256 * 1024
         const val PROGRESS_THROTTLE_MS = 200L
-        const val DOWNLOAD_LOG_MS = 5_000L
     }
 }

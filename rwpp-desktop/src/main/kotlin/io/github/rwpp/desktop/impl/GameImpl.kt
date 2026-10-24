@@ -170,6 +170,7 @@ class GameImpl : AbstractGame() {
         }
 
         container.post {
+            io.github.rwpp.game.mod.ModLoadSafety.run("startup") {
             DesktopReloadGlContext.initialize(Display.getDrawable())
             val nHelper = object : n() {
                 val i = com.corrodinggames.rts.java.i(main)
@@ -325,14 +326,18 @@ class GameImpl : AbstractGame() {
             val scale = getDPIScale()
             libRocket.setDimensionsWrap((displaySize.width / scale).toInt(), (displaySize.height / scale).toInt())
 
-            startup.completeInitialization()
-
             //Display.destroy()
+            }
+            startup.completeInitialization()
         }
 
         // Main 与初始化任务先准备好，再启动引擎，避免游戏线程抢先初始化。
         gameThread.start()
-        startup.awaitInitialization()
+        try { startup.awaitInitialization() }
+        catch (failure: Throwable) {
+            io.github.rwpp.desktop.showDesktopResourceFailure(failure.message.orEmpty().take(240))
+            throw failure
+        }
 
         gameSessionManager = GameSessionManager(
             displaySwitcher = displaySwitcher,

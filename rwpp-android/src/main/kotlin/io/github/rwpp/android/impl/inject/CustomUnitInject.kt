@@ -45,6 +45,22 @@ object CustomUnitInject {
  */
 @InjectClass(com.corrodinggames.rts.game.units.custom.ag::class)
 object CustomUnitLoadInject {
+    @Inject("a", InjectMode.InsertBefore,
+        "(Ljava/lang/String;Lcom/corrodinggames/rts/gameFramework/i/b;Ljava/lang/String;Ljava/lang/String;)Lcom/corrodinggames/rts/game/units/custom/l;")
+    @Suppress("UNUSED_PARAMETER")
+    fun checkUnitLoadBudget(path: String?, mod: com.corrodinggames.rts.gameFramework.i.b?, source: String?, extra: String?): Any {
+        io.github.rwpp.game.mod.ModLoadSafety.checkpoint(mod?.a())
+        return Unit
+    }
+
+    @Inject("a", InjectMode.InsertBefore,
+        "(Ljava/lang/String;Ljava/lang/Exception;Lcom/corrodinggames/rts/gameFramework/i/b;)V")
+    @Suppress("UNUSED_PARAMETER")
+    fun stopWrappedMemoryFailure(path: String?, error: Exception, mod: com.corrodinggames.rts.gameFramework.i.b?): Any {
+        io.github.rwpp.game.mod.ModLoadSafety.onEngineError(error)
+        return Unit
+    }
+
     @Inject(
         "a",
         InjectMode.InsertBefore,
@@ -64,5 +80,16 @@ object CustomUnitLoadInject {
             throw ReloadAbortToVanilla()
         }
         return Unit
+    }
+}
+
+/** A single script-heavy unit can exhaust the heap before the next unit boundary. */
+@InjectClass(com.corrodinggames.rts.game.units.custom.logicBooleans.LogicBooleanLoader::class)
+object LogicBooleanLoadInject {
+    @Inject("parseBooleanBlock", InjectMode.InsertBefore,
+        "(Lcom/corrodinggames/rts/game/units/custom/l;Ljava/lang/String;Z)Lcom/corrodinggames/rts/game/units/custom/logicBooleans/LogicBoolean;")
+    @Suppress("UNUSED_PARAMETER")
+    fun checkExpressionBudget(unit: l?, expression: String?, boolean: Boolean) {
+        io.github.rwpp.game.mod.ModLoadSafety.checkpoint()
     }
 }

@@ -87,6 +87,20 @@ class AndroidNetworkModCache(
         entry
     }
 
+    override fun storeVerified(descriptor: NetworkModDescriptor, file: File): NetworkModCacheEntry = synchronized(lock) {
+        require(descriptor.matches(file)) { "Network mod file does not match descriptor: ${descriptor.name}" }
+        prepareStartup()
+        val cacheRoot = root.apply { mkdirs() }
+        val inactive = NetworkModCacheFiles.inactiveFile(cacheRoot, descriptor)
+        val meta = NetworkModCacheFiles.metadataFile(cacheRoot, descriptor)
+        NetworkModCacheFiles.writeAtomic(inactive, cacheRoot) { output ->
+            file.inputStream().use { it.copyTo(output, 64 * 1024) }
+        }
+        val createdAt = System.currentTimeMillis()
+        NetworkModCacheFiles.writeMetadata(meta, descriptor, createdAt, inactive.name, cacheRoot)
+        NetworkModCacheEntry(descriptor, inactive, meta, createdAt).also { entries[descriptor.cacheKey()] = it }
+    }
+
     override fun activate(descriptor: NetworkModDescriptor): NetworkModCacheEntry = synchronized(lock) {
         val cacheRoot = root.apply { mkdirs() }
         val entry = entries[descriptor.cacheKey()] ?: find(descriptor)

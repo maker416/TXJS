@@ -48,6 +48,8 @@ data class NetworkModDescriptor(
     fun matches(bytes: ByteArray): Boolean =
         payloadSize == bytes.size.toLong() && normalizedSha256 == HashUtils.sha256(bytes)
 
+    fun matches(file: File): Boolean = NetworkModCacheFiles.validatePayload(file, this)
+
     companion object {
         const val MAX_NAME_LENGTH = 512
 
@@ -72,6 +74,10 @@ interface NetworkModCache {
 
     /** Stores bytes that were already verified by the transfer layer. Implementations verify again. */
     fun storeVerified(descriptor: NetworkModDescriptor, bytes: ByteArray): NetworkModCacheEntry
+
+    /** Copies a verified staging file. The caller retains ownership and deletes it after return. */
+    fun storeVerified(descriptor: NetworkModDescriptor, file: File): NetworkModCacheEntry =
+        throw UnsupportedOperationException("This cache does not support streaming payloads")
 
     /** Makes the exact descriptor visible to the original engine as a single .network.rwmod. */
     fun activate(descriptor: NetworkModDescriptor): NetworkModCacheEntry
@@ -159,25 +165,20 @@ object NetworkModCacheFiles {
         return target.renameTo(safeQuarantine)
     }
 
-    fun atomicWrite(file: File, bytes: ByteArray, root: File): File {
+    fun atomicWrite(file: File, bytes: ByteArray, root: File): File =
+        writeAtomic(file, root) { it.write(bytes) }
+
+    fun writeAtomic(file: File, root: File, writer: (java.io.OutputStream) -> Unit): File {
         root.mkdirs()
         val target = requireInside(root, file)
         target.parentFile?.mkdirs()
         val tmp = File.createTempFile(target.name, TEMP_SUFFIX, target.parentFile)
         try {
-            tmp.writeBytes(bytes)
-            // 快速路径：目标不存在（或能被直接删除）时走普通 delete+rename。
-            // 目标已存在且删除失败（Windows 上常见于文件仍被引擎持有句柄，例如正在使用中的
-            // 已激活网络模组）不再直接抛异常——统一落到下面更健壮的 NIO 替换链，其中
-            // Files.move(..., REPLACE_EXISTING) 在纯 delete 失败的场景下仍有机会成功。
-            val fastPathOk = (!target.exists() || target.delete()) && tmp.renameTo(target)
-            if (!fastPathOk) {
-                publishTempFile(tmp, target)
-            }
+            tmp.outputStream().buffered(64 * 1024).use(writer)
+            publishTempFile(tmp, target)
             return target
-        } catch (t: Throwable) {
+        } finally {
             tmp.delete()
-            throw t
         }
     }
 
@@ -194,14 +195,10 @@ object NetworkModCacheFiles {
             Files.move(tmpPath, targetPath, StandardCopyOption.REPLACE_EXISTING)
             return
         } catch (_: Exception) {
-            // 继续复制覆盖
+            // 保留已发布的旧文件；不回退到非原子的复制覆盖。
         }
-        try {
-            Files.copy(tmpPath, targetPath, StandardCopyOption.REPLACE_EXISTING)
-            Files.deleteIfExists(tmpPath)
-        } catch (e: Exception) {
-            throw IOException("Failed to publish temp file: $target", e)
-        }
+        // Both paths share a directory. Never copy over an existing valid payload after a failed move.
+        throw IOException("Failed to publish temp file without damaging previous content: $target")
     }
 
     fun writeMetadata(file: File, descriptor: NetworkModDescriptor, createdAtMillis: Long, payloadName: String, root: File) {

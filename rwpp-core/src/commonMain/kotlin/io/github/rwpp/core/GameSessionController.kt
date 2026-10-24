@@ -88,6 +88,21 @@ object GameSessionController {
         lifecycle.onRoomOpened()
     }
 
+    /** OOM cleanup never performs a second vanilla reload or walks the damaged unit table. */
+    fun closeFailedResourceLoad(game: Game) {
+        checkUiThread()
+        val disposed = roomViewDisposed
+        scheduleClose {
+            disposed?.await()
+            while (io.github.rwpp.game.mod.ModLoadSafety.loading ||
+                io.github.rwpp.game.mod.KeepConnectedReload.active) delay(25)
+            ModSyncController.clearRoomPresence().join()
+            game.cancelJoinServer()
+            game.gameRoom.disconnectAndWait("Resource loading failed; restart required")
+        }
+        resetNavigation(LauncherPage.MainMenu)
+    }
+
     fun onExternalSessionEnd() {
         checkUiThread()
         MatchStartController.gate.reset()

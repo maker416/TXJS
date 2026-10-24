@@ -10,7 +10,7 @@ package io.github.rwpp.game
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.lang.reflect.InvocationTargetException
-import java.util.concurrent.atomic.AtomicBoolean
+import io.github.rwpp.game.mod.ModLoadFailure
 
 /** 等待室进入对局的门控，与创建/退出房间的 GameSessionController 分开。 */
 class MatchStartGate {
@@ -99,11 +99,15 @@ class MatchStartGate {
 
 /** 地图加载 OOM 后不再启动另一轮资源加载；退房/重新进房不能清除此进程级标志。 */
 object GameStartSafety {
-    private val exhausted = AtomicBoolean(false)
-    val requiresRestart: Boolean get() = exhausted.get()
-    fun markMemoryExhausted() { exhausted.set(true) }
+    enum class Failure { NONE, LOAD_FAILED, MEMORY_EXHAUSTED }
+    private val failure = MutableStateFlow(Failure.NONE)
+    val state = failure.asStateFlow()
+    val requiresRestart: Boolean get() = failure.value != Failure.NONE
+    val memoryExhausted: Boolean get() = failure.value == Failure.MEMORY_EXHAUSTED
+    fun markMemoryExhausted() { failure.value = Failure.MEMORY_EXHAUSTED }
+    fun markLoadFailed() { failure.compareAndSet(Failure.NONE, Failure.LOAD_FAILED) }
     fun requireCanReload() {
-        check(!requiresRestart) { "Restart required after map loading exhausted memory" }
+        if (requiresRestart) throw ModLoadFailure(memoryExhausted, "资源加载已失败，请重启后调整模组组合。")
     }
 }
 

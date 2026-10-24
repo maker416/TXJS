@@ -113,6 +113,15 @@ fun App(
     val settings = koinInject<Settings>()
     val net = koinInject<Net>()
     val appContext = koinInject<AppContext>()
+    val resourceFailure by io.github.rwpp.game.GameStartSafety.state.collectAsState()
+    if (resourceFailure != io.github.rwpp.game.GameStartSafety.Failure.NONE) {
+        val failedGame = koinInject<Game>()
+        LaunchedEffect(resourceFailure) {
+            io.github.rwpp.core.GameSessionController.closeFailedResourceLoad(failedGame)
+        }
+        io.github.rwpp.ui.ResourceLoadFailureScreen(appContext::exitAfterResourceFailure)
+        return
+    }
     var isSinglePlayerGame by remember { mutableStateOf(false) }
     var roomExitInProgress by remember { mutableStateOf(false) }
     val appScope = rememberCoroutineScope()

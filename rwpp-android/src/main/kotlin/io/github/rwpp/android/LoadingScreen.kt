@@ -119,6 +119,27 @@ class LoadingScreen : ComponentActivity() {
         finish()
     }
 
+    private fun initializeEngine() {
+        InstallArtifactMaintenance(filesDir, dexFolder, cacheDir)
+            .prepareResources(androidInstallationId(this), File(resourceOutputDir))
+        appKoin.get<AppContext>().init()
+        val mapsDir = File(appKoin.get<AppContext>().externalStoragePath("maps"))
+        if (mapsDir.isDirectory) mapsDir.walk().filter { it.isFile && it.name.startsWith("generated_") }.forEach { it.delete() }
+        // This operation is owned by AndroidResourceStartup; no second attempt reuses a half-built singleton.
+        check(runCatching { GameEngine.t() }.getOrNull() == null) { "Engine was created before initialization completed" }
+        val engineImpl = GameEngine.dv.a(this)
+        Reflect.reifiedSet<GameEngine>(null, "ak", engineImpl)
+        loadingThread
+        prepareDefaultStorageType()
+        prepareNetworkModCacheForStartup()
+        engineImpl.a(this as Context)
+        val configIO = appKoin.get<ConfigIO>()
+        if (!configIO.getGameConfig<Boolean>("hasSelectedAStorageType")) {
+            configIO.setGameConfig("hasSelectedAStorageType", true)
+            configIO.setGameConfig("storageType", 0)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
@@ -126,6 +147,15 @@ class LoadingScreen : ComponentActivity() {
 
         val permissionHelper = appKoin.get<PermissionHelper>()
         var hasPermission by mutableStateOf(permissionHelper.hasManageFilePermission())
+
+        io.github.rwpp.game.mod.ModLoadSafety.configure(File(filesDir, "resource-load.properties"))
+        if (hasPermission && !requireReloadingLib && !gameLoaded &&
+            (io.github.rwpp.game.GameStartSafety.requiresRestart ||
+                !AndroidResourceStartup.started && !AndroidResourceStartup.recoveryChoiceMade &&
+                io.github.rwpp.game.mod.ModLoadSafety.previousFailure() != null)) {
+            showResourceRecovery { recreate() }
+            return
+        }
 
         setContent {
             KoinContext {
@@ -291,75 +321,20 @@ class LoadingScreen : ComponentActivity() {
                                     MenuLoadingView(message)
 
                                     LaunchedEffect(Unit) {
-                                        message = "loading"
-                                        val engineInitSuccess = withContext(Dispatchers.IO) {
-                                            // 公共目录的清理延后到权限已就绪；注入自动重启不会重复删除新产物。
-                                            try {
-                                                InstallArtifactMaintenance(filesDir, dexFolder, cacheDir)
-                                                    .prepareResources(androidInstallationId(this@LoadingScreen), File(resourceOutputDir))
-                                            } catch (error: Exception) {
-                                                Log.e("RWPP", "Cannot invalidate resources after APK update", error)
-                                                engineInitError = error
-                                                return@withContext false
-                                            }
-                                            appKoin.get<AppContext>().init()
-                                            runCatching {
-                                                val mapsDir = File(
-                                                    appKoin.get<AppContext>().externalStoragePath("maps")
-                                                )
-                                                if (mapsDir.isDirectory) {
-                                                    mapsDir.walk()
-                                                        .filter { it.isFile && it.name.startsWith("generated_") }
-                                                        .forEach { it.delete() }
-                                                }
-                                            }.onFailure {
-                                                Log.e("RWPP", "cleanup generated_ maps failed", it)
-                                            }
-
-                                            if (isGameEngineReady()) {
-                                                true
-                                            } else {
-                                                try {
-                                                    // 引擎可能已被上一轮初始化创建（例如 Activity 因配置变更被重建，
-                                                    // 上一轮已 new 出引擎但未及置 gameLoaded 即被取消）。此时再次调用
-                                                    // GameEngine.dv.a(...) 必抛 "gameEngine already created"，因此优先复用已存在实例。
-                                                    val existingEngine = runCatching { GameEngine.t() }.getOrNull()
-                                                    if (existingEngine != null) {
-                                                        logger?.info("Reusing existing GameEngine instance; skip re-creation.")
-                                                        loadingThread
-                                                        prepareDefaultStorageType()
-                                                        prepareNetworkModCacheForStartup()
-                                                    } else {
-                                                        val engineImpl = GameEngine.dv.a(this@LoadingScreen)
-                                                        Reflect.reifiedSet<GameEngine>(null, "ak", engineImpl)
-                                                        loadingThread
-                                                        prepareDefaultStorageType()
-                                                        prepareNetworkModCacheForStartup()
-                                                        engineImpl.a(this@LoadingScreen as Context)
-                                                        val configIO = appKoin.get<ConfigIO>()
-                                                        if (!configIO.getGameConfig<Boolean>("hasSelectedAStorageType")) {
-                                                            configIO.setGameConfig("hasSelectedAStorageType", true)
-                                                            configIO.setGameConfig("storageType", 0)
-                                                        }
-                                                    }
-                                                    true
-                                                } catch (e: Exception) {
-                                                    Reflect.reifiedSet<GameEngine>(null, "ak", null)
-                                                    invalidateGeneratedGameDex()
-                                                    Log.e("RWPP", "GameEngine init failed", e)
-                                                    engineInitError = e
-                                                    false
-                                                }
-                                            }
+                                        // Permission may have been granted after onCreate; recovery must still precede parsing.
+                                        if (!AndroidResourceStartup.started && !AndroidResourceStartup.recoveryChoiceMade &&
+                                            io.github.rwpp.game.mod.ModLoadSafety.previousFailure() != null) {
+                                            showResourceRecovery { recreate() }
+                                            return@LaunchedEffect
                                         }
-
-                                        if (engineInitSuccess) {
-                                            gameLoaded = true
+                                        message = "loading"
+                                        val result = AndroidResourceStartup.initialize { initializeEngine() }
+                                        if (result.isSuccess) {
                                             GameLoadedEvent().broadcastIn()
                                             openMainActivity()
                                         } else {
-                                            diagnosticsReport = buildDiagnosticsReport("engineInit", engineInitError)
-                                            showEngineFailure = true
+                                            // Never rebuild DEX or retry the partially initialized engine for a resource failure.
+                                            showResourceRecovery { recreate() }
                                         }
                                     }
                                 }

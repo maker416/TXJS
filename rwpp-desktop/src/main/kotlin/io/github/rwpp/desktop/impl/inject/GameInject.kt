@@ -42,6 +42,7 @@ object GameInject {
      */
     @Inject("b", InjectMode.InsertBefore, "(FI)V")
     fun onMainLoop(deltaTime: Float, unused: Int): Any {
+        if (io.github.rwpp.game.GameStartSafety.requiresRestart) return InterruptResult.Unit
         if (!KeepConnectedReload.active) return Unit
         KeepConnectedReload.markGameTick()
         try {

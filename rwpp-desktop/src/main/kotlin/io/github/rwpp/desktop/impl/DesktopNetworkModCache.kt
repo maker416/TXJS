@@ -9,27 +9,21 @@ package io.github.rwpp.desktop.impl
 
 import io.github.rwpp.AppContext
 import io.github.rwpp.game.mod.NetworkModCache
+import io.github.rwpp.game.mod.ChunkedModEnvelope
 import io.github.rwpp.game.mod.NetworkModCacheEntry
 import io.github.rwpp.game.mod.NetworkModCacheFiles
 import io.github.rwpp.game.mod.NetworkModDescriptor
 import org.koin.core.annotation.Single
 import org.slf4j.LoggerFactory
-import java.io.ByteArrayOutputStream
-import java.io.DataInputStream
-import java.io.DataOutputStream
 import java.io.File
-import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
-import javax.crypto.Cipher
-import javax.crypto.spec.GCMParameterSpec
-import javax.crypto.spec.SecretKeySpec
 
 @Single([NetworkModCache::class])
 class DesktopNetworkModCache(
     private val appContext: AppContext,
 ) : NetworkModCache {
     private val lock = Any()
-    private val encryptedRoot: File get() = File(appContext.externalStoragePath(".rwpp/network-mod-cache/"))
+    private val encryptedRoot: File get() = File(appContext.externalStoragePath(".rwpp/network-mod-cache-v2/"))
     private val workingRoot: File get() = File(appContext.externalStoragePath("mods/units/"))
     private val entries = mutableMapOf<String, DesktopEntry>()
     private val random = SecureRandom()
@@ -88,8 +82,28 @@ class DesktopNetworkModCache(
         val key = loadOrCreateKey(cacheRoot)
         val createdAt = System.currentTimeMillis()
         val cacheFile = File(cacheRoot, "${descriptor.cacheKey()}.$CACHE_EXTENSION")
-        val envelope = writeEnvelope(descriptor, bytes, createdAt, key)
-        NetworkModCacheFiles.atomicWrite(cacheFile, envelope, cacheRoot)
+        val staging = File.createTempFile("legacy-payload-", ".tmp", cacheRoot)
+        try {
+            staging.writeBytes(bytes)
+            NetworkModCacheFiles.writeAtomic(cacheFile, cacheRoot) { output ->
+                ChunkedModEnvelope.write(staging, descriptor, createdAt, key, output)
+            }
+        } finally { staging.delete() }
+        val entry = DesktopEntry(descriptor, cacheFile, createdAt)
+        entries[descriptor.cacheKey()] = entry
+        entry.asCacheEntry()
+    }
+
+    override fun storeVerified(descriptor: NetworkModDescriptor, file: File): NetworkModCacheEntry = synchronized(lock) {
+        require(descriptor.matches(file)) { "Network mod file does not match descriptor" }
+        prepareStartup()
+        val cacheRoot = encryptedRoot.apply { mkdirs() }
+        val key = loadOrCreateKey(cacheRoot)
+        val createdAt = System.currentTimeMillis()
+        val cacheFile = File(cacheRoot, "${descriptor.cacheKey()}.$CACHE_EXTENSION")
+        NetworkModCacheFiles.writeAtomic(cacheFile, cacheRoot) { output ->
+            ChunkedModEnvelope.write(file, descriptor, createdAt, key, output)
+        }
         val entry = DesktopEntry(descriptor, cacheFile, createdAt)
         entries[descriptor.cacheKey()] = entry
         entry.asCacheEntry()
@@ -107,11 +121,12 @@ class DesktopNetworkModCache(
             "Network mod cache expired: ${descriptor.name}"
         }
         val workRoot = workingRoot.apply { mkdirs() }
-        demoteSameName(workRoot, descriptor)
         val active = NetworkModCacheFiles.activeFile(workRoot, descriptor)
         val key = loadOrCreateKey(encryptedRoot.apply { mkdirs() })
-        val bytes = readEnvelopeBytes(entry.cacheFile, key, descriptor)
-        NetworkModCacheFiles.atomicWrite(active, bytes, workRoot)
+        NetworkModCacheFiles.writeAtomic(active, workRoot) { output ->
+            ChunkedModEnvelope.read(entry.cacheFile, key, output, descriptor)
+        }
+        demoteSameName(workRoot, descriptor)
         return entry.asCacheEntry(active)
     }
 
@@ -149,82 +164,10 @@ class DesktopNetworkModCache(
         return key
     }
 
-    private fun writeEnvelope(descriptor: NetworkModDescriptor, bytes: ByteArray, createdAtMillis: Long, key: ByteArray): ByteArray {
-        val nonce = ByteArray(NONCE_SIZE_BYTES).also { random.nextBytes(it) }
-        val header = encodeHeader(descriptor, createdAtMillis, nonce)
-        val cipher = Cipher.getInstance(CIPHER)
-        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(TAG_BITS, nonce))
-        cipher.updateAAD(header)
-        val encrypted = cipher.doFinal(bytes)
-        return header + encrypted
-    }
-
     private fun readEnvelope(file: File, key: ByteArray): DesktopEntry {
-        val bytes = file.readBytes()
-        val parsed = parseHeader(bytes)
-        val plain = decrypt(bytes, parsed, key)
-        require(parsed.descriptor.matches(plain)) { "Desktop cache hash mismatch: ${file.name}" }
-        return DesktopEntry(parsed.descriptor, file, parsed.createdAtMillis)
+        val metadata = ChunkedModEnvelope.read(file, key)
+        return DesktopEntry(metadata.descriptor, file, metadata.createdAtMillis)
     }
-
-    private fun readEnvelopeBytes(file: File, key: ByteArray, descriptor: NetworkModDescriptor): ByteArray {
-        val bytes = file.readBytes()
-        val parsed = parseHeader(bytes)
-        require(parsed.descriptor == descriptor) { "Desktop cache descriptor mismatch: ${file.name}" }
-        val plain = decrypt(bytes, parsed, key)
-        require(descriptor.matches(plain)) { "Desktop cache hash mismatch: ${file.name}" }
-        return plain
-    }
-
-    private fun decrypt(envelope: ByteArray, header: Header, key: ByteArray): ByteArray {
-        val cipher = Cipher.getInstance(CIPHER)
-        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(TAG_BITS, header.nonce))
-        cipher.updateAAD(envelope.copyOfRange(0, header.headerLength))
-        return cipher.doFinal(envelope.copyOfRange(header.headerLength, envelope.size))
-    }
-
-    private fun encodeHeader(descriptor: NetworkModDescriptor, createdAtMillis: Long, nonce: ByteArray): ByteArray {
-        val nameBytes = descriptor.name.toByteArray(StandardCharsets.UTF_8)
-        val out = ByteArrayOutputStream()
-        DataOutputStream(out).use { data ->
-            data.writeInt(MAGIC)
-            data.writeByte(FORMAT_VERSION)
-            data.writeByte(nonce.size)
-            data.write(nonce)
-            data.writeLong(createdAtMillis)
-            data.writeInt(nameBytes.size)
-            data.write(nameBytes)
-            data.writeLong(descriptor.payloadSize)
-            data.writeUTF(descriptor.normalizedSha256)
-        }
-        return out.toByteArray()
-    }
-
-    private fun parseHeader(envelope: ByteArray): Header {
-        DataInputStream(envelope.inputStream()).use { input ->
-            require(input.readInt() == MAGIC) { "Invalid cache magic" }
-            require(input.readUnsignedByte() == FORMAT_VERSION) { "Invalid cache version" }
-            val nonceLength = input.readUnsignedByte()
-            require(nonceLength == NONCE_SIZE_BYTES) { "Invalid nonce length" }
-            val nonce = ByteArray(nonceLength).also { input.readFully(it) }
-            val createdAt = input.readLong()
-            val nameLength = input.readInt().also { require(it in 1..NetworkModDescriptor.MAX_NAME_LENGTH * 4) { "Invalid name length" } }
-            val name = String(ByteArray(nameLength).also { input.readFully(it) }, StandardCharsets.UTF_8)
-            val size = input.readLong()
-            val sha256 = input.readUTF()
-            val descriptor = NetworkModDescriptor(name, size, sha256)
-            val headerLength = envelope.size - input.available()
-            require(headerLength < envelope.size) { "Missing ciphertext" }
-            return Header(descriptor, createdAt, nonce, headerLength)
-        }
-    }
-
-    private data class Header(
-        val descriptor: NetworkModDescriptor,
-        val createdAtMillis: Long,
-        val nonce: ByteArray,
-        val headerLength: Int,
-    )
 
     private data class DesktopEntry(
         val descriptor: NetworkModDescriptor,
@@ -239,10 +182,5 @@ class DesktopNetworkModCache(
         private const val CACHE_EXTENSION = "rwcache"
         private const val KEY_FILE = "cache.key"
         private const val KEY_SIZE_BYTES = 32
-        private const val NONCE_SIZE_BYTES = 12
-        private const val TAG_BITS = 128
-        private const val CIPHER = "AES/GCM/NoPadding"
-        private const val MAGIC = 0x52574d43 // RWMC
-        private const val FORMAT_VERSION = 1
     }
 }

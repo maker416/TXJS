@@ -336,6 +336,8 @@ fun ModsView(
     val disabledTotal = mods.size - enabledTotal
 
     suspend fun reloadMods(knownStates: Map<String, Boolean>): List<FailedModLoadInfo> {
+        // Only this explicit Apply commits the temporary startup choice as the user's new selection.
+        io.github.rwpp.game.mod.ModLoadSafety.commitRecoverySelection()
         withContext(Dispatchers.IO) {
             // 在引擎加载单位定义之前应用开关，未启用的新模组不会解析单位（避免浪费时间）
             modManager.modReload(enabledByFileName = knownStates)
@@ -384,6 +386,9 @@ fun ModsView(
                 }
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: io.github.rwpp.game.mod.ModLoadFailure) {
+                // App switches to the shared, lightweight recovery screen; do not enumerate the damaged table.
+                if (!io.github.rwpp.game.GameStartSafety.requiresRestart) UI.showWarning(e.message.orEmpty())
             } catch (e: Throwable) {
                 UI.showWarning(e.message ?: "Unknown error")
             } finally {

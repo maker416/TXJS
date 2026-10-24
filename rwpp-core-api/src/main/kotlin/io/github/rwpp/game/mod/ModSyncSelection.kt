@@ -21,7 +21,7 @@ fun selectModSyncFiles(
         .sortedWith(compareBy<Mod> { it.isNetworkMod }.thenByDescending { it.isEnabled }.thenBy { it.path })
         .firstOrNull { mod ->
             try {
-                descriptor.matches(mod.getBytes())
+                descriptor == mod.payloadDescriptor()
             } catch (error: Exception) {
                 onHashFailure(mod, error)
                 false

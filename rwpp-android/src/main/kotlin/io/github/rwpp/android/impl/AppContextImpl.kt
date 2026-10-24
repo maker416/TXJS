@@ -93,6 +93,7 @@ class AppContextImpl : BaseAppContextImpl() {
     }
 
     override fun exit() {
+        if (io.github.rwpp.game.GameStartSafety.requiresRestart) exitAfterResourceFailure()
         markExitOverlayVisible()
         get<ConfigIO>().saveAllConfig()
         runCatching { GameEngine.t() }.getOrNull()?.bN?.apply {
@@ -103,4 +104,6 @@ class AppContextImpl : BaseAppContextImpl() {
         exitActions.forEach { it.invoke() }
         exitProcess(0)
     }
+
+    override fun exitAfterResourceFailure(): Nothing = exitProcess(0)
 }

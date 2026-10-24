@@ -22,6 +22,13 @@ import io.github.rwpp.event.events.StartGameEvent
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.mod.KeepConnectedReload
 import io.github.rwpp.game.mod.Mod
+import io.github.rwpp.game.mod.ModPayload
+import io.github.rwpp.game.mod.ModLoadFailure
+import io.github.rwpp.game.mod.payloadDescriptor
+import io.github.rwpp.game.mod.preparePayload
+import io.github.rwpp.game.GameStartSafety
+import io.github.rwpp.AppContext
+import java.io.File
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.game.mod.NetworkModCache
 import io.github.rwpp.game.mod.NetworkModDescriptor
@@ -275,6 +282,7 @@ object ModSyncController {
     }
 
     private suspend fun runHostSession(key: String, secret: String) {
+        val prepared = mutableListOf<ModPayload>()
         try {
             val manager = appKoin.get<ModManager>()
             val enabled = manager.getAllMods().filter { it.isEnabled }
@@ -295,12 +303,12 @@ object ModSyncController {
 
             logger.info("[MODSYNC-HOST] preparing manifest for ${enabled.size} mod(s), key=$key")
             setHostState(HostSyncState.Preparing(0, enabled.size, 0L, 0L))
-            // 读取/压缩 + SHA-256；与旧协议方案一致，全部字节驻留内存直至上传完成
-            val prepared = enabled.map { mod ->
-                val bytes = mod.getBytes()
-                NetworkModDescriptor.fromBytes(mod.name, bytes) to bytes
+            // Stable disk snapshots keep the manifest/upload bytes identical without retaining all mods.
+            val prepareContext = currentCoroutineContext()
+            enabled.forEach { mod ->
+                prepared += mod.preparePayload(transferDirectory()) { prepareContext.ensureActive() }
             }
-            val descriptors = prepared.map { it.first }
+            val descriptors = prepared.map { it.descriptor }
             val totalBytes = descriptors.sumOf { it.payloadSize }
 
             val client = newClient()
@@ -322,9 +330,10 @@ object ModSyncController {
 
             var uploadedBytes = 0L
             var doneCount = 0
-            prepared.forEach { (descriptor, bytes) ->
+            prepared.forEach { payload ->
+                val descriptor = payload.descriptor
                 if (descriptor.normalizedSha256 in missing) {
-                    client.uploadFile(descriptor.normalizedSha256, secret, bytes) { progress ->
+                    client.uploadFile(descriptor.normalizedSha256, secret, payload.file) { progress ->
                         setHostState(
                             HostSyncState.Preparing(
                                 doneCount, prepared.size,
@@ -346,6 +355,8 @@ object ModSyncController {
         } catch (e: Exception) {
             logger.error("[MODSYNC-HOST] host session failed: ${e.stackTraceToString()}")
             setHostState(HostSyncState.Error(e.message ?: e.javaClass.simpleName))
+        } finally {
+            prepared.forEach { it.close() }
         }
     }
 
@@ -737,29 +748,25 @@ object ModSyncController {
                         ),
                         force = true,
                     )
-                    val bytes = client.downloadFile(descriptor.normalizedSha256, descriptor.payloadSize) { progress ->
-                        updateDownloadingProgress(descriptor, progress, missing.size, index + 1)
-                        val received = (descriptor.payloadSize * progress).toLong()
-                        reporter.report(
-                            SyncPeerUpsertRequest(
-                                displayName = reporter.displayName,
-                                phase = SyncPeerPhase.DOWNLOADING,
-                                currentModName = descriptor.name,
-                                currentBytes = received,
-                                currentTotal = descriptor.payloadSize,
-                                modIndex = index,
-                                modCount = missing.size,
-                            ),
-                        )
-                    }
-                    if (!descriptor.matches(bytes)) {
-                        failInRoom(
-                            readI18n("mod.integrityFailed"),
-                            readI18n("mod.integrityFailedDetail", I18nType.RWPP, descriptor.name),
-                        )
-                        return
-                    }
-                    cache.storeVerified(descriptor, bytes)
+                    val staging = File.createTempFile("mod-download-", ".tmp", transferDirectory())
+                    try {
+                        client.downloadFileTo(descriptor.normalizedSha256, descriptor.payloadSize, staging) { progress ->
+                            updateDownloadingProgress(descriptor, progress, missing.size, index + 1)
+                            val received = (descriptor.payloadSize * progress).toLong()
+                            reporter.report(
+                                SyncPeerUpsertRequest(
+                                    displayName = reporter.displayName,
+                                    phase = SyncPeerPhase.DOWNLOADING,
+                                    currentModName = descriptor.name,
+                                    currentBytes = received,
+                                    currentTotal = descriptor.payloadSize,
+                                    modIndex = index,
+                                    modCount = missing.size,
+                                ),
+                            )
+                        }
+                        cache.storeVerified(descriptor, staging)
+                    } finally { staging.delete() }
                     logger.info("[MODSYNC] mod cached OK: ${descriptor.name}")
                 }
             }
@@ -830,6 +837,17 @@ object ModSyncController {
         } catch (e: CancellationException) {
             // clearRoomPresence / cancelInRoomSync 触发，清理由调用方负责
             throw e
+        } catch (e: ModLoadFailure) {
+            withContext(NonCancellable + Dispatchers.Main.immediate) {
+                cancellingReload = false
+                GameSessionController.closeFailedResourceLoad(appKoin.get<Game>())
+            }
+        } catch (e: OutOfMemoryError) {
+            GameStartSafety.markMemoryExhausted()
+            withContext(NonCancellable + Dispatchers.Main.immediate) {
+                cancellingReload = false
+                GameSessionController.closeFailedResourceLoad(appKoin.get<Game>())
+            }
         } catch (e: Exception) {
             logger.error("[MODSYNC] in-room sync failed: ${e.stackTraceToString()}")
             failInRoom(readI18n("modSync.syncFailed"), readI18n("modSync.syncFailedDetail", I18nType.RWPP, e.message.orEmpty()))
@@ -1116,6 +1134,7 @@ object ModSyncController {
         // 单位表重建后连接与房间不受影响，可继续聊天。
         logger.info("[MODSYNC] calling modReloadKeepConnected ...")
         manager.modReloadKeepConnected(enabledByFileName)
+        GameStartSafety.requireCanReload()
         if (cancellingReload) {
             if (!KeepConnectedReload.didVanillaFallback) {
                 manager.modReloadKeepConnectedVanillaOnly()
@@ -1151,7 +1170,7 @@ object ModSyncController {
                 cache.descriptorForManagedPath(mod.path)?.cacheKey() == expected.cacheKey()
             } else {
                 runCatching {
-                    NetworkModDescriptor.fromBytes(mod.name, mod.getBytes()) == expected
+                    mod.payloadDescriptor() == expected
                 }.getOrElse {
                     logger.warn("[MODSYNC] failed to hash enabled mod '${mod.name}': ${it.message}")
                     false
@@ -1182,13 +1201,17 @@ object ModSyncController {
             } else {
                 val expected = namesToHashes[mod.name] ?: return@forEach
                 runCatching {
-                    val descriptor = NetworkModDescriptor.fromBytes(mod.name, mod.getBytes())
+                    val descriptor = mod.payloadDescriptor()
                     if (descriptor.cacheKey() in targetKeys && descriptor == expected) matches.add(descriptor.cacheKey())
                 }.onFailure { logger.warn("[MODSYNC] failed to hash local mod '${mod.name}': ${it.message}") }
             }
         }
         return matches
     }
+
+    private fun transferDirectory(): File = File(
+        appKoin.get<AppContext>().internalStoragePath(".rwpp/mod-transfer")
+    ).apply { check(isDirectory || mkdirs()) { "Cannot create mod transfer directory" } }
 
     private fun resolveDisplayName(): String {
         val raw = runCatching {

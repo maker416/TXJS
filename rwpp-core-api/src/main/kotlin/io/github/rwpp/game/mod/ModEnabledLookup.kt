@@ -68,7 +68,7 @@ object ModReloadSelection {
      * 未处于受控重载时返回 null；受控重载中未匹配的文件默认返回 false（禁用）。
      */
     fun resolve(pathCandidates: Iterable<String>): Boolean? {
-        val selection = enabledByFileName.get() ?: return null
+        val selection = enabledByFileName.get() ?: return ModLoadSafety.recoveryEnabled(pathCandidates)
         return resolveModEnabledByFileName(pathCandidates, selection)
     }
 }

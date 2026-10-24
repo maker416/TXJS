@@ -22,6 +22,10 @@ import io.github.rwpp.inject.InjectMode
  */
 @InjectClass(a::class)
 object ModManagerInject {
+    @Inject("d", InjectMode.InsertBefore, "()V")
+    fun preserveSelectionDuringRecovery(): Any =
+        if (io.github.rwpp.game.mod.ModLoadSafety.suppressSelectionSave) io.github.rwpp.inject.InterruptResult.Unit else Unit
+
 
     @Inject("j", InjectMode.InsertAfter)
     @Suppress("UNCHECKED_CAST")

@@ -174,11 +174,17 @@ fun main(array: Array<String>) {
     Builder.logger = defaultBuildLogger
     requireReloadingLib = Builder.prepareReloadingLib()
 
+    io.github.rwpp.game.mod.ModLoadSafety.configure(File("resource-load.properties"))
     if (!requireReloadingLib) {
+        chooseDesktopRecovery()
         val app = appKoin.get<AppContext>()
         app.init()
         val networkModCache = appKoin.get<NetworkModCache>()
-        networkModCache.prepareStartup()
+        try { io.github.rwpp.game.mod.ModLoadSafety.run("cache-preparation") { networkModCache.prepareStartup() } }
+        catch (failure: io.github.rwpp.game.mod.ModLoadFailure) {
+            showDesktopResourceFailure(failure.message.orEmpty())
+            return
+        }
         app.onExit { networkModCache.cleanupWorkingCopiesOnExit() }
     }
 
