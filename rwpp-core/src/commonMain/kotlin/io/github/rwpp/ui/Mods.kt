@@ -503,6 +503,7 @@ fun ModsView(
 
                 var lastProgressUpdate = 0L
                 withContext(Dispatchers.IO) {
+                    io.github.rwpp.game.mod.ModPlaytimeHashCache.sourceChanged(target)
                     file.copyToWithProgress(target, overwrite = false) { copiedBytes, totalBytes ->
                         val now = System.currentTimeMillis()
                         if (now - lastProgressUpdate >= 100L || copiedBytes == totalBytes) {

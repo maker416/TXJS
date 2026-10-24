@@ -55,6 +55,7 @@ import io.github.rwpp.game.map.scanReplayFiles
 import io.github.rwpp.game.map.browserCustomMapPaths
 import io.github.rwpp.game.mod.KeepConnectedReload
 import io.github.rwpp.game.mod.ModManager
+import io.github.rwpp.game.mod.ModPlaytimeSnapshotCache
 import io.github.rwpp.game.mod.ModPlaytimeState
 import io.github.rwpp.game.ui.GUI
 import io.github.rwpp.game.world.World
@@ -85,8 +86,16 @@ class GameImpl : AbstractGame() {
     private var lastPlaytimeMap: Any? = null
     private var playtimeGeneration = 0L
     private var lastPlaytimeState = ModPlaytimeState()
+    private val playtimeSnapshot = ModPlaytimeSnapshotCache()
+    private var lastPlaytimeRevision = -1L
+
+    override fun invalidateModPlaytimeSnapshot() = playtimeSnapshot.invalidate()
 
     override fun getModPlaytimeState(): ModPlaytimeState = runCatching {
+        if (KeepConnectedReload.active || io.github.rwpp.game.mod.ModLoadSafety.loading ||
+            io.github.rwpp.game.GameStartSafety.requiresRestart) {
+            return@runCatching lastPlaytimeState.copy(active = false, reliable = false)
+        }
         val engine = GameEngine.B()
         val player = engine.bs ?: engine.bX.z
         // 原版 bG 是关卡已加载，bH 是菜单演示，bI 是加载中。显示模式另排除返回启动器/战役室。
@@ -96,13 +105,16 @@ class GameImpl : AbstractGame() {
             lastPlaytimeFrame = null
             lastPlaytimeGameTime = null
             lastPlaytimeMap = null
+            playtimeSnapshot.clear()
             return@runCatching ModPlaytimeState()
         }
         val frame = engine.bx
         val gameTime = engine.by
         val previousFrame = lastPlaytimeFrame
         val newMatch = previousFrame == null || frame < previousFrame || engine.bL !== lastPlaytimeMap
-        if (newMatch) playtimeGeneration++
+        val revision = playtimeSnapshot.revision
+        if (newMatch || revision != lastPlaytimeRevision) playtimeGeneration++
+        lastPlaytimeRevision = revision
         val advancing = !newMatch && frame > previousFrame!! &&
             lastPlaytimeGameTime?.let { gameTime != it } == true
         lastPlaytimeFrame = frame
@@ -112,18 +124,20 @@ class GameImpl : AbstractGame() {
         val active = advancing && !engine.bS.u && !engine.bp &&
             !engine.bX.aj && !engine.bX.ak &&
             !gameOver && !player.F && !player.G && !KeepConnectedReload.active
-        val modIds = com.corrodinggames.rts.game.units.custom.l.d.toArray()
-            .filterIsInstance<com.corrodinggames.rts.game.units.custom.l>()
-            .mapNotNull { it.J?.a }.toMutableSet()
-        // 地图模组可以没有单位；只补入当前实际加载地图的 MOD|hash 所属模组。
-        engine.dl?.takeIf { "MOD|" in it }?.let { engine.bZ.h(it)?.a }?.let(modIds::add)
-        // j() 只返回已注册、启用且无加载错误的模组，q() 是引擎成功扫描后的音乐轨道表。
-        // 音乐可在原版单位对局生效，不依赖房主单位表；不能把尚未读入轨道的勾选项算进来。
-        engine.bZ.j().toArray().filterIsInstance<com.corrodinggames.rts.gameFramework.i.b>()
-            .filter { it.q().isNotEmpty() }.forEach { modIds.add(it.a) }
-        // d 是本局生效定义（加入时由远端单位表 e 替换），J.a 对应 Mod.id；不能统计菜单勾选集合。
-        val mods = appKoin.get<ModManager>().getAllMods().filter { it.id in modIds }
-        ModPlaytimeState(hasMatch = true, active = active, mods = mods, generation = playtimeGeneration)
+        val snapshot = playtimeSnapshot.get(playtimeGeneration) {
+            val modIds = com.corrodinggames.rts.game.units.custom.l.d.toArray()
+                .filterIsInstance<com.corrodinggames.rts.game.units.custom.l>()
+                .mapNotNull { it.J?.a }.toMutableSet()
+            // 地图模组可以没有单位；只补入当前实际加载地图的 MOD|hash 所属模组。
+            engine.dl?.takeIf { "MOD|" in it }?.let { engine.bZ.h(it)?.a }?.let(modIds::add)
+            // j() 只返回已注册、启用且无加载错误的模组，q() 是引擎成功扫描后的音乐轨道表。
+            // 音乐可在原版单位对局生效，不依赖房主单位表；不能把尚未读入轨道的勾选项算进来。
+            engine.bZ.j().toArray().filterIsInstance<com.corrodinggames.rts.gameFramework.i.b>()
+                .filter { it.q().isNotEmpty() }.forEach { modIds.add(it.a) }
+            // d 是本局生效定义（加入时由远端单位表 e 替换），J.a 对应 Mod.id；不能统计菜单勾选集合。
+            appKoin.get<ModManager>().getAllMods().filter { it.id in modIds }
+        }
+        ModPlaytimeState(hasMatch = true, active = active, mods = snapshot.mods, generation = playtimeGeneration, sources = snapshot.sources)
     }.getOrElse {
         // 重载边界的未知采样不能假定退局；保留已知局身份并停计，避免重复 hash/局数。
         lastPlaytimeState.copy(active = false, reliable = false)

@@ -272,6 +272,13 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 - 房间视图打开（进房/开房成功）调 `onRoomOpened()`。
 - 注意：本控制器只串行「开始/结束」的时序，不镜像引擎房间状态；引擎仍是房间状态的真身。
 
+### 局内启动器后台开销
+
+- 模组游玩统计的本局生效集合由两端 `GameImpl` 的 `ModPlaytimeSnapshotCache` 捕获一次；每秒只采样轻量状态。模组重载前后调用 `invalidateModPlaytimeSnapshot()`，加载/损坏状态不得读取单位注册表。
+- 本地统计哈希缓存位于应用内部 `cache/mod-playtime-hashes-v1.json`，只用于统计身份；新增导入/替换/删除入口应在写入前调用 `ModPlaytimeHashCache.sourceChanged()`，不得替代同步传输校验。
+- `LauncherVisibility` 由平台画面切换/生命周期维护；不可见时暂停好友/私信、房间采样/名片/同步 peers 等界面轮询，恢复时补刷。协程内部直接收集可见性流，不能依赖隐藏 Activity 的 Compose 重组。账号在线、身份公示和模组同步 TTL 心跳及引擎保活继续运行。
+- 实现边界、回归命令与待做的真机 FPS 对比见 `docs/in-game-performance.md`。
+
 ### 房间状态快照（RoomSnapshotStore）
 
 `rwpp-core` 的 `core/RoomSnapshotStore.kt` 是等待房间核心状态（玩家列表、地图名/地图类型、房主状态）的**单一采样点**：`App.kt` 在 `RefreshUIEvent`（引擎→UI 的既有刷新漏斗）上于 Main 线程 `resample(game)` 一次，房间 UI 只 `collectAsState()` 采集不可变的 `RoomSnapshot`，不再在组合中直读这些引擎字段；玩家列表的去重/按队伍排序（防 `connectHexId` 撞 key 崩溃）也在采样时完成。房间内的本地动作（踢人/换队等）经 `updateAction` 追加一次即时重采样。锁房状态、开局单位选项、实时 ping 等可写/高频字段仍由旧的 `remember(update)` 翻转驱动，后续逐步迁移。

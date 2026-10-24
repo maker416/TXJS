@@ -21,7 +21,10 @@ import java.util.zip.ZipOutputStream
  * 流式处理，不读取整个模组到内存；目录名与 mtime 不参与身份。
  */
 object ModPlaytimeHash {
-    fun sha256(file: File): String {
+    fun sha256(file: File): String = sha256(file) {}
+
+    /** checkpoint 可由协程检查取消；每个文件和每个读取块都会执行。 */
+    fun sha256(file: File, checkpoint: () -> Unit): String {
         val digest = MessageDigest.getInstance("SHA-256")
         if (file.isDirectory) {
             val root = file.canonicalFile
@@ -33,6 +36,7 @@ object ModPlaytimeHash {
                 zip.setLevel(1)
                 val visitedDirectories = mutableSetOf<String>()
                 fun append(source: File) {
+                    checkpoint()
                     val canonical = source.canonicalFile
                     if (canonical != root && !canonical.path.startsWith(root.path + File.separator)) {
                         throw IOException("Mod folder contains a link outside its root")
@@ -44,7 +48,15 @@ object ModPlaytimeHash {
                     } else if (source.isFile) {
                         val relative = root.toPath().relativize(source.absoluteFile.toPath()).toString().replace('\\', '/')
                         zip.putNextEntry(ZipEntry(relative).apply { time = 0L })
-                        source.inputStream().use { it.copyTo(zip) }
+                        source.inputStream().use { input ->
+                            val buffer = ByteArray(64 * 1024)
+                            while (true) {
+                                checkpoint()
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                zip.write(buffer, 0, count)
+                            }
+                        }
                         zip.closeEntry()
                     } else throw IOException("Cannot read mod file")
                 }
@@ -55,6 +67,7 @@ object ModPlaytimeHash {
             file.inputStream().use { input ->
                 val buffer = ByteArray(64 * 1024)
                 while (true) {
+                    checkpoint()
                     val count = input.read(buffer)
                     if (count < 0) break
                     digest.update(buffer, 0, count)

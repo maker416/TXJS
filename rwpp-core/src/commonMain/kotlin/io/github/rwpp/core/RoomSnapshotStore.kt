@@ -8,10 +8,14 @@
 package io.github.rwpp.core
 
 import androidx.compose.runtime.Immutable
+import io.github.rwpp.app.LauncherVisibility
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.Player
 import io.github.rwpp.game.map.GameMap
 import io.github.rwpp.game.map.MapType
+import io.github.rwpp.ui.LauncherPage
+import io.github.rwpp.ui.launcherPage
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,11 +47,23 @@ object RoomSnapshotStore {
     private val _snapshot = MutableStateFlow(RoomSnapshot())
     val snapshot: StateFlow<RoomSnapshot> = _snapshot.asStateFlow()
 
+    /** 只允许可见的等待房间读引擎；隐藏时连状态 getter 也不调用。 */
+    fun shouldSample(game: Game): Boolean =
+        LauncherVisibility.visible.value &&
+            launcherPage == LauncherPage.Room &&
+            !game.gameRoom.isStartGame && !game.gameRoom.isStartingGame
+
+    /** 可见性恢复可能先于平台清除 isGaming；只在可见 effect 内等待这个短暂交接。 */
+    suspend fun awaitSampling(game: Game) {
+        while (!shouldSample(game)) delay(100L)
+    }
+
     /**
      * 从引擎房间采样一次。必须在 Main 上调用（与原先组合内直读同线程）；
      * 引擎字段缺失/异常时降级为默认值，不把异常抛进事件总线。
      */
     fun resample(game: Game) {
+        if (!shouldSample(game)) return
         val room = game.gameRoom
         _snapshot.value = RoomSnapshot(
             // 引擎玩家数组里 connectHexId 不保证唯一（缺省值/握手占位/正式槽位可能撞车），

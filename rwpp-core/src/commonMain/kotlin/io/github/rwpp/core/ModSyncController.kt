@@ -10,6 +10,8 @@ package io.github.rwpp.core
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import io.github.rwpp.app.LauncherVisibility
+import io.github.rwpp.app.pollWhileVisible
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.MultiplayerPreferences
@@ -376,14 +378,17 @@ object ModSyncController {
     private fun startPeerPolling(key: String, secret: String) {
         peerPollJob?.cancel()
         peerPollJob = scope.launch(Dispatchers.IO) {
-            while (true) {
+            LauncherVisibility.visible.pollWhileVisible(PEER_POLL_MS) {
+                if (!withContext(Dispatchers.Main.immediate) { RoomSnapshotStore.shouldSample(appKoin.get<Game>()) }) {
+                    return@pollWhileVisible
+                }
                 runCatching {
                     val peers = newClient().listPeers(key, secret).map { it.toSnapshot() }
                     withContext(Dispatchers.Main.immediate) { hostPeerSnapshots = peers }
                 }.onFailure {
+                    if (it is CancellationException) throw it
                     logger.warn("[MODSYNC-HOST] listPeers failed: ${it.message}")
                 }
-                delay(PEER_POLL_MS)
             }
         }
     }

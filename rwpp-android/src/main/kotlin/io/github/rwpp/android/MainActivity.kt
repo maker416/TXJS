@@ -220,17 +220,20 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onPause() {
+        io.github.rwpp.app.LauncherVisibility.setVisible(false)
         super.onPause()
         LauncherMusic.pause()
         if(gameView != null) GameEngine.t()?.b(gameView)
     }
     override fun onResume() {
+        io.github.rwpp.app.LauncherVisibility.setVisible(true)
         super.onResume()
         LauncherMusic.resume()
         if(gameView != null) activityResume()
     }
 
     override fun onStop() {
+        io.github.rwpp.app.LauncherVisibility.setVisible(false)
         super.onStop()
         configIO.saveAllConfig()
         if(gameView != null) GameEngine.t()?.b(gameView)

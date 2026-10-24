@@ -166,6 +166,9 @@ interface Game : KoinComponent {
      */
     fun getModPlaytimeState(): ModPlaytimeState = ModPlaytimeState()
 
+    /** 重载前后使统计来源失效；不读取或修改引擎。 */
+    fun invalidateModPlaytimeSnapshot() {}
+
     /**
      * 返回当前全部启用单位的校验和（单位注册表实时重算）。
      * 注意：引擎握手读的是 init 时缓存的字段（Android `k.r()` / 桌面 `l.z()`），模组重载不会刷新它；

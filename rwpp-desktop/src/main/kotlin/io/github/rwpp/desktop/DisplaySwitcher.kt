@@ -13,6 +13,7 @@ import io.github.rwpp.logger
 import java.awt.CardLayout
 import java.awt.Canvas
 import java.awt.Component
+import java.awt.Frame
 import java.awt.Window
 import java.lang.reflect.InvocationTargetException
 import javax.swing.JComponent
@@ -75,6 +76,10 @@ class DisplaySwitcher(
         }
 
         _currentMode.value = target
+        io.github.rwpp.app.LauncherVisibility.setVisible(
+            target == DisplayMode.Menu && window.isVisible &&
+                (window !is Frame || window.extendedState and Frame.ICONIFIED == 0)
+        )
 
         logger.info("[DisplaySwitcher] executeSwitch complete — now in mode {}", _currentMode.value)
 

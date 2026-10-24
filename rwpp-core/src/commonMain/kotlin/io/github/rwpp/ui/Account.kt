@@ -66,6 +66,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.rwpp.app.LauncherVisibility
+import io.github.rwpp.app.whileVisible
 import io.github.rwpp.AppContext
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
@@ -135,22 +137,17 @@ fun AccountView(onExit: () -> Unit) {
     var showChangeEmail by remember { mutableStateOf(false) }
     var profileBanner by remember { mutableStateOf("") }
 
-    LaunchedEffect(Unit) {
-        AccountSession.restoreIfNeeded()
-        if (AccountSession.loggedIn) {
-            runCatching { FriendsSession.refreshLists() }
-            runCatching { AccountSession.refreshPresenceSettings() }
-            runCatching { AccountSession.refreshPoints() }
-        }
-    }
+    LaunchedEffect(Unit) { AccountSession.restoreIfNeeded() }
 
     LaunchedEffect(loggedIn) {
-        if (loggedIn && AccountSession.networkEnabled) {
-            runCatching { AccountSession.refreshPresenceSettings() }
-            runCatching { AccountSession.refreshPoints() }
-            while (true) {
-                delay(FriendsSession.LIST_POLL_INTERVAL_MS)
-                runCatching { FriendsSession.refreshLists() }
+        LauncherVisibility.visible.whileVisible {
+            if (loggedIn && AccountSession.networkEnabled) {
+                runCatching { AccountSession.refreshPresenceSettings() }
+                runCatching { AccountSession.refreshPoints() }
+                while (true) {
+                    runCatching { FriendsSession.refreshLists() }
+                    delay(FriendsSession.LIST_POLL_INTERVAL_MS)
+                }
             }
         }
     }

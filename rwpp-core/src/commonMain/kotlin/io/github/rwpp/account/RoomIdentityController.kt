@@ -33,6 +33,7 @@ import io.github.rwpp.net.roomid.identityKeysForRoomDescription
 import io.github.rwpp.net.roomid.prioritizeIdentityKeys
 import io.github.rwpp.net.sync.SID_PREFIX
 import io.github.rwpp.net.sync.forAddress
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -44,6 +45,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.atomic.AtomicLong
 
 /** 房间内成员名片解析结果（点击成员 → 个人名片的数据源）。 */
 sealed interface RoomIdentityResult {
@@ -117,6 +119,7 @@ object RoomIdentityController {
     private var publishJob: Job? = null
     private var stopJob: Job? = null
     private var eventsBound = false
+    private val cardEpoch = AtomicLong()
 
     /**
      * 房内真人玩家的名片可用性（行尾「查看名片」按钮状态数据源），key 为 trim 后的玩家名：
@@ -141,6 +144,7 @@ object RoomIdentityController {
      * 其 key 靠进房后 [addRoomCodeKey] 从 roomDetails 短码补充。
      */
     fun onJoiningRoom(address: String, desc: RoomDescription?) {
+        cardEpoch.incrementAndGet()
         playerName = resolveDisplayName()
         val keys = buildList {
             desc?.let { addAll(identityKeysForRoomDescription(it)) }
@@ -197,6 +201,7 @@ object RoomIdentityController {
     /** 停止公示循环，并尽力向服务端撤销公示记录。 */
     @Synchronized
     fun stopPublishing(): Job? {
+        cardEpoch.incrementAndGet()
         val stoppedPublish = publishJob
         stoppedPublish?.cancel()
         publishJob = null
@@ -258,6 +263,7 @@ object RoomIdentityController {
      * 自己永远可打开名片（[resolvePlayer] 返回 Self），不参与预取。
      */
     suspend fun prefetchPlayerCards(room: GameRoom) {
+        val epoch = cardEpoch.get()
         val self = room.localPlayer
         val names = room.getPlayers()
             .filter { !it.isAI && it != self && !ListDetectorPlayers.isDetector(it.name) }
@@ -276,7 +282,8 @@ object RoomIdentityController {
         }
         val client = newClient()
         val appKey = resolveAppKey()
-        val token = AccountSession.requireToken()
+        val session = AccountSession.sessionSnapshotOrNull() ?: return
+        val token = session.token
         for (name in names) {
             val entries = try {
                 client.lookup(keys, name, appKey, token)
@@ -289,6 +296,8 @@ object RoomIdentityController {
                 // 网络错误等：该玩家保持未知（按钮可点），下一轮再试
                 continue
             }
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if (epoch != cardEpoch.get() || !AccountSession.isCurrentSession(session)) return
             cardAvailability[name] = entries.isNotEmpty()
         }
     }

@@ -88,6 +88,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.rwpp.app.LauncherVisibility
+import io.github.rwpp.app.whileVisible
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
@@ -175,20 +177,24 @@ fun FriendsView(
     }
 
     LaunchedEffect(Unit) {
-        AccountSession.restoreIfNeeded()
-        runCatching { FriendsSession.refreshLists() }
-        while (true) {
-            delay(FriendsSession.LIST_POLL_INTERVAL_MS)
+        LauncherVisibility.visible.whileVisible {
+            AccountSession.restoreIfNeeded()
             runCatching { FriendsSession.refreshLists() }
+            while (true) {
+                delay(FriendsSession.LIST_POLL_INTERVAL_MS)
+                runCatching { FriendsSession.refreshLists() }
+            }
         }
     }
 
     LaunchedEffect(Unit) {
-        while (true) {
-            if (AccountSession.networkEnabled && FriendsSession.activePeer != null) {
-                runCatching { FriendsSession.pollMessages() }
+        LauncherVisibility.visible.whileVisible {
+            while (true) {
+                if (AccountSession.networkEnabled && FriendsSession.activePeer != null) {
+                    runCatching { FriendsSession.pollMessages() }
+                }
+                delay(FriendsSession.MESSAGE_POLL_INTERVAL_MS)
             }
-            delay(FriendsSession.MESSAGE_POLL_INTERVAL_MS)
         }
     }
 

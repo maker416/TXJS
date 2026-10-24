@@ -392,7 +392,14 @@ fun swingApplication() = SwingUtilities.invokeLater {
                     appKoin.get<AppContext>().exit()
                 }
             }
+            override fun windowIconified(e: WindowEvent?) {
+                io.github.rwpp.app.LauncherVisibility.setVisible(false)
+            }
+            override fun windowDeiconified(e: WindowEvent?) {
+                io.github.rwpp.app.LauncherVisibility.setVisible(displaySwitcher.currentMode.value == DisplayMode.Menu)
+            }
             override fun windowClosed(e: WindowEvent?) {
+                io.github.rwpp.app.LauncherVisibility.setVisible(false)
                 logger.info("[WINDOW] main window disposed")
             }
         })

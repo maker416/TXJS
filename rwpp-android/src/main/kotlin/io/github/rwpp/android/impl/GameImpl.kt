@@ -28,6 +28,7 @@ import io.github.rwpp.game.base.Difficulty
 import io.github.rwpp.game.map.*
 import io.github.rwpp.game.mod.KeepConnectedReload
 import io.github.rwpp.game.mod.ModManager
+import io.github.rwpp.game.mod.ModPlaytimeSnapshotCache
 import io.github.rwpp.game.mod.ModPlaytimeState
 import io.github.rwpp.game.ui.GUI
 import io.github.rwpp.game.units.UnitType
@@ -58,8 +59,16 @@ class GameImpl : Game, CoroutineScope {
     private var lastPlaytimeMap: Any? = null
     private var playtimeGeneration = 0L
     private var lastPlaytimeState = ModPlaytimeState()
+    private val playtimeSnapshot = ModPlaytimeSnapshotCache()
+    private var lastPlaytimeRevision = -1L
+
+    override fun invalidateModPlaytimeSnapshot() = playtimeSnapshot.invalidate()
 
     override fun getModPlaytimeState(): ModPlaytimeState = runCatching {
+        if (KeepConnectedReload.active || io.github.rwpp.game.mod.ModLoadSafety.loading ||
+            io.github.rwpp.game.GameStartSafety.requiresRestart) {
+            return@runCatching lastPlaytimeState.copy(active = false, reliable = false)
+        }
         val engine = GameEngine.t()
         val lifecycle = CustomInGameActivity.instance?.lifecycle?.currentState
         val player = engine.bp ?: engine.bU.A
@@ -71,13 +80,16 @@ class GameImpl : Game, CoroutineScope {
             lastPlaytimeFrame = null
             lastPlaytimeGameTime = null
             lastPlaytimeMap = null
+            playtimeSnapshot.clear()
             return@runCatching ModPlaytimeState()
         }
         val frame = engine.bu
         val gameTime = engine.bv
         val previousFrame = lastPlaytimeFrame
         val newMatch = previousFrame == null || frame < previousFrame || engine.bI !== lastPlaytimeMap
-        if (newMatch) playtimeGeneration++
+        val revision = playtimeSnapshot.revision
+        if (newMatch || revision != lastPlaytimeRevision) playtimeGeneration++
+        lastPlaytimeRevision = revision
         val advancing = !newMatch && frame > previousFrame!! &&
             lastPlaytimeGameTime?.let { gameTime != it } == true
         lastPlaytimeFrame = frame
@@ -88,15 +100,17 @@ class GameImpl : Game, CoroutineScope {
             !engine.bP.u && !engine.bm &&
             !engine.bU.al && !engine.bU.am &&
             !gameOver && !player.I && !player.J && !KeepConnectedReload.active
-        val modIds = com.corrodinggames.rts.game.units.custom.l.d.toArray()
-            .filterIsInstance<com.corrodinggames.rts.game.units.custom.l>()
-            .mapNotNull { it.J?.a }.toMutableSet()
-        engine.di?.takeIf { "MOD|" in it }?.let { engine.bW.f(it)?.a }?.let(modIds::add)
-        // i() 是已注册、启用且无加载错误的模组，O 是 refreshData 成功扫描的音乐轨道表。
-        engine.bW.i().toArray().filterIsInstance<com.corrodinggames.rts.gameFramework.i.b>()
-            .filter { it.O.isNotEmpty() }.forEach { modIds.add(it.a) }
-        val mods = appKoin.get<ModManager>().getAllMods().filter { it.id in modIds }
-        ModPlaytimeState(hasMatch = true, active = active, mods = mods, generation = playtimeGeneration)
+        val snapshot = playtimeSnapshot.get(playtimeGeneration) {
+            val modIds = com.corrodinggames.rts.game.units.custom.l.d.toArray()
+                .filterIsInstance<com.corrodinggames.rts.game.units.custom.l>()
+                .mapNotNull { it.J?.a }.toMutableSet()
+            engine.di?.takeIf { "MOD|" in it }?.let { engine.bW.f(it)?.a }?.let(modIds::add)
+            // i() 是已注册、启用且无加载错误的模组，O 是 refreshData 成功扫描的音乐轨道表。
+            engine.bW.i().toArray().filterIsInstance<com.corrodinggames.rts.gameFramework.i.b>()
+                .filter { it.O.isNotEmpty() }.forEach { modIds.add(it.a) }
+            appKoin.get<ModManager>().getAllMods().filter { it.id in modIds }
+        }
+        ModPlaytimeState(hasMatch = true, active = active, mods = snapshot.mods, generation = playtimeGeneration, sources = snapshot.sources)
     }.getOrElse {
         lastPlaytimeState.copy(active = false, reliable = false)
     }.also { lastPlaytimeState = it }

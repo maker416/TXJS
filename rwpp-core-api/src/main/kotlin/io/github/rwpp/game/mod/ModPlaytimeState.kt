@@ -16,4 +16,9 @@ data class ModPlaytimeState(
     val generation: Long = 0,
     /** false 表示采样失败；调用方只能暂停计时，不能据此认定退出对局。 */
     val reliable: Boolean = true,
+    /** 已在 Main 冻结的来源；null 兼容旧平台实现，空列表表示本局没有模组。 */
+    val sources: List<ModPlaytimeSource>? = null,
 )
+
+/** 不持有引擎对象，可安全交给 IO 计算身份。 */
+data class ModPlaytimeSource(val name: String, val path: String)

@@ -26,6 +26,7 @@ import io.github.rwpp.net.account.PublicUser
 import io.github.rwpp.net.account.RoomInviteCodec
 import io.github.rwpp.ui.RoomInviteNotification
 import io.github.rwpp.ui.UI
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -110,11 +111,16 @@ object FriendsSession {
             val epoch = cacheEpoch
             val api = AccountSession.client()
             val (f, inn, out, c, b) = withContext(Dispatchers.IO) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 val friends = api.listFriends(token)
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 val incoming = api.listFriendRequests(token, FriendRequestBox.INCOMING)
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 val outgoing = api.listFriendRequests(token, FriendRequestBox.OUTGOING)
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 val chats = api.listChats(token)
                 // 旧版本服务端没有 blocks 端点：失败不拖垮整个列表刷新
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 val blocks = runCatching { api.listBlocks(token) }.getOrDefault(emptyList())
                 Quintuple(friends, incoming, outgoing, chats, blocks)
             }

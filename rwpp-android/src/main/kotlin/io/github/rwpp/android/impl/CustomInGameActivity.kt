@@ -37,6 +37,7 @@ class CustomInGameActivity : InGameActivity(), LifecycleOwner, SavedStateRegistr
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        io.github.rwpp.app.LauncherVisibility.setVisible(false)
         savedStateRegistryController.performRestore(savedInstanceState)
         lifecycleRegistry.currentState = Lifecycle.State.CREATED
 

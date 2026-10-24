@@ -7,6 +7,7 @@
 
 package io.github.rwpp.core
 
+import io.github.rwpp.AppContext
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.AccountSessionSnapshot
 import io.github.rwpp.config.ConfigIO
@@ -19,6 +20,9 @@ import io.github.rwpp.event.events.ReturnMainMenuEvent
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.mod.ModPlaytimeClock
 import io.github.rwpp.game.mod.ModPlaytimeHash
+import io.github.rwpp.game.mod.ModPlaytimeHashCache
+import io.github.rwpp.game.mod.ModPlaytimeSource
+import io.github.rwpp.game.mod.ModPlaytimeSources
 import io.github.rwpp.game.mod.ModPlaytimeState
 import io.github.rwpp.game.mod.NetworkModCache
 import io.github.rwpp.logger
@@ -34,6 +38,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -56,11 +62,13 @@ object ModPlaytimeController : KoinComponent {
     private val lock = Any()
     private val persistenceMutex = Mutex()
     private var started = false
+    private var hashCache: ModPlaytimeHashCache? = null
     private var current: Match? = null
     private val pending = mutableListOf<PendingModPlaytimeReport>()
     private val hashJobs = mutableSetOf<Job>()
     private var dirtyVersion = 0L
     private var persistedVersion = -1L
+    @Volatile internal var cacheOverride: ModPlaytimeHashCache? = null
     @Volatile internal var hashOverride: ((File) -> String)? = null
 
     private class Match(
@@ -81,6 +89,7 @@ object ModPlaytimeController : KoinComponent {
         synchronized(lock) {
             if (started) return
             started = true
+            hashCache = ModPlaytimeHashCache(File(get<AppContext>().internalStoragePath("cache/mod-playtime-hashes-v1.json")))
             // 上一进程已经结束。重发其最后一个已落盘累计值，并关闭该 session。
             recoverPending(get<ModPlaytimePreferences>().pendingReports)
         }
@@ -89,6 +98,7 @@ object ModPlaytimeController : KoinComponent {
         GlobalEventChannel.filter(DisconnectEvent::class).subscribeAlways { finishMatch(System.nanoTime()) }
         scope.launch {
             var lastSamplingError: String? = null
+            val sourceSnapshot = ModPlaytimeSources()
             while (isActive) {
                 try {
                     val identity = AccountSession.playtimeIdentityOrNull()
@@ -98,7 +108,7 @@ object ModPlaytimeController : KoinComponent {
                         withContext(Dispatchers.Main.immediate) {
                             val sampled = game.getModPlaytimeState()
                             // Mod 是引擎 getter 的包装。Main 内复制字符串，再交给 IO 哈希，不能跨线程追读。
-                            sampled to sampled.mods.map { it.name to it.path }
+                            sampled to sourceSnapshot.read(sampled)
                         }
                     } else ModPlaytimeState() to emptyList()
                     sample(identity, url, state, System.nanoTime(), sources)
@@ -143,9 +153,9 @@ object ModPlaytimeController : KoinComponent {
     }
 
     private fun sample(identity: Pair<AccountSessionSnapshot, Long>?, url: String, state: ModPlaytimeState, now: Long,
-        capturedSources: List<Pair<String, String>>? = null,
+        capturedSources: List<ModPlaytimeSource>? = null,
     ) {
-        var toHash: Pair<Match, List<Pair<String, String>>>? = null
+        var toHash: Pair<Match, List<ModPlaytimeSource>>? = null
         synchronized(lock) {
             val old = current
             if (old != null && (identity == null || old.owner != identity.first || old.apiUrl != url)) {
@@ -171,11 +181,11 @@ object ModPlaytimeController : KoinComponent {
                 return@synchronized
             }
             if (current == null && identity != null && url.isNotBlank()) {
-                val sources = (capturedSources ?: state.mods.map { it.name to it.path }).map {
-                    it.first.trim() to it.second
+                val sources = (capturedSources ?: state.sources ?: state.mods.map { ModPlaytimeSource(it.name, it.path) }).map {
+                    it.copy(name = it.name.trim())
                 }.filter {
-                    it.first.isNotBlank() && it.first.codePointCount(0, it.first.length) <= 255 &&
-                        it.first.none { c -> c.isISOControl() }
+                    it.name.isNotBlank() && it.name.codePointCount(0, it.name.length) <= 255 &&
+                        it.name.none { c -> c.isISOControl() }
                 }.distinct()
                 if (sources.isNotEmpty()) {
                     val match = Match(identity.first, identity.second, tokenFingerprint(identity.first.token), url,
@@ -193,15 +203,19 @@ object ModPlaytimeController : KoinComponent {
             }
         }
         toHash?.let { (match, sources) ->
-            val hash = hashOverride ?: ModPlaytimeHash::sha256
             val job = scope.launch(Dispatchers.IO) {
                 val cache = runCatching { get<NetworkModCache>() }.getOrNull()
+                val context = currentCoroutineContext()
                 val mods = sources.mapNotNull { (name, path) ->
                     try {
                         // 激活的网络缓存有经过校验的传输身份；保留房主原名称，避免缓存文件名拆出另一模组。
                         val descriptor = cache?.descriptorForManagedPath(path)
-                        PlayedMod(descriptor?.name ?: name, descriptor?.normalizedSha256 ?: hash(File(path)))
+                        val digest = descriptor?.normalizedSha256 ?: hashOverride?.invoke(File(path))
+                            ?: (cacheOverride ?: hashCache)?.sha256(File(path))
+                            ?: ModPlaytimeHash.sha256(File(path)) { context.ensureActive() }
+                        PlayedMod(descriptor?.name ?: name, digest)
                     }
+                    catch (e: CancellationException) { throw e }
                     catch (e: Exception) {
                         logger.warn("无法识别模组内容，跳过游玩统计 {}：{}", name, e.message)
                         null
@@ -274,6 +288,7 @@ object ModPlaytimeController : KoinComponent {
     internal fun resetForTests() {
         onAccountInvalidated()
         hashOverride = null
+        cacheOverride = null
     }
 
     /** 持有 lock；同 session 始终替换为最新累计值，失败重试不生成额外时长。 */

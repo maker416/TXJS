@@ -95,6 +95,7 @@ object BrowserModFiles {
             val target = File(root, name)
             try {
                 // 不指定 REPLACE_EXISTING，避免覆盖其他下载或用户已有的文件。
+                io.github.rwpp.game.mod.ModPlaytimeHashCache.sourceChanged(target)
                 Files.move(partial.toPath(), target.toPath())
                 return target
             } catch (_: FileAlreadyExistsException) { }

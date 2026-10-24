@@ -5,6 +5,7 @@
  * https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
  */
 
+import io.github.rwpp.app.whileVisible
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
 import io.github.rwpp.config.AccountPreferences
@@ -16,6 +17,14 @@ import io.github.rwpp.net.account.AccountUser
 import io.github.rwpp.net.account.ChatItem
 import io.github.rwpp.net.account.ChatMessageDto
 import io.github.rwpp.net.account.PublicUser
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -49,6 +58,7 @@ class ChatMessageChangesTest {
     private var failSave = false
     private val requests = CopyOnWriteArrayList<RecordedRequest>()
     private val ackSnapshots = CopyOnWriteArrayList<Pair<List<ChatMessageDto>, List<ChatItem>>>()
+    private var friendsResponse: () -> MockResponse = { json("""{"friends":[]}""") }
     private var changesResponse: (RecordedRequest) -> MockResponse = { json("""{"changes":[],"has_more":false}""") }
     private var ackResponse: () -> MockResponse = { json("""{"ok":true}""") }
     private val peer = PublicUser(2, "bob", "Bob")
@@ -77,7 +87,7 @@ class ChatMessageChangesTest {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 requests.add(request)
                 return when (request.requestUrl!!.encodedPath) {
-                    "/api/v1/friends" -> json("""{"friends":[]}""")
+                    "/api/v1/friends" -> friendsResponse()
                     "/api/v1/friends/requests" -> json("""{"requests":[]}""")
                     "/api/v1/blocks" -> json("""{"blocks":[]}""")
                     "/api/v1/chats" -> json("""
@@ -111,6 +121,43 @@ class ChatMessageChangesTest {
         AccountSession.resetForTests()
         server.shutdown()
         stopKoin()
+    }
+
+    @Test
+    fun hidingLauncherCancelsRemainingHttpRequestsAndResumeRefreshes() = runBlocking {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        friendsResponse = {
+            entered.countDown()
+            check(release.await(5, TimeUnit.SECONDS))
+            json("""{"friends":[]}""")
+        }
+        val visible = MutableStateFlow(true)
+        val requestJob = CompletableDeferred<Job>()
+        val refreshed = CompletableDeferred<Unit>()
+        val loop = launch(Dispatchers.Default) {
+            visible.whileVisible {
+                requestJob.complete(currentCoroutineContext().job)
+                FriendsSession.refreshLists()
+                refreshed.complete(Unit)
+            }
+        }
+        try {
+            withContext(Dispatchers.IO) { assertTrue(entered.await(3, TimeUnit.SECONDS)) }
+            visible.value = false
+            val active = requestJob.await()
+            withTimeout(3000) { while (active.isActive) delay(1) }
+            release.countDown()
+            withTimeout(3000) { active.join() }
+            assertEquals(1, requests.size, "隐藏后不应继续发送好友申请、聊天等后续请求")
+            friendsResponse = { json("""{"friends":[]}""") }
+            visible.value = true
+            withTimeout(3000) { refreshed.await() }
+            assertEquals(7, requests.size, "恢复后完整刷新一轮")
+        } finally {
+            release.countDown()
+            loop.cancelAndJoin()
+        }
     }
 
     @Test

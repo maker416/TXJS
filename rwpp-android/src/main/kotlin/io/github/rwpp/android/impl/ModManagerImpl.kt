@@ -50,12 +50,14 @@ class ModManagerImpl : ModManager {
         io.github.rwpp.game.GameStartSafety.requireCanReload()
         check(isReloadingMods.compareAndSet(false, true)) { "模组仍在重载，请等待完成" }
         try {
+            game.invalidateModPlaytimeSnapshot()
             ReloadModEvent().broadcastIn()
             refreshProtectedModLoadHint(getAllMods(), enabledByFileName)
             if (forceImmediate) runReloadCore(enabledByFileName)
             else runOnGameThread { runReloadCore(enabledByFileName) }
             game.getAllMaps(true)
         } finally {
+            game.invalidateModPlaytimeSnapshot()
             try { ReloadModFinishedEvent().broadcastIn() } finally {
                 clearProtectedModLoadHint()
                 isReloadingMods.set(false)
@@ -74,6 +76,7 @@ class ModManagerImpl : ModManager {
         }
         try {
             logger.info("[MODSYNC] modReloadKeepConnected start, broadcasting ReloadModEvent")
+            game.invalidateModPlaytimeSnapshot()
             ReloadModEvent().broadcastIn()
             refreshProtectedModLoadHint(getAllMods(), enabledByFileName)
             KeepConnectedReload.begin()
@@ -100,6 +103,7 @@ class ModManagerImpl : ModManager {
             }
             logger.info("[MODSYNC] modReloadKeepConnected main work finished")
         } finally {
+            game.invalidateModPlaytimeSnapshot()
             try { ReloadModFinishedEvent().broadcastIn() } finally {
                 clearProtectedModLoadHint()
                 isReloadingMods.set(false)
@@ -116,6 +120,7 @@ class ModManagerImpl : ModManager {
             error("模组仍在重载，请等待完成")
         }
         try {
+            game.invalidateModPlaytimeSnapshot()
             KeepConnectedReload.begin()
             val watchdog = startNetWatchdog()
             try {
@@ -133,6 +138,7 @@ class ModManagerImpl : ModManager {
                 }
             }
         } finally {
+            game.invalidateModPlaytimeSnapshot()
             clearProtectedModLoadHint()
             isReloadingMods.set(false)
         }
@@ -284,8 +290,13 @@ class ModManagerImpl : ModManager {
     private suspend fun auxiliaryReload(stage: String, action: () -> Unit) {
         io.github.rwpp.game.GameStartSafety.requireCanReload()
         check(isReloadingMods.compareAndSet(false, true)) { "模组仍在重载，请等待完成" }
-        try { runOnGameThread { ModLoadSafety.run(stage, action) } }
-        finally { isReloadingMods.set(false) }
+        try {
+            game.invalidateModPlaytimeSnapshot()
+            runOnGameThread { ModLoadSafety.run(stage, action) }
+        } finally {
+            game.invalidateModPlaytimeSnapshot()
+            isReloadingMods.set(false)
+        }
     }
 
     override suspend fun modSaveChange(enabledByFileName: Map<String, Boolean>?) {

@@ -64,6 +64,8 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.rwpp.app.LauncherVisibility
+import io.github.rwpp.app.whileVisible
 import io.github.rwpp.net.sync.SyncPeerPhase
 import io.github.rwpp.net.sync.SyncPeerSnapshot
 import coil3.compose.AsyncImage
@@ -127,6 +129,7 @@ import io.github.rwpp.widget.v2.ScrollbarSelectionActionable
 import io.github.rwpp.widget.v2.bounceClick
 import kotlin.time.DurationUnit
 import kotlin.time.toDuration
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -206,7 +209,11 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     // 房间核心状态（玩家列表/地图名/地图类型/房主状态）由 RoomSnapshotStore 统一采样；
     // 组合内不再直读引擎这些字段
     val snapshot by RoomSnapshotStore.snapshot.collectAsState()
-    LaunchedEffect(Unit) { RoomSnapshotStore.resample(game) }
+    LaunchedEffect(Unit) {
+        LauncherVisibility.visible.whileVisible {
+            RoomSnapshotStore.resample(game)
+        }
+    }
     val displayMapName = snapshot.displayMapName
 
     var optionVisible by remember { mutableStateOf(false) }
@@ -231,6 +238,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     var hasPublishedInfo by remember { mutableStateOf(false) }
     var remainingSeconds by remember { mutableIntStateOf(0) }
     var totalSeconds by remember { mutableIntStateOf(0) }
+    var expiryDeadlineNanos by remember { mutableLongStateOf(0L) }
     var isRefreshingExpiry by remember { mutableStateOf(false) }
     // Q/R 房统一通过房间号手动申请公开，各种等待室布局使用同一个显示条件。
     val showPublishButton = roomIdForPublish != null && !isPublishing && !hasPublishedInfo
@@ -238,6 +246,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     fun updatePublishedExpiry(seconds: Int) {
         val safeSeconds = seconds.coerceAtLeast(0)
         remainingSeconds = safeSeconds
+        expiryDeadlineNanos = System.nanoTime() + safeSeconds.toLong() * 1_000_000_000L
         if (safeSeconds > 0) {
             hasPublishedInfo = true
             if (totalSeconds == 0 || safeSeconds > totalSeconds) totalSeconds = safeSeconds
@@ -249,38 +258,45 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 
     // 从持久化恢复已发布信息（若房间匹配）
     LaunchedEffect(roomIdForPublish) {
-        val info = configIO.readConfig(PublishedRoomInfo::class)
-        val currentRoomId = roomIdForPublish
-        if (info == null || currentRoomId == null || info.roomId != currentRoomId || !info.isPublished) {
-            hasPublishedInfo = false
-            remainingSeconds = 0
-            totalSeconds = 0
-            return@LaunchedEffect
-        }
+        LauncherVisibility.visible.whileVisible {
+            RoomSnapshotStore.awaitSampling(game)
+            val info = configIO.readConfig(PublishedRoomInfo::class)
+            val currentRoomId = roomIdForPublish
+            if (info == null || currentRoomId == null || info.roomId != currentRoomId || !info.isPublished) {
+                hasPublishedInfo = false
+                remainingSeconds = 0
+                totalSeconds = 0
+                return@whileVisible
+            }
 
-        if (info.roomId == currentRoomId && info.isPublished) {
-            hasPublishedInfo = true
-            remainingSeconds = 0
-            totalSeconds = 0
-            // 立即查询一次
-            with(net) {
-                getServerExpiry(info.baseUrl, info.serverId, info.secretKey)
-            }.onSuccess { sec ->
-                updatePublishedExpiry(sec)
+            if (info.roomId == currentRoomId && info.isPublished) {
+                hasPublishedInfo = true
+                remainingSeconds = 0
+                totalSeconds = 0
+                // 立即查询一次
+                with(net) {
+                    getServerExpiry(info.baseUrl, info.serverId, info.secretKey)
+                }.onSuccess { sec ->
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    updatePublishedExpiry(sec)
+                }
             }
         }
     }
 
     // 本地每秒递减倒计时，避免高频请求列表服务器
     LaunchedEffect(hasPublishedInfo) {
-        if (!hasPublishedInfo) return@LaunchedEffect
-        while (isActive) {
-            delay(1_000L)
-            if (remainingSeconds > 0) {
-                remainingSeconds--
-                if (remainingSeconds <= 0) {
-                    hasPublishedInfo = false
-                    totalSeconds = 0
+        LauncherVisibility.visible.whileVisible {
+            RoomSnapshotStore.awaitSampling(game)
+            if (!hasPublishedInfo) return@whileVisible
+            while (isActive) {
+                delay(1_000L)
+                if (remainingSeconds > 0) {
+                    remainingSeconds = ((expiryDeadlineNanos - System.nanoTime()).coerceAtLeast(0L) / 1_000_000_000L).toInt()
+                    if (remainingSeconds <= 0) {
+                        hasPublishedInfo = false
+                        totalSeconds = 0
+                    }
                 }
             }
         }
@@ -288,19 +304,24 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 
     // 定期与服务器同步剩余时间（本地倒计时之间校正）
     LaunchedEffect(hasPublishedInfo) {
-        if (!hasPublishedInfo) return@LaunchedEffect
-        val info = configIO.readConfig(PublishedRoomInfo::class) ?: return@LaunchedEffect
-        if (!info.isPublished) return@LaunchedEffect
-        while (isActive) {
-            with(net) {
-                getServerExpiry(info.baseUrl, info.serverId, info.secretKey)
-            }.onSuccess { sec ->
-                updatePublishedExpiry(sec)
-            }.onFailure {
-                // 查询失败可能是房间已过期，标记为未发布
-                if (remainingSeconds <= 0) hasPublishedInfo = false
+        LauncherVisibility.visible.whileVisible {
+            RoomSnapshotStore.awaitSampling(game)
+            if (!hasPublishedInfo) return@whileVisible
+            val info = configIO.readConfig(PublishedRoomInfo::class) ?: return@whileVisible
+            if (!info.isPublished) return@whileVisible
+            while (isActive) {
+                with(net) {
+                    getServerExpiry(info.baseUrl, info.serverId, info.secretKey)
+                }.onSuccess { sec ->
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    updatePublishedExpiry(sec)
+                }.onFailure {
+                    if (it is CancellationException) throw it
+                    // 查询失败可能是房间已过期，标记为未发布
+                    if (remainingSeconds <= 0) hasPublishedInfo = false
+                }
+                delay(PUBLISHED_ROOM_EXPIRY_SYNC_INTERVAL_MS)
             }
-            delay(PUBLISHED_ROOM_EXPIRY_SYNC_INTERVAL_MS)
         }
     }
 
@@ -363,7 +384,9 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 //    }
 
     GlobalEventChannel.filter(RefreshUIEvent::class).onDispose {
-        subscribeAlways(Dispatchers.Main.immediate) { updateAction() }
+        subscribeAlways(Dispatchers.Main.immediate) {
+            if (RoomSnapshotStore.shouldSample(game)) updateAction()
+        }
     }
 
     GlobalEventChannel.filter(ReturnMainMenuEvent::class).onDispose {
@@ -380,13 +403,15 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 
     // 单调时钟计时，不因刷新/弹窗/系统时间调整重置；离开等待室后取消并丢弃本轮记录。
     LaunchedEffect(room) {
-        val detectorGuard = ListDetectorGuard()
-        while (isActive) {
-            if (launcherPage == LauncherPage.Room) {
-                RoomSnapshotStore.resample(game)
-                detectorGuard.poll(room, RoomSnapshotStore.snapshot.value.players, System.nanoTime() / 1_000_000L)
+        LauncherVisibility.visible.whileVisible {
+            val detectorGuard = ListDetectorGuard()
+            while (isActive) {
+                if (RoomSnapshotStore.shouldSample(game)) {
+                    RoomSnapshotStore.resample(game)
+                    detectorGuard.poll(room, RoomSnapshotStore.snapshot.value.players, System.nanoTime() / 1_000_000L)
+                }
+                delay(1_000L)
             }
-            delay(1_000L)
         }
     }
 
@@ -624,28 +649,35 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
     var roomDetails by remember { mutableStateOf("Getting details...") }
 
     LaunchedEffect(update) {
-        val raw = room.roomDetails()
-        roomDetails = normalizeRoomAddressesInDetails(raw).split("\n")
-            .filter { !it.startsWith("Map:") && it.isNotBlank() }
-            .joinToString("\n")
-        roomIdForPublish = extractRoomJoinAddress(raw)
-        // 房主开启「传输模组」时：拿到短码即启动带外同步会话（内部幂等）
-        roomIdForPublish?.let { code ->
-            if (room.isHost) ModSyncController.startHostSession(code)
-            // 短码就绪：补充身份公示 key 并立即重发（内部幂等）
-            RoomIdentityController.addRoomCodeKey(code)
+        LauncherVisibility.visible.whileVisible {
+            RoomSnapshotStore.awaitSampling(game)
+            val raw = room.roomDetails()
+            roomDetails = normalizeRoomAddressesInDetails(raw).split("\n")
+                .filter { !it.startsWith("Map:") && it.isNotBlank() }
+                .joinToString("\n")
+            roomIdForPublish = extractRoomJoinAddress(raw)
+            // 房主开启「传输模组」时：拿到短码即启动带外同步会话（内部幂等）
+            roomIdForPublish?.let { code ->
+                if (room.isHost) ModSyncController.startHostSession(code)
+                // 短码就绪：补充身份公示 key 并立即重发（内部幂等）
+                RoomIdentityController.addRoomCodeKey(code)
+            }
+            // 单人/沙盒复用本视图，不做身份公示
+            if (!room.isSinglePlayerGame) RoomIdentityController.startPublishing()
         }
-        // 单人/沙盒复用本视图，不做身份公示
-        if (!room.isSinglePlayerGame) RoomIdentityController.startPublishing()
     }
 
     // 行尾「查看名片」按钮点亮态：每秒预取一轮房内真人玩家的名片公示记录，
     // 确认对方已公示（登录账号的极速版客户端）才点亮按钮，其余状态点击仅提示原因
     LaunchedEffect(room.isSinglePlayerGame) {
-        if (room.isSinglePlayerGame) return@LaunchedEffect
-        while (true) {
-            runCatching { RoomIdentityController.prefetchPlayerCards(room) }
-            delay(ROOM_CARD_PREFETCH_INTERVAL_MS)
+        LauncherVisibility.visible.whileVisible {
+            if (room.isSinglePlayerGame) return@whileVisible
+            while (true) {
+                if (RoomSnapshotStore.shouldSample(game)) {
+                    runCatching { RoomIdentityController.prefetchPlayerCards(room) }
+                }
+                delay(ROOM_CARD_PREFETCH_INTERVAL_MS)
+            }
         }
     }
 

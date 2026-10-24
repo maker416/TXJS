@@ -8,6 +8,8 @@
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.core.ModPlaytimeController
 import io.github.rwpp.game.mod.Mod
+import io.github.rwpp.game.mod.ModPlaytimeHashCache
+import io.github.rwpp.game.mod.ModPlaytimeSource
 import io.github.rwpp.game.mod.ModPlaytimeHash
 import io.github.rwpp.game.mod.ModPlaytimeState
 import io.github.rwpp.logger
@@ -325,6 +327,34 @@ class ModPlaytimeControllerTest {
         assertEquals(replacement.report.sessionId, selected.report.sessionId)
         assertEquals("http://new-server", selected.apiUrl)
         assertEquals(listOf(selected), ModPlaytimeController.pendingForTests(), "旧地址记录必须淘汰，不能阻塞新地址或发到旧服务")
+    }
+
+    @Test
+    fun separateMatchesReusePersistentContentIdentityAndKeepSeparateReports() = runBlocking {
+        login()
+        val source = mod("Cached mod")
+        val calls = AtomicInteger()
+        val cacheFile = File(directory, "cache/identities.json")
+        fun cache() = ModPlaytimeHashCache(cacheFile) { file, check ->
+            calls.incrementAndGet()
+            ModPlaytimeHash.sha256(file, check)
+        }
+        ModPlaytimeController.cacheOverride = cache()
+        val frozen = listOf(ModPlaytimeSource(source.name, source.path))
+        sample(active(source).copy(sources = frozen), 0)
+        awaitHashing()
+        for (time in 1L..30L) sample(active(source).copy(sources = frozen), time)
+        ModPlaytimeController.finishMatchForTests(31 * second)
+        ModPlaytimeController.cacheOverride = cache() // 模拟重新加载磁盘缓存。
+        sample(active(source, 2).copy(sources = frozen), 40)
+        awaitHashing()
+        for (time in 41L..70L) sample(active(source, 2).copy(sources = frozen), time)
+        ModPlaytimeController.finishMatchForTests(71 * second)
+        assertEquals(1, calls.get())
+        val reports = ModPlaytimeController.pendingForTests()
+        assertEquals(2, reports.size)
+        assertNotEquals(reports[0].report.sessionId, reports[1].report.sessionId)
+        assertEquals(reports[0].report.mods, reports[1].report.mods)
     }
 
     private fun login(userId: Long = 1, token: String = "token-A") {

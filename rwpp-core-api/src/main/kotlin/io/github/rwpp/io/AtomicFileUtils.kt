@@ -51,6 +51,7 @@ object AtomicFileUtils {
         val tmp = File.createTempFile(this.name, ".tmp", canonicalTarget.parentFile)
         try {
             tmp.writeBytes(bytes)
+            io.github.rwpp.game.mod.ModPlaytimeHashCache.sourceChanged(canonicalTarget)
             // 目标已存在时先删，否则 renameTo 在部分文件系统上会失败
             if (canonicalTarget.exists() && !canonicalTarget.delete()) {
                 throw IOException("Failed to delete existing target: $canonicalTarget")

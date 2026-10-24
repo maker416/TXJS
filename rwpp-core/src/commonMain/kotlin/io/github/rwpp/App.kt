@@ -44,6 +44,9 @@ import coil3.ImageLoader
 import coil3.compose.setSingletonImageLoaderFactory
 import coil3.request.crossfade
 import coil3.size.Precision
+import io.github.rwpp.app.AutoUpdater
+import io.github.rwpp.app.LauncherVisibility
+import io.github.rwpp.app.whileVisible
 import io.github.rwpp.coil.AccountAvatarFetcherFactory
 import io.github.rwpp.coil.AccountAvatarKeyer
 import io.github.rwpp.coil.ImageableFetcherFactory
@@ -68,7 +71,6 @@ import io.github.rwpp.game.map.MissionType
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.io.SizeUtils
-import io.github.rwpp.app.AutoUpdater
 import io.github.rwpp.net.Net
 import io.github.rwpp.scripts.Render
 import io.github.rwpp.ui.*
@@ -153,13 +155,15 @@ fun App(
     // 好友私信全局轮询：驱动未读徽标与房间邀请悬浮卡片。
     // 好友页/账号页打开时跳过（它们有自有轮询）；共用聊天配额，列表每 5s 刷新
     LaunchedEffect(Unit) {
-        while (true) {
-            if (AccountSession.loggedIn && AccountSession.networkEnabled &&
-                !UI.showFriendsView && !UI.showAccountView
-            ) {
-                runCatching { FriendsSession.refreshLists() }
+        LauncherVisibility.visible.whileVisible {
+            while (true) {
+                if (AccountSession.loggedIn && AccountSession.networkEnabled &&
+                    !UI.showFriendsView && !UI.showAccountView
+                ) {
+                    runCatching { FriendsSession.refreshLists() }
+                }
+                delay(FriendsSession.LIST_POLL_INTERVAL_MS)
             }
-            delay(FriendsSession.LIST_POLL_INTERVAL_MS)
         }
     }
 

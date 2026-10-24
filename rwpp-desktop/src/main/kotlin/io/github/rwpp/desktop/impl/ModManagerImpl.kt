@@ -56,6 +56,7 @@ class ModManagerImpl : ModManager {
         }
         try {
             logger.info("[MODSYNC] modReload start, broadcasting ReloadModEvent (forceImmediate=$forceImmediate)")
+            game.invalidateModPlaytimeSnapshot()
             ReloadModEvent().broadcastIn()
             refreshProtectedModLoadHint(getAllMods(), enabledByFileName)
             // PC 的 forceImmediate 也不能绕过 GL 所有权；已在游戏线程时直接执行，否则排队。
@@ -67,6 +68,7 @@ class ModManagerImpl : ModManager {
             logger.info("[MODSYNC] modReload main work finished")
         } finally {
             logger.info("[MODSYNC] modReload broadcasting ReloadModFinishedEvent (finally)")
+            game.invalidateModPlaytimeSnapshot()
             try { ReloadModFinishedEvent().broadcastIn() } finally {
                 clearProtectedModLoadHint()
                 isReloadingMods.set(false)
@@ -85,6 +87,7 @@ class ModManagerImpl : ModManager {
         }
         try {
             logger.info("[MODSYNC] modReloadKeepConnected start, broadcasting ReloadModEvent")
+            game.invalidateModPlaytimeSnapshot()
             ReloadModEvent().broadcastIn()
             refreshProtectedModLoadHint(getAllMods(), enabledByFileName)
             gameThreadDispatcher.run { KeepConnectedReload.begin() }
@@ -120,6 +123,7 @@ class ModManagerImpl : ModManager {
             logger.error("[MODSYNC] keep-connected mod reload failed", e)
             throw e
         } finally {
+            game.invalidateModPlaytimeSnapshot()
             try { ReloadModFinishedEvent().broadcastIn() } finally {
                 clearProtectedModLoadHint()
                 isReloadingMods.set(false)
@@ -136,6 +140,7 @@ class ModManagerImpl : ModManager {
             error("模组仍在重载，请等待完成")
         }
         try {
+            game.invalidateModPlaytimeSnapshot()
             gameThreadDispatcher.run { KeepConnectedReload.begin() }
             val watchdog = startNetWatchdog()
             try {
@@ -162,6 +167,7 @@ class ModManagerImpl : ModManager {
             logger.error("[MODSYNC] vanilla-only mod reload failed", e)
             throw e
         } finally {
+            game.invalidateModPlaytimeSnapshot()
             clearProtectedModLoadHint()
             isReloadingMods.set(false)
         }
@@ -310,11 +316,15 @@ class ModManagerImpl : ModManager {
         io.github.rwpp.game.GameStartSafety.requireCanReload()
         check(isReloadingMods.compareAndSet(false, true)) { "模组仍在重载，请等待完成" }
         try {
+            game.invalidateModPlaytimeSnapshot()
             gameThreadDispatcher.run {
                 DesktopReloadGlContext.requireOwnerContext()
                 ModLoadSafety.run(stage, action)
             }
-        } finally { isReloadingMods.set(false) }
+        } finally {
+            game.invalidateModPlaytimeSnapshot()
+            isReloadingMods.set(false)
+        }
     }
 
     override fun getModByName(name: String): Mod? {
