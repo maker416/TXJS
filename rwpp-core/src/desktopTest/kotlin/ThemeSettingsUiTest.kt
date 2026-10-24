@@ -9,6 +9,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
+import io.github.rwpp.widget.uiAnimationsEnabled
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
@@ -185,6 +187,30 @@ class ThemeSettingsUiTest {
             assertTrue(settings.backgroundImageEnabled)
             assertEquals("sample", settings.selectedThemePack)
         }
+    }
+
+    @Test
+    fun animationSwitchUpdatesAnAlreadyComposedSiblingAndSaves() = runDesktopComposeUiTest(width = 1100, height = 1300) {
+        var observed = true
+        setContent {
+            KoinContext(appKoin) {
+                RWPPTheme(default = true) {
+                    val enabled = uiAnimationsEnabled()
+                    SideEffect { observed = enabled }
+                    CompositionLocalProvider(LocalWindowManager provides WindowManager.Middle) {
+                        SettingsView({}, "RWPP", {}, {}, {})
+                    }
+                }
+            }
+        }
+        themeTab()
+        runOnIdle { assertFalse(observed) }
+        onNodeWithText(readI18n("settings.enableAnimations")).performScrollTo().performClick()
+        runOnIdle { assertTrue(settings.enableAnimations); assertTrue(observed) }
+        onNodeWithText(readI18n("settings.enableAnimations")).performClick()
+        runOnIdle { assertFalse(settings.enableAnimations); assertFalse(observed) }
+        onNodeWithContentDescription(readI18n("settings.saveChanges")).performClick()
+        runOnIdle { assertFalse(assertNotNull(saved).enableAnimations) }
     }
 
     private fun ComposeUiTest.themeTab() {

@@ -47,20 +47,19 @@ import coil3.size.Precision
 import io.github.rwpp.app.AutoUpdater
 import io.github.rwpp.app.LauncherVisibility
 import io.github.rwpp.app.whileVisible
+import io.github.rwpp.account.AccountSession
+import io.github.rwpp.account.FriendsSession
 import io.github.rwpp.coil.AccountAvatarFetcherFactory
 import io.github.rwpp.coil.AccountAvatarKeyer
 import io.github.rwpp.coil.ImageableFetcherFactory
 import io.github.rwpp.coil.ImageableKeyer
 import io.github.rwpp.config.CoreData
 import io.github.rwpp.config.Settings
-import io.github.rwpp.account.AccountSession
-import io.github.rwpp.account.FriendsSession
 import io.github.rwpp.core.GameSessionController
 import io.github.rwpp.core.MatchStartController
-import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.core.ModPlaytimeController
+import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.core.RoomSnapshotStore
-import io.github.rwpp.net.sync.SyncPeerPhase
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.events.RefreshUIEvent
 import io.github.rwpp.event.events.ReloadModEvent
@@ -72,11 +71,15 @@ import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.io.SizeUtils
 import io.github.rwpp.net.Net
+import io.github.rwpp.net.sync.SyncPeerPhase
 import io.github.rwpp.scripts.Render
+import io.github.rwpp.theme.ArtThemeController
+import io.github.rwpp.theme.LauncherMusicController
 import io.github.rwpp.ui.*
 import io.github.rwpp.ui.UI.selectedColorSchemeName
-import io.github.rwpp.utils.compareVersions
+import io.github.rwpp.ui.UI.showAccountView
 import io.github.rwpp.ui.UI.showExtensionView
+import io.github.rwpp.ui.UI.showFriendsView
 import io.github.rwpp.ui.UI.showMissionView
 import io.github.rwpp.ui.UI.showModsView
 import io.github.rwpp.ui.UI.showMultiplayerView
@@ -84,15 +87,13 @@ import io.github.rwpp.ui.UI.showOpenSourceInfoView
 import io.github.rwpp.ui.UI.showReplayView
 import io.github.rwpp.ui.UI.showResourceBrowser
 import io.github.rwpp.ui.UI.showRoomView
-import io.github.rwpp.ui.UI.showAccountView
-import io.github.rwpp.ui.UI.showFriendsView
 import io.github.rwpp.ui.UI.showSettingsView
 import io.github.rwpp.ui.UI.showSinglePlayerView
 import io.github.rwpp.ui.UI.showSurvivalView
 import io.github.rwpp.ui.UI.showThemesView
-import io.github.rwpp.theme.ArtThemeController
-import io.github.rwpp.theme.LauncherMusicController
+import io.github.rwpp.utils.compareVersions
 import io.github.rwpp.widget.*
+import io.github.rwpp.widget.UiCircularProgressIndicator
 import io.github.rwpp.widget.v2.LineSpinFadeLoaderIndicator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -169,8 +170,10 @@ fun App(
 
     setSingletonImageLoaderFactory { context ->
         ImageLoader.Builder(context)
-            .crossfade(true)
             .components {
+                add(coil3.intercept.Interceptor { chain ->
+                    chain.withRequest(chain.request.newBuilder().crossfade(settings.enableAnimations).build()).proceed()
+                })
                 add(ImageableFetcherFactory())
                 add(ImageableKeyer())
                 add(AccountAvatarFetcherFactory())
@@ -239,7 +242,7 @@ fun App(
                 LocalUpdateCheckInProgress provides updateController.checking,
             ) {
 
-                val enableAnimations = settings.enableAnimations
+                val enableAnimations = uiAnimationsEnabled()
                 Scaffold(
                     containerColor = Color.Transparent,
                     floatingActionButton = {
@@ -555,7 +558,7 @@ fun App(
                     BorderCard(Modifier.widthIn(max = 420.dp).padding(20.dp)) {
                         Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            CircularProgressIndicator()
+                            UiCircularProgressIndicator()
                             Text(readI18n("multiplayer.room.startLoading"))
                         }
                     }

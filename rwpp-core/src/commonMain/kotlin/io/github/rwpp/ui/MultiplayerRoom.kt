@@ -10,9 +10,7 @@ package io.github.rwpp.ui
 import androidx.compose.animation.*
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -28,13 +26,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.ripple.RippleAlpha
@@ -72,14 +70,20 @@ import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import coil3.size.Precision
+import com.eclipsesource.json.Json
 import io.github.rwpp.AppContext
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.RoomIdentityController
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
+import io.github.rwpp.config.DEFAULT_ROOM_LIST_API_URLS
 import io.github.rwpp.config.PublishedRoomInfo
 import io.github.rwpp.config.Settings
+import io.github.rwpp.core.ListDetectorGuard
+import io.github.rwpp.core.ListDetectorPlayers
+import io.github.rwpp.core.ModSyncController
+import io.github.rwpp.core.RoomSnapshotStore
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
@@ -97,22 +101,16 @@ import io.github.rwpp.game.team.TeamMode
 import io.github.rwpp.game.units.UnitType
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.io.SizeUtils
 import io.github.rwpp.net.DEFAULT_PUBLISH_ROOM_TYPE
 import io.github.rwpp.net.MOD_SYNC_ROOM_TYPE
 import io.github.rwpp.net.Net
 import io.github.rwpp.net.account.RoomInvite
 import io.github.rwpp.net.account.isPlausibleJoinAddress
 import io.github.rwpp.net.composePublishRoomType
-import io.github.rwpp.net.roomListPublishAddress
 import io.github.rwpp.net.extractRoomJoinAddress
 import io.github.rwpp.net.normalizeRoomAddressesInDetails
-import io.github.rwpp.config.DEFAULT_ROOM_LIST_API_URLS
-import com.eclipsesource.json.Json
-import io.github.rwpp.core.ModSyncController
-import io.github.rwpp.core.ListDetectorGuard
-import io.github.rwpp.core.ListDetectorPlayers
-import io.github.rwpp.core.RoomSnapshotStore
-import io.github.rwpp.io.SizeUtils
+import io.github.rwpp.net.roomListPublishAddress
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.platform.KickPlayerContextMenuAreaMultiplatform
 import io.github.rwpp.projectVersion
@@ -122,11 +120,17 @@ import io.github.rwpp.scripts.Render
 import io.github.rwpp.ui.UI.chatMessages
 import io.github.rwpp.ui.color.getTeamColor
 import io.github.rwpp.widget.*
+import io.github.rwpp.widget.UiCircularProgressIndicator
+import io.github.rwpp.widget.UiLinearProgressIndicator
+import io.github.rwpp.widget.animateUiColorAsState
+import io.github.rwpp.widget.animateUiDpAsState
+import io.github.rwpp.widget.animateUiFloatAsState
 import io.github.rwpp.widget.v2.LazyColumnScrollbar
 import io.github.rwpp.widget.v2.LineSpinFadeLoaderIndicator
 import io.github.rwpp.widget.v2.ListIndicatorSettings
 import io.github.rwpp.widget.v2.ScrollbarSelectionActionable
 import io.github.rwpp.widget.v2.bounceClick
+import kotlin.math.roundToInt
 import kotlin.time.DurationUnit
 import kotlin.time.toDuration
 import kotlinx.coroutines.CancellationException
@@ -141,7 +145,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
-import kotlin.math.roundToInt
 
 /** 已发布房间剩余时间与列表服务器同步的间隔（本地每秒递减倒计时） */
 private const val PUBLISHED_ROOM_EXPIRY_SYNC_INTERVAL_MS = 30_000L
@@ -790,7 +793,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
             val mapType = snapshot.mapType
             val compactRowShape = RoundedCornerShape(6.dp)
             val scrollState = rememberScrollState()
-            val enableAnimations = koinInject<Settings>().enableAnimations
+            val enableAnimations = uiAnimationsEnabled()
 
             if (roomDetailsDialogVisible) {
                 RoomDetailsDialog(
@@ -1069,7 +1072,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                                     update = update,
                                                     onPlayerClick = onPlayerClick,
                                                     onViewProfile = openPlayerCard,
-                                                    modifier = if (koinInject<Settings>().enableAnimations) {
+                                                    modifier = if (uiAnimationsEnabled()) {
                                                         Modifier.animateItem()
                                                     } else {
                                                         Modifier
@@ -2105,7 +2108,7 @@ private fun PublishToListDialog(
     onRetry: (PublishStep) -> Unit,
 ) {
     val settings = koinInject<Settings>()
-    val enableAnimations = settings.enableAnimations
+    val enableAnimations = uiAnimationsEnabled()
 
     AnimatedAlertDialog(
         visible = state != PublishToListUiState.Hidden,
@@ -2130,7 +2133,7 @@ private fun PublishToListDialog(
                         if (enableAnimations) {
                             (fadeIn() + scaleIn(initialScale = 0.92f)) togetherWith fadeOut()
                         } else {
-                            EnterTransition.None togetherWith ExitTransition.None
+                            (EnterTransition.None togetherWith ExitTransition.None).using(null)
                         }
                     },
                     label = "publishToListContent",
@@ -2191,7 +2194,7 @@ private fun PublishToListDialog(
                             // 未选手动标签时由 composePublishRoomType 默认补「默认」，允许直接点公开
                             val effectiveRoomType = composePublishRoomType(orderedSelected, modSyncEnabled)
                             val canPublish = effectiveRoomName.isNotBlank()
-                            val roomNameHintColor by animateColorAsState(
+                            val roomNameHintColor by animateUiColorAsState(
                                 targetValue = if (roomNameHintHighlighted) {
                                     MaterialTheme.colorScheme.primary
                                 } else {
@@ -2201,7 +2204,9 @@ private fun PublishToListDialog(
                                 label = "roomNameHintColor",
                             )
 
-                            LaunchedEffect(roomNameHintFlashTick) {
+                            LaunchedEffect(roomNameHintFlashTick, enableAnimations) {
+                                roomNameHintHighlighted = false
+                                if (!enableAnimations) return@LaunchedEffect
                                 if (roomNameHintFlashTick == 0) return@LaunchedEffect
                                 roomNameHintHighlighted = true
                                 delay(120)
@@ -3079,15 +3084,15 @@ private fun MiniToggleSwitch(
     checkedColor: Color,
     modifier: Modifier = Modifier,
 ) {
-    val thumbOffset by animateDpAsState(if (checked) 12.dp else 0.dp)
-    val trackColor by animateColorAsState(
+    val thumbOffset by animateUiDpAsState(if (checked) 12.dp else 0.dp)
+    val trackColor by animateUiColorAsState(
         if (checked) {
             checkedColor.copy(alpha = 0.45f)
         } else {
             MaterialTheme.colorScheme.surfaceContainer
         }
     )
-    val thumbColor by animateColorAsState(
+    val thumbColor by animateUiColorAsState(
         if (checked) {
             checkedColor
         } else {
@@ -3640,7 +3645,7 @@ private fun ModSyncHostStatusBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (state is ModSyncController.HostSyncState.Preparing) {
-            CircularProgressIndicator(
+            UiCircularProgressIndicator(
                 modifier = Modifier.size(12.dp),
                 strokeWidth = 1.5.dp,
                 color = MaterialTheme.colorScheme.primary,
@@ -3702,7 +3707,7 @@ private fun RoomSelfSyncBar(compact: Boolean, modifier: Modifier = Modifier) {
                     color = Color(0xFF4CAF50),
                 )
             } else {
-                CircularProgressIndicator(
+                UiCircularProgressIndicator(
                     modifier = Modifier.size(12.dp),
                     strokeWidth = 1.5.dp,
                     color = MaterialTheme.colorScheme.primary,
@@ -3810,7 +3815,7 @@ private fun RowScope.RoomPlayerNameCell(
                     Spacer(Modifier.width(4.dp))
                 }
                 syncing || showReadySpinner -> {
-                    CircularProgressIndicator(
+                    UiCircularProgressIndicator(
                         modifier = Modifier.size(if (compact) 10.dp else 12.dp),
                         strokeWidth = if (compact) 1.5.dp else 2.dp,
                         color = MaterialTheme.colorScheme.primary,
@@ -3845,7 +3850,7 @@ private fun RoomPlayerSyncStatus(peer: SyncPeerSnapshot, compact: Boolean) {
     val progress = if (!indeterminate && peer.currentTotal > 0) {
         (peer.currentBytes.toFloat() / peer.currentTotal).coerceIn(0f, 1f)
     } else 0f
-    val animatedProgress by animateFloatAsState(
+    val animatedProgress by animateUiFloatAsState(
         targetValue = progress,
         animationSpec = tween(220),
         label = "player sync progress",
@@ -3884,7 +3889,7 @@ private fun RoomPlayerSyncStatus(peer: SyncPeerSnapshot, compact: Boolean) {
             )
         }
         if (indeterminate) {
-            LinearProgressIndicator(
+            UiLinearProgressIndicator(
                 modifier = Modifier
                     .weight(0.9f)
                     .height(if (compact) 3.dp else 4.dp),
@@ -3896,7 +3901,7 @@ private fun RoomPlayerSyncStatus(peer: SyncPeerSnapshot, compact: Boolean) {
             }
         } else {
             ModSyncProgressBar(
-                progress = animatedProgress,
+                progress = { animatedProgress },
                 modifier = Modifier
                     .weight(0.9f)
                     .height(if (compact) 3.dp else 4.dp),
@@ -3930,11 +3935,16 @@ private fun RoomPlayerSyncStatus(peer: SyncPeerSnapshot, compact: Boolean) {
 
 /** 细圆角渐变进度条：轨道 + 主色渐变填充 + 流光扫过 + 进度端点光斑。 */
 @Composable
-private fun ModSyncProgressBar(progress: Float, modifier: Modifier = Modifier) {
+private fun ModSyncProgressBar(progress: () -> Float, modifier: Modifier = Modifier) {
     val trackColor = MaterialTheme.colorScheme.surfaceContainer
     val fillStartColor = MaterialTheme.colorScheme.inversePrimary
     val fillEndColor = MaterialTheme.colorScheme.primary
-    val shimmer by rememberInfiniteTransition(label = "room mod sync shimmer").animateFloat(
+    val fillBrush = remember(fillStartColor, fillEndColor) {
+        Brush.horizontalGradient(listOf(fillStartColor, fillEndColor))
+    }
+    val fillPath = remember { Path() }
+    val band = remember { Path() }
+    val shimmer = if (uiAnimationsEnabled()) rememberInfiniteTransition(label = "room mod sync shimmer").animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
@@ -3942,36 +3952,36 @@ private fun ModSyncProgressBar(progress: Float, modifier: Modifier = Modifier) {
             repeatMode = RepeatMode.Restart,
         ),
         label = "room mod sync shimmer offset",
-    )
+    ) else null
 
     Canvas(modifier = modifier) {
         val radius = size.height / 2f
         drawRoundRect(color = trackColor, cornerRadius = CornerRadius(radius, radius))
 
-        val fillWidth = size.width * progress.coerceIn(0f, 1f)
+        val fillWidth = size.width * progress().coerceIn(0f, 1f)
         if (fillWidth > 0f) {
-            val fillPath = Path().apply {
+            fillPath.reset()
+            fillPath.apply {
                 addRoundRect(RoundRect(0f, 0f, fillWidth, size.height, CornerRadius(radius, radius)))
             }
             clipPath(fillPath) {
                 drawRoundRect(
-                    brush = Brush.horizontalGradient(
-                        colors = listOf(fillStartColor, fillEndColor),
-                        startX = 0f,
-                        endX = size.width,
-                    ),
+                    brush = fillBrush,
                     cornerRadius = CornerRadius(radius, radius),
                 )
-                val bandWidth = size.height * 2.5f
-                val sweep = shimmer * (fillWidth + bandWidth * 2f) - bandWidth
-                val band = Path().apply {
-                    moveTo(sweep, size.height)
-                    lineTo(sweep + bandWidth * 0.5f, 0f)
-                    lineTo(sweep + bandWidth, 0f)
-                    lineTo(sweep + bandWidth * 0.5f, size.height)
-                    close()
+                if (shimmer != null) {
+                    val bandWidth = size.height * 2.5f
+                    val sweep = shimmer.value * (fillWidth + bandWidth * 2f) - bandWidth
+                    band.reset()
+                    band.apply {
+                        moveTo(sweep, size.height)
+                        lineTo(sweep + bandWidth * 0.5f, 0f)
+                        lineTo(sweep + bandWidth, 0f)
+                        lineTo(sweep + bandWidth * 0.5f, size.height)
+                        close()
+                    }
+                    drawPath(band, Color.White.copy(alpha = 0.16f))
                 }
-                drawPath(band, Color.White.copy(alpha = 0.16f))
             }
             drawCircle(
                 color = Color.White.copy(alpha = 0.85f),

@@ -7,21 +7,20 @@
 
 package io.github.rwpp.widget.v2
 
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
-import io.github.rwpp.config.Settings
-import org.koin.compose.koinInject
+import io.github.rwpp.widget.animateUiFloatAsState
+import io.github.rwpp.widget.uiAnimationsEnabled
 
 @OptIn(ExperimentalFoundationApi::class)
 fun Modifier.bounceClick(
@@ -30,9 +29,9 @@ fun Modifier.bounceClick(
 ) = composed {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
-    val animationsEnabled = koinInject<Settings>().enableAnimations
+    val animationsEnabled = uiAnimationsEnabled()
     // 使用点击组件自己的按压状态，避免状态作为 pointerInput key 时取消当前手势。
-    val scale by animateFloatAsState(
+    val scale by animateUiFloatAsState(
         targetValue = if (animationsEnabled && pressed) 0.97f else 1f,
         animationSpec = tween(if (animationsEnabled) 120 else 0),
         label = "button press scale",

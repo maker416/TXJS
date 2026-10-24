@@ -7,10 +7,14 @@
 
 package io.github.rwpp.ui
 
+import io.github.rwpp.widget.UiSwitch
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,7 +22,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -30,7 +33,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.ExitToApp
@@ -40,26 +42,22 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -94,14 +92,15 @@ import io.github.rwpp.widget.AnimatedAlertDialog
 import io.github.rwpp.widget.BorderCard
 import io.github.rwpp.widget.ExitButton
 import io.github.rwpp.widget.RWSingleOutlinedTextField
+import io.github.rwpp.widget.UiCircularProgressIndicator
 import io.github.rwpp.widget.WindowManager
 import io.github.rwpp.widget.autoClearFocus
 import io.github.rwpp.widget.desktopEscapeToBackDispatcher
 import io.github.rwpp.widget.v2.ExpandedCard
-import org.koin.compose.koinInject
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.painterResource
+import org.koin.compose.koinInject
 
 private enum class AccountAuthKind {
     Login,
@@ -357,7 +356,7 @@ fun AccountView(onExit: () -> Unit) {
                     )
                 }
                 if (loggingOut) {
-                    CircularProgressIndicator(
+                    UiCircularProgressIndicator(
                         modifier = Modifier.padding(start = 8.dp).size(28.dp),
                         color = MaterialTheme.colorScheme.primary,
                     )
@@ -459,7 +458,7 @@ private fun AccountLoadingState() {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        CircularProgressIndicator(
+        UiCircularProgressIndicator(
             modifier = Modifier.size(40.dp),
             color = MaterialTheme.colorScheme.primary,
         )
@@ -1522,7 +1521,7 @@ private fun AccountAuthActions(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         if (submitting) {
-            CircularProgressIndicator(
+            UiCircularProgressIndicator(
                 modifier = Modifier.padding(vertical = 10.dp).size(36.dp),
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -1585,7 +1584,7 @@ private fun AccountPresenceSwitchRow(
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f),
         )
-        Switch(
+        UiSwitch(
             checked = checked,
             enabled = enabled,
             onCheckedChange = { onToggle() },
@@ -1638,7 +1637,7 @@ private fun PointLedgersDialog(
             }
             val ledgers = resp?.ledgers.orEmpty()
             if (loading && ledgers.isEmpty()) {
-                CircularProgressIndicator(
+                UiCircularProgressIndicator(
                     modifier = Modifier.padding(16.dp).size(32.dp).align(Alignment.CenterHorizontally),
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -1889,7 +1888,7 @@ private fun AccountAvatarDialog(
                     }
                 }
                 if (busy) {
-                    CircularProgressIndicator(
+                    UiCircularProgressIndicator(
                         modifier = Modifier.size(28.dp).align(Alignment.CenterHorizontally),
                         color = MaterialTheme.colorScheme.primary,
                     )

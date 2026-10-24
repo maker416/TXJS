@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -25,6 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.widget.UiCircularProgressIndicator
 
 /** 状态仍由启动检查控制器持有，主菜单只读取，不另存全局副本。 */
 internal val LocalUpdateCheckInProgress = staticCompositionLocalOf { false }
@@ -43,7 +43,7 @@ internal fun UpdateCheckHint(modifier: Modifier = Modifier) {
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            CircularProgressIndicator(
+            UiCircularProgressIndicator(
                 modifier = Modifier.size(12.dp),
                 color = LocalContentColor.current,
                 strokeWidth = 1.5.dp,

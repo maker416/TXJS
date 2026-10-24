@@ -7,17 +7,14 @@
 
 package io.github.rwpp.widget.v2
 
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animate
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
-import kotlinx.coroutines.delay
+import io.github.rwpp.widget.uiAnimationsEnabled
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -38,73 +35,28 @@ fun LineSpinFadeLoaderIndicator(
     maxAlpha: Float = 1.0f
 ) {
 
-    val angleStep = 360f / rectCount
-    val outerRadius = radius + elementHeight
-
-
-// ------------------------ scale animation ---------------------
-    val alphas = (1..rectCount).map { index ->
-        var alpha: Float by remember { mutableStateOf(minAlpha) }
-        LaunchedEffect(key1 = Unit) {
-
-            when (linearAnimationType) {
-                LinearAnimationType.CIRCULAR -> {
-                    delay(linearAnimationType.circleDelay * index)
-                }
-
-                LinearAnimationType.SKIP_AND_REPEAT -> {
-                    delay(linearAnimationType.circleDelay * index) // The constant value, here 250L, must be the same animation duration for this pattern to run
-                }
-            }
-
-            animate(
-                initialValue = minAlpha,
-                targetValue = maxAlpha,
-                animationSpec = infiniteRepeatable(
-                    animation = when (linearAnimationType) {
-                        LinearAnimationType.CIRCULAR -> {
-                            tween(durationMillis = linearAnimationType.animDuration)
-                        }
-
-                        LinearAnimationType.SKIP_AND_REPEAT -> {
-                            tween(durationMillis = linearAnimationType.animDuration)
-                        }
-                    },
-                    repeatMode = RepeatMode.Reverse,
-                )
-            ) { value, _ -> alpha = value }
+    val enabled = uiAnimationsEnabled()
+    val cycle = linearAnimationType.animDuration * 2
+    // One clock replaces rectCount perpetual coroutines and per-frame list allocation.
+    val phase = if (enabled) rememberInfiniteTransition(label = "loader").animateFloat(
+        initialValue = 0f, targetValue = cycle.toFloat(),
+        animationSpec = infiniteRepeatable(tween(cycle, easing = LinearEasing)), label = "loader phase",
+    ) else rememberUpdatedState(0f)
+    val lines = remember(rectCount, radius, elementHeight) {
+        List(rectCount) { index ->
+            val angle = Math.toRadians(index * 360.0 / rectCount)
+            val direction = Offset(cos(angle).toFloat(), sin(angle).toFloat())
+            direction * radius to direction * (radius + elementHeight)
         }
-
-        alpha
     }
-
-
-// ----------------------------- UI --------------------------
-
     Canvas(modifier = Modifier) {
-
         val center = Offset(size.width / 2, size.height / 2)
-
-        for (index in 0 until rectCount) {
-
-            val angle = index * angleStep
-
-            val startX =
-                center.x + radius * cos(Math.toRadians(angle.toDouble())).toFloat()
-            val startY =
-                center.y + radius * sin(Math.toRadians(angle.toDouble())).toFloat()
-
-            val endX = center.x + outerRadius * cos(Math.toRadians(angle.toDouble())).toFloat()
-            val endY = center.y + outerRadius * sin(Math.toRadians(angle.toDouble())).toFloat()
-
-            drawLine(
-                color = color,
-                start = Offset(startX, startY),
-                end = Offset(endX, endY),
-                strokeWidth = penThickness * alphas[index],
-                alpha = alphas[index],
-                cap = StrokeCap.Round,
-            )
+        lines.forEachIndexed { index, (start, end) ->
+            val shifted = ((phase.value - linearAnimationType.circleDelay * (index + 1)) % cycle + cycle) % cycle
+            val fraction = (shifted / linearAnimationType.animDuration).let { if (it > 1f) 2f - it else it }
+            val alpha = if (enabled) minAlpha + (maxAlpha - minAlpha) * FastOutSlowInEasing.transform(fraction)
+                else minAlpha + (maxAlpha - minAlpha) * (index + 1f) / rectCount
+            drawLine(color, center + start, center + end, penThickness * alpha, alpha = alpha, cap = StrokeCap.Round)
         }
     }
 }

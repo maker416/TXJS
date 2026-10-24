@@ -7,6 +7,8 @@
 
 package io.github.rwpp.ui
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -20,13 +22,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -39,15 +41,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -64,11 +65,11 @@ import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
 import io.github.rwpp.appKoin
-import io.github.rwpp.core.ListDetectorPlayers
 import io.github.rwpp.coil.AccountAvatar
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.Settings
 import io.github.rwpp.core.Initialization
+import io.github.rwpp.core.ListDetectorPlayers
 import io.github.rwpp.coreVersion
 import io.github.rwpp.event.EventPriority
 import io.github.rwpp.event.GlobalEventChannel
@@ -80,18 +81,19 @@ import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.net.LatestVersionProfile
 import io.github.rwpp.net.account.RoomInvite
 import io.github.rwpp.projectVersion
-import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.group_30
 import io.github.rwpp.rwpp_core.generated.resources.title
+import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.ui.UI.showQuestion
 import io.github.rwpp.ui.UI.showWarning
 import io.github.rwpp.ui.color.getTeamColor
 import io.github.rwpp.widget.WindowManager
+import io.github.rwpp.widget.uiAnimationsEnabled
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
-import java.io.File
 
 object UI : Initialization, IUserInterface {
     internal var backgroundTransparency by mutableStateOf(appKoin.get<Settings>().backgroundTransparency)
@@ -579,16 +581,15 @@ open class UIProvider {
         val windowManager = LocalWindowManager.current
         val showLabel = windowManager != WindowManager.Small
 
-        val infiniteTransition = rememberInfiniteTransition(label = "friendsBadgePulse")
-        val badgeScale by infiniteTransition.animateFloat(
+        val badgeScale = if (unread > 0 && uiAnimationsEnabled()) rememberInfiniteTransition(label = "friendsBadgePulse").animateFloat(
             initialValue = 1f,
-            targetValue = if (unread > 0) 1.25f else 1f,
+            targetValue = 1.25f,
             animationSpec = infiniteRepeatable(
                 animation = tween(700),
                 repeatMode = RepeatMode.Reverse,
             ),
             label = "friendsBadgeScale",
-        )
+        ) else rememberUpdatedState(1f)
 
         MenuEntryBox(onClick = onClick) {
             Box(
@@ -606,7 +607,7 @@ open class UIProvider {
                         modifier = Modifier
                             .align(Alignment.TopEnd)
                             .offset(x = (-2).dp, y = 2.dp)
-                            .scale(badgeScale),
+                            .graphicsLayer { scaleX = badgeScale.value; scaleY = badgeScale.value },
                     ) {
                         MenuBadge(unread)
                     }

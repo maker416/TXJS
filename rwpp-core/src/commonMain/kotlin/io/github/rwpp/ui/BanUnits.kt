@@ -30,7 +30,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.LocalWindowManager
-import io.github.rwpp.config.Settings
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.units.MovementType
 import io.github.rwpp.game.units.UnitType
@@ -154,7 +153,7 @@ private fun BanUnitItem(
 
     BorderCard(
         modifier = Modifier
-            .then(if (koinInject<Settings>().enableAnimations)
+            .then(if (uiAnimationsEnabled())
                 Modifier.graphicsLayer(alpha = alpha, scaleX = scale, scaleY = scale)
             else Modifier)
             .fillMaxWidth()

@@ -7,6 +7,7 @@
 
 package io.github.rwpp.ui
 
+import io.github.rwpp.widget.UiSwitch
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -21,7 +22,9 @@ import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.theme.LauncherMusicController
 import io.github.rwpp.widget.LargeDropdownMenu
+import io.github.rwpp.widget.setUiAnimationsEnabled
 import io.github.rwpp.widget.themes
+import io.github.rwpp.widget.uiAnimationsEnabled
 import kotlin.math.roundToInt
 
 /** 纵向排布的主题卡片；输入与滑块占满可用宽度，按钮在窄屏自动换行。 */
@@ -117,7 +120,7 @@ internal fun ThemeSettingsContent(
             }
 
             ThemeSettingsCard("settings.themeInterface") {
-                ThemeSettingsSwitch("settings.enableAnimations", settings.enableAnimations) { settings.enableAnimations = it }
+                ThemeSettingsSwitch("settings.enableAnimations", uiAnimationsEnabled()) { settings.setUiAnimationsEnabled(it) }
                 HorizontalDivider()
                 ThemeSettingsSwitch("settings.boldText", settings.boldText) { settings.boldText = it }
             }
@@ -173,7 +176,7 @@ private fun ThemeSettingsSwitch(key: String, initialValue: Boolean, onChange: (B
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text(readI18n(key), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-        Switch(checked = checked, onCheckedChange = { update(it) })
+        UiSwitch(checked = checked, onCheckedChange = { update(it) })
     }
 }
 

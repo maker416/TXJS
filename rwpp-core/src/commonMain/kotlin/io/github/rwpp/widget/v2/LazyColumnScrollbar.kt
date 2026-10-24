@@ -10,7 +10,6 @@ package io.github.rwpp.widget.v2
 
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
@@ -37,13 +36,14 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.widget.WindowManager
+import io.github.rwpp.widget.animateUiFloatAsState
 import io.github.rwpp.widget.v2.ListIndicatorSettings.*
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlin.math.floor
 import kotlin.time.Duration
 import kotlin.time.DurationUnit
 import kotlin.time.toDuration
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Enumerates the possible visibility states of an element within the user interface.
@@ -209,21 +209,21 @@ fun LazyColumnScrollbar(
             }
 
             // Use animateFloatAsState to smoothly transition the alpha value
-            val alphaAbove: Float by animateFloatAsState(
+            val alphaAbove: Float by animateUiFloatAsState(
                 if (visibilityState.value.first != VisibilityState.CompletelyVisible) 1f else 0f,
                 animationSpec = tween(250)
             )
-            val alphaBelow: Float by animateFloatAsState(
+            val alphaBelow: Float by animateUiFloatAsState(
                 if (visibilityState.value.second != VisibilityState.CompletelyVisible) 1f else 0f,
                 animationSpec = tween(250)
             )
 
-            val heightAbove: Float by animateFloatAsState(
+            val heightAbove: Float by animateUiFloatAsState(
                 if (visibilityState.value.first == VisibilityState.NotVisible) .8f else .25f,
                 animationSpec = tween(1000)
             )
 
-            val heightBelow: Float by animateFloatAsState(
+            val heightBelow: Float by animateUiFloatAsState(
                 if (visibilityState.value.second == VisibilityState.NotVisible) 1f else .25f,
                 animationSpec = tween(1000)
             )
@@ -451,7 +451,7 @@ private fun InternalLazyColumnScrollbar(
         }
     }
 
-    val alpha by animateFloatAsState(
+    val alpha by animateUiFloatAsState(
         targetValue = if (isInAction) oneHundredPercentDecimal else 0f,
         animationSpec = tween(
             durationMillis = if (isInAction) fadeInDurationMillis else fadeOutDurationMillis,

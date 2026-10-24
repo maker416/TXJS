@@ -120,44 +120,46 @@ fun RWPPTheme(default: Boolean = false, content: @Composable () -> Unit) {
         }
     }
 
-    val baseTypography = Typography(
-        displayLarge = TextStyle(
-            color = selectedColorScheme.onSurface,
-            fontFamily = valoraxFont,
-            fontWeight = FontWeight.Normal,
-            fontSize = 32.sp
-        ),
-        headlineLarge = TextStyle(
-            color = selectedColorScheme.onSurface,
-            fontFamily = jostFonts,
-            fontWeight = FontWeight.Bold,
-            fontSize = 21.sp
-        ),
-        headlineMedium = TextStyle(
-            color = selectedColorScheme.onSurface,
-            fontFamily = jostFonts,
-            fontWeight = FontWeight.Normal,
-            fontSize = 19.sp
-        ),
-        headlineSmall = TextStyle(
-            color = selectedColorScheme.onSurface,
-            fontFamily = jostFonts,
-            fontWeight = FontWeight.Normal,
-            fontSize = 17.sp
-        ),
-        bodyLarge = TextStyle(
-            color = selectedColorScheme.onSurface,
-            fontFamily = jostFonts,
-            fontWeight = FontWeight.Bold,
-            fontSize = 15.sp,
-        ),
-        bodyMedium = TextStyle(
-            color = selectedColorScheme.onSurface,
-            fontFamily = jostFonts,
-            fontWeight = FontWeight.Normal,
-            fontSize = 13.sp
+    val baseTypography = remember(selectedColorScheme, jostFonts, valoraxFont) {
+        Typography(
+            displayLarge = TextStyle(
+                color = selectedColorScheme.onSurface,
+                fontFamily = valoraxFont,
+                fontWeight = FontWeight.Normal,
+                fontSize = 32.sp
+            ),
+            headlineLarge = TextStyle(
+                color = selectedColorScheme.onSurface,
+                fontFamily = jostFonts,
+                fontWeight = FontWeight.Bold,
+                fontSize = 21.sp
+            ),
+            headlineMedium = TextStyle(
+                color = selectedColorScheme.onSurface,
+                fontFamily = jostFonts,
+                fontWeight = FontWeight.Normal,
+                fontSize = 19.sp
+            ),
+            headlineSmall = TextStyle(
+                color = selectedColorScheme.onSurface,
+                fontFamily = jostFonts,
+                fontWeight = FontWeight.Normal,
+                fontSize = 17.sp
+            ),
+            bodyLarge = TextStyle(
+                color = selectedColorScheme.onSurface,
+                fontFamily = jostFonts,
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp,
+            ),
+            bodyMedium = TextStyle(
+                color = selectedColorScheme.onSurface,
+                fontFamily = jostFonts,
+                fontWeight = FontWeight.Normal,
+                fontSize = 13.sp
+            )
         )
-    )
+    }
 
     // 主菜单按钮等使用 titleSmall/titleMedium（Material 默认 Typography 里是系统默认字体族）：
     // 仅当主题包提供字体时才把这些档位一并换成包字体，否则保持内置外观逐像素不变
@@ -172,7 +174,7 @@ fun RWPPTheme(default: Boolean = false, content: @Composable () -> Unit) {
         )
     }
 
-    MaterialTheme(
+    UiMotionTheme(
         typography = typography,
         colorScheme = selectedColorScheme,
         content = content

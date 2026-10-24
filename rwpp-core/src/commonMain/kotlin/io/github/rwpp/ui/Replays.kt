@@ -68,17 +68,18 @@ import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.file_open
 import io.github.rwpp.widget.*
+import io.github.rwpp.widget.UiLinearProgressIndicator
 import io.github.rwpp.widget.v2.LazyColumnScrollbar
 import io.github.rwpp.widget.v2.RWIconButton
+import java.io.File
+import java.io.IOException
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
-import java.io.File
-import java.io.IOException
-import kotlin.math.roundToInt
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
@@ -1215,7 +1216,7 @@ private fun ReplayImportProgressDialog(progress: ReplayImportProgress?) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    UiLinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
             }
         }

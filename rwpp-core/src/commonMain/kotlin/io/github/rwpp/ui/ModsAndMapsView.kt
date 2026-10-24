@@ -7,7 +7,11 @@
 
 package io.github.rwpp.ui
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -28,10 +32,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -42,6 +44,7 @@ import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.widget.ExitButton
+import io.github.rwpp.widget.uiAnimationsEnabled
 import io.github.rwpp.widget.v2.ExpandedCard
 import io.github.rwpp.widget.v2.bounceClick
 
@@ -151,10 +154,12 @@ fun ModsAndMapsView(onExit: () -> Unit) {
 
     ExpandedCard {
         Box(modifier = Modifier.fillMaxSize()) {
+            val contentAnimations = uiAnimationsEnabled()
             AnimatedContent(
                 targetState = tab,
                 modifier = Modifier.fillMaxSize(),
                 transitionSpec = {
+                    if (!contentAnimations) return@AnimatedContent (EnterTransition.None togetherWith ExitTransition.None).using(null)
                     val toMaps = targetState == ModsMapsTab.Maps
                     val enter = slideInHorizontally(
                         animationSpec = tween(320),

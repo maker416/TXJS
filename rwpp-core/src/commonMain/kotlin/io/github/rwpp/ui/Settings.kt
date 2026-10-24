@@ -7,12 +7,10 @@
 
 package io.github.rwpp.ui
 
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -27,8 +25,8 @@ import androidx.compose.ui.unit.dp
 import io.github.rwpp.AppContext
 import io.github.rwpp.config.AccountPreferences
 import io.github.rwpp.config.ConfigIO
-import io.github.rwpp.config.Settings
 import io.github.rwpp.config.ModPlaytimePreferences
+import io.github.rwpp.config.Settings
 import io.github.rwpp.config.resolveAccountApiUrl
 import io.github.rwpp.config.resolveAccountAppKey
 import io.github.rwpp.event.broadcastIn
@@ -44,6 +42,7 @@ import io.github.rwpp.platform.BackgroundConnectionSettingsEntry
 import io.github.rwpp.projectVersion
 import io.github.rwpp.utils.compareVersions
 import io.github.rwpp.widget.*
+import io.github.rwpp.widget.UiCircularProgressIndicator
 import io.github.rwpp.widget.v2.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -353,9 +352,11 @@ fun SettingsView(
                                         val logScrollState = rememberLazyListState()
                                         var isChecking by remember { mutableStateOf(false) }
 
-                                        LaunchedEffect(logLines.size) {
+                                        val animationsEnabled = uiAnimationsEnabled()
+                                        LaunchedEffect(logLines.size, animationsEnabled) {
                                             if (logLines.isNotEmpty()) {
-                                                logScrollState.animateScrollToItem(logLines.size - 1)
+                                                if (animationsEnabled) logScrollState.animateScrollToItem(logLines.size - 1)
+                                                else logScrollState.scrollToItem(logLines.size - 1)
                                             }
                                         }
 
@@ -429,7 +430,7 @@ fun SettingsView(
                                                     }
                                                 }
 
-                                                if (isChecking) CircularProgressIndicator(color = MaterialTheme.colorScheme.onSecondaryContainer)
+                                                if (isChecking) UiCircularProgressIndicator(color = MaterialTheme.colorScheme.onSecondaryContainer)
                                             }
 
                                             ResourceBrowserOrientationSetting(settings, configIO)
@@ -547,7 +548,7 @@ private fun LazyItemScope.SettingsGroup(
     displayName: String? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    Column(modifier = Modifier.padding(vertical = 8.dp).then(if (koinInject<Settings>().enableAnimations)
+    Column(modifier = Modifier.padding(vertical = 8.dp).then(if (uiAnimationsEnabled())
         Modifier.animateItem()
     else Modifier)) {
         Text(

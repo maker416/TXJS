@@ -1,13 +1,20 @@
+/*
+ * Copyright 2023-2025 RWPP contributors
+ * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
+ * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
+ * https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
+ */
+
 package my.nanihadesuka.compose.foundation
 
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import io.github.rwpp.widget.animateUiColorAsState
+import io.github.rwpp.widget.animateUiDpAsState
+import io.github.rwpp.widget.animateUiFloatAsState
 import kotlinx.coroutines.delay
 import my.nanihadesuka.compose.ScrollbarSelectionActionable
 
@@ -41,7 +48,7 @@ internal fun rememberScrollbarLayoutState(
         }
     }
 
-    val thumbColor = animateColorAsState(
+    val thumbColor = animateUiColorAsState(
         targetValue = if (thumbIsSelected) settingsUpdated.thumbSelectedColor else settingsUpdated.thumbUnselectedColor,
         animationSpec = tween(durationMillis = 50),
         label = "scrollbar thumb color value"
@@ -54,7 +61,7 @@ internal fun rememberScrollbarLayoutState(
         }
     }
 
-    val hideAlpha = animateFloatAsState(
+    val hideAlpha = animateUiFloatAsState(
         targetValue = if (thumbIsInActionUpdated) 1f else 0f,
         animationSpec = tween(
             durationMillis = currentDurationMillis.value,
@@ -64,7 +71,7 @@ internal fun rememberScrollbarLayoutState(
         label = "scrollbar alpha value"
     )
 
-    val hideDisplacement = animateDpAsState(
+    val hideDisplacement = animateUiDpAsState(
         targetValue = if (thumbIsInActionUpdated) 0.dp else settingsUpdated.hideDisplacement,
         animationSpec = tween(
             durationMillis = currentDurationMillis.value,
@@ -74,7 +81,7 @@ internal fun rememberScrollbarLayoutState(
         label = "scrollbar displacement value"
     )
 
-    return remember {
+    return remember(activeDraggableModifier, thumbColor, hideDisplacement, hideAlpha) {
         ScrollbarLayoutState(
             activeDraggableModifier = activeDraggableModifier,
             thumbColor = thumbColor,

@@ -33,11 +33,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.config.Settings
 import io.github.rwpp.ui.UI
+import io.github.rwpp.widget.animateUiFloatAsState
 import io.github.rwpp.widget.v2.bounceClick
 import org.koin.compose.koinInject
 
@@ -390,7 +391,7 @@ fun RWCheckbox(
     onCheckedChange: ((Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-) = Checkbox(
+) = UiCheckbox(
     checked, onCheckedChange, modifier, enabled, RWCheckBoxColors
 )
 
@@ -495,7 +496,7 @@ fun ExpandableText(
         Text(
             modifier = textModifier
                 .fillMaxWidth()
-                .animateContentSize(),
+                .then(if (uiAnimationsEnabled()) Modifier.animateContentSize() else Modifier),
             text = buildAnnotatedString {
                 if (clickable) {
                     if (isExpanded) {
@@ -534,7 +535,7 @@ fun ExpandableText(
 //    val targetAlpha = if (state.isScrollInProgress) 1f else 0f
 //    val duration = if (state.isScrollInProgress) 150 else 500
 //
-//    val alpha by animateFloatAsState(
+//    val alpha by animateUiFloatAsState(
 //        targetValue = targetAlpha,
 //        animationSpec = tween(durationMillis = duration)
 //    )

@@ -7,6 +7,7 @@
 
 package io.github.rwpp.widget.v2
 
+import io.github.rwpp.widget.UiSwitch
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -19,7 +20,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -186,7 +186,7 @@ fun SettingsSwitchComp(
                     )
                 }
                 Spacer(modifier = Modifier.weight(1f))
-                Switch(
+                UiSwitch(
                     checked = state,
                     modifier = Modifier.padding(end = 15.dp),
                     onCheckedChange = { onClick() },

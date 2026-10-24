@@ -7,6 +7,7 @@
 
 package io.github.rwpp.ui
 
+import io.github.rwpp.widget.UiSwitch
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -63,18 +64,19 @@ import io.github.rwpp.platform.analyzeRwmodFileDrop
 import io.github.rwpp.platform.modFileDropTarget
 import io.github.rwpp.rwpp_core.generated.resources.*
 import io.github.rwpp.widget.*
+import io.github.rwpp.widget.UiLinearProgressIndicator
 import io.github.rwpp.widget.v2.ExpandedCard
 import io.github.rwpp.widget.v2.LazyColumnScrollbar
 import io.github.rwpp.widget.v2.ListIndicatorSettings
 import io.github.rwpp.widget.v2.ScrollbarSelectionActionable
+import java.io.File
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
-import java.io.File
-import kotlin.math.roundToInt
 
 private enum class ModImportStage {
     Preparing,
@@ -218,7 +220,7 @@ private fun ModImportProgressDialog(progress: ModImportProgress?) {
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 } else {
-                    LinearProgressIndicator(
+                    UiLinearProgressIndicator(
                         trackColor = MaterialTheme.colorScheme.surface,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -903,7 +905,7 @@ fun ModsView(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(if (dense) 4.dp else 8.dp)
             ) {
-                Switch(
+                UiSwitch(
                     checked = isEnabled,
                     onCheckedChange = { changeModEnabled(mod, it) },
                     colors = SwitchDefaults.colors(
@@ -1053,7 +1055,7 @@ fun ModsView(
                 shape = RoundedCornerShape(8.dp),
                 border = BorderStroke(2.dp, modCardStatusColor(cardStatus)),
                 modifier = Modifier.then(
-                    if (settings.enableAnimations)
+                    if (uiAnimationsEnabled())
                         Modifier.animateItem()
                     else Modifier
                 )

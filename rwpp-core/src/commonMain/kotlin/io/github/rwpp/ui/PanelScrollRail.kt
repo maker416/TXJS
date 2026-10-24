@@ -70,3 +70,9 @@ internal fun PanelScrollRail(
         )
     }
 }
+
+/** Limit inset-driven recomposition to the narrow rail. */
+@Composable
+internal fun PanelListScrollbarRail(listState: LazyListState, topInset: androidx.compose.runtime.State<Dp>) {
+    PanelListScrollbarRail(listState = listState, topInset = topInset.value)
+}

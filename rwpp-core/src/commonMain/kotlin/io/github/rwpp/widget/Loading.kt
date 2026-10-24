@@ -16,7 +16,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -36,12 +35,12 @@ import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.internalModDir
 import io.github.rwpp.modDir
+import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 var loadingMessage by mutableStateOf("")
 
@@ -224,7 +223,7 @@ fun LoadingView(
                     }
 
                     if (enableAnimation && !cancel) {
-                        LinearProgressIndicator(
+                        UiLinearProgressIndicator(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(4.dp),

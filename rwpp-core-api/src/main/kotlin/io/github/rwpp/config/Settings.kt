@@ -34,7 +34,7 @@ data class Settings(
     @Volatile var showExtraButton: Boolean = false,
     /** @see unitAttackRangeTypes */
     @Volatile var showAttackRangeUnit: String = "Never",
-    var enableAnimations: Boolean = false,
+    @Volatile var enableAnimations: Boolean = false,
     var maxDisplayUnitGroupCount: Int = 7,
     var displayUnitGroupXOffset: Int = 0,
     var changeGameTheme: Boolean = false,

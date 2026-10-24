@@ -7,8 +7,11 @@
 
 package io.github.rwpp.ui
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -27,9 +30,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -37,7 +40,6 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -53,7 +55,6 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -63,12 +64,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -95,7 +94,6 @@ import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
 import io.github.rwpp.account.accountErrorText
 import io.github.rwpp.coil.AccountAvatar
-import io.github.rwpp.config.Settings
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.i18n.I18nType
@@ -111,22 +109,22 @@ import io.github.rwpp.net.account.RoomInvite
 import io.github.rwpp.net.account.RoomInviteCodec
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.projectVersion
-import io.github.rwpp.utils.compareVersions
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.block_30
 import io.github.rwpp.rwpp_core.generated.resources.group_30
+import io.github.rwpp.utils.compareVersions
 import io.github.rwpp.widget.AnimatedAlertDialog
-import io.github.rwpp.widget.BorderCard
 import io.github.rwpp.widget.ExitButton
-import io.github.rwpp.widget.LargeProportion
 import io.github.rwpp.widget.RWOutlinedTextColors
 import io.github.rwpp.widget.RWSingleOutlinedTextField
+import io.github.rwpp.widget.UiCircularProgressIndicator
 import io.github.rwpp.widget.WindowManager
+import io.github.rwpp.widget.animateUiColorAsState
+import io.github.rwpp.widget.uiAnimationsEnabled
 import io.github.rwpp.widget.v2.RWIconButton
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.painterResource
-import org.koin.compose.koinInject
 
 /**
  * 好友主页：微信式布局——左侧好友列表，右侧聊天内容。
@@ -218,9 +216,11 @@ fun FriendsView(
                 } else if (isSmall) {
                     // 小屏：列表 ↔ 聊天 单栏滑动切换（微信手机版交互）
                     val chatOpen = FriendsSession.activePeer != null
+                    val contentAnimations = uiAnimationsEnabled()
                     AnimatedContent(
                         targetState = chatOpen,
                         transitionSpec = {
+                            if (!contentAnimations) return@AnimatedContent (EnterTransition.None togetherWith ExitTransition.None).using(null)
                             if (targetState) {
                                 (slideInHorizontally(tween(280)) { it } + fadeIn(tween(280)))
                                     .togetherWith(slideOutHorizontally(tween(280)) { -it } + fadeOut(tween(280)))
@@ -347,7 +347,7 @@ private fun FriendListPane(
     val incoming = FriendsSession.incoming
     val outgoing = FriendsSession.outgoing
     val scope = rememberCoroutineScope()
-    val enableAnimations = koinInject<Settings>().enableAnimations
+    val enableAnimations = uiAnimationsEnabled()
     var showBlocked by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -374,7 +374,7 @@ private fun FriendListPane(
                 modifier = Modifier.weight(1f),
             )
             if (FriendsSession.loadingLists) {
-                CircularProgressIndicator(
+                UiCircularProgressIndicator(
                     modifier = Modifier.size(18.dp),
                     color = MaterialTheme.colorScheme.primary,
                     strokeWidth = 2.dp,
@@ -522,11 +522,12 @@ private fun FriendChatPane(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val selfId = AccountSession.user?.id
-    val enableAnimations = koinInject<Settings>().enableAnimations
+    val enableAnimations = uiAnimationsEnabled()
 
-    LaunchedEffect(messages.size) {
+    LaunchedEffect(messages.size, enableAnimations) {
         if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+            if (enableAnimations) listState.animateScrollToItem(messages.size - 1)
+            else listState.scrollToItem(messages.size - 1)
         }
     }
 
@@ -722,7 +723,7 @@ private fun FriendChatPane(
             )
             // 有可发送内容时发送按钮染色，给明确可点反馈
             val canSend = AccountFieldRules.isValidChatBody(draft.trim())
-            val sendTint by animateColorAsState(
+            val sendTint by animateUiColorAsState(
                 if (canSend) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceTint,
                 animationSpec = tween(200),
                 label = "sendTint",
@@ -815,7 +816,7 @@ private fun FriendRow(
     var confirmDelete by remember { mutableStateOf(false) }
     var confirmBlock by remember { mutableStateOf(false) }
     // 选中态颜色渐变过渡
-    val containerColor by animateColorAsState(
+    val containerColor by animateUiColorAsState(
         if (selected) {
             MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
         } else {
@@ -824,7 +825,7 @@ private fun FriendRow(
         animationSpec = tween(200),
         label = "friendRowBg",
     )
-    val borderColor by animateColorAsState(
+    val borderColor by animateUiColorAsState(
         if (selected) {
             MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
         } else {
@@ -1069,7 +1070,7 @@ private fun AddFriendDialog(
                 }
             }
             if (submitting) {
-                CircularProgressIndicator(
+                UiCircularProgressIndicator(
                     modifier = Modifier.size(32.dp).align(Alignment.CenterHorizontally),
                     color = MaterialTheme.colorScheme.primary,
                 )

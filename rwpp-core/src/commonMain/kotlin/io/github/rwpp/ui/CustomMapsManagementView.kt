@@ -51,15 +51,16 @@ import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.error_missingmap
 import io.github.rwpp.rwpp_core.generated.resources.file_open
 import io.github.rwpp.widget.*
+import io.github.rwpp.widget.UiLinearProgressIndicator
 import io.github.rwpp.widget.v2.ExpandedCard
+import java.io.File
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
-import java.io.File
-import kotlin.math.roundToInt
 
 private enum class MapImportStage {
     Preparing,
@@ -128,7 +129,7 @@ private fun MapImportProgressDialog(progress: MapImportProgress?) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    UiLinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
             }
         }

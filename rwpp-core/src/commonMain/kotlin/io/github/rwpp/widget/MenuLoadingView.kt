@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -35,10 +34,10 @@ import io.github.rwpp.modDir
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.title
 import io.github.rwpp.widget.v2.LineSpinFadeLoaderIndicator
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
-import java.io.File
 
 @Composable
 fun MenuLoadingView(
@@ -151,7 +150,7 @@ private fun SplashLoadingStatus(
                 )
             }
 
-            LinearProgressIndicator(
+            UiLinearProgressIndicator(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(3.dp),

@@ -7,7 +7,11 @@
 
 package io.github.rwpp.ui
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -33,11 +37,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -50,12 +52,14 @@ import io.github.rwpp.config.Settings
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.widget.BorderCard
 import io.github.rwpp.widget.LargeDropdownMenu
+import io.github.rwpp.widget.uiAnimationsEnabled
 
 @Composable
 internal fun ResourceBrowserOrientationDialog(
     onSelected: (ResourceBrowserOrientation) -> Unit,
     onDismissRequest: () -> Unit,
 ) {
+    val animationsEnabled = uiAnimationsEnabled()
     val transition = remember { MutableTransitionState(false).apply { targetState = true } }
     var closing by remember { mutableStateOf(false) }
     var selection by remember { mutableStateOf<ResourceBrowserOrientation?>(null) }
@@ -82,8 +86,8 @@ internal fun ResourceBrowserOrientationDialog(
     ) {
         AnimatedVisibility(
             visibleState = transition,
-            enter = fadeIn(tween(240)) + scaleIn(tween(240), initialScale = 0.9f),
-            exit = fadeOut(tween(180)) + scaleOut(tween(180), targetScale = 0.95f),
+            enter = if (animationsEnabled) fadeIn(tween(240)) + scaleIn(tween(240), initialScale = 0.9f) else EnterTransition.None,
+            exit = if (animationsEnabled) fadeOut(tween(180)) + scaleOut(tween(180), targetScale = 0.95f) else ExitTransition.None,
         ) {
             BorderCard(
                 modifier = Modifier.padding(16.dp).widthIn(max = 480.dp).fillMaxWidth(),

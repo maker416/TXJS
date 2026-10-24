@@ -246,6 +246,10 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 ## 导航与 UI 架构
 
+### 启动器动画与性能
+
+动画设置统一经 `Settings.setUiAnimationsEnabled()` 写入、`uiAnimationsEnabled()` 读取，`RWPPTheme` 同时控制 Material 内部动效和波纹。禁用时无限动画必须退出组合，加载器显示静态不定进度；真实进度/业务超时仍继续。不要用动画完成作为邀请等业务计时依据。动画值尽量在布局/绘制阶段读取。当前 Material3 1.9.0-beta03 的 MotionScheme 适配集中在 `widget/UiMotion.kt`，升级依赖须运行两端编译、`UiMotionTest` 和 `ThemeSettingsUiTest`。详情见 `docs/ui-performance.md`。
+
 ### 局内辅助渲染
 
 攻击范围圈、目标线、改进血条、快速选择、局内时间/延迟、范围快捷按钮和保护/巡逻放大按键走两端 `UnitAssistInject` / `InGameHudInject` 的**原生引擎渲染与输入回调**，默认关闭，可在设置「游戏玩法 → 局内辅助」独立开启。共享规则在 `rwpp-core-api/game/ui/InGameAssistRules.kt`，共享绘制在 `rwpp-core/game/InGameAssistRenderer.kt`。禁止恢复旧 `OffscreenSurfaceView`、离屏 Compose 整屏纹理上传、忙等线程与逐单位组件列表。保连接重载期间跳过绘制/选择；迷雾按原版可见性过滤，选择在引擎 HUD 回调内完成并消费按钮抬起事件。`GameUnit.attackRangeHighlighted` 仅为本地显示字段。详情及验收清单见 `docs/in-game-assists.md`。

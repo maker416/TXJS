@@ -7,9 +7,10 @@
 
 package io.github.rwpp.ui
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -24,10 +25,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -48,10 +47,12 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
-import kotlinx.coroutines.delay
+import io.github.rwpp.widget.animateUiFloatAsState
+import io.github.rwpp.widget.uiAnimationsEnabled
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 // Rare UI folder-component black 主题配色
 private val BackColor = Color.Black
@@ -220,7 +221,7 @@ private fun ModDropFolderGraphic(state: FolderState) {
     val m = ModDropFolderMetrics
     val density = LocalDensity.current
 
-    val flapRotation by animateFloatAsState(
+    val flapRotation by animateUiFloatAsState(
         targetValue = when (state) {
             FolderState.Idle -> m.flapRotationIdle
             FolderState.Hover -> m.flapRotationHover
@@ -313,6 +314,7 @@ private fun flapPath(w: Float, h: Float): Path {
 /** 带错峰延迟的弹簧动画：进入 Hover/Open 按卡延迟，回落（Idle）立即。 */
 @Composable
 private fun animatedFloat(targetValue: Float, delayMs: Int, spec: AnimationSpec<Float>): Float {
+    if (!uiAnimationsEnabled()) return targetValue
     val animatable = remember { Animatable(targetValue) }
     LaunchedEffect(targetValue, delayMs) {
         if (delayMs > 0 && targetValue != animatable.value) {

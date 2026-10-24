@@ -7,10 +7,10 @@
 
 package io.github.rwpp.widget
 
+import androidx.compose.runtime.getValue
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 
 /**
@@ -58,6 +58,7 @@ fun scaleAndAlpha(
     args: ScaleAndAlphaArgs,
     animation: FiniteAnimationSpec<Float>
 ): Pair<Float, Float> {
+    if (!uiAnimationsEnabled()) return args.toAlpha to args.toScale
     val transitionState = remember { MutableTransitionState(State.PLACING).apply { targetState = State.PLACED } }
     val transition = updateTransition(transitionState)
     val alpha by transition.animateFloat(transitionSpec = { animation }) { state ->

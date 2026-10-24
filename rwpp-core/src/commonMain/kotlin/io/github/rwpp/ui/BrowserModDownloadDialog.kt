@@ -7,6 +7,8 @@
 
 package io.github.rwpp.ui
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,41 +24,40 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import io.github.rwpp.customMapDir
+import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.logger
 import io.github.rwpp.modDir
-import io.github.rwpp.customMapDir
-import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.net.browser.BrowserModDownload
 import io.github.rwpp.net.browser.BrowserResourceFiles
-import io.github.rwpp.net.browser.BrowserResourceInstallKind
 import io.github.rwpp.net.browser.BrowserResourceInstallError
 import io.github.rwpp.net.browser.BrowserResourceInstallException
+import io.github.rwpp.net.browser.BrowserResourceInstallKind
 import io.github.rwpp.net.browser.BrowserResourceType
 import io.github.rwpp.net.browser.browserResourceType
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.platform.EmbeddedBrowserState
 import io.github.rwpp.widget.BorderCard
+import io.github.rwpp.widget.UiLinearProgressIndicator
+import java.io.File
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.util.concurrent.atomic.AtomicLong
 
 private enum class DownloadStage { ChooseZipType, ConfirmZipMod, Confirm, Downloading, Installing, Complete, Failed, Unsupported }
 
@@ -221,11 +222,11 @@ private fun ModDownloadDialog(download: BrowserModDownload, modDirectory: () -> 
                             LinearProgressIndicator(progress = { percent.toFloat() }, modifier = Modifier.fillMaxWidth())
                             Text("${(percent * 100).toInt()}% · ${downloadSize(received)} / ${downloadSize(expected)}")
                         } else {
-                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            UiLinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                             Text(downloadSize(received))
                         }
                     }
-                    DownloadStage.Installing -> LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    DownloadStage.Installing -> UiLinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     DownloadStage.Complete -> {
                         Text(readI18n(when (kind) {
                             BrowserResourceInstallKind.Mod -> "browser.modInstalledHint"

@@ -9,10 +9,12 @@
 
 package io.github.rwpp.ui
 
+import io.github.rwpp.widget.UiSwitch
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
@@ -22,7 +24,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -31,9 +32,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -48,16 +46,19 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.AppContext
 import io.github.rwpp.account.AccountSession
@@ -73,14 +74,11 @@ import io.github.rwpp.game.Game
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.logger
-import io.github.rwpp.net.Net
 import io.github.rwpp.net.HostCommandPrefix
+import io.github.rwpp.net.MOD_SYNC_ROOM_TYPE
+import io.github.rwpp.net.Net
 import io.github.rwpp.net.QuickHostLimits
 import io.github.rwpp.net.QuickHostRoomOptions
-import io.github.rwpp.net.quickHostAddressSkipsClientVanillaModClear
-import io.github.rwpp.net.quickHostSkipsClientVanillaModClear
-import io.github.rwpp.net.roomListApiBasesWithDefaultFallback
-import io.github.rwpp.net.MOD_SYNC_ROOM_TYPE
 import io.github.rwpp.net.RoomDescription
 import io.github.rwpp.net.hasRoomLabel
 import io.github.rwpp.net.isJoinableFromList
@@ -88,13 +86,18 @@ import io.github.rwpp.net.isModdedRoom
 import io.github.rwpp.net.labels
 import io.github.rwpp.net.matchesAnyRoomLabel
 import io.github.rwpp.net.parseRequiredModNames
+import io.github.rwpp.net.quickHostAddressSkipsClientVanillaModClear
+import io.github.rwpp.net.quickHostSkipsClientVanillaModClear
 import io.github.rwpp.net.roomJoinAddressForId
+import io.github.rwpp.net.roomListApiBasesWithDefaultFallback
 import io.github.rwpp.net.sorted
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.platform.readPainterByBytes
 import io.github.rwpp.rwpp_core.generated.resources.*
 import io.github.rwpp.widget.*
+import io.github.rwpp.widget.UiCircularProgressIndicator
 import io.github.rwpp.widget.v2.*
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
@@ -105,7 +108,6 @@ import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
-import kotlin.math.roundToInt
 
 private fun roomListCategoryText(desc: RoomDescription): String =
     readI18n(if (desc.isModdedRoom) "multiplayer.roomList.moddedDisplay" else "multiplayer.roomList.vanillaDisplay")
@@ -179,7 +181,7 @@ private fun FilterSwitchRow(
                     )
                 }
             }
-            Switch(
+            UiSwitch(
                 checked = checked,
                 onCheckedChange = onCheckedChange,
                 colors = SwitchDefaults.colors(
@@ -1228,7 +1230,7 @@ fun MultiplayerView(
                         configIO.setGameConfig("lastNetworkIP", ip)
                         isConnecting = true
                     },
-                    modifier = Modifier.then(if (koinInject<Settings>().enableAnimations)
+                    modifier = Modifier.then(if (uiAnimationsEnabled())
                         Modifier.animateItem()
                     else Modifier)
                         .fillMaxWidth()
@@ -1300,7 +1302,7 @@ fun MultiplayerView(
                                         null,
                                         modifier = Modifier.size(120.dp).padding(5.dp)
                                     )
-                                    if (serverData.isLoading) CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary)
+                                    if (serverData.isLoading) UiCircularProgressIndicator(color = MaterialTheme.colorScheme.secondary)
                                 }
                             }
 
@@ -1579,7 +1581,7 @@ fun MultiplayerView(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        CircularProgressIndicator(
+                                        UiCircularProgressIndicator(
                                             modifier = Modifier.size(16.dp),
                                             strokeWidth = 2.dp,
                                         )
@@ -1794,14 +1796,15 @@ fun MultiplayerView(
             editingServerConfig = null
         }
 
+        val enableAnimations = uiAnimationsEnabled()
         val measuredTopBarHeight = remember { mutableStateOf(MultiplayerTopBarHeight) }
         val topBarMeasureDensity = LocalDensity.current
         var topBarVisible by rememberMultiplayerTopBarVisible(lazyListState)
-        val animatedListTopInset by rememberAnimatedMultiplayerListTopInset(
+        val animatedListTopInset = rememberAnimatedMultiplayerListTopInset(
             measuredTopBarHeight.value,
             topBarVisible,
         )
-        val animatedTopBarOffsetY by rememberAnimatedMultiplayerTopBarOffsetY(
+        val animatedTopBarOffsetY = rememberAnimatedMultiplayerTopBarOffsetY(
             measuredTopBarHeight.value,
             topBarVisible,
         )
@@ -1822,7 +1825,7 @@ fun MultiplayerView(
                                             topBarVisible = visible
                                         },
                                     state = lazyListState,
-                                    contentPadding = PaddingValues(
+                                    contentPadding = rememberMultiplayerContentPadding(
                                         top = animatedListTopInset,
                                         bottom = innerPadding.calculateBottomPadding() + 12.dp,
                                     ),
@@ -1840,7 +1843,10 @@ fun MultiplayerView(
                                             TextButton(onClick = { showErrorDetails = !showErrorDetails }) {
                                                 Text(readI18n("multiplayer.viewDetails"))
                                             }
-                                            AnimatedVisibility(showErrorDetails) {
+                                            AnimatedVisibility(showErrorDetails,
+                                                enter = if (enableAnimations) fadeIn() + expandVertically() else EnterTransition.None,
+                                                exit = if (enableAnimations) shrinkVertically() + fadeOut() else ExitTransition.None,
+                                            ) {
                                                 SelectionContainer {
                                                     Text(
                                                         throwable?.stackTraceToString() ?: "Unknown error",
@@ -1867,7 +1873,7 @@ fun MultiplayerView(
                                         }
                                     }
                                 }
-                                roomCardRows(realList, roomColumns, settings.enableAnimations) { room ->
+                                roomCardRows(realList, roomColumns, enableAnimations) { room ->
                                     roomJoinContext.selectedRoom = room
                                     showJoinRequestDialog = true
                                 }
@@ -1885,7 +1891,7 @@ fun MultiplayerView(
                 MultiplayerTopBar(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .offset(y = animatedTopBarOffsetY)
+                        .offset { IntOffset(0, animatedTopBarOffsetY.value.roundToPx()) }
                         .onGloballyPositioned { coordinates ->
                             val measured = with(topBarMeasureDensity) {
                                 coordinates.size.height.toDp()
@@ -1988,7 +1994,7 @@ private fun AnimatedBlackList(
     onTapInfoButton: (Int) -> Unit,
     onTapAddButton: () -> Unit,
 ) {
-    val enableAnimations = koinInject<Settings>().enableAnimations
+    val enableAnimations = uiAnimationsEnabled()
     AnimatedVisibility(
         visible,
         enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
@@ -2008,7 +2014,7 @@ private fun AnimatedBlackList(
                         val blacklist = blacklists[index]
                         Modifier
                             .wrapContentSize()
-                        Row(modifier = Modifier.then(if (koinInject<Settings>().enableAnimations)
+                        Row(modifier = Modifier.then(if (uiAnimationsEnabled())
                             Modifier.animateItem()
                         else Modifier)) {
                             Column(modifier = Modifier.weight(1f)) {
@@ -2061,8 +2067,11 @@ private fun AnimatedBlacklistInfo(
     onSourceChanged: (Blacklist) -> Unit
 ) {
     blacklist ?: return
+    val enableAnimations = uiAnimationsEnabled()
     AnimatedVisibility(
-        visible
+        visible,
+        enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
+        exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
     ){
         var name by remember { mutableStateOf(blacklist.name) }
         var url by remember { mutableStateOf(blacklist.uuid) }
@@ -2457,7 +2466,7 @@ internal fun RefreshButtonWithHint(
                 contentAlignment = Alignment.Center,
             ) {
                 if (isRefreshing) {
-                    CircularProgressIndicator(
+                    UiCircularProgressIndicator(
                         color = MaterialTheme.colorScheme.secondary,
                         modifier = Modifier.size(30.dp),
                         strokeWidth = 3.dp,

@@ -7,8 +7,8 @@
 
 package io.github.rwpp.ui
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -32,11 +32,12 @@ import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
 import io.github.rwpp.app.UpdateProgress
 import io.github.rwpp.app.UpdateStage
-import io.github.rwpp.net.LatestVersionProfile
-import io.github.rwpp.projectVersion
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.net.LatestVersionProfile
 import io.github.rwpp.platform.BackHandler
+import io.github.rwpp.projectVersion
+import io.github.rwpp.widget.UiLinearProgressIndicator
 
 private val UpdateMint = Color(0xFF83E8C2)
 private val UpdateMuted = Color(0xFF9BAAB9)
@@ -189,7 +190,7 @@ private fun UpdateControls(progress: UpdateProgress, onUpdate: () -> Unit, onCan
             if (busy) {
                 if (progress.stage == UpdateStage.DOWNLOADING && progress.totalBytes > 0) {
                     LinearProgressIndicator(progress = { progress.fraction }, modifier = Modifier.fillMaxWidth(), color = UpdateMint)
-                } else LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = UpdateMint)
+                } else UiLinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = UpdateMint)
                 val eta = if (progress.totalBytes > progress.downloadedBytes && progress.bytesPerSecond > 0)
                     " · ~${(progress.totalBytes - progress.downloadedBytes) / progress.bytesPerSecond}s" else ""
                 val transferDetails = if (progress.stage == UpdateStage.DOWNLOADING)

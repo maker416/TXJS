@@ -7,6 +7,9 @@
 
 package io.github.rwpp.ui
 
+import io.github.rwpp.widget.UiCheckbox
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -19,8 +22,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -28,12 +29,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -49,13 +48,14 @@ import io.github.rwpp.platform.BrowserFileUploadRequest
 import io.github.rwpp.platform.EmbeddedBrowserState
 import io.github.rwpp.widget.BorderCard
 import io.github.rwpp.widget.LargeDropdownMenu
+import io.github.rwpp.widget.UiLinearProgressIndicator
+import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.compose.koinInject
-import java.io.File
 
 internal data class BrowserUploadMod(val name: String, val file: File)
 private data class BrowserUploadChoice(val mod: BrowserUploadMod, val uploadName: String) {
@@ -164,19 +164,19 @@ internal fun BrowserFileUploadDialog(
                         }
                     } else if (stage == UploadStage.Packing) {
                         Text(readI18n("browser.uploadPreparing"))
-                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                        UiLinearProgressIndicator(Modifier.fillMaxWidth())
                     } else {
                         Text(readI18n("browser.uploadModsHint"))
                         OutlinedTextField(search, { search = it }, label = { Text(readI18n("browser.search")) },
                             singleLine = true, modifier = Modifier.fillMaxWidth())
                         val visible = mods?.filter { it.name.contains(search, true) || it.file.name.contains(search, true) }
-                        if (visible == null) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        if (visible == null) UiLinearProgressIndicator(Modifier.fillMaxWidth())
                         else if (visible.isEmpty()) Text(readI18n("browser.uploadNoMods"))
                         else LazyColumn(Modifier.fillMaxWidth().heightIn(max = 260.dp)) {
                             items(visible, key = { it.file.path }) { mod ->
                                 Row(Modifier.fillMaxWidth().clickable { toggle(mod) }.padding(vertical = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically) {
-                                    Checkbox(mod in selected, { toggle(mod) })
+                                    UiCheckbox(mod in selected, { toggle(mod) })
                                     Column(Modifier.weight(1f)) {
                                         Text(mod.name)
                                         Text(mod.uploadName, style = MaterialTheme.typography.bodySmall)

@@ -7,6 +7,8 @@
 
 package io.github.rwpp.ui
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -26,31 +28,30 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
-import androidx.compose.ui.unit.dp
-import io.github.rwpp.config.ConfigIO
-import io.github.rwpp.config.Settings
-import io.github.rwpp.game.Game
-import io.github.rwpp.config.AccountPreferences
-import io.github.rwpp.config.resolveForumUrl
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.ForumSsoSession
-import io.github.rwpp.net.account.ForumSsoUrls
-import kotlinx.coroutines.CancellationException
+import io.github.rwpp.config.AccountPreferences
+import io.github.rwpp.config.ConfigIO
+import io.github.rwpp.config.Settings
+import io.github.rwpp.config.resolveForumUrl
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
+import io.github.rwpp.game.Game
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.net.account.ForumSsoUrls
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.platform.EmbeddedBrowser
 import io.github.rwpp.platform.EmbeddedBrowserState
 import io.github.rwpp.platform.ResourceBrowserLayout
+import io.github.rwpp.widget.UiLinearProgressIndicator
+import kotlinx.coroutines.CancellationException
 import org.koin.compose.koinInject
 
 @Composable
@@ -123,7 +124,7 @@ fun ResourceBrowser(onExit: () -> Unit) {
                 Popup(alignment = Alignment.TopStart, properties = PopupProperties(focusable = false)) {
                     val progress = browser.progress
                     if (progress == null) {
-                        LinearProgressIndicator(modifier = Modifier.width(maxWidth).height(3.dp))
+                        UiLinearProgressIndicator(modifier = Modifier.width(maxWidth).height(3.dp))
                     } else {
                         LinearProgressIndicator(
                             progress = { progress },

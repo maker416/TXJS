@@ -8,12 +8,12 @@
 package io.github.rwpp.widget
 
 import androidx.compose.animation.*
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,8 +21,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -30,10 +30,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
-import io.github.rwpp.config.Settings
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.platform.BackHandlerScope
-import org.koin.compose.koinInject
 
 internal const val ANIMATION_TIME = 200L
 // 页面/弹窗的退出动画只保留绘制，其弹窗与下拉层不能继续抢占输入。
@@ -48,7 +46,7 @@ internal fun AnimatedModalBottomSheetTransition(
     visible: Boolean,
     content: @Composable AnimatedVisibilityScope.() -> Unit
 ) {
-    val enableAnimations = koinInject<Settings>().enableAnimations
+    val enableAnimations = uiAnimationsEnabled()
 
     AnimatedVisibility(
         visible = visible,
@@ -69,7 +67,7 @@ internal fun AnimatedScaleInTransition(
     visible: Boolean,
     content: @Composable AnimatedVisibilityScope.() -> Unit
 ) {
-    val enableAnimations = koinInject<Settings>().enableAnimations
+    val enableAnimations = uiAnimationsEnabled()
 
     AnimatedVisibility(
         visible = visible,
@@ -105,7 +103,7 @@ fun AnimatedTransitionDialog(
 ) {
     val visibility = remember { MutableTransitionState(false).apply { targetState = true } }
     var dismissRequested by remember { mutableStateOf(false) }
-    val enableAnimations = koinInject<Settings>().enableAnimations
+    val enableAnimations = uiAnimationsEnabled()
     val currentOnDismissRequest by rememberUpdatedState(onDismissRequest)
     val currentEnableDismiss by rememberUpdatedState(enableDismiss)
     val modalFocus = remember { FocusRequester() }

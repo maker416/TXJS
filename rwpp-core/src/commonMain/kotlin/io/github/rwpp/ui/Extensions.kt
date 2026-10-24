@@ -53,9 +53,9 @@ import io.github.rwpp.scripts.Render
 import io.github.rwpp.utils.compareVersions
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.LazyColumnScrollbar
+import java.io.File
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
-import java.io.File
 
 @Suppress("UnusedMaterial3ScaffoldPaddingParameter")
 @Composable
@@ -320,7 +320,7 @@ private fun LazyItemScope.ExtensionCard(
 ) {
     BorderCard(
         backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(.6f),
-        modifier = Modifier.then(if (koinInject<Settings>().enableAnimations)
+        modifier = Modifier.then(if (uiAnimationsEnabled())
             Modifier.animateItem()
         else Modifier)
             .fillMaxWidth()

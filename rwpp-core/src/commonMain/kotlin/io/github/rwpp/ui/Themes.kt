@@ -7,6 +7,8 @@
 
 package io.github.rwpp.ui
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,7 +28,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -34,11 +35,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,6 +61,7 @@ import io.github.rwpp.widget.AnimatedAlertDialog
 import io.github.rwpp.widget.BorderCard
 import io.github.rwpp.widget.ExitButton
 import io.github.rwpp.widget.RWTextButton
+import io.github.rwpp.widget.UiCircularProgressIndicator
 import io.github.rwpp.widget.v2.LazyColumnScrollbar
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.painterResource
@@ -98,7 +98,7 @@ fun ThemesView(
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                CircularProgressIndicator()
+                UiCircularProgressIndicator()
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
                     readI18n("themes.importing", I18nType.RWPP),
@@ -118,7 +118,7 @@ fun ThemesView(
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                CircularProgressIndicator()
+                UiCircularProgressIndicator()
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
                     readI18n("themes.applyingGameArt", I18nType.RWPP),

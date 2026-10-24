@@ -7,9 +7,11 @@
 
 package io.github.rwpp.ui
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -38,7 +40,6 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -48,12 +49,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -76,14 +75,17 @@ import io.github.rwpp.net.account.ROOM_INVITE_TTL_MS
 import io.github.rwpp.net.account.RoomInvite
 import io.github.rwpp.net.account.RoomInviteCodec
 import io.github.rwpp.projectVersion
-import io.github.rwpp.utils.compareVersions
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.swords_30
+import io.github.rwpp.utils.compareVersions
 import io.github.rwpp.widget.AnimatedAlertDialog
 import io.github.rwpp.widget.BorderCard
 import io.github.rwpp.widget.LargeProportion
 import io.github.rwpp.widget.RWOutlinedTextColors
+import io.github.rwpp.widget.UiCircularProgressIndicator
 import io.github.rwpp.widget.WindowManager
+import io.github.rwpp.widget.rememberTimedUiProgress
+import io.github.rwpp.widget.uiAnimationsEnabled
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.painterResource
 
@@ -488,7 +490,7 @@ fun InviteFriendsDialog(
                         }
 
                         if (sending) {
-                            CircularProgressIndicator(
+                            UiCircularProgressIndicator(
                                 modifier = Modifier.size(28.dp).align(Alignment.CenterHorizontally),
                                 color = MaterialTheme.colorScheme.primary,
                             )
@@ -763,11 +765,12 @@ fun RoomInviteToastHost(modifier: Modifier = Modifier) {
     val current = UI.incomingInviteNotification
     if (current != null) rendered = current
 
+    val animationsEnabled = uiAnimationsEnabled()
     Box(modifier = modifier) {
         AnimatedVisibility(
             visible = current != null,
-            enter = slideInHorizontally(tween(280)) { it } + fadeIn(tween(280)),
-            exit = slideOutHorizontally(tween(280)) { it } + fadeOut(tween(280)),
+            enter = if (animationsEnabled) slideInHorizontally(tween(280)) { it } + fadeIn(tween(280)) else EnterTransition.None,
+            exit = if (animationsEnabled) slideOutHorizontally(tween(280)) { it } + fadeOut(tween(280)) else ExitTransition.None,
         ) {
             rendered?.let { notification ->
                 RoomInviteToastCard(
@@ -821,11 +824,7 @@ private fun RoomInviteToastCard(
     onTimeout: () -> Unit,
 ) {
     val invite = notification.invite
-    val countdown = remember(notification.messageId) { Animatable(1f) }
-    LaunchedEffect(notification.messageId) {
-        countdown.animateTo(0f, tween(INVITE_TOAST_DURATION_MS, easing = LinearEasing))
-        onTimeout()
-    }
+    val countdown = rememberTimedUiProgress(notification.messageId, INVITE_TOAST_DURATION_MS, onTimeout)
 
     Surface(
         modifier = Modifier

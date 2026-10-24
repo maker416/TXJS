@@ -32,6 +32,7 @@ import io.github.rwpp.game.map.MapType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.logger
 import io.github.rwpp.widget.*
+import io.github.rwpp.widget.UiCircularProgressIndicator
 import kotlinx.coroutines.CancellationException
 import org.koin.compose.koinInject
 
@@ -196,7 +197,7 @@ internal fun MapSelectionContent(
                         } else if (loadedMapType == mapType) {
                             Text(readI18n("maps.emptyFiltered"), color = MaterialTheme.colorScheme.onSurfaceVariant)
                         } else {
-                            CircularProgressIndicator()
+                            UiCircularProgressIndicator()
                         }
                     }
                 } else {

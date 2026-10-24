@@ -7,7 +7,8 @@
 
 package io.github.rwpp.ui
 
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,11 +22,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
@@ -36,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.widget.animateUiFloatAsState
 import kotlin.math.roundToInt
 
 /** 小尺寸独立浮层，只拦截球内输入；位置按比例保存，旋转/缩放后仍留在页面内。 */
@@ -48,7 +48,7 @@ internal fun ResourceBrowserFloatingExit(onExit: () -> Unit) {
         var horizontal by rememberSaveable { mutableStateOf(1f) }
         var vertical by rememberSaveable { mutableStateOf(0.35f) }
         var dragging by remember { mutableStateOf(false) }
-        val animatedX by animateFloatAsState(horizontal * maxX)
+        val animatedX by animateUiFloatAsState(horizontal * maxX)
         val x = (if (dragging) horizontal * maxX else animatedX).coerceIn(0f, maxX)
         fun dock() {
             horizontal = if (horizontal < 0.5f) 0f else 1f

@@ -25,12 +25,13 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.widget.BorderCard
+import io.github.rwpp.widget.uiAnimationsEnabled
 import io.github.rwpp.widget.v2.LineSpinFadeLoaderIndicator
 import io.github.rwpp.widget.v2.bounceClick
+import kotlinx.coroutines.delay
 
 @Composable
 fun InjectSetupScreen(
@@ -52,9 +53,11 @@ fun InjectSetupScreen(
     val bodyScrollState = rememberScrollState()
     val logScrollState = rememberScrollState()
 
-    LaunchedEffect(log, logExpanded) {
+    val animationsEnabled = uiAnimationsEnabled()
+    LaunchedEffect(log, logExpanded, animationsEnabled) {
         if (logExpanded) {
-            logScrollState.animateScrollTo(logScrollState.maxValue)
+            if (animationsEnabled) logScrollState.animateScrollTo(logScrollState.maxValue)
+            else logScrollState.scrollTo(logScrollState.maxValue)
         }
     }
 
