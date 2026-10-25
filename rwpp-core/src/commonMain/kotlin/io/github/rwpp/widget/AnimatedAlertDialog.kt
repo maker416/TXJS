@@ -91,7 +91,7 @@ fun AnimatedTransitionDialog(
 ) = AnimatedTransitionDialog(onDismissRequest, enableDismiss, contentAlignment, inlineDesktop = false, content)
 
 /**
- * [inlineDesktop] 仅由桌面账号页在整窗根 Box 下显式开启；普通调用和嵌套弹层必须保留原生窗口。
+ * [inlineDesktop] 由桌面账号页及开局提示在整窗根容器下显式开启；普通调用和嵌套弹层保留原生窗口。
  */
 @Composable
 fun AnimatedTransitionDialog(
@@ -167,7 +167,7 @@ fun AnimatedTransitionDialog(
     }
 
     if (inlineDesktop) {
-        // 仅供账号页根 Box 下的弹窗显式使用；普通/嵌套调用继续使用原生 Dialog，
+        // 仅供账号页、开局提示的整窗根容器显式使用；普通/嵌套调用继续使用原生 Dialog，
         // 不能用局部 fillMaxSize/zIndex 冒充整窗模态层（尤其桌面原生浏览器上方）。
         Box(
             modifier = Modifier

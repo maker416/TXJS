@@ -93,7 +93,6 @@ import io.github.rwpp.ui.UI.showSurvivalView
 import io.github.rwpp.ui.UI.showThemesView
 import io.github.rwpp.utils.compareVersions
 import io.github.rwpp.widget.*
-import io.github.rwpp.widget.UiCircularProgressIndicator
 import io.github.rwpp.widget.v2.LineSpinFadeLoaderIndicator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -550,19 +549,10 @@ fun App(
                 }
 
                 val matchStart by MatchStartController.gate.state.collectAsState()
-                AnimatedAlertDialog(
+                MatchStartLoadingOverlay(
                     visible = matchStart.busy && launcherPage == LauncherPage.Room,
-                    onDismissRequest = {},
-                    enableDismiss = false,
-                ) {
-                    BorderCard(Modifier.widthIn(max = 420.dp).padding(20.dp)) {
-                        Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            UiCircularProgressIndicator()
-                            Text(readI18n("multiplayer.room.startLoading"))
-                        }
-                    }
-                }
+                    isDesktop = appContext.isDesktop(),
+                )
 
                 var warningDialogVisible by remember { mutableStateOf(false) }
 
