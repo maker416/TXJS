@@ -26,6 +26,8 @@ buildConfig {
         ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,64}")) }
         ?: "official"
     buildConfigField("ONLINE_CHANNEL", onlineChannel)
+    buildConfigField("FEEDBACK_API_URL", ((findProperty("feedbackApiUrl") as String?)
+        ?: "https://fk.xn--rhqr8xvr4ahqsgka.com").trim().trimEnd('/'))
 }
 
 dependencies {

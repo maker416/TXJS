@@ -7,7 +7,6 @@
 
 package io.github.rwpp.android.impl.inject
 
-import android.util.Log
 import io.github.rwpp.android.impl.GameEngine
 import io.github.rwpp.android.isReturnToBattleRoom
 import io.github.rwpp.core.ModSyncController
@@ -32,6 +31,7 @@ object GameEngineInject {
 
     @Inject("d", InjectMode.InsertBefore)
     fun log(str: String): Any {
+        io.github.rwpp.logger.info("[ENGINE] {}", str)
         if(str == "----- returnToBattleroom -----") {
             isReturnToBattleRoom = true
         }
@@ -41,7 +41,7 @@ object GameEngineInject {
 
     @Inject("c", InjectMode.Override)
     fun logI(str: String?) {
-        Log.i("RustedWarfare", str ?: "")
+        io.github.rwpp.logger.info("[ENGINE] {}", str ?: "")
     }
 
     @Inject("b", InjectMode.InsertBefore)

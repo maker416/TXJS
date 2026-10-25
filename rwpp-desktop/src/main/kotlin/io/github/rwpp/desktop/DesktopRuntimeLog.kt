@@ -11,13 +11,11 @@ import java.io.File
 import java.io.OutputStream
 import java.io.PrintStream
 import java.nio.charset.StandardCharsets
-import java.nio.file.Files
+import io.github.rwpp.diagnostics.RuntimeLogs
 import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
 
-/** 引擎、SLF4J、Swing/协程异常写进同一次运行日志，保留最近 10 次运行。 */
+/** 引擎、SLF4J、Swing/协程异常按天追加，保留包含当天在内的七天。 */
 object DesktopRuntimeLog {
-    private const val RETAINED_RUNS = 10
 
     fun initialize() {
         if (System.getProperty("org.slf4j.simpleLogger.showDateTime") == null) {
@@ -30,13 +28,12 @@ object DesktopRuntimeLog {
         val consoleErr = System.err
         try {
             val preferred = File(System.getProperty("user.dir"), "logs")
-            val session = try {
-                openSession(preferred)
+            val fileStream = try {
+                RuntimeLogs.initialize(preferred)
             } catch (_: Exception) {
                 val local = System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home")
-                openSession(File(local, "RWJS/logs"))
+                RuntimeLogs.initialize(File(local, "RWJS/logs"))
             }
-            val fileStream = session.outputStream()
             val fileLock = Any()
             System.setOut(PrintStream(tee(consoleOut, fileStream, fileLock), true, StandardCharsets.UTF_8))
             System.setErr(PrintStream(tee(consoleErr, fileStream, fileLock), true, StandardCharsets.UTF_8))
@@ -52,22 +49,12 @@ object DesktopRuntimeLog {
                 System.out.flush()
                 System.err.flush()
             }, "rwjs-log-shutdown"))
-            System.out.println("[START] time=${LocalDateTime.now()} pid=${ProcessHandle.current().pid()} log=${session.absolutePath}")
+            System.out.println("[START] time=${LocalDateTime.now()} pid=${ProcessHandle.current().pid()} logs=${fileStream.directory.absolutePath}")
             System.out.println("[ENV] java=${System.getProperty("java.version")} os=${System.getProperty("os.name")} arch=${System.getProperty("os.arch")}")
         } catch (e: Exception) {
             consoleErr.println("[LOG] Failed to initialize persistent PC logging")
             e.printStackTrace(consoleErr)
         }
-    }
-
-    internal fun openSession(directory: File): File {
-        Files.createDirectories(directory.toPath())
-        val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
-        val session = Files.createTempFile(directory.toPath(), "rwjs-$timestamp-${ProcessHandle.current().pid()}-", ".log").toFile()
-        directory.listFiles { f -> f.isFile && f.name.startsWith("rwjs-") && f.extension == "log" }
-            .orEmpty().filter { it != session }.sortedByDescending { it.lastModified() }
-            .drop(RETAINED_RUNS - 1).forEach { it.delete() }
-        return session
     }
 
     internal fun tee(console: OutputStream, file: OutputStream, lock: Any): OutputStream = object : OutputStream() {

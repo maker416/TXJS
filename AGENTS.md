@@ -366,7 +366,7 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
    - 注入模块以 `Inject` 结尾，按领域分组（如 `GameInject.kt`、`NetPacketInject.kt`）
    - 接口与数据模型放在 `rwpp-core-api`，实现放在平台模块
 6. **日志**：使用 SLF4J API（`rwpp-core-api` 引入 `slf4j-api`）；桌面端运行时提供 `slf4j-simple`，Android 端使用 `logback-android`。
-   PC 的 `DesktopRuntimeLog` 必须在 SLF4J 初始化前接管标准输出与错误输出，每次运行独立保存到 `logs/rwjs-*.log`（保留 10 次，不可写时使用 `%LOCALAPPDATA%/RWJS/logs`）。主动退出会用 `Runtime.halt`，调用前必须写入退出来源并刷新，不能仅靠 shutdown hook。原生 JVM 崩溃报告为 `logs/hs_err_pid*.log`。
+   PC 的 `DesktopRuntimeLog` 必须在 SLF4J 初始化前接管标准输出与错误输出。两端统一使用 `DailyLogOutputStream` 按本机日期追加 `rwjs-yyyy-MM-dd.log`，保留包含当天的七天，跨午夜自动切换；PC 在运行目录 `logs`（不可写时回退 `%LOCALAPPDATA%/RWJS/logs`），Android 在 `filesDir/logs`，不依赖外部存储权限。反馈页在玩家同意后流式打包七天日志并提交到 `FeedbackClient`，失败保留表单。默认反馈域名由 core-api 的 `feedbackApiUrl` 构建参数确定，也支持 `FeedbackPreferences.apiUrl`、`RWJS_FEEDBACK_API_URL` 或 `rwjs.feedback.apiUrl` 覆盖。服务端在相邻 `fakuiserver` 目录，协议与部署见 `docs/feedback.md`。主动退出会用 `Runtime.halt`，调用前必须写入退出来源并刷新，不能仅靠 shutdown hook。原生 JVM 崩溃报告为 `logs/hs_err_pid*.log`。
 7. **中文注释**：核心业务逻辑与复杂注入点通常使用中文注释；公开 API 的 KDoc 也大量使用中文。
 8. **资源引用**：Compose Multiplatform 资源通过 generated accessor 访问，如 `Res.drawable.logo`。
 9. **提交信息**：git 提交说明统一使用中文。

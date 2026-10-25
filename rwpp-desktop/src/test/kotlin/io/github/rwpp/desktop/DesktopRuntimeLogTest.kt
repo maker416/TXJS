@@ -8,29 +8,11 @@
 package io.github.rwpp.desktop
 
 import java.io.ByteArrayOutputStream
-import java.io.File
 import java.io.PrintStream
 import java.nio.charset.StandardCharsets
-import java.nio.file.Files
 import kotlin.test.*
 
 class DesktopRuntimeLogTest {
-    @Test fun separateRunsKeepOldContentsAndRetainTenLogs() {
-        val scratch = File("build/tmp/runtime-log-test").apply { mkdirs() }.canonicalFile
-        val root = Files.createTempDirectory(scratch.toPath(), "logs-").toFile().canonicalFile
-        try {
-            val first = DesktopRuntimeLog.openSession(root).apply { writeText("first run") }
-            val second = DesktopRuntimeLog.openSession(root)
-            assertNotEquals(first, second)
-            assertEquals("first run", first.readText())
-            repeat(12) { DesktopRuntimeLog.openSession(root) }
-            assertEquals(10, root.listFiles()!!.size)
-        } finally {
-            check(root.toPath().startsWith(scratch.toPath()) && root != scratch)
-            root.deleteRecursively()
-        }
-    }
-
     @Test fun utf8StackTraceAndConsoleOutputReachLogTogether() {
         val console = ByteArrayOutputStream()
         val log = ByteArrayOutputStream()

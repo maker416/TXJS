@@ -18,7 +18,10 @@ import ch.qos.logback.classic.LoggerContext
 import ch.qos.logback.classic.android.LogcatAppender
 import ch.qos.logback.classic.encoder.PatternLayoutEncoder
 import ch.qos.logback.classic.spi.ILoggingEvent
-import ch.qos.logback.core.FileAppender
+import ch.qos.logback.core.OutputStreamAppender
+import io.github.rwpp.diagnostics.RuntimeLogs
+import java.io.OutputStream
+import java.io.PrintStream
 import io.github.rwpp.android.impl.GameSoundPoolImpl
 import io.github.rwpp.app.PermissionHelper
 import io.github.rwpp.app.InstallArtifactMaintenance
@@ -67,20 +70,32 @@ class MainApplication : Application() {
         val lc = LoggerFactory.getILoggerFactory() as LoggerContext
         lc.stop()
 
-        // setup FileAppender
+        // 应用私有目录不依赖文件管理权限；同一天多次启动追加，跨午夜自动切换。
         val encoder1 = PatternLayoutEncoder()
         encoder1.context = lc
-        encoder1.pattern = "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+        encoder1.pattern = "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
         encoder1.start()
 
-        val fileAppender = FileAppender<ILoggingEvent>()
-        fileAppender.isAppend = false
+        val fileAppender = OutputStreamAppender<ILoggingEvent>()
         fileAppender.context = lc
-        val logFile = File("/storage/emulated/0/rustedWarfare/rwpp-log.txt")
-        logFile.parentFile?.mkdirs()
-        fileAppender.file = logFile.absolutePath
         fileAppender.encoder = encoder1
-        val fileAppenderOk = runCatching { fileAppender.start() }.isSuccess
+        val fileAppenderOk = runCatching {
+            val daily = RuntimeLogs.initialize(File(filesDir, "logs"))
+            daily.migrateLegacy(listOf(File("/storage/emulated/0/rustedWarfare/rwpp-log.txt")))
+            fileAppender.setOutputStream(daily)
+            fileAppender.start()
+            check(fileAppender.isStarted)
+            // 原引擎的 stdout/stderr 及直接 printStackTrace 也写入同一套日志。
+            fun capture(console: PrintStream) = PrintStream(object : OutputStream() {
+                override fun write(value: Int) { daily.write(value); console.write(value) }
+                override fun write(bytes: ByteArray, offset: Int, length: Int) {
+                    daily.write(bytes, offset, length); console.write(bytes, offset, length)
+                }
+                override fun flush() { daily.flush(); console.flush() }
+            }, true, "UTF-8")
+            System.setOut(capture(System.out))
+            System.setErr(capture(System.err))
+        }.isSuccess
         if (!fileAppenderOk) {
             Log.e("RWPP", "File logging unavailable (storage permission or path); using logcat only")
         }
@@ -117,6 +132,7 @@ class MainApplication : Application() {
         }
 
         logger = LoggerFactory.getLogger(packageName)
+        logger.info("[START] RWJS ${io.github.rwpp.projectVersion} Android ${Build.VERSION.RELEASE} ${Build.MANUFACTURER} ${Build.MODEL}")
 
         BackgroundKeepAlive.install(this)
 

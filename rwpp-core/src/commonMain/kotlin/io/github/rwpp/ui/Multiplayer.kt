@@ -416,6 +416,7 @@ fun MultiplayerView(
             GameSessionController.beginSession {
                 var joined = false
                 var opened = false
+                logger.info("[JOIN] begin room entry")
                 try {
                     ModSyncController.awaitJoinEntryCleanup()
                     if(address.isBlank()) {
@@ -448,6 +449,7 @@ fun MultiplayerView(
                         // 加入者：连接前只跑带外同步轻量段（查清单/登记 Presence 供房主握手放行）；
                         // 下载与重载在进房成功后由 ModSyncController 在房间内后台完成，期间可正常聊天
                         if (!ModSyncController.preJoinSync(capturedRoomDescription, address, this)) {
+                            logger.info("[JOIN] pre-join sync did not allow connection")
                             return@beginSession false
                         }
                     }
@@ -462,6 +464,8 @@ fun MultiplayerView(
                         capturedRoomDescription?.joinRelayUuid(),
                         this,
                     )
+                    logger.info("[JOIN] engine connection returned; success={}", result.isSuccess)
+                    result.exceptionOrNull()?.let { logger.warn("[JOIN] connection failed", it) }
                     if(result.isSuccess) {
                         // 房间身份公示（带外机制）：暂存候选 key 与玩家名快照；
                         // 房主走 quickHost 指令串产不出 key，靠进房后 roomDetails 短码补充
@@ -475,6 +479,7 @@ fun MultiplayerView(
                             }
                         }
                         if (!accepted) return@beginSession false
+                        logger.info("[JOIN] room navigation committed")
                         // 进房成功：joining Presence 转为 synced 并保活，驱动行内徽章（无同步记录时为空操作）
                         ModSyncController.onJoinedRoom()
                         JoinGameEvent(address).broadcastIn()
@@ -484,6 +489,7 @@ fun MultiplayerView(
                         false
                     }
                 } finally {
+                    logger.info("[JOIN] entry finished; joined={} roomOpened={}", joined, opened)
                     if (joined && !opened) {
                         withContext(NonCancellable + Dispatchers.Main.immediate) {
                             game.gameRoom.disconnectAndWait()

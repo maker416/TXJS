@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -55,85 +56,99 @@ private const val OFFICIAL_QQ_GROUP_NUMBER = "219678874"
 @Composable
 fun OpenSourceInfoView(
     onExit: () -> Unit,
-) = ExpandedCard(
-    modifier = Modifier.verticalScroll(rememberScrollState())
 ) {
-    Box {
-        ExitButton(onExit)
-        Column(modifier = Modifier.padding(18.dp)) {
-            BackHandler(true, onExit)
+    var showFeedback by rememberSaveable { mutableStateOf(false) }
+    if (showFeedback) {
+        FeedbackView { showFeedback = false }
+        return
+    }
+    ExpandedCard(
+        modifier = Modifier.verticalScroll(rememberScrollState())
+    ) {
+        Box {
+            ExitButton(onExit)
+            Column(modifier = Modifier.padding(18.dp)) {
+                BackHandler(true, onExit)
 
-            val net = koinInject<Net>()
+                val net = koinInject<Net>()
 
-            Text(
-                "开源说明与许可",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp, bottom = 4.dp)
-            )
-            Text(
-                "RWPP $projectVersion (core $coreVersion)",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
-                modifier = Modifier.align(Alignment.CenterHorizontally)
-            )
-
-            LargeDividingLine { 10.dp }
-
-            OfficialQqGroupCard()
-
-            InfoSection(
-                title = "项目来源",
-                lines = listOf(
-                    "铁锈战争极速版基于上游 RWPP 体系 fork 并独立维护。",
-                    "本项目开源仓库：maker416/TXJS（https://github.com/maker416/TXJS）。",
-                    "项目面向萌新云生态与更清爽的铁锈战争联机体验，在 RWPP 能力之上继续优化上手流程、服务器列表与公开房间曝光。",
-                    "本项目不是 Rusted Warfare 官方项目，也不代表原游戏开发者。"
+                Text(
+                    "反馈与说明",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp, bottom = 4.dp)
                 )
-            )
-
-            InfoSection(
-                title = "开源许可",
-                lines = listOf(
-                    "本仓库沿用 GNU Affero General Public License v3.0（AGPL-3.0）。",
-                    "二次开发、fork、修改和再分发时，请保留版权声明、许可证文本和源代码提供方式。",
-                    "如果你通过网络提供修改后的版本，也需要遵守 AGPL-3.0 对网络交互版本的源代码提供义务。"
+                Text(
+                    "RWPP $projectVersion (core $coreVersion)",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
                 )
-            )
 
-            InfoSection(
-                title = "游戏资源与依赖",
-                lines = listOf(
-                    "Rusted Warfare 游戏本体、名称、素材与资源归其原权利方所有。",
-                    "本仓库的纯源码发布不包含原版游戏库、商业游戏本体或需要用户自行准备的游戏资源。",
-                    "Android 资源或桌面游戏库缺失时，请从你合法拥有的本地客户端中自行补齐。"
+                LargeDividingLine { 10.dp }
+
+                BorderCard(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), onClick = { showFeedback = true }) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("提交问题反馈", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("描述遇到的问题，并附带最近七天的运行日志。", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+
+                OfficialQqGroupCard()
+
+                InfoSection(
+                    title = "项目来源",
+                    lines = listOf(
+                        "铁锈战争极速版基于上游 RWPP 体系 fork 并独立维护。",
+                        "本项目开源仓库：maker416/TXJS（https://github.com/maker416/TXJS）。",
+                        "项目面向萌新云生态与更清爽的铁锈战争联机体验，在 RWPP 能力之上继续优化上手流程、服务器列表与公开房间曝光。",
+                        "本项目不是 Rusted Warfare 官方项目，也不代表原游戏开发者。"
+                    )
                 )
-            )
 
-            InfoSection(
-                title = "再分发建议",
-                lines = listOf(
-                    "发布修改版时，请清楚标注你修改了什么、基于哪个版本、源码在哪里获取。",
-                    "不要移除上游 RWPP、本项目贡献者以及相关第三方库的版权与许可信息。",
-                    "如果额外加入素材、脚本或扩展，请同时标注它们各自的来源和授权。"
+                InfoSection(
+                    title = "开源许可",
+                    lines = listOf(
+                        "本仓库沿用 GNU Affero General Public License v3.0（AGPL-3.0）。",
+                        "二次开发、fork、修改和再分发时，请保留版权声明、许可证文本和源代码提供方式。",
+                        "如果你通过网络提供修改后的版本，也需要遵守 AGPL-3.0 对网络交互版本的源代码提供义务。"
+                    )
                 )
-            )
 
-            InfoSection(
-                title = "致谢",
-                lines = listOf(
-                    "感谢上游 RWPP 项目提供技术基底。",
-                    "感谢 RW-HPS 等铁锈战争生态项目，以及所有参与反馈、测试和贡献的玩家。",
-                    "感谢 Corroding Games / Luke Hoschke 创作 Rusted Warfare。"
+                InfoSection(
+                    title = "游戏资源与依赖",
+                    lines = listOf(
+                        "Rusted Warfare 游戏本体、名称、素材与资源归其原权利方所有。",
+                        "本仓库的纯源码发布不包含原版游戏库、商业游戏本体或需要用户自行准备的游戏资源。",
+                        "Android 资源或桌面游戏库缺失时，请从你合法拥有的本地客户端中自行补齐。"
+                    )
                 )
-            )
 
-            LinkCard("开源仓库 maker416/TXJS", "https://github.com/maker416/TXJS", net)
-            LinkCard("上游 RWPP", "https://github.com/Minxyzgo/RWPP", net)
-            LinkCard("相关生态 RW-HPS", "https://github.com/deng-rui/RW-HPS", net)
-            LinkCard("AGPL-3.0 许可证文本", "https://www.gnu.org/licenses/agpl-3.0.html", net)
+                InfoSection(
+                    title = "再分发建议",
+                    lines = listOf(
+                        "发布修改版时，请清楚标注你修改了什么、基于哪个版本、源码在哪里获取。",
+                        "不要移除上游 RWPP、本项目贡献者以及相关第三方库的版权与许可信息。",
+                        "如果额外加入素材、脚本或扩展，请同时标注它们各自的来源和授权。"
+                    )
+                )
 
-            Spacer(modifier = Modifier.height(12.dp))
+                InfoSection(
+                    title = "致谢",
+                    lines = listOf(
+                        "感谢上游 RWPP 项目提供技术基底。",
+                        "感谢 RW-HPS 等铁锈战争生态项目，以及所有参与反馈、测试和贡献的玩家。",
+                        "感谢 Corroding Games / Luke Hoschke 创作 Rusted Warfare。"
+                    )
+                )
+
+                LinkCard("开源仓库 maker416/TXJS", "https://github.com/maker416/TXJS", net)
+                LinkCard("上游 RWPP", "https://github.com/Minxyzgo/RWPP", net)
+                LinkCard("相关生态 RW-HPS", "https://github.com/deng-rui/RW-HPS", net)
+                LinkCard("AGPL-3.0 许可证文本", "https://www.gnu.org/licenses/agpl-3.0.html", net)
+
+                Spacer(modifier = Modifier.height(12.dp))
+            }
         }
     }
 }
