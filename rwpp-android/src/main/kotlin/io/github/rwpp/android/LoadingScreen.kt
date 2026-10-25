@@ -58,7 +58,6 @@ import io.github.rwpp.widget.RWPPTheme
 import io.github.rwpp.widget.RWSelectionColors
 import io.github.rwpp.widget.v2.TitleBrush
 import com.corrodinggames.rts.gameFramework.SettingsEngine
-import javassist.android.DexFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.koin.compose.KoinContext
@@ -247,9 +246,8 @@ class LoadingScreen : ComponentActivity() {
                                                     logger?.logging("compiling dex: $libPath")
                                                     logger?.logging("Saving dex to ${dexFolder.absolutePath}/classes.dex")
                                                     StartupTiming.measure("android.dexBuild") {
-                                                        val dex = DexFile()
-                                                        dex.addJarFile(libPath)
-                                                        dex.writeFile("${dexFolder.absolutePath}/classes.dex")
+                                                        logger?.logging("DEX compiler optimization: enabled")
+                                                        OptimizedGameDexCompiler.compile(File(libPath), File(dexFolder, "classes.dex"))
                                                     }
                                                     logger?.logging("Successfully compile dex")
                                                     logGeneratedArtifactState()

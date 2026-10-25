@@ -278,6 +278,7 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 ### 局内启动器后台开销
 
+- Android 核心在注入后通过 `OptimizedGameDexCompiler` 转为 DEX，必须显式开启 `CfOptions.optimize=true`。旧 `javassist.android.DexFile` 包装器默认关闭优化，Release 打包不会替它开启。覆盖安装由既有安装标记作废旧 DEX；修改转换路径须跑 `OptimizedGameDexCompilerTest`（含完整生产注入转换）和 Android Release 编译。对照包已有用户反馈改善，但不代表桌面端问题已解决；详情见 `docs/in-game-performance.md`。
 - 模组游玩统计的本局生效集合由两端 `GameImpl` 的 `ModPlaytimeSnapshotCache` 捕获一次；每秒只采样轻量状态。模组重载前后调用 `invalidateModPlaytimeSnapshot()`，加载/损坏状态不得读取单位注册表。
 - 本地统计哈希缓存位于应用内部 `cache/mod-playtime-hashes-v1.json`，只用于统计身份；新增导入/替换/删除入口应在写入前调用 `ModPlaytimeHashCache.sourceChanged()`，不得替代同步传输校验。
 - `LauncherVisibility` 由平台画面切换/生命周期维护；不可见时暂停好友/私信、房间采样/名片/同步 peers 等界面轮询，恢复时补刷。协程内部直接收集可见性流，不能依赖隐藏 Activity 的 Compose 重组。账号在线、身份公示和模组同步 TTL 心跳及引擎保活继续运行。

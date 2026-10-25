@@ -8,6 +8,26 @@
 
 ## 已实施
 
+### Android 游戏核心 DEX 编译
+
+Android 启动器会注入原版核心，再把修改后的 JAR 转为 DEX 动态加载。原来调用的 `javassist.android.DexFile.addJarFile()` 使用默认 `CfOptions`，其中 `optimize=false`；APK 为 Release 并不会改变这条运行时转换路径的编译参数。
+
+现在由 `OptimizedGameDexCompiler` 显式设置 `CfOptions.optimize=true`，保留原 DX 后端、游戏逻辑和注入配置。写入时继续先打开描述符再把 DEX 标记只读，失败时清除不完整输出。APK 覆盖安装仍通过既有 `androidInstallationId` / `InstallArtifactMaintenance` 作废旧产物，首次启动重新生成优化后的核心，无需清除用户数据。
+
+同一份未注入 Android 核心的静态 DEX 指令对比：基础单位更新 `bp.a(F)` 为 4,992 → 2,648 条，模组单位更新 `custom.j.a(F)` 为 3,674 → 1,556 条。此数字不能换算为 FPS 提升比例，也不表示 Android 运行时没有进一步的 JIT 优化。
+
+2026-10-25，用户报告基于 1.20.29、仅改变核心 DEX 优化的 Release 对照包有效。包内原始核心 JAR 与注入配置和未优化对照包一致，签名及非调试标记均已校验。目前反馈为定性改善，尚未收到标准化帧时间曲线；也不能把这项 Android 专用修复视为桌面端掉帧原因。较早的 1.20.5 / 1.13.70 APK 同样关闭了此优化，尚不能据此定位最近版本回退的唯一提交。
+
+优化增加首次编译的内存需求：桌面 JVM 的未注入核心转换在 256MiB 堆下通过、128MiB 下失败，这不是手机内存峰值测量。低内存设备的首次生成和扩展注入仍需真机覆盖，禁止静默退回未优化编译并当作优化成功。
+
+回归：`OptimizedGameDexCompilerTest` 比较真实核心优化前后的全部类和方法集合、热点代码大小，并用当前生成的完整注入配置生成 JAR 后执行优化转换。
+
+```powershell
+.\gradlew.bat :rwpp-android:testDebugUnitTest :rwpp-android:compileReleaseKotlin --console=plain
+```
+
+### 模组统计和隐藏界面轮询
+
 | 工作 | 原行为 | 修复后 |
 | --- | --- | --- |
 | 本局生效模组识别 | 登录后每秒复制、筛选单位定义表，枚举模组，读取名称和路径 | 每局首次有效采样创建快照；后续只读轻量状态和快照 |
