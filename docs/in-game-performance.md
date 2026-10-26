@@ -8,6 +8,25 @@
 
 ## 已实施
 
+### 特效“无限制”的对象池扩容
+
+原实现仅把四个优先级阈值设为最大整数，核心仍使用固定的 350 / 500 个特效对象，满池后无法保留更多同时存在的特效。现在 Android、桌面端均由 `EffectLimitInject` 接管“无限制”模式的分配：先复用空闲对象，满池时按约 50%（至少 64 个槽位）扩容，没有额外的固定数量上限。默认“保持”和“零”继续执行原版分配逻辑；设置仍在引擎就绪后应用，修改后需重启。
+
+扩容保留原对象引用，并在所有新对象构造成功后才发布新数组。原版更新循环会缓存旧数组，特效死亡或拖尾回调又可能生成子特效，因此超出本帧数组容量的槽位从下一次更新起参与遍历；退局清场会清除待发布范围。初始化、可见性过滤和绘制流程继续由原版处理。扩容后的池保留复用，不在对局中缩容。
+
+大量特效仍消耗实际内存与绘制时间。若扩容内存不足，本次分配返回空、保留旧池，每个引擎生命周期仅记录一次 `[EFFECTS]` 警告，并停止重复扩容尝试；已释放的槽位仍可复用，重启后恢复扩容尝试。
+
+回归包括两端真实核心的 1,200 个并存特效、连续扩容、释放复用、低帧率、更新中生成子特效时的扩容、退局清场、“保持”/“零”与原版差分、构造时内存不足，以及容量溢出和完整生产注入的优化 DEX 转换。JVM 测试保留原版特效构造、分配、清场与遍历循环，替换渲染资源初始化、设备帧率来源，并用受控子特效回调验证重入，不能替代真机绘制验证。
+
+```powershell
+.\gradlew.bat :rwpp-core-api:test --tests '*EffectPoolGrowthTest' `
+  :rwpp-desktop:test --tests '*EffectLimitInjectionTest' `
+  :rwpp-android:testDebugUnitTest --tests '*EffectLimitInjectionTest' --tests '*OptimizedGameDexCompilerTest' `
+  :rwpp-android:assembleRelease --console=plain
+```
+
+设备验收待完成：两端选择“无限制”并重启，在密集爆炸/拖尾场景检查特效完整性、迷雾过滤、暂停/恢复、退局再开局；旧版本覆盖安装后确认核心重新注入，Android 同时重新生成 DEX。
+
 ### Android 游戏核心 DEX 编译
 
 Android 启动器会注入原版核心，再把修改后的 JAR 转为 DEX 动态加载。原来调用的 `javassist.android.DexFile.addJarFile()` 使用默认 `CfOptions`，其中 `optimize=false`；APK 为 Release 并不会改变这条运行时转换路径的编译参数。

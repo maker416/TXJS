@@ -41,6 +41,7 @@ import io.github.rwpp.desktop.GameStartMode
 import io.github.rwpp.desktop.displaySwitcher
 import io.github.rwpp.desktop.gameSessionManager
 import io.github.rwpp.desktop.native
+import io.github.rwpp.desktop.impl.inject.EffectLimitInject
 import io.github.rwpp.desktop.singlePlayer
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.game.Game
@@ -553,6 +554,7 @@ class GameImpl : AbstractGame() {
             d = limit
             e = limit
         }
+        EffectLimitInject.configure(limit)
     }
 
     override fun isGameCouldContinue(): Boolean {

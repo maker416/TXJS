@@ -74,6 +74,9 @@ class OptimizedGameDexCompilerTest {
             assertTrue("Lcom/corrodinggames/rts/game/units/ce;->__original__a(FZ)V" in signatures)
             assertTrue("Lcom/corrodinggames/rts/game/units/ce;->__redirect__a__a(Landroid/graphics/RectF;Landroid/graphics/Paint;)V" in signatures)
             assertTrue("Lcom/corrodinggames/rts/game/units/ce;->getAttackRangeHighlighted()Z" in signatures)
+            assertTrue("Lcom/corrodinggames/rts/gameFramework/d/c;->__original__a(Lcom/corrodinggames/rts/gameFramework/d/h;)Lcom/corrodinggames/rts/gameFramework/d/e;" in signatures)
+            assertTrue("Lcom/corrodinggames/rts/gameFramework/d/c;->__original__a(F)V" in signatures)
+            assertTrue("Lcom/corrodinggames/rts/gameFramework/d/c;->__original__a(Z)V" in signatures)
         } finally {
             Builder.rootInfo = previousRoot
             GameLibraries.includes.clear()

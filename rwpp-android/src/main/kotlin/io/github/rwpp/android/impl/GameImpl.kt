@@ -17,6 +17,7 @@ import com.corrodinggames.rts.gameFramework.j.ae
 import com.corrodinggames.rts.gameFramework.k
 import io.github.rwpp.android.*
 import io.github.rwpp.android.MainActivity.Companion.gameView
+import io.github.rwpp.android.impl.inject.EffectLimitInject
 import io.github.rwpp.appKoin
 import io.github.rwpp.core.LoadingContext
 import io.github.rwpp.event.broadcastIn
@@ -466,6 +467,7 @@ class GameImpl : Game, CoroutineScope {
             d = limit
             e = limit
         }
+        EffectLimitInject.configure(limit)
     }
 
     override fun isGameCouldContinue(): Boolean {
