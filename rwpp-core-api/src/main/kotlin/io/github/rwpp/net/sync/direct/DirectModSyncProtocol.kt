@@ -117,14 +117,18 @@ object DirectModSyncProtocol {
     }
 
     fun readFileResponse(input: InputStream, expected: NetworkModDescriptor, requestedOffset: Long): DirectFileResponseHeader {
-        val length = DataInputStream(input).readInt()
+        val data = DataInputStream(input)
+        val length = data.readInt()
+        val kind = data.readInt()
+        if (kind == ERROR) {
+            // ERROR 使用独立的小帧上限，不能套用 FILE 长度下限，也不能按文件大小分配内存。
+            if (length !in 0..MAX_ERROR_PAYLOAD) throw IOException("Invalid direct error payload length: $length")
+            throw DirectModSyncServerException(readErrorPayload(data.readNBytesStrict(length)))
+        }
+        if (kind != FILE) throw IOException("Unexpected direct file response kind: $kind")
         val minimum = 48
         val maximum = (expected.payloadSize - requestedOffset + minimum).coerceAtMost(Int.MAX_VALUE.toLong())
         if (length < minimum || length > maximum) throw IOException("Invalid direct file payload length: $length")
-        if (input.readNBytesStrict(4).let { DataInputStream(it.inputStream()).readInt() } != FILE) {
-            throw IOException("Unexpected direct file response kind")
-        }
-        val data = DataInputStream(input)
         val totalSize = data.readLong()
         val offset = data.readLong()
         val hash = encodeSha256(data.readNBytesStrict(32))

@@ -27,6 +27,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
@@ -92,6 +93,32 @@ class DirectModSyncClientTest {
                 }) { port -> client(port, cache, attempts = 1).download(descriptor, tempDir()) }
             }
             assertTrue(cache.stored.isEmpty(), mode)
+        }
+    }
+
+    @Test
+    fun downloadPreservesServerErrorCodesWithoutPublishing() = runBlocking {
+        val descriptor = NetworkModDescriptor.fromBytes("server-error", byteArrayOf(1, 2, 3))
+        DirectModSyncErrorCode.entries.forEach { code ->
+            val cache = RecordingCache()
+            val staging = tempDir()
+            val error = assertFailsWith<DirectModSyncException> {
+                withServer(handler = { socket ->
+                    assertRequest(socket, DirectModSyncProtocol.GET_FILE, descriptor, 0)
+                    socket.getOutputStream().apply {
+                        write(DirectModSyncProtocol.encodeError(code))
+                        flush()
+                    }
+                }) { port -> client(port, cache, attempts = 1).download(descriptor, staging) }
+            }
+            // withContext 的协程堆栈恢复可能复制外层 IOException，服务端错误须在 cause 链中保留。
+            val serverError = generateSequence<Throwable>(error) { it.cause }
+                .filterIsInstance<DirectModSyncServerException>()
+                .firstOrNull()
+            assertNotNull(serverError, "Missing server error for $code: $error")
+            assertEquals(code, serverError.code)
+            assertTrue(cache.stored.isEmpty(), code.name)
+            assertTrue(staging.listFiles().orEmpty().isEmpty(), code.name)
         }
     }
 

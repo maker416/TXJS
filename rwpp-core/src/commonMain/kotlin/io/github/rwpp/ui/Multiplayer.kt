@@ -83,7 +83,9 @@ import io.github.rwpp.net.RoomDescription
 import io.github.rwpp.net.hasRoomLabel
 import io.github.rwpp.net.isJoinableFromList
 import io.github.rwpp.net.isModdedRoom
-import io.github.rwpp.net.joinFailureMessage
+import io.github.rwpp.net.ConnectionFailure
+import io.github.rwpp.net.ConnectionFailureReason
+import io.github.rwpp.net.connectionFailure
 import io.github.rwpp.net.labels
 import io.github.rwpp.net.matchesAnyRoomLabel
 import io.github.rwpp.net.parseRequiredModNames
@@ -392,10 +394,24 @@ fun MultiplayerView(
     val hostSession = pendingHostSession
     val hostEnableMods = pendingHostEnableMods
     val hostTransferMods = pendingHostTransferMods
+    val failureAttempt = roomJoinContext.failureAttempt
+    var releaseFailureCapture by remember { mutableStateOf<(() -> Unit)?>(null) }
+    DisposableEffect(isConnecting, failureAttempt) {
+        val release = if (isConnecting) UI.captureConnectionFailures { failureAttempt.report(it) } else null
+        releaseFailureCapture = release
+        onDispose {
+            if (release != null) failureAttempt.finish()
+            release?.invoke()
+        }
+    }
     LoadingView(
         isConnecting,
+        externalFailure = failureAttempt.failure,
+        failureContent = { failure, dismiss -> io.github.rwpp.widget.ConnectionFailureCard(failure, dismiss) },
         onLoaded = {
             // 取消 Loading：掐断带外同步（含已排定的被踢重试）+ 清 Presence + 取消游戏侧加入，避免关闭后仍进房
+            failureAttempt.finish()
+            releaseFailureCapture?.invoke()
             ModSyncController.cancelJoinEntry()
             game.cancelJoinServer()
             pendingHostSession = false
@@ -421,11 +437,11 @@ fun MultiplayerView(
                 try {
                     ModSyncController.awaitJoinEntryCleanup()
                     if(address.isBlank()) {
-                        message("That server no longer exists")
+                        failure(ConnectionFailure(ConnectionFailureReason.NO_ROOM))
                         return@beginSession false
                     }
                     if (!io.github.rwpp.net.isSingleLineJoinAddress(address)) {
-                        message(readI18n("multiplayer.invalidJoinAddress"))
+                        failure(ConnectionFailure(ConnectionFailureReason.INVALID_ADDRESS, details = address))
                         return@beginSession false
                     }
                     address = roomJoinAddressForId(address)
@@ -460,7 +476,7 @@ fun MultiplayerView(
                                 }
                             }
                             is io.github.rwpp.core.DirectJoinSyncResult.Failed -> {
-                                message(direct.message)
+                                failure(direct.failure)
                                 return@beginSession false
                             }
                         }
@@ -483,7 +499,9 @@ fun MultiplayerView(
                         // 房主走 quickHost 指令串产不出 key，靠进房后 roomDetails 短码补充
                         joined = true
                         val accepted = withContext(Dispatchers.Main.immediate) {
-                            if (!UI.showMultiplayerView || !isConnecting) false else {
+                            if (!UI.showMultiplayerView || !isConnecting || failureAttempt !== roomJoinContext.failureAttempt) false else {
+                                failureAttempt.finish()
+                                releaseFailureCapture?.invoke()
                                 RoomIdentityController.onJoiningRoom(address, capturedRoomDescription)
                                 onOpenRoomView()
                                 opened = true
@@ -497,7 +515,10 @@ fun MultiplayerView(
                         JoinGameEvent(address).broadcastIn()
                         true
                     } else {
-                        message(joinFailureMessage(result.exceptionOrNull()!!.message!!))
+                        val error = result.exceptionOrNull()
+                        val model = error?.let { connectionFailure(it) }
+                        if (error != null && model == null) throw kotlinx.coroutines.CancellationException("Connection attempt cancelled", error)
+                        if (model != null) failure(failureAttempt.failure ?: model)
                         false
                     }
                 } finally {

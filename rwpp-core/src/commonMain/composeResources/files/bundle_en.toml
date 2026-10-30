@@ -1,3 +1,162 @@
+[connectionError]
+details = "Technical details"
+showDetails = "Show details"
+hideDetails = "Hide details"
+reasonLabel = "What happened"
+suggestionLabel = "What you can do"
+ok = "OK"
+context = "Related value: {0}"
+timeoutTarget = "Host: {0}, port: {1}; waited {2} ms."
+
+[connectionError.unknown]
+title = "Could not join the room"
+explanation = "The connection did not complete. The exact cause is not known."
+suggestion = "Check the address and network, then try again. If it keeps failing, share the technical details with the host."
+[connectionError.serverRejected]
+title = "The server did not accept the connection"
+explanation = "The server returned a message that the launcher cannot safely classify."
+suggestion = "Read the server message in technical details or ask the host for help."
+[connectionError.timeout]
+title = "Connection timed out"
+explanation = "The server did not respond before the connection timeout."
+suggestion = "Check your network and try again. If other rooms work, this server may be temporarily unreachable."
+[connectionError.invalidAddress]
+title = "Invalid server address"
+explanation = "The address is not a valid connection address."
+suggestion = "Enter a single-line IP, hostname or room code supplied by the host."
+[connectionError.invalidPort]
+title = "Invalid server port"
+explanation = "The port number is outside the allowed range."
+suggestion = "Check the port with the host and enter a number from 1 to 65535."
+[connectionError.dns]
+title = "Could not resolve the server address"
+explanation = "The hostname could not be resolved to a network address."
+suggestion = "Check the hostname and your network or DNS settings, then try again."
+[connectionError.refused]
+title = "Connection refused"
+explanation = "The destination refused the connection. The server may not be listening on this port."
+suggestion = "Ask the host to check the server, port and firewall, or try again later."
+[connectionError.unreachable]
+title = "Network destination unreachable"
+explanation = "No working network route to the destination was available."
+suggestion = "Check your internet connection, VPN and network restrictions."
+[connectionError.missingMods]
+title = "Required mods are missing"
+explanation = "Your loaded mods do not include all mods required by the room."
+suggestion = "Obtain the required mods from the host or use a room with mod sync enabled."
+[connectionError.missingUnits]
+title = "Required units are missing"
+explanation = "The game could not find units required by the host."
+suggestion = "Use the same enabled mods and versions as the host, then reload and rejoin."
+[connectionError.dataMismatch]
+title = "Game or mod data does not match"
+explanation = "Your loaded data differs from the data required by the room."
+suggestion = "Check mod versions and enabled mods with the host, then reload and rejoin."
+[connectionError.syncFailed]
+title = "Mod sync failed"
+explanation = "The mod synchronization operation could not be completed."
+suggestion = "Check your network and available storage, then try joining again."
+[connectionError.manifestChanged]
+title = "The room mod list changed"
+explanation = "The host changed the mod manifest while files were being synchronized."
+suggestion = "Wait for the host to finish changing mods, then join again."
+[connectionError.checksumMismatch]
+title = "Mod verification failed"
+explanation = "The synchronized files or loaded units did not pass verification."
+suggestion = "Try syncing again. If it persists, ask the host to check the mods and their versions."
+[connectionError.reloadFailed]
+title = "Could not apply synchronized mods"
+explanation = "The game could not finish loading the required mods."
+suggestion = "Check the mod loading details and available memory, then try again."
+[connectionError.reconnectFailed]
+title = "Could not reconnect after sync"
+explanation = "The game could not establish a stable room connection after applying mods."
+suggestion = "Check whether the room is still available and join again."
+[connectionError.noRoom]
+title = "The room is no longer available"
+explanation = "The sync server reports that there is no active room."
+suggestion = "Refresh the room list or ask the host for a new address."
+[connectionError.notLobby]
+title = "The room is not in the lobby"
+explanation = "The room is no longer accepting lobby mod synchronization."
+suggestion = "Wait for the next game or choose another room."
+[connectionError.preparing]
+title = "The host is preparing mods"
+explanation = "The host has not finished preparing the mod list or files."
+suggestion = "Wait a moment and try joining again."
+[connectionError.notFound]
+title = "The required sync file was not found"
+explanation = "The sync server does not have the requested file."
+suggestion = "Ask the host to prepare or publish the mods again, then retry."
+[connectionError.busy]
+title = "The sync server is busy"
+explanation = "The server cannot handle this sync request right now."
+suggestion = "Wait a moment and try again."
+[connectionError.badRequest]
+title = "The sync request was rejected"
+explanation = "The server could not accept the sync request format or parameters."
+suggestion = "Check that the launcher and server use compatible versions."
+[connectionError.internalError]
+title = "The sync server encountered an error"
+explanation = "The server could not complete the request because of an internal error."
+suggestion = "Try again later or contact the server administrator."
+[connectionError.usernameTooLong]
+title = "Your player name is too long"
+explanation = "The server rejected the length of your player name."
+suggestion = "Shorten your player name before joining again."
+[connectionError.usernameTooShort]
+title = "Your player name is too short"
+explanation = "The server requires a longer player name."
+suggestion = "Choose a longer player name before joining again."
+[connectionError.banned]
+title = "You are temporarily banned"
+explanation = "The server rejected the connection because of an active ban."
+suggestion = "Wait for the ban to expire or contact the host."
+[connectionError.clientOutdated]
+title = "Your game version is too old"
+explanation = "The server requires a newer game version."
+suggestion = "Update to a compatible version agreed with the host."
+[connectionError.serverOutdated]
+title = "The server game version is too old"
+explanation = "Your client is newer than the server."
+suggestion = "Ask the host to update or use the same compatible game version."
+[connectionError.coreUnitsMismatch]
+title = "Core unit data does not match"
+explanation = "Your built-in unit data differs from the server and cannot be synchronized."
+suggestion = "Use matching game versions and check for modified or damaged game resources."
+[connectionError.clientIntegrity]
+title = "Client verification failed"
+explanation = "The server detected incompatible client data."
+suggestion = "Use matching game versions and check that your game installation is complete."
+[connectionError.roomLocked]
+title = "The room is locked"
+explanation = "The host has disabled entry for new players."
+suggestion = "Ask the host to unlock the room or choose another room."
+[connectionError.gameStarted]
+title = "The game has already started"
+explanation = "This server is no longer accepting new players for this game."
+suggestion = "Wait for the next game or choose another room."
+[connectionError.roomFull]
+title = "The room is full"
+explanation = "No suitable player or spectator slots are available."
+suggestion = "Wait for a slot to open or choose another room."
+[connectionError.passwordRequired]
+title = "A room password is required"
+explanation = "No password was provided for a password-protected room."
+suggestion = "Ask the host for the password and join again."
+[connectionError.wrongPassword]
+title = "Incorrect room password"
+explanation = "The room or master server did not accept the password."
+suggestion = "Check the password with the host and enter it again."
+[connectionError.masterQueryFailed]
+title = "Could not look up the room"
+explanation = "The master server did not return valid room connection information."
+suggestion = "Refresh the room list, check the room code or ask the host for a direct address."
+[connectionError.kicked]
+title = "You were removed from the room"
+explanation = "The host or server ended your room connection."
+suggestion = "Check the technical details for a host message or contact the host before rejoining."
+
 [mission]
 title = "Missions"
 type = "Mission Type"

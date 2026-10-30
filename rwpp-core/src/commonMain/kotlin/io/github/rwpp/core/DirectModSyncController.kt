@@ -20,6 +20,12 @@ import io.github.rwpp.game.mod.selectModSyncFiles
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.logger
+import io.github.rwpp.net.ConnectionFailure
+import io.github.rwpp.net.ConnectionFailureReason
+import io.github.rwpp.net.ConnectionFailureStage
+import io.github.rwpp.net.connectionFailure
+import io.github.rwpp.net.sync.direct.DirectModSyncErrorCode
+import io.github.rwpp.net.sync.direct.DirectModSyncServerException
 import io.github.rwpp.net.sync.direct.DirectJoinEndpoint
 import io.github.rwpp.net.sync.direct.DirectModManifest
 import io.github.rwpp.net.sync.direct.DirectModSyncClient
@@ -34,7 +40,7 @@ import kotlinx.coroutines.ensureActive
 sealed interface DirectJoinSyncResult {
     data object Applied : DirectJoinSyncResult
     data object Unsupported : DirectJoinSyncResult
-    data class Failed(val message: String) : DirectJoinSyncResult
+    data class Failed(val failure: ConnectionFailure) : DirectJoinSyncResult
 }
 
 /** 可替换的引擎边界，便于在不启动原版连接的情况下验证 Direct 编排。 */
@@ -45,6 +51,8 @@ interface DirectModSyncEnvironment {
     fun getUnitsChecksum(): Int
     fun refreshHandshakeChecksumCache()
 }
+
+private class DirectSyncFailure(val failure: ConnectionFailure) : IllegalStateException(failure.details)
 
 private object DefaultDirectModSyncEnvironment : DirectModSyncEnvironment {
     override val cache: NetworkModCache get() = appKoin.get()
@@ -65,7 +73,11 @@ private object DefaultDirectModSyncEnvironment : DirectModSyncEnvironment {
         manager.modReload(forceImmediate = true, enabledByFileName = enabledByFileName)
         GameStartSafety.requireCanReload()
         if (!isEnabledModSetExact(manager.getAllMods(), descriptors, cache)) {
-            throw IllegalStateException("Local mod set does not match direct manifest after reload")
+            throw DirectSyncFailure(ConnectionFailure(
+                ConnectionFailureReason.MISSING_MODS,
+                ConnectionFailureStage.SYNC_APPLY,
+                details = "Local mod set does not match direct manifest after reload",
+            ))
         }
     }
 }
@@ -84,38 +96,53 @@ class DirectModSyncController(
         val transport = transportFactory(endpoint, environment.cache)
         val first = try {
             transport.getManifest()
-        } catch (_: DirectModSyncUnsupportedException) {
+        } catch (error: DirectModSyncUnsupportedException) {
+            if (connectionFailure(error, ConnectionFailureStage.SYNC_MANIFEST) == null) throw error
             return DirectJoinSyncResult.Unsupported
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            return failed(error)
+            return failed(error, ConnectionFailureStage.SYNC_MANIFEST)
         }
 
+        var stage = ConnectionFailureStage.SYNC_MANIFEST
         return try {
             prepare(first)
             loadingContext.message(readI18n("modSync.directChecking", I18nType.RWPP))
             val missing = first.mods.map { it.cacheKey() }.toSet() - findMatchingModSyncKeys(
                 environment.getAllMods(), first.mods, environment.cache,
             )
+            stage = ConnectionFailureStage.SYNC_DOWNLOAD
             first.mods.filter { it.cacheKey() in missing }.forEachIndexed { index, descriptor ->
                 currentCoroutineContext().ensureActive()
                 loadingContext.message(readI18n("modSync.directDownloading", I18nType.RWPP, (index + 1).toString(), first.mods.size.toString(), descriptor.name))
                 transport.download(descriptor)
             }
             currentCoroutineContext().ensureActive()
+            stage = ConnectionFailureStage.SYNC_MANIFEST
             loadingContext.message(readI18n("modSync.directRechecking", I18nType.RWPP))
             val second = transport.getManifest()
             validateManifest(second)
             requireReady(second)
-            if (!first.sameRoomContent(second)) throw IllegalStateException("Direct room manifest changed during download")
+            if (!first.sameRoomContent(second)) {
+                return DirectJoinSyncResult.Failed(ConnectionFailure(
+                    ConnectionFailureReason.MANIFEST_CHANGED,
+                    stage,
+                    details = "Direct room manifest changed during download",
+                ))
+            }
 
+            stage = ConnectionFailureStage.SYNC_APPLY
             loadingContext.message(readI18n("modSync.directApplying", I18nType.RWPP))
             environment.applyMods(second.mods)
             currentCoroutineContext().ensureActive()
             val localChecksum = environment.getUnitsChecksum().toLong()
             if (second.hostUnitsChecksum != -1L && localChecksum != second.hostUnitsChecksum) {
-                throw IllegalStateException("Direct unit checksum mismatch (local $localChecksum / host ${second.hostUnitsChecksum})")
+                return DirectJoinSyncResult.Failed(ConnectionFailure(
+                    ConnectionFailureReason.CHECKSUM_MISMATCH,
+                    stage,
+                    details = "Direct unit checksum mismatch (local $localChecksum / host ${second.hostUnitsChecksum})",
+                ))
             }
             environment.refreshHandshakeChecksumCache()
             currentCoroutineContext().ensureActive()
@@ -124,9 +151,13 @@ class DirectModSyncController(
             throw error
         } catch (error: OutOfMemoryError) {
             io.github.rwpp.game.mod.ModLoadSafety.recordMemoryFailure("direct-pre-join-transfer")
-            DirectJoinSyncResult.Failed(readI18n("modSync.directFailed", I18nType.RWPP, error.message.orEmpty()))
+            DirectJoinSyncResult.Failed(ConnectionFailure(
+                if (stage == ConnectionFailureStage.SYNC_APPLY) ConnectionFailureReason.RELOAD_FAILED else ConnectionFailureReason.SYNC_FAILED,
+                stage,
+                details = error.message.orEmpty(),
+            ))
         } catch (error: Exception) {
-            failed(error)
+            failed(error, stage)
         }
     }
 
@@ -136,14 +167,16 @@ class DirectModSyncController(
     }
 
     private fun requireReady(manifest: DirectModManifest) {
-        if (!manifest.lobby) throw IllegalStateException("Direct room is not in lobby")
-        if (manifest.status != "ready") throw IllegalStateException("Direct room is not ready: ${manifest.status}")
+        if (!manifest.lobby) throw DirectModSyncServerException(DirectModSyncErrorCode.NOT_LOBBY)
+        if (manifest.status != "ready") throw DirectModSyncServerException(DirectModSyncErrorCode.PREPARING)
     }
 
-    private fun failed(error: Exception): DirectJoinSyncResult.Failed {
+    private fun failed(error: Exception, stage: ConnectionFailureStage): DirectJoinSyncResult.Failed {
+        // cause 链中的取消也必须传播，不能变成一次「未知失败」。
+        val failure = (error as? DirectSyncFailure)?.failure ?: connectionFailure(error, stage) ?: throw error
         org.slf4j.LoggerFactory.getLogger(DirectModSyncController::class.java)
             .error("[MODSYNC-DIRECT] direct join sync failed: ${error.stackTraceToString()}")
-        return DirectJoinSyncResult.Failed(readI18n("modSync.directFailed", I18nType.RWPP, error.message.orEmpty()))
+        return DirectJoinSyncResult.Failed(failure)
     }
 
     companion object {

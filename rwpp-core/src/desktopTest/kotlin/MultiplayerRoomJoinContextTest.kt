@@ -23,6 +23,23 @@ class MultiplayerRoomJoinContextTest {
     )
 
     @Test
+    fun nativeAndResultFailuresShareFirstFailureWithoutLeakingToNextRequest() {
+        val context = MultiplayerRoomJoinContext()
+        context.beginConnection()
+        val old = context.failureAttempt
+        val first = io.github.rwpp.net.ConnectionFailure(io.github.rwpp.net.ConnectionFailureReason.ROOM_FULL)
+        val second = io.github.rwpp.net.ConnectionFailure(io.github.rwpp.net.ConnectionFailureReason.UNKNOWN)
+        kotlin.test.assertTrue(old.report(first))
+        kotlin.test.assertTrue(old.report(second))
+        assertSame(first, old.failure)
+        context.beginConnection()
+        kotlin.test.assertFalse(old.report(second))
+        assertNull(context.failureAttempt.failure)
+        context.failureAttempt.finish()
+        kotlin.test.assertFalse(context.failureAttempt.report(second))
+    }
+
+    @Test
     fun cancellingListSelectionThenConnectingDirectlyCannotReuseItsSyncKeysOrRelay() {
         for (address in listOf("192.168.1.2:5123", "R5678", "t.mxy.wang/9876", "Qnews", "Rmods")) {
             val context = MultiplayerRoomJoinContext()

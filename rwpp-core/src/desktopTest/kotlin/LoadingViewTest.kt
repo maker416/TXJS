@@ -14,6 +14,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.*
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
+import androidx.compose.material3.Text
+import io.github.rwpp.net.ConnectionFailure
+import io.github.rwpp.net.ConnectionFailureReason
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -106,6 +110,51 @@ class LoadingViewTest {
         waitForIdle()
         assertEquals(1, dismissals)
         onNodeWithText("Connection refused").assertDoesNotExist()
+    }
+
+    @Test
+    fun modelSlotWaitsForFalseAndPrefersTheLocalFailure() = runDesktopComposeUiTest {
+        val release = CompletableDeferred<Unit>()
+        val entered = AtomicBoolean()
+        val local = ConnectionFailure(ConnectionFailureReason.REFUSED)
+        val external = ConnectionFailure(ConnectionFailureReason.TIMEOUT)
+        var shown: ConnectionFailure? = null
+        setContent {
+            KoinContext(appKoin) {
+                MaterialTheme {
+                    LoadingView(true, onLoaded = {}, externalFailure = external,
+                        failureContent = { model, _ -> shown = model; Text("friendly failure") }) {
+                        failure(local)
+                        entered.set(true)
+                        release.await()
+                        false
+                    }
+                }
+            }
+        }
+        waitUntil(timeoutMillis = 3_000) { entered.get() }
+        onNodeWithText("friendly failure").assertDoesNotExist()
+        release.complete(Unit)
+        waitUntil(timeoutMillis = 3_000) { shown != null }
+        assertEquals(local, shown)
+        onNodeWithText("friendly failure").assertIsDisplayed()
+    }
+
+    @Test
+    fun externalFailureIsUsedWhenTheTaskReturnsFalseWithoutLocalModel() = runDesktopComposeUiTest {
+        val external = ConnectionFailure(ConnectionFailureReason.TIMEOUT)
+        var shown: ConnectionFailure? = null
+        setContent {
+            KoinContext(appKoin) {
+                MaterialTheme {
+                    LoadingView(true, onLoaded = {}, externalFailure = external,
+                        failureContent = { model, _ -> shown = model; Text("external failure") }) { false }
+                }
+            }
+        }
+        waitUntil(timeoutMillis = 3_000) { shown != null }
+        assertEquals(external, shown)
+        onNodeWithText("external failure").assertIsDisplayed()
     }
 
     @Test

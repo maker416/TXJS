@@ -78,6 +78,7 @@ import io.github.rwpp.game.Game
 import io.github.rwpp.game.Player
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.net.ConnectionFailure
 import io.github.rwpp.net.LatestVersionProfile
 import io.github.rwpp.net.account.RoomInvite
 import io.github.rwpp.projectVersion
@@ -183,6 +184,20 @@ object UI : Initialization, IUserInterface {
         }
     }
 
+    private var connectionFailureReceiver: ((ConnectionFailure) -> Boolean)? = null
+
+    fun captureConnectionFailures(receiver: (ConnectionFailure) -> Boolean): () -> Unit {
+        synchronized(UI) { connectionFailureReceiver = receiver }
+        return { synchronized(UI) { if (connectionFailureReceiver === receiver) connectionFailureReceiver = null } }
+    }
+
+    fun showConnectionFailure(failure: ConnectionFailure, isKicked: Boolean = false) {
+        synchronized(UI) {
+            if (connectionFailureReceiver?.invoke(failure) == true) return
+            warning = Warning(failure.details, isKicked, failure)
+        }
+    }
+
     override fun showQuestion(title: String, message: String, callback: (String?) -> Unit) {
         synchronized(UI) {
             question = Question(title, message, callback)
@@ -246,7 +261,11 @@ object UI : Initialization, IUserInterface {
     /**
      * @see [showWarning]
      */
-    class Warning(val reason: String, val isKicked: Boolean = false)
+    class Warning(
+        val reason: String,
+        val isKicked: Boolean = false,
+        val connectionFailure: ConnectionFailure? = null,
+    )
 
     override fun init() {
         GlobalEventChannel.filter(DisconnectEvent::class).subscribeAlways(Dispatchers.Main.immediate, priority = EventPriority.MONITOR) {

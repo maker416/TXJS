@@ -570,7 +570,10 @@ fun App(
                 AnimatedAlertDialog(
                     warningDialogVisible,
                     onDismissRequest = { warningDialogVisible = false }) { dismiss ->
-                    BorderCard(
+                    val failure = UI.warning?.connectionFailure
+                    if (failure != null) {
+                        io.github.rwpp.widget.ConnectionFailureCard(failure, dismiss)
+                    } else BorderCard(
                         modifier = Modifier
                             .fillMaxWidth(0.72f)
                             .widthIn(max = 420.dp)

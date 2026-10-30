@@ -141,6 +141,20 @@ compose.desktop {
 rootProject.tasks.matching { it.name == "unzipWix" }.configureEach {
     enabled = false
 }
+// 插件在 Windows 上把 wixToolsetDir 设为必需输入并加入 jpackage 的 PATH，但该目录由已禁用的
+// unzipWix 产出；app-image 不调用 WiX，指向本任务创建的空目录即可，否则新工作树在执行前校验失败。
+val emptyWixToolsetDir = tasks.register("emptyWixToolsetDir") {
+    val dir = layout.buildDirectory.dir("tmp/empty-wix")
+    outputs.dir(dir)
+    doLast { dir.get().asFile.mkdirs() }
+}
+afterEvaluate {
+    tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask>()
+        .matching { it.targetFormat == TargetFormat.AppImage }
+        .configureEach {
+            wixToolsetDir.set(layout.dir(emptyWixToolsetDir.map { it.outputs.files.singleFile }))
+        }
+}
 
 tasks.register<Exec>("packageInnoDistribution") {
     group = "distribution"

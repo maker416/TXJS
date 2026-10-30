@@ -40,6 +40,11 @@ import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.io.SizeUtils
 import io.github.rwpp.logger
+import io.github.rwpp.net.ConnectionFailure
+import io.github.rwpp.net.ConnectionFailureReason
+import io.github.rwpp.net.ConnectionFailureStage
+import io.github.rwpp.net.connectionFailure
+import io.github.rwpp.net.localized
 import io.github.rwpp.net.Net
 import io.github.rwpp.net.RoomDescription
 import io.github.rwpp.net.sync.ModSyncClient
@@ -517,7 +522,8 @@ object ModSyncController {
             return false
         } catch (e: Exception) {
             logger.error("[MODSYNC] pre-join sync failed: ${e.stackTraceToString()}")
-            fail(loadingContext, readI18n("modSync.syncFailed"), readI18n("modSync.syncFailedDetail", I18nType.RWPP, e.message.orEmpty()))
+            val failure = connectionFailure(e, ConnectionFailureStage.SYNC_MANIFEST) ?: return false
+            loadingContext.failure(failure)
             return false
         } finally {
             preJoinJob = null
@@ -686,6 +692,7 @@ object ModSyncController {
      */
     private suspend fun runPostJoinSync(ctx: PostJoinContext) {
         val reporter = ctx.reporter
+        var stage = ConnectionFailureStage.SYNC_MANIFEST
         try {
             val client = newClient()
             var response = ctx.manifest
@@ -703,20 +710,20 @@ object ModSyncController {
                     force = true,
                 )
                 if (polls >= PREPARING_POLL_MAX) {
-                    failInRoom(readI18n("modSync.hostPreparingTimeout"), null)
+                    failInRoom(ConnectionFailure(ConnectionFailureReason.PREPARING, stage))
                     return
                 }
                 polls++
                 delay(PREPARING_POLL_MS)
                 val polled = client.fetchManifest(ctx.roomKey)
                 if (polled == null) {
-                    failInRoom(readI18n("modSync.hostPreparingGone"), null)
+                    failInRoom(ConnectionFailure(ConnectionFailureReason.NO_ROOM, stage))
                     return
                 }
                 response = polled
             }
             if (!response.isReady) {
-                failInRoom(readI18n("modSync.syncFailed"), null)
+                failInRoom(ConnectionFailure(ConnectionFailureReason.SYNC_FAILED, stage))
                 return
             }
 
@@ -728,6 +735,7 @@ object ModSyncController {
             val missing = descriptors.filter { it.cacheKey() !in localMatches }
             logger.info("[MODSYNC] in-room sync: required=${descriptors.size}, missing=${missing.size}")
 
+            stage = ConnectionFailureStage.SYNC_DOWNLOAD
             if (missing.isNotEmpty()) {
                 setInRoomPhase(SyncPeerPhase.DOWNLOADING)
                 setDownloadingTitle(missing)
@@ -782,6 +790,7 @@ object ModSyncController {
             }
 
             // 启用 + 重载（保连接重载：引擎线程与网络保活保持运行，连接不断、聊天可用）
+            stage = ConnectionFailureStage.SYNC_APPLY
             val applyModCount = missing.size.coerceAtLeast(descriptors.size)
             setInRoomPhase(SyncPeerPhase.APPLYING)
             hideNetworkDownloadDialog()
@@ -816,20 +825,17 @@ object ModSyncController {
             if (expectedChecksum != null) {
                 val local = appKoin.get<Game>().getUnitsChecksum().toLong()
                 if (local != expectedChecksum) {
-                    failInRoom(
-                        readI18n("modSync.checksumMismatch"),
-                        readI18n(
-                            "modSync.checksumMismatchDetail",
-                            I18nType.RWPP,
-                            local.toString(),
-                            expectedChecksum.toString(),
-                        ),
-                    )
+                    failInRoom(ConnectionFailure(
+                        ConnectionFailureReason.CHECKSUM_MISMATCH,
+                        stage,
+                        details = "Unit checksum mismatch (local $local / host $expectedChecksum)",
+                    ))
                     return
                 }
             }
 
             // apply 后必须确认游戏连接仍活着；保活失败则保持 applying Presence 并重连，禁止僵尸房。
+            stage = ConnectionFailureStage.SYNC_RECONNECT
             if (!ensureConnectedOrRejoin()) return
 
             // 同步完成：synced 心跳保留至开局/断线，玩家行内徽章显示 ✓
@@ -856,7 +862,10 @@ object ModSyncController {
             stopAfterTransferMemoryFailure("room-transfer")
         } catch (e: Exception) {
             logger.error("[MODSYNC] in-room sync failed: ${e.stackTraceToString()}")
-            failInRoom(readI18n("modSync.syncFailed"), readI18n("modSync.syncFailedDetail", I18nType.RWPP, e.message.orEmpty()))
+            val failure = connectionFailure(e, stage) ?: return
+            failInRoom(if (stage == ConnectionFailureStage.SYNC_RECONNECT) {
+                failure.copy(reason = ConnectionFailureReason.RECONNECT_FAILED)
+            } else failure)
         }
     }
 
@@ -871,7 +880,7 @@ object ModSyncController {
         if (waitUntilConnecting(APPLY_CONNECT_WAIT_MS)) return true
         val address = inRoomJoinAddress
         if (address.isNullOrBlank()) {
-            failInRoom(readI18n("modSync.reconnectFailed"), null)
+            failInRoom(ConnectionFailure(ConnectionFailureReason.RECONNECT_FAILED, ConnectionFailureStage.SYNC_RECONNECT))
             return false
         }
         logger.warn("[MODSYNC] connection lost during apply, rejoining $address")
@@ -897,11 +906,16 @@ object ModSyncController {
             syncEntryJobs.scheduleExpiry(syncEntryJobs.currentEpoch(), ENTRY_GRACE_MS) { syncEntryActive = false }
             return true
         }
-        logger.warn("[MODSYNC] rejoin after apply failed: ${result.exceptionOrNull()?.message}")
-        failInRoom(
-            readI18n("modSync.reconnectFailed"),
-            result.exceptionOrNull()?.message,
-        )
+        val reconnectError = result.exceptionOrNull()
+        if (reconnectError != null && connectionFailure(reconnectError, ConnectionFailureStage.SYNC_RECONNECT) == null) {
+            throw reconnectError
+        }
+        logger.warn("[MODSYNC] rejoin after apply failed: ${reconnectError?.message}")
+        failInRoom(ConnectionFailure(
+            ConnectionFailureReason.RECONNECT_FAILED,
+            ConnectionFailureStage.SYNC_RECONNECT,
+            details = reconnectError?.message.orEmpty(),
+        ))
         return false
     }
 
@@ -929,7 +943,7 @@ object ModSyncController {
     /** 进房后同步失败：提示并自动退房（模组不一致留在房内无意义）。
      *  Presence/心跳在这里直接清理（[clearRoomPresence] 最后调用，它会取消本协程所在 job，
      *  因此放在所有挂起点之后）；DisconnectEvent 的清理仍作兜底，二者幂等。 */
-    private suspend fun failInRoom(message: String, detail: String?) {
+    private suspend fun failInRoom(failure: ConnectionFailure) {
         if (cancellingReload) {
             finishCancelReload()
             return
@@ -938,9 +952,9 @@ object ModSyncController {
         withContext(Dispatchers.Main.immediate) {
             inRoomSyncPhase = null
             resetReceivingStateOnMain()
-            UI.showWarning(detail ?: message, true)
+            UI.showConnectionFailure(failure, isKicked = true)
         }
-        runCatching { appKoin.get<Game>().gameRoom.disconnect(message) }
+        runCatching { appKoin.get<Game>().gameRoom.disconnect(failure.localized().title) }
         clearRoomPresence()
     }
 
@@ -1055,7 +1069,9 @@ object ModSyncController {
                         syncEntryJobs.scheduleExpiry(entryEpoch, ENTRY_GRACE_MS) { syncEntryActive = false }
                     }
                 } else {
-                    logger.warn("[MODSYNC] sync entry retry failed: ${result.exceptionOrNull()?.message}")
+                    val error = result.exceptionOrNull()
+                    if (error != null && connectionFailure(error, ConnectionFailureStage.SYNC_RECONNECT) == null) throw error
+                    logger.warn("[MODSYNC] sync entry retry failed: ${error?.message}")
                     val ctx = synchronized(this) {
                         if (!syncEntryJobs.isCurrent(entryEpoch)) null else {
                             pendingPostJoin.also { pendingPostJoin = null }
@@ -1065,13 +1081,18 @@ object ModSyncController {
                     withContext(Dispatchers.Main.immediate) {
                         if (syncEntryJobs.isCurrent(entryEpoch)) {
                             syncEntryActive = false
-                            UI.showWarning(readI18n("modSync.syncFailed"), true)
+                            UI.showConnectionFailure(ConnectionFailure(
+                                ConnectionFailureReason.RECONNECT_FAILED,
+                                ConnectionFailureStage.SYNC_RECONNECT,
+                                details = error?.message.orEmpty(),
+                            ), isKicked = true)
                         }
                     }
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                val failure = connectionFailure(e, ConnectionFailureStage.SYNC_RECONNECT) ?: throw e
                 logger.error("[MODSYNC] sync entry retry threw: ${e.stackTraceToString()}")
                 val ctx = synchronized(this) {
                     if (!syncEntryJobs.isCurrent(entryEpoch)) null else {
@@ -1080,6 +1101,11 @@ object ModSyncController {
                     }
                 }
                 ctx?.reporter?.clear()
+                withContext(Dispatchers.Main.immediate) {
+                    if (syncEntryJobs.isCurrent(entryEpoch)) {
+                        UI.showConnectionFailure(failure.copy(reason = ConnectionFailureReason.RECONNECT_FAILED), isKicked = true)
+                    }
+                }
             }
         }
         if (!scheduled) {
@@ -1149,7 +1175,11 @@ object ModSyncController {
         }
         val matched = findLocalMatchKeys(manager.getAllMods(), descriptors, cache)
         if (!descriptors.all { it.cacheKey() in matched }) {
-            failInRoom(readI18n("mod.downloadFailed"), readI18n("mod.downloadFailedMissing"))
+            failInRoom(ConnectionFailure(
+                ConnectionFailureReason.MISSING_MODS,
+                ConnectionFailureStage.SYNC_APPLY,
+                details = "Local mod set does not match manifest after reload",
+            ))
             return false
         }
         logger.info("[MODSYNC] SUCCESS: mods synced")
@@ -1267,13 +1297,6 @@ object ModSyncController {
 
     private fun setHostState(state: HostSyncState) {
         scope.launch(Dispatchers.Main.immediate) { hostSyncState = state }
-    }
-
-    private suspend fun fail(loadingContext: LoadingContext, message: String, detail: String?) {
-        loadingContext.message(message)
-        if (detail != null) {
-            withContext(Dispatchers.Main.immediate) { UI.showWarning(detail, true) }
-        }
     }
 
     private suspend fun setDownloadingTitle(missing: List<NetworkModDescriptor>) {
