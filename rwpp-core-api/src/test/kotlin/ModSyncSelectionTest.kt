@@ -90,6 +90,20 @@ class ModSyncSelectionTest {
     }
 
     @Test
+    fun emptyManifestRequiresEveryLocalModToBeDisabled() {
+        val root = createTempDirectory().toFile()
+        try {
+            val mod = FileMod("Demo", root.resolve("demo.rwmod").apply { writeText("units") })
+            val cache = Cache(root, byteArrayOf())
+            assertFalse(io.github.rwpp.game.mod.isEnabledModSetExact(listOf(mod), emptyList(), cache))
+            mod.isEnabled = false
+            assertTrue(io.github.rwpp.game.mod.isEnabledModSetExact(listOf(mod), emptyList(), cache))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun unreadableOldWorkingCopyCannotPreventActivatingVerifiedCache() {
         val root = createTempDirectory().toFile()
         try {
@@ -102,6 +116,26 @@ class ModSyncSelectionTest {
             assertEquals(1, failures)
             assertEquals(1, cache.activations)
             assertTrue(descriptor.matches(selected.single().readBytes()))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun disabledCorrectCopyCannotMakeEnabledStaleCopyExact() {
+        val root = createTempDirectory().toFile()
+        try {
+            val bytes = "new units".encodeToByteArray()
+            val descriptor = NetworkModDescriptor.fromBytes("Demo", bytes)
+            val stale = FileMod("Demo", root.resolve("stale.rwmod").apply { writeText("old units") })
+            val correct = FileMod("Demo", root.resolve("correct.rwmod").apply { writeBytes(bytes) })
+            correct.isEnabled = false
+            val cache = Cache(root, bytes)
+
+            assertFalse(io.github.rwpp.game.mod.isEnabledModSetExact(listOf(stale, correct), listOf(descriptor), cache))
+            stale.isEnabled = false
+            correct.isEnabled = true
+            assertTrue(io.github.rwpp.game.mod.isEnabledModSetExact(listOf(stale, correct), listOf(descriptor), cache))
         } finally {
             root.deleteRecursively()
         }

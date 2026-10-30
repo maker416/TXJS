@@ -446,11 +446,22 @@ fun MultiplayerView(
                             }
                         }
                     } else {
-                        // 加入者：连接前只跑带外同步轻量段（查清单/登记 Presence 供房主握手放行）；
-                        // 下载与重载在进房成功后由 ModSyncController 在房间内后台完成，期间可正常聊天
-                        if (!ModSyncController.preJoinSync(capturedRoomDescription, address, this)) {
-                            logger.info("[JOIN] pre-join sync did not allow connection")
-                            return@beginSession false
+                        // Direct 在原版连接前完成下载、普通重载与校验；只有未识别协议才回落旧 relay。
+                        when (val direct = io.github.rwpp.core.DirectModSyncController.shared.preJoinSync(address, this)) {
+                            io.github.rwpp.core.DirectJoinSyncResult.Applied -> {
+                                // 本轮未创建 relay joining Presence，也清掉任何旧会话遗留上下文。
+                                ModSyncController.finishJoinerPresence()
+                            }
+                            io.github.rwpp.core.DirectJoinSyncResult.Unsupported -> {
+                                if (!ModSyncController.preJoinSync(capturedRoomDescription, address, this)) {
+                                    logger.info("[JOIN] relay pre-join sync did not allow connection")
+                                    return@beginSession false
+                                }
+                            }
+                            is io.github.rwpp.core.DirectJoinSyncResult.Failed -> {
+                                message(direct.message)
+                                return@beginSession false
+                            }
                         }
                     }
 
