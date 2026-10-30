@@ -186,6 +186,8 @@ Gradle JVM 参数在根目录 `gradle.properties` 中定义（`-Xmx2048M`）。
 
 新建 git worktree 时，`.gitignore` 排除的本地文件**不会**进入新工作树，但构建/测试依赖其中一部分。**创建 worktree 后必须立即把这部分文件同步过去**，否则 Android 构建、Release 签名、注入元数据生成会失败。
 
+**这是每次创建工作树的必做步骤，不得等用户要求打包时再补。** 无论通过 Git 命令、Claude 工具还是桌面应用自动创建，助手进入新工作树后都必须先检查并补齐下方文件，使用户可直接在该工作树构建 PC JAR、Windows 安装包及 Android Debug/Release APK。同步源优先使用同一仓库的主检出目录（通过 `git worktree list` 确认）；当前会话所在的旧工作树可能也缺依赖，不能把「旧工作树不存在」当作无需同步。只复制构建所需的本地文件，不覆盖目标中已修改的受 Git 跟踪源码或已有不同配置；有差异时先确认。源目录也缺失时明确报告缺项及受影响的构建目标，不能宣称已具备打包条件。
+
 必须同步的文件（相对于仓库根）：
 
 - `local.properties` — Android SDK 路径（无此文件 Android 模块无法配置）
@@ -206,7 +208,15 @@ git ls-files --others --ignored --exclude-standard -z \
   | tar --null --files-from=- -cf - | tar -xf - -C <worktree路径>
 ```
 
-同步后建议在新工作树跑一次 `./gradlew :rwpp-core-api:test` 冒烟验证。
+同步后必须在新工作树完成以下检查：
+
+- 按清单核对文件确实已落盘；Android `assets/` 和被忽略的 `res/` 按相对路径、文件数及大小与源目录比对，不能只检查目录存在。
+- 确认 `local.properties` 指向本机有效的 Android SDK；确认 `packaging/game-root.local.txt` 指向有效且完整的 PC 游戏资源目录。游戏资源可继续引用该本机目录，无需复制到每个工作树。
+- 确认 `build/key/keystore.properties` 引用的 keystore 在新工作树可解析且存在；必须沿用原有 Release 签名，禁止为补齐依赖重新生成密钥。密钥及密码只作本地复制与校验，不输出内容、不纳入 Git 提交或上传。
+- 确认 Java 21、Android SDK、Inno Setup 6.5+（或 `INNO_SETUP_COMPILER`）等本机工具可用；这些工具不复制进仓库，缺失时报告。
+- 在新工作树运行 `./gradlew :rwpp-core-api:test` 冒烟验证，并告知同步结果及未满足条件。冒烟测试不能替代双端实际打包和运行测试；未执行完整构建时明确说明，不自动安装或发布客户端。
+
+用户可在工作树根目录使用 `powershell -NoProfile -File ./packaging/build.ps1 installer -Channel official` 构建 PC 安装包，或使用 `powershell -NoProfile -File ./packaging/build.ps1 android-release -Channel official` 构建 Android 正式 APK；`desktop`、`android-debug` 分别用于 PC JAR 与 Android 调试包。产物位于该工作树自己的 `build/artifacts/<目标>-official/`，不依赖先合入 `main`。
 
 ### 发布产物
 
