@@ -186,6 +186,8 @@ Gradle JVM 参数在根目录 `gradle.properties` 中定义（`-Xmx2048M`）。
 
 新建 git worktree 时，`.gitignore` 排除的本地文件**不会**进入新工作树，但构建/测试依赖其中一部分。**创建 worktree 后必须立即把这部分文件同步过去**，否则 Android 构建、Release 签名、注入元数据生成会失败。
 
+**这是每次创建工作树的必做步骤，不得等用户要求打包时再补。** 无论通过 Git 命令、Claude 工具还是桌面应用自动创建，助手进入新工作树后都必须先检查并补齐下方文件，使用户可直接在该工作树构建 PC JAR、Windows 安装包及 Android Debug/Release APK。同步源优先使用同一仓库的主检出目录（通过 `git worktree list` 确认）；当前会话所在的旧工作树可能也缺依赖，不能把「旧工作树不存在」当作无需同步。只复制构建所需的本地文件，不覆盖目标中已修改的受 Git 跟踪源码或已有不同配置；有差异时先确认。源目录也缺失时明确报告缺项及受影响的构建目标，不能宣称已具备打包条件。
+
 必须同步的文件（相对于仓库根）：
 
 - `local.properties` — Android SDK 路径（无此文件 Android 模块无法配置）
@@ -206,7 +208,15 @@ git ls-files --others --ignored --exclude-standard -z \
   | tar --null --files-from=- -cf - | tar -xf - -C <worktree路径>
 ```
 
-同步后建议在新工作树跑一次 `./gradlew :rwpp-core-api:test` 冒烟验证。
+同步后必须在新工作树完成以下检查：
+
+- 按清单核对文件确实已落盘；Android `assets/` 和被忽略的 `res/` 按相对路径、文件数及大小与源目录比对，不能只检查目录存在。
+- 确认 `local.properties` 指向本机有效的 Android SDK；确认 `packaging/game-root.local.txt` 指向有效且完整的 PC 游戏资源目录。游戏资源可继续引用该本机目录，无需复制到每个工作树。
+- 确认 `build/key/keystore.properties` 引用的 keystore 在新工作树可解析且存在；必须沿用原有 Release 签名，禁止为补齐依赖重新生成密钥。密钥及密码只作本地复制与校验，不输出内容、不纳入 Git 提交或上传。
+- 确认 Java 21、Android SDK、Inno Setup 6.5+（或 `INNO_SETUP_COMPILER`）等本机工具可用；这些工具不复制进仓库，缺失时报告。
+- 在新工作树运行 `./gradlew :rwpp-core-api:test` 冒烟验证，并告知同步结果及未满足条件。冒烟测试不能替代双端实际打包和运行测试；未执行完整构建时明确说明，不自动安装或发布客户端。
+
+用户可在工作树根目录使用 `powershell -NoProfile -File ./packaging/build.ps1 installer -Channel official` 构建 PC 安装包，或使用 `powershell -NoProfile -File ./packaging/build.ps1 android-release -Channel official` 构建 Android 正式 APK；`desktop`、`android-debug` 分别用于 PC JAR 与 Android 调试包。产物位于该工作树自己的 `build/artifacts/<目标>-official/`，不依赖先合入 `main`。
 
 ### 发布产物
 
@@ -314,10 +324,11 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 ## 模组同步（带外方案）
 
-**游戏联机通讯完全保持原版**，模组同步是启动器自身的带外功能，不注入任何自定义联机包。v2 起加入者**先进房再同步**：模组未下完也能立即进房聊天，进度显示在玩家列表该玩家名字旁（见下「握手放行」）。
+**游戏联机通讯完全保持原版**，模组同步是启动器自身的带外功能，不注入任何自定义联机包。加入者优先尝试 TServer 同端口 Direct；只有对端未识别 Direct 时才走 relaymod v2 的**先进房再同步**路径（模组未下完也能立即进房聊天，进度显示在玩家列表该玩家名字旁，见下「握手放行」）。
 
-- **中转服务端**：独立 Go 服务 `relaymod`（源码在 `D:\workspace\RW\relaymod`，非本仓库模块），部署在公网 IPv4；仅标准库 `net/http`。房间同步记录（清单 + TTL + secret + `host_units_checksum`）与内容寻址 blob（按 SHA-256 去重存储）；另提供加入者进度 Presence（内存态，45s TTL，不落盘；新建 PUT 返回一次性 `peer_secret`，后续须 `X-Peer-Secret`；连接 IP 仅房主可见）。`GET .../peers` 双通道：房主 `X-Secret` 得全量（含 ip），加入者 `X-Peer-Secret` 得脱敏列表。
-- **客户端协议层**：`rwpp-core-api` 的 `net/sync/` —— `ModSyncModels.kt`（DTO，snake_case 与 Go 对齐）、`ModSyncKeys.kt`（房间 key 推导：`code:<短码>`、发布后绑定 `sid:<server_id>` 别名；直连 IP 房不提供同步）、`ModSyncClient.kt`（OkHttp，多 baseUrl failover；Presence 带 peer/room secret）。
+- **TServer Direct**：`rwpp-core-api/net/sync/direct/` 使用独立 TCP 控制 Socket，前缀 `TXJSMD1\n`，一连接一请求；不修改游戏 Socket、包号、握手或双端 `directJoinServer` 实现。入房前的统一 Loading 链覆盖手动 IP、列表直连、收藏与邀请，依次完成 manifest、缺失下载、断点续传、完整 SHA-256、二次 manifest 复核、普通 `modReload(forceImmediate=true)`、实时单位 checksum 与握手缓存刷新，再调用原版连接。空清单也必须禁用多余 Mod。合法 MANIFEST/ERROR 后所有错误直接终止本轮加入，禁止回落 relay；Direct 路径不调用 relay `preJoinSync`、不创建 Presence、不使用保连接重载。Loading 取消必须关闭活动 Socket，临时文件未校验不得发布。文件帧仍须流式读写并限制单项及总大小。
+- **中转服务端**：独立 Go 服务 `relaymod`（源码在 `D:\workspace\RW\relaymod`，非本仓库模块），部署在公网 IPv4；仅标准库 `net/http`。房间同步记录（清单 + TTL + secret + `host_units_checksum`）与内容寻址 blob（按 SHA-256 去重存储）；另提供加入者进度 Presence（内存态，45s TTL，不落盘；新建 PUT 返回一次性 `peer_secret`，后续须 `X-Peer-Secret`；连接 IP 仅房主可见）。`GET .../peers` 双通道：房主 `X-Secret` 得全量（含 ip），加入者 `X-Peer-Secret` 得脱敏列表。Direct 与该 HTTP 服务完全独立。
+- **客户端协议层**：`rwpp-core-api` 的 `net/sync/` —— `ModSyncModels.kt`（DTO，snake_case 与 Go 对齐）、`ModSyncKeys.kt`（relay 房间 key 推导：`code:<短码>`、发布后绑定 `sid:<server_id>` 别名；直连 IP 房不提供 relay 同步）、`ModSyncClient.kt`（OkHttp，多 baseUrl failover；Presence 带 peer/room secret）。
 - **编排层**：`rwpp-core` 的 `core/ModSyncController.kt` ——
   - 房主侧：开房勾选「传输模组」后进房拿到短码即注册（status=preparing，含 `hostUnitsChecksum`）→ `files/check` 查缺 → 上传缺失 blob → ready → 60s 心跳续期 → 发布列表后绑定 sid 别名 → 离房（`DisconnectEvent`）注销；注册成功后每 1s 带 `X-Secret` 拉 peers；可 `clearHostPeers()`。
   - 加入者侧：`Multiplayer.kt` 的 `LoadingView.loadContent` 中、`directJoinServer` 之前执行 `preJoinSync` **轻量段**：查清单（404=无同步，按原版加入）→ 本地启用集合已与清单完全一致（`isEngineAlreadyExact`）则按原版加入；否则上报 `joining` Presence + 心跳，等 ~1.5s（`JOIN_SETTLE_MS`，让房主 1s 轮询看到自己）后放行连接。进房成功后 `onJoinedRoom` 启动 `runPostJoinSync`：preparing 轮询（≤60s，上报 `waiting_host`；轮询中 404=房主已注销则失败退房）→ diff 本地（三路匹配）→ 下载缺失（`downloading`，房间内联进度条 `RoomSelfSyncBar`，不再弹阻塞卡片）→ 启用 + **`modReloadKeepConnected` 保连接重载**（`applying`，见下「连接态重载红线」）→ 双校验（本地集合命中 + `getUnitsChecksum()` vs 清单 `hostUnitsChecksum`）→ 等 `gameRoom.isConnecting` 连续稳定约 1s（已断则保持 `applying` Presence 并用本轮地址 `directJoinServer` 重连，再等稳定，失败 `failInRoom`）→ `synced` 心跳保留至开局/断线。失败/取消（`cancelInRoomSync`）提示、自动退房并**直接**清 Presence/心跳（不只依赖 `DisconnectEvent` 兜底——连接已死时它不会来）。进房窗口期内被踢由 `onKickedDuringSyncEntry` 静默重试（≤2 次，平台层被踢告警钩子抑制弹窗）；重试期间 `finishJoinerPresence` 保留 Presence，重试成功直接打开房间视图并 `onJoinedRoom`。Presence upsert/`listPeersAsPeer` 失败同一错误只 warn 一次并指数退避（2s→8s，须短于 45s TTL）；旧 relay 拒绝 `phase=synced` 时回退 `applying` 心跳保 TTL（房主开局门控会视该玩家未完成，**必须先部署承认 `synced` 的 relaymod**）。

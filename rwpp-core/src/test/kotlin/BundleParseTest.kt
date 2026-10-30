@@ -23,6 +23,15 @@ class BundleParseTest {
     private val bundleNames = listOf("bundle_zh.toml", "bundle_en.toml")
 
     @Test
+    fun joinTimeoutKeyExistsInAllBundles() {
+        bundleNames.forEach { name ->
+            val root = Toml.parseToTomlTable(File(bundleDir, name).readText())
+            val multiplayer = root["multiplayer"] as TomlTable
+            assertTrue(multiplayer.containsKey("joinConnectTimeout"), "joinConnectTimeout missing in $name")
+        }
+    }
+
+    @Test
     fun matchStartRecoveryKeysExistInAllBundles() {
         bundleNames.forEach { name ->
             val root = Toml.parseToTomlTable(File(bundleDir, name).readText())
@@ -146,6 +155,11 @@ class BundleParseTest {
                 "hostPreparingGone",
                 "syncFailed",
                 "syncFailedDetail",
+                "directChecking",
+                "directDownloading",
+                "directRechecking",
+                "directApplying",
+                "directFailed",
                 "statusUploading",
                 "statusReady",
                 "statusError",

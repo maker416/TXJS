@@ -194,7 +194,16 @@ abstract class AbstractGame : Game {
      * 实时重算的全部启用单位校验和（`am.bM()`）。
      * 不用 `l.z()`：那是引擎 init 时缓存的字段，模组重载后不会刷新，同步校验需要真实状态。
      */
-    override fun getUnitsChecksum(): Int = com.corrodinggames.rts.game.units.am.bM()
+    override fun getUnitsChecksum(): Int {
+        val checksum = com.corrodinggames.rts.game.units.am.bM()
+        if (System.getenv("RWJS_CHECKSUM_DEBUG") == "1") {
+            com.corrodinggames.rts.game.units.ar.values().forEach { type ->
+                val unit = com.corrodinggames.rts.game.units.am.a(type)
+                logger.info("[CHECKSUM] $type bw=${unit.bw()}")
+            }
+        }
+        return checksum
+    }
 
     override fun refreshHandshakeChecksumCache() {
         val checksum = com.corrodinggames.rts.game.units.am.bM()
