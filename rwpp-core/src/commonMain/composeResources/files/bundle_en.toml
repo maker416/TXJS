@@ -4,6 +4,7 @@ type = "Mission Type"
 
 [multiplayer]
 invalidJoinAddress = "The address contains line breaks or control characters. Clear it and enter a single-line IP, hostname or room code."
+joinConnectTimeout = "Connection to server timed out\nHost: {0}, port: {1}\nCould not connect within {2} ms. Check your network or try again later. If other rooms work, this server may be temporarily unreachable."
 host = "Host new game"
 replay = "Watch Replay"
 joinLastGame = "Join the last game"
