@@ -49,6 +49,10 @@ object FriendsSession {
     private val lastAppliedChangeIds = mutableMapOf<Long, Long>()
     private var cacheEpoch = 0L
     private var chatPollRetryAtMs = 0L
+    /** 会话 id → 本会话期内已成功上报的已读位置；仅在 markRead 成功后推进，失败时留给下一轮轮询重试。 */
+    private val readMarks = mutableMapOf<Long, Long>()
+    /** 已在好友页展示过的收到的申请 id；只影响主菜单红点，不改变申请状态。 */
+    private val seenIncomingRequestIds = mutableStateListOf<Long>()
 
     val friends = mutableStateListOf<FriendItem>()
     val incoming = mutableStateListOf<FriendRequestDto>()
@@ -78,6 +82,15 @@ object FriendsSession {
 
     fun unreadOf(userId: Long): Int {
         return chats.firstOrNull { it.peer.id == userId }?.unread ?: 0
+    }
+
+    /** 主菜单好友入口红点：未读私信条数 + 尚未在好友页看过的收到的申请数。 */
+    fun badgeCount(): Int =
+        chats.sumOf { it.unread } + incoming.count { it.id !in seenIncomingRequestIds }
+
+    /** 好友页列表展示了收到的申请后调用，使这些申请不再计入主菜单红点。 */
+    fun markIncomingRequestsSeen(ids: Collection<Long>) {
+        ids.forEach { if (it !in seenIncomingRequestIds) seenIncomingRequestIds.add(it) }
     }
 
     /** 好友的在线状态（文档 6.16 随列表下发）；不在好友列表（或非好友）返回 null。 */
@@ -129,6 +142,7 @@ object FriendsSession {
             friends.addAll(f)
             incoming.clear()
             incoming.addAll(inn)
+            seenIncomingRequestIds.retainAll(inn.map { it.id }.toSet())
             outgoing.clear()
             outgoing.addAll(out)
             chats.clear()
@@ -295,8 +309,9 @@ object FriendsSession {
             }
             if (added) {
                 messages.sortBy { it.id }
-                markReadIfNeeded()
             }
+            // 没有新消息也要检查：上一次标记已读失败时在这里重试
+            markReadIfNeeded()
             chatError = ""
         } catch (e: CancellationException) {
             throw e
@@ -320,6 +335,8 @@ object FriendsSession {
     ) {
         cacheEpoch++
         lastAppliedChangeIds.clear()
+        readMarks.clear()
+        seenIncomingRequestIds.clear()
         chatPollRetryAtMs = 0L
         AccountSession.networkEnabled = false
         friends.clear()
@@ -343,6 +360,8 @@ object FriendsSession {
     fun clear() {
         cacheEpoch++
         lastAppliedChangeIds.clear()
+        readMarks.clear()
+        seenIncomingRequestIds.clear()
         chatPollRetryAtMs = 0L
         friends.clear()
         incoming.clear()
@@ -465,15 +484,64 @@ object FriendsSession {
         }
     }
 
+    /**
+     * 当前会话有未上报的对方消息时标记已读（调用方须持有 chatSyncMutex）。
+     *
+     * 服务端未读数 = 对方发来且 id 大于已读位置的条数，自己发信不推进已读位置，
+     * 所以即使最后一条是自己发的，也要用会话最后一条消息 id 上报。
+     */
     private suspend fun markReadIfNeeded() {
         val conversationId = activeConversationId ?: return
         val last = messages.lastOrNull() ?: return
         val selfId = AccountSession.user?.id ?: return
-        if (last.senderId == selfId) return
-        runCatching {
-            val token = AccountSession.requireToken()
+        val marked = readMarks[conversationId] ?: 0L
+        val chat = chats.firstOrNull { it.id == conversationId }
+        val hasUnreportedPeerMessage = messages.any { it.senderId != selfId && it.id > marked }
+        // 列表仍报未读、且本地已拿到最新消息时也补报（覆盖上次上报失败等情况）
+        val listStillUnread = chat != null && chat.unread > 0 && last.id >= (chat.lastMessage?.id ?: 0L)
+        if (!hasUnreportedPeerMessage && !listStillUnread) return
+        markReadUpTo(conversationId, last.id)
+    }
+
+    /**
+     * 从房间邀请悬浮卡片接受邀请后，把该邀请所在会话标记为已读。
+     * 玩家已在卡片里看过这条邀请；未打开过会话时它不会再留在红点里。
+     */
+    suspend fun markInviteRead(peerId: Long, messageId: Long) {
+        chatSyncMutex.withLock {
+            if (!AccountSession.networkEnabled || !AccountSession.loggedIn) return
+            val conversationId = chats.firstOrNull { it.peer.id == peerId }?.id ?: return
+            if ((readMarks[conversationId] ?: 0L) >= messageId) return
+            markReadUpTo(conversationId, messageId)
+        }
+    }
+
+    /** 上报已读位置；成功后推进 [readMarks] 并立即清本地未读，不必等下一轮列表刷新。 */
+    private suspend fun markReadUpTo(conversationId: Long, messageId: Long) {
+        val token = AccountSession.token ?: return
+        val epoch = cacheEpoch
+        try {
             withContext(Dispatchers.IO) {
-                AccountSession.client().markRead(token, conversationId, last.id)
+                AccountSession.client().markRead(token, conversationId, messageId)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: AccountApiException) {
+            if (isCurrentSession(token, epoch)) deferChatPolls(e)
+            logger.warn("标记已读失败：{}", e.message)
+            return
+        } catch (e: Exception) {
+            logger.warn("标记已读失败：{}", e.message)
+            return
+        }
+        if (!isCurrentSession(token, epoch)) return
+        if (messageId > (readMarks[conversationId] ?: 0L)) readMarks[conversationId] = messageId
+        val index = chats.indexOfFirst { it.id == conversationId }
+        if (index >= 0) {
+            val chat = chats[index]
+            // 列表里还有更新的消息时不清零，留给下一轮刷新给出准确值
+            if (chat.unread > 0 && messageId >= (chat.lastMessage?.id ?: 0L)) {
+                chats[index] = chat.copy(unread = 0)
             }
         }
     }
