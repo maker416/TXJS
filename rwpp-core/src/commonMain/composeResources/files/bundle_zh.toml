@@ -4,6 +4,7 @@ type = "战役类型"
 
 [multiplayer]
 invalidJoinAddress = "连接地址包含换行或控制字符，请清空输入框后重新输入单行 IP、域名或房间号。"
+joinConnectTimeout = "连接服务器超时\n目标：{0}，端口：{1}\n等待 {2} 毫秒后仍未连通。请检查网络连接，或稍后重试；若其他房间可以加入，可能是该服务器暂时不可达。"
 host = "创建房间"
 replay = "观看回放"
 joinLastGame = "加入上一次游戏"

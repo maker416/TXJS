@@ -83,6 +83,7 @@ import io.github.rwpp.net.RoomDescription
 import io.github.rwpp.net.hasRoomLabel
 import io.github.rwpp.net.isJoinableFromList
 import io.github.rwpp.net.isModdedRoom
+import io.github.rwpp.net.joinFailureMessage
 import io.github.rwpp.net.labels
 import io.github.rwpp.net.matchesAnyRoomLabel
 import io.github.rwpp.net.parseRequiredModNames
@@ -485,7 +486,7 @@ fun MultiplayerView(
                         JoinGameEvent(address).broadcastIn()
                         true
                     } else {
-                        message(result.exceptionOrNull()!!.message!!)
+                        message(joinFailureMessage(result.exceptionOrNull()!!.message!!))
                         false
                     }
                 } finally {

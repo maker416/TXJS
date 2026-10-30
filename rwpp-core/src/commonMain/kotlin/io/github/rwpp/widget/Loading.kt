@@ -209,7 +209,7 @@ fun LoadingView(
                             ),
                             textAlign = TextAlign.Start,
                             minLines = 2,
-                            maxLines = 2,
+                            maxLines = if (cancel) Int.MAX_VALUE else 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
