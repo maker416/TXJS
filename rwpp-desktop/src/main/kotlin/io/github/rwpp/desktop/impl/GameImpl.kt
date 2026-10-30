@@ -62,6 +62,9 @@ import io.github.rwpp.game.ui.GUI
 import io.github.rwpp.game.world.World
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.logger
+import io.github.rwpp.net.ConnectionFailureReason
+import io.github.rwpp.net.ConnectionFailureStage
+import io.github.rwpp.net.connectionFailure
 import io.github.rwpp.ui.UI
 import io.github.rwpp.utils.Reflect
 import io.github.rwpp.widget.composeEngineLoadingMessage
@@ -195,7 +198,10 @@ class GameImpl : AbstractGame() {
                         // 同步进房窗口内被踢（房主 1s 轮询尚未看到自己的 Presence）：静默重试，不弹窗不回退视图
                         if (ModSyncController.onKickedDuringSyncEntry(p0)) return
                         if (ModSyncController.shouldSuppressEngineKickUi()) return
-                        UI.showWarning(p0, true)
+                        UI.showConnectionFailure(connectionFailure(p0, ConnectionFailureStage.SERVER), true)
+                    } else if (p0.startsWith("Missing", ignoreCase = true)) {
+                        if (ModSyncController.shouldSuppressEngineKickUi()) return
+                        UI.showConnectionFailure(connectionFailure(p0, ConnectionFailureStage.SERVER), true)
                     } else {
                         i.a(p0, p1)
                     }
@@ -211,6 +217,20 @@ class GameImpl : AbstractGame() {
                     } else if (io.github.rwpp.core.MatchStartController.gate.busy) {
                         // 开局恢复统一提示并清理，不能先把加载中的房间当作被踢硬跳转。
                         logger.warn("[GAMESTART] engine message: {}: {}", p0, p1)
+                    } else if (listOf(p0, p1).any {
+                        it.startsWith("Kicked", ignoreCase = true) || it.startsWith("Missing", ignoreCase = true)
+                    }) {
+                        val bodyFailure = connectionFailure(p1, ConnectionFailureStage.SERVER)
+                        val failure = when (p0) {
+                            "Missing mods" -> bodyFailure.copy(reason = ConnectionFailureReason.MISSING_MODS)
+                            "Missing units" -> bodyFailure.copy(reason = ConnectionFailureReason.MISSING_UNITS)
+                            else -> if (bodyFailure.reason == ConnectionFailureReason.SERVER_REJECTED) {
+                                connectionFailure("$p0: $p1", ConnectionFailureStage.SERVER)
+                            } else {
+                                bodyFailure
+                            }
+                        }
+                        UI.showConnectionFailure(failure.copy(details = "$p0\n$p1"), true)
                     } else {
                         UI.showWarning("$p0: $p1", true)
                     }

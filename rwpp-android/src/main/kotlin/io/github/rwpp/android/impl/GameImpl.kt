@@ -237,10 +237,15 @@ class GameImpl : Game, CoroutineScope {
                 }
             }
             ae.u() -> {
-                Result.failure(IOException("Connection failed: Target server may not be open to the internet."))
+                Result.failure(
+                    result.exceptionOrNull()
+                        ?: IOException("Connection failed: Target server may not be open to the internet.")
+                )
             }
             else -> {
-                Result.failure(IOException(result.getOrNull() ?: "Connection failed.", result.exceptionOrNull()))
+                Result.failure(
+                    result.exceptionOrNull() ?: IOException(result.getOrNull() ?: "Connection failed.")
+                )
             }
         }
     }

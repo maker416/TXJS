@@ -15,6 +15,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 
 class DirectModSyncProtocolTest {
     private val descriptor = NetworkModDescriptor("m", 3, "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
@@ -79,6 +80,102 @@ class DirectModSyncProtocolTest {
             DirectModSyncProtocol.readFileResponse(frame.toByteArray().inputStream(), descriptor, 1)
         }
     }
+
+    @Test
+    fun fileResponsePreservesAllServerErrorCodes() {
+        DirectModSyncErrorCode.entries.forEach { code ->
+            val error = assertFailsWith<DirectModSyncServerException> {
+                DirectModSyncProtocol.readFileResponse(
+                    DirectModSyncProtocol.encodeError(code).inputStream(), descriptor, 0,
+                )
+            }
+            assertEquals(code, error.code)
+        }
+    }
+
+    @Test
+    fun fileResponseRejectsErrorLengthsBeforeReadingPayload() {
+        listOf(-1, 16 * 1024 + 1, Int.MAX_VALUE).forEach { length ->
+            val frame = ByteArrayOutputStream()
+            DataOutputStream(frame).apply { writeInt(length); writeInt(DirectModSyncProtocol.ERROR) }
+            val error = assertFailsWith<IOException> {
+                DirectModSyncProtocol.readFileResponse(frame.toByteArray().inputStream(), descriptor, 0)
+            }
+            assertEquals("Invalid direct error payload length: $length", error.message)
+        }
+    }
+
+    @Test
+    fun fileResponseRejectsMalformedErrors() {
+        fun stringPayload(length: Int, bytes: ByteArray = byteArrayOf()): ByteArray =
+            ByteArrayOutputStream().also { buffer ->
+                DataOutputStream(buffer).apply { writeInt(length); write(bytes) }
+            }.toByteArray()
+
+        val malformed = listOf(
+            byteArrayOf(),
+            byteArrayOf(0, 0, 0),
+            stringPayload(-1),
+            stringPayload(64 * 1024 + 1),
+            stringPayload(7, "NO_ROOM".toByteArray().dropLast(1).toByteArray()),
+            stringPayload(0),
+            stringPayload(7, "UNKNOWN".toByteArray()),
+            stringPayload(7, "NO_ROOM".toByteArray()) + 0,
+            stringPayload(16 * 1024 - 4, ByteArray(16 * 1024 - 4)),
+        )
+        malformed.forEach { payload ->
+            val error = assertFailsWith<IOException> {
+                DirectModSyncProtocol.readFileResponse(errorFrame(payload).inputStream(), descriptor, 0)
+            }
+            assertFalse(error is DirectModSyncServerException)
+        }
+        val truncatedFrame = DirectModSyncProtocol.encodeError(DirectModSyncErrorCode.NO_ROOM).dropLast(1).toByteArray()
+        assertFailsWith<java.io.EOFException> {
+            DirectModSyncProtocol.readFileResponse(truncatedFrame.inputStream(), descriptor, 0)
+        }
+    }
+
+    @Test
+    fun fileResponseKeepsMaximumFileBodyStreamingAndSupportsResume() {
+        val large = descriptor.copy(payloadSize = DIRECT_MOD_SYNC_MAX_FILE_BYTES)
+        listOf(0L, 123L, large.payloadSize).forEach { offset ->
+            val header = DirectModSyncProtocol.fileResponseHeader(large.payloadSize, offset, large)
+            val frame = ByteArrayOutputStream()
+            DataOutputStream(frame).apply {
+                writeInt((header.size + large.payloadSize - offset).toInt())
+                writeInt(DirectModSyncProtocol.FILE)
+                write(header)
+            }
+            // 故意不提供正文，头部解析仍须返回，不能缓冲整个 FILE。
+            assertEquals(
+                large.payloadSize - offset,
+                DirectModSyncProtocol.readFileResponse(frame.toByteArray().inputStream(), large, offset).bodyBytes,
+            )
+        }
+    }
+
+    @Test
+    fun fileResponseStillRejectsInvalidLengthsKindsAndIdentity() {
+        val header = DirectModSyncProtocol.fileResponseHeader(descriptor.payloadSize, 0, descriptor)
+        fun fileFrame(length: Int, kind: Int = DirectModSyncProtocol.FILE, payload: ByteArray = header): ByteArray =
+            ByteArrayOutputStream().also { buffer ->
+                DataOutputStream(buffer).apply { writeInt(length); writeInt(kind); write(payload) }
+            }.toByteArray()
+        val invalid = listOf(
+            fileFrame(-1), fileFrame(47), fileFrame(50), fileFrame(52), fileFrame(Int.MAX_VALUE),
+            fileFrame(51, DirectModSyncProtocol.MANIFEST),
+            fileFrame(51, payload = DirectModSyncProtocol.fileResponseHeader(4, 0, descriptor)),
+            fileFrame(51, payload = DirectModSyncProtocol.fileResponseHeader(3, 1, descriptor)),
+            fileFrame(51, payload = DirectModSyncProtocol.fileResponseHeader(3, 0, descriptor.copy(sha256 = "f".repeat(64)))),
+        )
+        invalid.forEach { frame ->
+            assertFailsWith<IOException> { DirectModSyncProtocol.readFileResponse(frame.inputStream(), descriptor, 0) }
+        }
+    }
+
+    private fun errorFrame(payload: ByteArray): ByteArray = ByteArrayOutputStream().also { buffer ->
+        DataOutputStream(buffer).apply { writeInt(payload.size); writeInt(DirectModSyncProtocol.ERROR); write(payload) }
+    }.toByteArray()
 
     private fun ByteArray.toHex() = joinToString("") { "%02x".format(it.toInt() and 0xff) }
 }

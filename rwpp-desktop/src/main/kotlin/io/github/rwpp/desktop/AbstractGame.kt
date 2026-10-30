@@ -137,7 +137,7 @@ abstract class AbstractGame : Game {
             ) { connector ->
                 if (connector.e != null) {
                     rcnOption = null
-                    Result.failure(IOException("Connection failed: ${connector.e}."))
+                    Result.failure(IOException(connector.e))
                 } else {
                     try {
                         l.B().bX.b("starting new")
@@ -147,7 +147,7 @@ abstract class AbstractGame : Game {
                         Result.success("")
                     } catch (error: IOException) {
                         runCatching { connector.g?.close() }
-                        Result.failure(IOException("Connection failed", error))
+                        Result.failure(error)
                     }
                 }
             }

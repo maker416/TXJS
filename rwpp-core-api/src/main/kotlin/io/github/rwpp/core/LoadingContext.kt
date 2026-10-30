@@ -7,7 +7,11 @@
 
 package io.github.rwpp.core
 
+import io.github.rwpp.net.ConnectionFailure
 
 fun interface LoadingContext {
     fun message(str: String)
+
+    /** 可选的本次连接错误；默认实现保持既有 message lambda 的 SAM 用法。 */
+    fun failure(failure: ConnectionFailure) {}
 }

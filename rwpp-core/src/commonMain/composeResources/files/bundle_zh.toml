@@ -1,3 +1,162 @@
+[connectionError]
+details = "技术详情"
+showDetails = "显示详情"
+hideDetails = "收起详情"
+reasonLabel = "发生了什么"
+suggestionLabel = "您可以尝试"
+ok = "确定"
+context = "相关值：{0}"
+timeoutTarget = "目标：{0}，端口：{1}；已等待 {2} 毫秒。"
+
+[connectionError.unknown]
+title = "未能加入房间"
+explanation = "连接未完成，目前无法确定具体原因。"
+suggestion = "请检查地址和网络后重试。若持续失败，可将技术详情提供给房主协助排查。"
+[connectionError.serverRejected]
+title = "服务器未接受连接"
+explanation = "服务器返回了启动器无法准确归类的提示。"
+suggestion = "请展开技术详情查看服务器原文，或联系房主确认。"
+[connectionError.timeout]
+title = "连接服务器超时"
+explanation = "等待连接期间，服务器未在超时前响应。"
+suggestion = "请检查网络后重试；若其他房间可以加入，可能是该服务器暂时不可达。"
+[connectionError.invalidAddress]
+title = "服务器地址无效"
+explanation = "输入的地址无法作为有效连接地址使用。"
+suggestion = "请输入房主提供的单行 IP、域名或房间号。"
+[connectionError.invalidPort]
+title = "服务器端口无效"
+explanation = "端口号超出了有效范围。"
+suggestion = "请向房主确认端口，并填写 1 至 65535 之间的数字。"
+[connectionError.dns]
+title = "无法解析服务器地址"
+explanation = "无法将服务器域名解析为网络地址。"
+suggestion = "请核对域名，并检查网络或 DNS 设置后重试。"
+[connectionError.refused]
+title = "服务器拒绝了连接"
+explanation = "目标地址拒绝连接，服务器可能尚未在此端口提供服务。"
+suggestion = "请让房主检查服务器、端口和防火墙，或稍后重试。"
+[connectionError.unreachable]
+title = "无法访问目标网络"
+explanation = "当前没有可用的网络路径连接目标服务器。"
+suggestion = "请检查网络连接、VPN 和网络访问限制。"
+[connectionError.missingMods]
+title = "缺少房间所需模组"
+explanation = "您已加载的模组未包含房间要求的全部模组。"
+suggestion = "请向房主获取所需模组，或使用已开启模组同步的房间。"
+[connectionError.missingUnits]
+title = "缺少房间所需单位"
+explanation = "游戏找不到房主要求的单位数据。"
+suggestion = "请使用与房主相同的模组和版本，重新加载后再加入。"
+[connectionError.dataMismatch]
+title = "游戏或模组数据不一致"
+explanation = "您已加载的数据与房间要求的数据不同。"
+suggestion = "请与房主核对模组版本及启用集合，重新加载后再加入。"
+[connectionError.syncFailed]
+title = "模组同步失败"
+explanation = "本次模组同步未能完成。"
+suggestion = "请检查网络和可用存储空间，然后重新加入房间。"
+[connectionError.manifestChanged]
+title = "房间模组清单已变化"
+explanation = "同步文件期间，房主更改了模组清单。"
+suggestion = "请等待房主完成模组调整后重新加入。"
+[connectionError.checksumMismatch]
+title = "模组校验失败"
+explanation = "同步文件或已加载单位未通过一致性校验。"
+suggestion = "请重新同步；若仍然失败，请让房主检查模组及其版本。"
+[connectionError.reloadFailed]
+title = "无法应用同步模组"
+explanation = "游戏未能完成所需模组的加载。"
+suggestion = "请检查模组加载详情及可用内存，然后重试。"
+[connectionError.reconnectFailed]
+title = "同步后重新连接失败"
+explanation = "应用模组后，游戏未能建立稳定的房间连接。"
+suggestion = "请确认房间仍可加入，然后重新连接。"
+[connectionError.noRoom]
+title = "房间已不可用"
+explanation = "同步服务器表示当前没有可用房间。"
+suggestion = "请刷新房间列表，或向房主获取新的连接地址。"
+[connectionError.notLobby]
+title = "房间已不在等待阶段"
+explanation = "房间已不再接受等待阶段的模组同步。"
+suggestion = "请等待下一局，或选择其他房间。"
+[connectionError.preparing]
+title = "房主正在准备模组"
+explanation = "房主尚未完成模组清单或文件的准备。"
+suggestion = "请稍等片刻后重新加入。"
+[connectionError.notFound]
+title = "找不到所需同步文件"
+explanation = "同步服务器没有本次请求的文件。"
+suggestion = "请让房主重新准备或发布模组，然后重试。"
+[connectionError.busy]
+title = "同步服务器繁忙"
+explanation = "服务器暂时无法处理本次同步请求。"
+suggestion = "请稍等片刻后重试。"
+[connectionError.badRequest]
+title = "同步请求被拒绝"
+explanation = "服务器无法接受同步请求的格式或参数。"
+suggestion = "请确认启动器和服务器使用兼容的版本。"
+[connectionError.internalError]
+title = "同步服务器发生错误"
+explanation = "服务器内部错误导致请求未能完成。"
+suggestion = "请稍后重试，或联系服务器管理员。"
+[connectionError.usernameTooLong]
+title = "玩家昵称过长"
+explanation = "服务器不接受当前昵称的长度。"
+suggestion = "请缩短玩家昵称后重新加入。"
+[connectionError.usernameTooShort]
+title = "玩家昵称过短"
+explanation = "服务器要求使用更长的玩家昵称。"
+suggestion = "请修改为更长的玩家昵称后重新加入。"
+[connectionError.banned]
+title = "您暂时无法加入此服务器"
+explanation = "服务器因尚未到期的封禁拒绝了连接。"
+suggestion = "请等待封禁到期，或联系房主确认。"
+[connectionError.clientOutdated]
+title = "您的游戏版本过旧"
+explanation = "服务器要求使用更新的游戏版本。"
+suggestion = "请与房主确认兼容版本后更新客户端。"
+[connectionError.serverOutdated]
+title = "服务器游戏版本过旧"
+explanation = "您的客户端版本比服务器更新。"
+suggestion = "请让房主更新，或使用双方兼容的相同游戏版本。"
+[connectionError.coreUnitsMismatch]
+title = "原版单位数据不一致"
+explanation = "您的内置单位数据与服务器不同，无法同步对局。"
+suggestion = "请使用相同游戏版本，并检查游戏资源是否被修改或损坏。"
+[connectionError.clientIntegrity]
+title = "客户端完整性校验失败"
+explanation = "服务器检测到不兼容的客户端数据。"
+suggestion = "请使用相同游戏版本，并检查游戏安装是否完整。"
+[connectionError.roomLocked]
+title = "房间已锁定"
+explanation = "房主已禁止新玩家进入房间。"
+suggestion = "请联系房主解锁，或选择其他房间。"
+[connectionError.gameStarted]
+title = "对局已经开始"
+explanation = "服务器不再接受新玩家加入本局。"
+suggestion = "请等待下一局，或选择其他房间。"
+[connectionError.roomFull]
+title = "房间已满"
+explanation = "当前没有可用的玩家或观战席位。"
+suggestion = "请等待空位，或选择其他房间。"
+[connectionError.passwordRequired]
+title = "需要房间密码"
+explanation = "该房间需要密码，但连接时未提供密码。"
+suggestion = "请向房主获取密码后重新加入。"
+[connectionError.wrongPassword]
+title = "房间密码不正确"
+explanation = "房间或主服务器未接受您提供的密码。"
+suggestion = "请与房主核对密码后重新输入。"
+[connectionError.masterQueryFailed]
+title = "无法查询房间连接信息"
+explanation = "主服务器没有返回有效的房间连接信息。"
+suggestion = "请刷新列表、核对房间号，或向房主获取直连地址。"
+[connectionError.kicked]
+title = "您已被移出房间"
+explanation = "房主或服务器结束了您的房间连接。"
+suggestion = "请展开技术详情查看房主提示，或在重新加入前联系房主。"
+
 [mission]
 title = "战役"
 type = "战役类型"

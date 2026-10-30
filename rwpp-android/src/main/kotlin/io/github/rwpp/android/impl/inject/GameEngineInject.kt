@@ -14,6 +14,8 @@ import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
 import io.github.rwpp.inject.InterruptResult
+import io.github.rwpp.net.ConnectionFailureStage
+import io.github.rwpp.net.connectionFailure
 import io.github.rwpp.ui.UI
 
 @InjectClass(GameEngine::class)
@@ -26,7 +28,9 @@ object GameEngineInject {
         if (ModSyncController.shouldSuppressEngineKickUi() &&
             (message.startsWith("Kicked") || message.startsWith("Missing"))
         ) return
-        if (message.startsWith("Kicked") || message.startsWith("Missing")) UI.showWarning(message, true)
+        if (message.startsWith("Kicked") || message.startsWith("Missing")) {
+            UI.showConnectionFailure(connectionFailure(message, ConnectionFailureStage.SERVER), true)
+        }
     }
 
     @Inject("d", InjectMode.InsertBefore)

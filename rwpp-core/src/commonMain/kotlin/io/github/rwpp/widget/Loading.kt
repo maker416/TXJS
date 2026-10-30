@@ -35,7 +35,10 @@ import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.internalModDir
 import io.github.rwpp.modDir
+import io.github.rwpp.net.ConnectionFailure
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -114,13 +117,17 @@ fun LoadingView(
     showMemoryUsage: Boolean = false,
     /** 仅加载成功时调用，用于收起外层 `visible`；失败保留提示，null 等待外部状态关闭。 */
     onLoadingFinished: () -> Unit = {},
+    failureContent: (@Composable (ConnectionFailure, () -> Unit) -> Unit)? = null,
+    externalFailure: ConnectionFailure? = null,
     loadContent: suspend LoadingContext.() -> Boolean?
 ) {
     // 必须持有可取消的 Job：关闭对话框时立刻 cancel，避免退出动画期间后台仍跑完
     // preJoinSync / directJoinServer 导致「取消后仍进房」。
     var loadJob by remember { mutableStateOf<Job?>(null) }
+    val activeAttempt = remember { AtomicReference<AtomicBoolean?>(null) }
 
     fun cancelLoadIfRunning() {
+        activeAttempt.getAndSet(null)?.set(false)
         loadJob?.cancel()
         loadJob = null
     }
@@ -134,46 +141,76 @@ fun LoadingView(
         enableDismiss = cancellable
     ) { dismiss ->
         var cancel by remember { mutableStateOf(false) }
+        var localFailure by remember { mutableStateOf<ConnectionFailure?>(null) }
+        val callbackScope = rememberCoroutineScope()
+        val attempt = remember { AtomicBoolean(true) }
+        val currentVisible by rememberUpdatedState(visible)
+
+        DisposableEffect(Unit) {
+            activeAttempt.set(attempt)
+            onDispose {
+                attempt.set(false)
+                activeAttempt.compareAndSet(attempt, null)
+            }
+        }
 
         fun dismissAndCancel() {
             cancelLoadIfRunning()
             dismiss()
         }
 
-        BorderCard(
+        LaunchedEffect(Unit) {
+            val context = object : LoadingContext {
+                override fun message(str: String) {
+                    callbackScope.launch(Dispatchers.Main.immediate) {
+                        if (attempt.get() && currentVisible) loadingMessage = str
+                    }
+                }
+
+                override fun failure(failure: ConnectionFailure) {
+                    callbackScope.launch(Dispatchers.Main.immediate) {
+                        if (attempt.get() && currentVisible) localFailure = failure
+                    }
+                }
+            }
+            val job = launch(Dispatchers.IO) {
+                try {
+                    val result = loadContent(context)
+                    withContext(Dispatchers.Main.immediate) {
+                        if (!attempt.get() || !currentVisible) return@withContext
+                        when (result) {
+                            true -> {
+                                attempt.set(false)
+                                loadingMessage = ""
+                                onLoadingFinished()
+                                dismiss()
+                            }
+                            false -> cancel = true
+                            null -> Unit
+                        }
+                    }
+                } catch (_: CancellationException) {
+                    // 用户关闭对话框或组合销毁：中止后续进房/开房逻辑。
+                }
+            }
+            loadJob = job
+            job.join()
+        }
+
+        val failure = localFailure ?: externalFailure
+        if (cancel && failure != null && failureContent != null) {
+            failureContent(failure, ::dismissAndCancel)
+        } else BorderCard(
             modifier = Modifier
                 .fillMaxWidth(0.72f)
                 .widthIn(min = 300.dp, max = 500.dp)
                 .wrapContentHeight(),
             backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
         ) {
-            LaunchedEffect(Unit) {
-                val job = launch(Dispatchers.IO) {
-                    try {
-                        val result = loadContent(LoadingContext { loadingMessage = it })
-                        withContext(Dispatchers.Main.immediate) {
-                            when (result) {
-                                true -> {
-                                    loadingMessage = ""
-                                    onLoadingFinished()
-                                    dismiss()
-                                }
-                                false -> cancel = true
-                                null -> Unit
-                            }
-                        }
-                    } catch (_: CancellationException) {
-                        // 用户关闭对话框或组合销毁：中止后续进房/开房逻辑
-                    }
-                }
-                loadJob = job
-                job.join()
-            }
-
             Box(modifier = Modifier.fillMaxWidth()) {
                 // 可取消时点关闭必须走 dismissAndCancel，在退出动画开始前就掐断 IO 协程
                 if (cancellable || cancel) {
-                    ExitButton(if (cancellable) ({ dismissAndCancel() }) else dismiss)
+                    ExitButton(::dismissAndCancel)
                 }
 
                 Column(

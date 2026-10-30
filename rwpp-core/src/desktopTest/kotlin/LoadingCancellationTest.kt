@@ -11,6 +11,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.test.*
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
+import androidx.compose.material3.Text
+import io.github.rwpp.core.LoadingContext
+import io.github.rwpp.net.ConnectionFailure
+import io.github.rwpp.net.ConnectionFailureReason
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.*
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -41,6 +46,53 @@ class LoadingCancellationTest {
     }
     @Test fun firstAttemptCloseCancelsBeforeExitAnimationCompletes() = verifyClose(false)
     @Test fun retryCloseCancelsBeforeExitAnimationCompletes() = verifyClose(true)
+
+    @Test
+    fun cancelledAttemptCannotPublishIntoTheNextAttempt() = runDesktopComposeUiTest {
+        var visible by mutableStateOf(true)
+        val firstContext = AtomicReference<LoadingContext?>()
+        val secondContext = AtomicReference<LoadingContext?>()
+        val failSecond = CompletableDeferred<Unit>()
+        var attempts = 0
+        var shown: ConnectionFailure? = null
+        val currentFailure = ConnectionFailure(ConnectionFailureReason.TIMEOUT)
+        setContent {
+            KoinContext(appKoin) {
+                MaterialTheme {
+                    LoadingView(visible, onLoaded = { visible = false }, cancellable = true,
+                        failureContent = { failure, _ -> shown = failure; Text("current error") }) {
+                        if (++attempts == 1) {
+                            firstContext.set(this)
+                            awaitCancellation()
+                        } else {
+                            secondContext.set(this)
+                            message("Current attempt")
+                            failSecond.await()
+                            failure(currentFailure)
+                            false
+                        }
+                    }
+                }
+            }
+        }
+        waitUntil(timeoutMillis = 3_000) { firstContext.get() != null }
+        onNode(hasClickAction()).performClick()
+        waitUntil(timeoutMillis = 3_000) { !visible }
+        waitForIdle()
+        runOnIdle { visible = true }
+        waitUntil(timeoutMillis = 3_000) { secondContext.get() != null }
+        // 模拟引擎持有旧的 LoadingContext，在新请求已开始时从 IO 迟到回调。
+        runBlocking(Dispatchers.IO) {
+            firstContext.get()!!.message("Stale attempt")
+            firstContext.get()!!.failure(ConnectionFailure(ConnectionFailureReason.REFUSED))
+        }
+        waitForIdle()
+        assertEquals("Current attempt", loadingMessage)
+        onNodeWithText("current error").assertDoesNotExist()
+        failSecond.complete(Unit)
+        waitUntil(timeoutMillis = 3_000) { shown != null }
+        assertEquals(currentFailure, shown)
+    }
 
     private fun verifyClose(failOnce: Boolean) = runDesktopComposeUiTest {
         var visible by mutableStateOf(true)

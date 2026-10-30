@@ -7,6 +7,9 @@
 
 import net.peanuuutz.tomlkt.Toml
 import net.peanuuutz.tomlkt.TomlTable
+import net.peanuuutz.tomlkt.TomlLiteral
+import io.github.rwpp.net.ConnectionFailureReason
+import java.text.MessageFormat
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertNotNull
@@ -21,6 +24,27 @@ class BundleParseTest {
 
     private val bundleDir = File("src/commonMain/composeResources/files")
     private val bundleNames = listOf("bundle_zh.toml", "bundle_en.toml")
+
+    @Test
+    fun connectionFailureKeysExistAndFormatInAllBundles() {
+        bundleNames.forEach { name ->
+            val root = Toml.parseToTomlTable(File(bundleDir, name).readText())
+            val errors = root["connectionError"] as TomlTable
+            fun checkText(table: TomlTable, key: String) {
+                val literal = assertNotNull(table[key] as? TomlLiteral, "$name: missing connectionError text $key")
+                val formatted = MessageFormat.format(literal.content, "example.org", "5123", "7000")
+                assertTrue(formatted.isNotBlank(), "$name: empty connectionError text $key")
+                assertTrue(!Regex("\\{[0-9]+}").containsMatchIn(formatted), "$name: unformatted argument in $key")
+            }
+            listOf("details", "showDetails", "hideDetails", "reasonLabel", "suggestionLabel", "ok", "context", "timeoutTarget").forEach {
+                checkText(errors, it)
+            }
+            ConnectionFailureReason.entries.forEach { reason ->
+                val table = assertNotNull(errors[reason.key] as? TomlTable, "$name: missing ${reason.key}")
+                listOf("title", "explanation", "suggestion").forEach { checkText(table, it) }
+            }
+        }
+    }
 
     @Test
     fun joinTimeoutKeyExistsInAllBundles() {
