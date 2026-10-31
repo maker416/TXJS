@@ -285,6 +285,7 @@ open class UIProvider {
         mods: () -> Unit,
         extension: () -> Unit,
         resourceBrowser: () -> Unit,
+        esports: () -> Unit,
         openSourceInfo: () -> Unit,
         account: () -> Unit,
         friends: () -> Unit,
@@ -427,7 +428,8 @@ open class UIProvider {
                 val menuItems = buildList {
                     add(MenuButtonItem("singlePlayer", readI18n("menu.singlePlayerGame"), singlePlayer, defaultFullWidth = true))
                     add(MenuButtonItem("multiplayer", readI18n("menu.multiplayer"), multiplayer, defaultFullWidth = true))
-                    add(MenuButtonItem("resourceBrowser", readI18n("browser.resourceBrowser"), resourceBrowser))
+                    add(MenuButtonItem("resourceBrowser", readI18n("browser.resourceBrowser"), resourceBrowser, defaultHalfWidth = true))
+                    add(MenuButtonItem("esports", readI18n("browser.esportsSite"), esports, defaultHalfWidth = true))
                     add(MenuButtonItem("mods", readI18n("menu.modsAndMaps"), mods))
                     add(MenuButtonItem("settings", readI18n("menu.settings"), settings))
                     add(MenuButtonItem("openSourceInfo", readI18n("menu.openSourceInfo"), openSourceInfo))
@@ -439,22 +441,37 @@ open class UIProvider {
                     .filter { it.third?.hidden != true }
                     .sortedBy { (index, _, override) -> (override?.order ?: 0) * 1000 + index }
 
-                // 网格装箱：span 为占用列数，装满一行即换行
-                val rows = mutableListOf<List<Pair<MenuButtonItem, Int>>>()
-                var currentRow = mutableListOf<Pair<MenuButtonItem, Int>>()
-                var usedColumns = 0
+                // 半宽按钮：排序后相邻的两个合占一个格子；落单、单列/竖排或主题写了 span 时按普通按钮占列
+                val cells = mutableListOf<Pair<List<MenuButtonItem>, Int>>()
+                var pairable = false
                 for ((_, item, override) in ordered) {
+                    val half = item.defaultHalfWidth && columns > 1 && (override?.span ?: 0) == 0
+                    if (half && pairable) {
+                        val (first, span) = cells[cells.lastIndex]
+                        cells[cells.lastIndex] = (first + item) to span
+                        pairable = false
+                        continue
+                    }
                     val span = (when {
                         override != null && override.span > 0 -> override.span
                         item.defaultFullWidth -> columns
                         else -> 1
                     }).coerceIn(1, columns)
+                    cells += listOf(item) to span
+                    pairable = half
+                }
+
+                // 网格装箱：span 为占用列数，装满一行即换行
+                val rows = mutableListOf<List<Pair<List<MenuButtonItem>, Int>>>()
+                var currentRow = mutableListOf<Pair<List<MenuButtonItem>, Int>>()
+                var usedColumns = 0
+                for ((cellItems, span) in cells) {
                     if (usedColumns + span > columns && currentRow.isNotEmpty()) {
                         rows += currentRow.toList()
                         currentRow = mutableListOf()
                         usedColumns = 0
                     }
-                    currentRow += item to span
+                    currentRow += cellItems to span
                     usedColumns += span
                 }
                 if (currentRow.isNotEmpty()) rows += currentRow.toList()
@@ -469,22 +486,31 @@ open class UIProvider {
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(columnSpacing)
                         ) {
-                            rowItems.forEach { (item, span) ->
-                                val buttonSpec = buttonOverrides[item.slotId]
-                                // 占列决定格子大小，单按钮宽度只缩窄按钮，不挤动同排按钮。
-                                Box(
+                            rowItems.forEach { (cellItems, span) ->
+                                // 格子外缘与其他行对齐；合占格子的两个按钮在格内平分并保持同样间距。
+                                Row(
                                     modifier = Modifier.weight(span.toFloat()),
-                                    contentAlignment = Alignment.Center,
+                                    horizontalArrangement = Arrangement.spacedBy(columnSpacing),
                                 ) {
-                                    MainMenuAction(
-                                        item.text,
-                                        onClick = item.onClick,
-                                        modifier = Modifier.fillMaxWidth((buttonSpec?.widthPercent ?: 100) / 100f),
-                                        heightOverride = menuLayout?.buttonHeight?.dp,
-                                        cornerOverride = menuLayout?.buttonCorner?.dp,
-                                        backgroundImage = item.slotId?.let { artTheme?.buttonImages?.get(it) },
-                                        showBorder = buttonSpec?.showBorder ?: menuLayout?.showBorder ?: true,
-                                    )
+                                    cellItems.forEach { item ->
+                                        val buttonSpec = buttonOverrides[item.slotId]
+                                        // 占列决定格子大小，单按钮宽度只缩窄按钮，不挤动同排按钮。
+                                        Box(
+                                            modifier = Modifier.weight(1f),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            MainMenuAction(
+                                                item.text,
+                                                onClick = item.onClick,
+                                                modifier = Modifier.fillMaxWidth((buttonSpec?.widthPercent ?: 100) / 100f),
+                                                heightOverride = menuLayout?.buttonHeight?.dp,
+                                                cornerOverride = menuLayout?.buttonCorner?.dp,
+                                                backgroundImage = item.slotId?.let { artTheme?.buttonImages?.get(it) },
+                                                showBorder = buttonSpec?.showBorder ?: menuLayout?.showBorder ?: true,
+                                                compact = cellItems.size > 1,
+                                            )
+                                        }
+                                    }
                                 }
                             }
                             // 补齐空列，保持网格对齐
@@ -711,6 +737,8 @@ open class UIProvider {
         cornerOverride: Dp? = null,
         backgroundImage: File? = null,
         showBorder: Boolean = true,
+        /** 两个按钮合占一格时收窄左右内边距，避免文字折行。 */
+        compact: Boolean = false,
     ) {
         val windowManager = LocalWindowManager.current
         val buttonHeight = heightOverride ?: when (windowManager) {
@@ -764,7 +792,7 @@ open class UIProvider {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                        .padding(horizontal = if (compact) 8.dp else 16.dp, vertical = 8.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -784,6 +812,8 @@ open class UIProvider {
         val text: String,
         val onClick: () -> Unit,
         val defaultFullWidth: Boolean = false,
+        /** 与排序后相邻的另一个半宽按钮合占一个格子。 */
+        val defaultHalfWidth: Boolean = false,
     )
 
     class Menu(

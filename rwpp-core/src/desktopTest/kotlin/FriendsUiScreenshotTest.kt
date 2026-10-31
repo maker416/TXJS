@@ -148,6 +148,7 @@ class FriendsUiScreenshotTest {
                         mods = {},
                         extension = {},
                         resourceBrowser = {},
+                        esports = {},
                         openSourceInfo = {},
                         account = {},
                         friends = {},

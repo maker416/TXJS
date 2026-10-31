@@ -109,7 +109,7 @@ data class MenuButtonSpec(
 
 /** 主菜单按钮的稳定语义 id，美术包据此覆盖排布与背景图（文档承诺不变）。 */
 val MENU_BUTTON_IDS: Set<String> = setOf(
-    "singlePlayer", "multiplayer", "resourceBrowser", "mods", "settings", "openSourceInfo",
+    "singlePlayer", "multiplayer", "resourceBrowser", "esports", "mods", "settings", "openSourceInfo",
 )
 
 /**

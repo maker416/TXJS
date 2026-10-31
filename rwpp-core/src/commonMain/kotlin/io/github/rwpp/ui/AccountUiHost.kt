@@ -45,6 +45,7 @@ fun AccountUiHostContent() {
                 mods = {},
                 extension = {},
                 resourceBrowser = {},
+                esports = {},
                 openSourceInfo = {},
                 account = { UI.showAccountView = true },
                 friends = { UI.showFriendsView = true },

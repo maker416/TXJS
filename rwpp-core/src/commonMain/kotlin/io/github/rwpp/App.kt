@@ -284,6 +284,9 @@ fun App(
                             resourceBrowser = {
                                 showResourceBrowser = true
                             },
+                            esports = {
+                                navigateTo(LauncherPage.Esports)
+                            },
                             openSourceInfo = {
                                 showOpenSourceInfoView = true
                             },
@@ -419,6 +422,14 @@ fun App(
                     exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
                 ) {
                     ResourceBrowser { showResourceBrowser = false }
+                }
+
+                LauncherPageHost(
+                    LauncherPage.Esports,
+                    enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
+                    exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
+                ) {
+                    EsportsBrowser { closePage(LauncherPage.Esports) }
                 }
 
                 LauncherPageHost(

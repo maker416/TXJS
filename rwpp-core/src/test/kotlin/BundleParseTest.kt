@@ -130,6 +130,16 @@ class BundleParseTest {
     }
 
     @Test
+    fun mainMenuBrowserKeysExistInAllBundles() {
+        bundleNames.forEach { name ->
+            val browser = Toml.parseToTomlTable(File(bundleDir, name).readText())["browser"] as TomlTable
+            listOf("resourceBrowser", "esportsSite").forEach {
+                assertTrue(browser.containsKey(it), "browser.$it missing in $name")
+            }
+        }
+    }
+
+    @Test
     fun browserUploadKeysExistInAllBundles() {
         bundleNames.forEach { name ->
             val browser = Toml.parseToTomlTable(File(bundleDir, name).readText())["browser"] as TomlTable

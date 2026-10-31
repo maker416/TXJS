@@ -54,15 +54,52 @@ import io.github.rwpp.widget.UiLinearProgressIndicator
 import kotlinx.coroutines.CancellationException
 import org.koin.compose.koinInject
 
+/** 赛事资讯站地址：普通网页，不做论坛单点登录。 */
+internal const val ESPORTS_SITE_URL = "https://rwesports.xn--rhqr8xvr4ahqsgka.com/"
+
+/** 极速论坛：先经统一账号单点登录，再进入论坛首页。 */
 @Composable
 fun ResourceBrowser(onExit: () -> Unit) {
+    val accountPrefs = koinInject<AccountPreferences>()
+    val forumUrl = resolveForumUrl(accountPrefs.forumUrl)
+    val normalizedUrl = remember(forumUrl) { runCatching { ForumSsoUrls.base(forumUrl) }.getOrDefault(forumUrl) }
+    val bootstrapUrl = remember(normalizedUrl) { runCatching { ForumSsoUrls.bootstrap(normalizedUrl) }.getOrDefault(normalizedUrl) }
+    val browser = remember(normalizedUrl, AccountSession.token, AccountSession.loggedIn, ForumSsoSession.generation) {
+        EmbeddedBrowserState(bootstrapUrl, normalizedUrl).also { it.clientAuthenticating = true }
+    }
+    BrowserPage(LauncherPage.ResourceBrowser, browser, onExit) {
+        AccountSession.restoreIfNeeded()
+        val session = AccountSession.playtimeIdentityOrNull()?.first
+        val prepared = ForumSsoSession.prepare(normalizedUrl, session)
+        browser.error = null
+        browser.submitClientLogin(bootstrapUrl, prepared?.handoff)
+    }
+}
+
+/** 赛事资讯站：与论坛共用应用内浏览器外壳，直接加载网址。 */
+@Composable
+fun EsportsBrowser(onExit: () -> Unit) {
+    val browser = remember { EmbeddedBrowserState(ESPORTS_SITE_URL) }
+    BrowserPage(LauncherPage.Esports, browser, onExit, clientLogin = null)
+}
+
+/**
+ * 应用内网页的公共外壳：显示方向、加载进度、错误浮层、悬浮退出与模组/地图下载。
+ * [clientLogin] 为空时按普通网页加载，错误浮层只提供刷新。
+ */
+@Composable
+private fun BrowserPage(
+    page: LauncherPage,
+    browser: EmbeddedBrowserState,
+    onExit: () -> Unit,
+    clientLogin: (suspend () -> Unit)?,
+) {
     val settings = koinInject<Settings>()
     val game = koinInject<Game>()
     val configIO = koinInject<ConfigIO>()
-    val accountPrefs = koinInject<AccountPreferences>()
     var orientation by remember(settings) { mutableStateOf(settings.resourceBrowserOrientation) }
     // 退出动画尚未 dispose 时也要立即恢复方向，以免其他页面暂时留在竖屏。
-    val active = launcherPage == LauncherPage.ResourceBrowser
+    val active = launcherPage == page
     if (orientation == null && active) {
         ResourceBrowserOrientationDialog(
             onSelected = {
@@ -74,28 +111,20 @@ fun ResourceBrowser(onExit: () -> Unit) {
         )
     }
 
-    val forumUrl = resolveForumUrl(accountPrefs.forumUrl)
-    val normalizedUrl = remember(forumUrl) { runCatching { ForumSsoUrls.base(forumUrl) }.getOrDefault(forumUrl) }
-    val bootstrapUrl = remember(normalizedUrl) { runCatching { ForumSsoUrls.bootstrap(normalizedUrl) }.getOrDefault(normalizedUrl) }
-    val browser = remember(normalizedUrl, AccountSession.token, AccountSession.loggedIn, ForumSsoSession.generation) {
-        EmbeddedBrowserState(bootstrapUrl, normalizedUrl).also { it.clientAuthenticating = true }
-    }
     val overlaysAvailable = active && !UI.showFriendsView && !UI.showAccountView &&
         browser.modDownload == null && browser.fileUpload == null
     var attempt by remember { mutableIntStateOf(0) }
-    browser.retryClientLogin = { attempt++ }
-    LaunchedEffect(browser, attempt, orientation, active) {
-        if (!active || orientation == null) return@LaunchedEffect
-        browser.beginClientLogin()
-        try {
-            AccountSession.restoreIfNeeded()
-            val session = AccountSession.playtimeIdentityOrNull()?.first
-            val prepared = ForumSsoSession.prepare(normalizedUrl, session)
-            browser.error = null
-            browser.submitClientLogin(bootstrapUrl, prepared?.handoff)
-        } catch (e: CancellationException) { throw e }
-        catch (e: Exception) {
-            browser.failClientLogin(forumSsoErrorText(e))
+    if (clientLogin != null) {
+        browser.retryClientLogin = { attempt++ }
+        LaunchedEffect(browser, attempt, orientation, active) {
+            if (!active || orientation == null) return@LaunchedEffect
+            browser.beginClientLogin()
+            try {
+                clientLogin()
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                browser.failClientLogin(forumSsoErrorText(e))
+            }
         }
     }
     BackHandler(true) {
@@ -142,11 +171,16 @@ fun ResourceBrowser(onExit: () -> Unit) {
                             modifier = Modifier.widthIn(max = minOf(maxWidth, 440.dp)).padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
-                            Text(readI18n(if (browser.clientLoginError != null) "browser.loginFailedTitle" else "browser.loadFailed"), color = MaterialTheme.colorScheme.error)
+                            val loginFailed = clientLogin != null && browser.clientLoginError != null
+                            Text(readI18n(if (loginFailed) "browser.loginFailedTitle" else "browser.loadFailed"), color = MaterialTheme.colorScheme.error)
                             Text(error, style = MaterialTheme.typography.bodySmall)
                             Row {
-                                TextButton(onClick = { attempt++ }) { Text(readI18n("browser.retryLogin")) }
-                                TextButton(onClick = browser::openAsGuest) { Text(readI18n("browser.guest")) }
+                                if (clientLogin != null) {
+                                    TextButton(onClick = { attempt++ }) { Text(readI18n("browser.retryLogin")) }
+                                    TextButton(onClick = browser::openAsGuest) { Text(readI18n("browser.guest")) }
+                                } else {
+                                    TextButton(onClick = browser::retryLoad) { Text(readI18n("browser.refresh")) }
+                                }
                             }
                         }
                     }

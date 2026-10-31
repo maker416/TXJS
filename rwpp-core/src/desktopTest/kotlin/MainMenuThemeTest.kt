@@ -107,16 +107,16 @@ class MainMenuThemeTest {
             widthPercent = 80
         """.trimIndent(), withImages = true)
         var clicks = 0
-        menu { clicks++ }
+        menu(onMods = { clicks++ })
         val single = button("menu.singlePlayerGame")
         val multi = button("menu.multiplayer")
         val mods = button("menu.modsAndMaps")
-        val resources = button("browser.resourceBrowser")
+        val fullCell = button("menu.settings")
         val modsBounds = mods.fetchSemanticsNode().boundsInRoot
         val sameColumnBounds = button("menu.openSourceInfo").fetchSemanticsNode().boundsInRoot
         assertEquals(single.fetchSemanticsNode().boundsInRoot.width, multi.fetchSemanticsNode().boundsInRoot.width,
             "只设置描边时，单人按钮必须继续占满整行")
-        closeTo(resources.fetchSemanticsNode().boundsInRoot.width * 0.8f, modsBounds.width)
+        closeTo(fullCell.fetchSemanticsNode().boundsInRoot.width * 0.8f, modsBounds.width)
         closeTo(sameColumnBounds.center.x, modsBounds.center.x)
         assertTrue(redAtLeftEdge(single.captureToImage().toAwtImage()) > 100, "单按钮 true 应覆盖全局 false")
         waitUntil(timeoutMillis = 10_000) { multi.captureToImage().toAwtImage().getRGB(0, 0) == 0xFF204080.toInt() }
@@ -170,6 +170,51 @@ class MainMenuThemeTest {
         closeTo(multi.center.x, mods.center.x)
     }
 
+    @Test
+    fun forumAndEsportsShareOneGridCell() = runDesktopComposeUiTest(width = 1000, height = 700) {
+        var forumClicks = 0
+        var esportsClicks = 0
+        menu(onResourceBrowser = { forumClicks++ }, onEsports = { esportsClicks++ })
+        val forum = button("browser.resourceBrowser").fetchSemanticsNode().boundsInRoot
+        val esports = button("browser.esportsSite").fetchSemanticsNode().boundsInRoot
+        val settings = button("menu.settings").fetchSemanticsNode().boundsInRoot
+        closeTo(forum.width, esports.width)
+        closeTo(forum.top, esports.top)
+        // 两个半宽按钮合起来与下一行同列的整格按钮外缘对齐，且没有折行变高。
+        closeTo(settings.left, forum.left)
+        closeTo(settings.right, esports.right)
+        closeTo(settings.height, forum.height)
+        closeTo(settings.height, esports.height)
+        button("browser.esportsSite").performClick()
+        runOnIdle { assertEquals(0, forumClicks); assertEquals(1, esportsClicks) }
+        button("browser.resourceBrowser").performClick()
+        runOnIdle { assertEquals(1, forumClicks); assertEquals(1, esportsClicks) }
+        save("forum-esports-cell.png")
+    }
+
+    @Test
+    fun hiddenEsportsGivesForumTheWholeCell() = runDesktopComposeUiTest(width = 1000, height = 700) {
+        activate("""
+            [menu.buttons.esports]
+            hidden = true
+        """.trimIndent())
+        menu()
+        val forum = button("browser.resourceBrowser").fetchSemanticsNode().boundsInRoot
+        val settings = button("menu.settings").fetchSemanticsNode().boundsInRoot
+        closeTo(settings.width, forum.width)
+        closeTo(settings.left, forum.left)
+    }
+
+    @Test
+    fun pairedButtonsStayOnOneLineInEnglish() = runDesktopComposeUiTest(width = 1000, height = 700) {
+        i18nTable = Toml.parseToTomlTable(File("src/commonMain/composeResources/files/bundle_en.toml").readText())
+        menu()
+        val settings = button("menu.settings").fetchSemanticsNode().boundsInRoot
+        listOf("browser.resourceBrowser", "browser.esportsSite").forEach {
+            closeTo(settings.height, button(it).fetchSemanticsNode().boundsInRoot.height)
+        }
+    }
+
     private fun activate(config: String, withImages: Boolean = false) {
         val dir = File(themesRoot, "test").apply { mkdirs() }
         File(dir, "theme.toml").writeText("[theme]\nid = \"test\"\nname = \"测试主题\"\n\n$config")
@@ -183,7 +228,11 @@ class MainMenuThemeTest {
         ArtThemeController.apply("test")
     }
 
-    private fun ComposeUiTest.menu(onMods: () -> Unit = {}) {
+    private fun ComposeUiTest.menu(
+        onMods: () -> Unit = {},
+        onResourceBrowser: () -> Unit = {},
+        onEsports: () -> Unit = {},
+    ) {
         setContent {
             KoinContext(appKoin) {
                 RWPPTheme(default = true) {
@@ -191,7 +240,8 @@ class MainMenuThemeTest {
                         Box(Modifier.fillMaxSize().background(Color(53, 57, 53))) {
                             UIProvider().MainMenu(
                                 multiplayer = {}, singlePlayer = {}, settings = {}, mods = onMods,
-                                extension = {}, resourceBrowser = {}, openSourceInfo = {}, account = {}, friends = {},
+                                extension = {}, resourceBrowser = onResourceBrowser, esports = onEsports,
+                                openSourceInfo = {}, account = {}, friends = {},
                             )
                         }
                     }

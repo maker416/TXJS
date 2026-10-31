@@ -124,6 +124,9 @@ class EmbeddedBrowserState(val initialUrl: String, private val homeUrl: String =
     }
 
     internal fun openAsGuest() { clientLoginError = null; error = null; submitClientLogin(initialUrl, null) }
+
+    /** 不走论坛登录的页面：清除错误后重新加载（引擎未就绪时由平台层重新初始化）。 */
+    internal fun retryLoad() { clientLoginError = null; error = null; controller?.reload() }
 }
 
 internal interface EmbeddedBrowserController {
