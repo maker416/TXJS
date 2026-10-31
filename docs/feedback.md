@@ -10,8 +10,8 @@
 
 打包在 IO 线程流式完成：短暂锁定日志输出捕获文件长度，压缩阶段释放锁，只读取捕获时已有的内容，不阻塞游戏线程。压缩包上传后或失败时删除，进程被强杀后遗留的包会在后续启动清理。原始日志最多 128 MiB、压缩包最多 64 MiB；超限明确提示，不静默丢弃历史内容。
 
-默认服务地址为 `https://fk.xn--rhqr8xvr4ahqsgka.com`。覆盖优先级：系统属性 `rwjs.feedback.apiUrl` → 环境变量 `RWJS_FEEDBACK_API_URL` → `FeedbackPreferences.apiUrl` → 构建参数 `-PfeedbackApiUrl=...`。Android 本地联调可用 `adb reverse tcp:11556 tcp:11556`，通过配置文件把 `apiUrl` 设为 `http://127.0.0.1:11556`；正式包继续使用 HTTPS 默认域名。
+默认服务地址为 `http://fk.xn--rhqr8xvr4ahqsgka.com:11556`，直接连接 Go 服务，无需 nginx 反向代理。公网直连时服务端设置 `FEEDBACK_LISTEN=0.0.0.0:11556`、`FEEDBACK_TRUST_PROXY=0` 并放行 TCP 11556 端口。覆盖优先级：系统属性 `rwjs.feedback.apiUrl` → 环境变量 `RWJS_FEEDBACK_API_URL` → `FeedbackPreferences.apiUrl` → 构建参数 `-PfeedbackApiUrl=...`。Android 本地联调可用 `adb reverse tcp:11556 tcp:11556`，通过配置文件把 `apiUrl` 设为 `http://127.0.0.1:11556`；正式包使用上述 HTTP 默认地址。
 
 配套服务端位于 `D:\workspace\RW\fakuiserver`（独立项目）。其 README 包含端点协议、管理员页面、存储、systemd 和 nginx 部署说明。管理员密钥只保存在服务端，客户端不需要账号登录或管理员凭据。
 
-回归：`:rwpp-core-api:test` 覆盖同日重启、跨午夜切分、七天边界、快照期间继续写入、超限及上传契约；`:rwpp-desktop:test --tests '*DesktopRuntimeLogTest'` 验证控制台和日志同时接收 UTF-8 异常；两端 Kotlin 编译与反馈页窄屏检查；服务端 `go test ./...` 与 `go vet ./...`。上线前还需在公网 HTTPS 域名和 Android 真机上验收一次实际反馈提交。
+回归：`:rwpp-core-api:test` 覆盖同日重启、跨午夜切分、七天边界、快照期间继续写入、超限及上传契约；`:rwpp-desktop:test --tests '*DesktopRuntimeLogTest'` 验证控制台和日志同时接收 UTF-8 异常；两端 Kotlin 编译与反馈页窄屏检查；服务端 `go test ./...` 与 `go vet ./...`。上线前还需在公网服务地址和 Android 真机上验收一次实际反馈提交。
