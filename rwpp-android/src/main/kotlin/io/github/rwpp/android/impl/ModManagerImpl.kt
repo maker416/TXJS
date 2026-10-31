@@ -333,7 +333,8 @@ class ModManagerImpl : ModManager {
                         get() = !it.f
                         set(value) { it.f = !value }
                     override val path: String
-                        get() = modFile().path
+                        // APK assets 没有 File 实体，选择身份须保留引擎路径以匹配扫描注入。
+                        get() = if (it.x) it.e() else modFile().path
 
                     override fun tryDelete(): Boolean {
                         return deleteModFileSafely(modFile())

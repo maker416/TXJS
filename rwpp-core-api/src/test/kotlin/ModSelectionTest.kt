@@ -6,6 +6,7 @@
  */
 
 import io.github.rwpp.game.mod.Mod
+import io.github.rwpp.game.mod.ModReloadSelection
 import io.github.rwpp.game.mod.SelectableMod
 import io.github.rwpp.game.mod.requireModSelectionApplied
 import io.github.rwpp.game.mod.snapshotModSelection
@@ -59,6 +60,33 @@ class ModSelectionTest {
         assertTrue(pending.isEnabled)
         engine.isEnabled = true
         requireModSelectionApplied(listOf(engine), selection)
+    }
+
+    @Test
+    fun assetSelectionSurvivesScanWithoutEnablingExternalModWithSameName() {
+        val builtin = engineMod("builtin_mods/mega_builders", enabled = false)
+        val external = engineMod("/storage/emulated/0/builtin_mods/mega_builders", enabled = false)
+        val pending = SelectableMod(builtin).apply { isEnabled = true }
+        val selection = snapshotModSelection(listOf(pending, external))
+
+        ModReloadSelection.activate(selection)
+        try {
+            builtin.isEnabled = ModReloadSelection.resolve(listOf(builtin.path))!!
+            external.isEnabled = ModReloadSelection.resolve(listOf(external.path))!!
+            assertTrue(builtin.isEnabled)
+            assertFalse(external.isEnabled)
+            requireModSelectionApplied(listOf(builtin, external), selection)
+        } finally {
+            ModReloadSelection.deactivate()
+        }
+
+        pending.isEnabled = false
+        ModReloadSelection.activate(snapshotModSelection(listOf(pending, external)))
+        try {
+            assertFalse(ModReloadSelection.resolve(listOf(builtin.path))!!)
+        } finally {
+            ModReloadSelection.deactivate()
+        }
     }
 
     private fun engineMod(path: String, enabled: Boolean): Mod = object : Mod {
