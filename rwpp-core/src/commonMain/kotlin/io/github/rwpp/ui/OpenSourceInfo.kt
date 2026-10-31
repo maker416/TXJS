@@ -7,6 +7,7 @@
 
 package io.github.rwpp.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -34,6 +38,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -87,12 +95,7 @@ fun OpenSourceInfoView(
 
                 LargeDividingLine { 10.dp }
 
-                BorderCard(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), onClick = { showFeedback = true }) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("提交问题反馈", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Text("描述遇到的问题，并附带最近七天的运行日志。", style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
+                FeedbackEntryCard(onClick = { showFeedback = true })
 
                 OfficialQqGroupCard()
 
@@ -148,6 +151,77 @@ fun OpenSourceInfoView(
                 LinkCard("AGPL-3.0 许可证文本", "https://www.gnu.org/licenses/agpl-3.0.html", net)
 
                 Spacer(modifier = Modifier.height(12.dp))
+            }
+        }
+    }
+}
+
+/** 反馈入口：图标块 + 实心「去反馈」按钮 + 主题色描边，让整张卡片一眼可点；点击区域仍是整张卡片。 */
+@Composable
+private fun FeedbackEntryCard(onClick: () -> Unit) {
+    val accent = MaterialTheme.colorScheme.primary
+    BorderCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 12.dp),
+        onClick = onClick,
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(2.dp, accent.copy(alpha = 0.45f)),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(54.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(accent.copy(alpha = 0.22f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(FeedbackBugIcon, contentDescription = null, tint = accent, modifier = Modifier.size(28.dp))
+            }
+
+            Spacer(modifier = Modifier.width(14.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "提交问题反馈",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "描述遇到的问题，并附带最近七天的运行日志。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+                )
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(accent)
+                    .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "去反馈",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                )
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(18.dp),
+                )
             }
         }
     }
@@ -310,3 +384,39 @@ private fun ColumnScope.LinkCard(
         )
     }
 }
+
+/** Material「BugReport」图标路径（Apache-2.0）；项目只依赖 material-icons-core，不含该图标。 */
+private val FeedbackBugIcon = ImageVector.Builder("FeedbackBug", 24.dp, 24.dp, 24f, 24f).apply {
+    path(fill = SolidColor(Color.Black)) {
+        moveTo(20f, 8f); horizontalLineToRelative(-2.81f)
+        curveToRelative(-0.45f, -0.78f, -1.07f, -1.45f, -1.82f, -1.96f)
+        lineTo(17f, 4.41f); lineTo(15.59f, 3f)
+        lineToRelative(-2.17f, 2.17f)
+        curveTo(12.96f, 5.06f, 12.49f, 5f, 12f, 5f)
+        reflectiveCurveToRelative(-0.96f, 0.06f, -1.41f, 0.17f)
+        lineTo(8.41f, 3f); lineTo(7f, 4.41f)
+        lineToRelative(1.62f, 1.63f)
+        curveTo(7.88f, 6.55f, 7.26f, 7.22f, 6.81f, 8f)
+        horizontalLineTo(4f); verticalLineToRelative(2f)
+        horizontalLineToRelative(2.09f)
+        curveToRelative(-0.05f, 0.33f, -0.09f, 0.66f, -0.09f, 1f)
+        verticalLineToRelative(1f); horizontalLineTo(4f); verticalLineToRelative(2f)
+        horizontalLineToRelative(2f); verticalLineToRelative(1f)
+        curveToRelative(0f, 0.34f, 0.04f, 0.67f, 0.09f, 1f)
+        horizontalLineTo(4f); verticalLineToRelative(2f)
+        horizontalLineToRelative(2.81f)
+        curveToRelative(1.04f, 1.79f, 2.97f, 3f, 5.19f, 3f)
+        reflectiveCurveToRelative(4.15f, -1.21f, 5.19f, -3f)
+        horizontalLineTo(20f); verticalLineToRelative(-2f)
+        horizontalLineToRelative(-2.09f)
+        curveToRelative(0.05f, -0.33f, 0.09f, -0.66f, 0.09f, -1f)
+        verticalLineToRelative(-1f); horizontalLineToRelative(2f); verticalLineToRelative(-2f)
+        horizontalLineToRelative(-2f); verticalLineToRelative(-1f)
+        curveToRelative(0f, -0.34f, -0.04f, -0.67f, -0.09f, -1f)
+        horizontalLineTo(20f); verticalLineTo(8f); close()
+        moveTo(14f, 16f); horizontalLineToRelative(-4f); verticalLineToRelative(-2f)
+        horizontalLineToRelative(4f); verticalLineToRelative(2f); close()
+        moveTo(14f, 12f); horizontalLineToRelative(-4f); verticalLineToRelative(-2f)
+        horizontalLineToRelative(4f); verticalLineToRelative(2f); close()
+    }
+}.build()
