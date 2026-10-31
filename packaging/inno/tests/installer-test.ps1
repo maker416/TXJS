@@ -18,6 +18,8 @@ $registryKey = "Software\RWJS-PackagingTests\$testId"
 $registryPath = "HKCU:\$registryKey"
 $groupName = "RWJS Installer Test $testId"
 $uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{$testId}_is1"
+$setupLog = Join-Path $testRoot 'setup.log'
+$vanillaDir = Join-Path $testRoot 'Rusted Warfare'
 $source = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../RWJS.iss'))
 # 执行生产安装脚本，但以独立 AppId、HKCU、测试快捷方式和临时目录隔离真实安装。
 $source = $source.Replace('C9F7D3ED-E974-4C19-9291-9D5460608316', $testId).
@@ -33,7 +35,7 @@ function Write-TestFile([string]$Path, [string]$Value = 'fixture') {
     New-Item -ItemType Directory -Path (Split-Path $Path -Parent) -Force | Out-Null
     [IO.File]::WriteAllText($Path, $Value)
 }
-function Build-TestInstaller([string]$Version) {
+function Build-TestInstaller([string]$Version, [string]$ScriptSource = $source) {
     $app = Join-Path $testRoot "source-$Version"
     $game = Join-Path $testRoot 'game'
     New-Item -ItemType Directory -Path $app -Force | Out-Null
@@ -43,8 +45,9 @@ function Build-TestInstaller([string]$Version) {
     Write-TestFile (Join-Path $app "app/dependency-$Version.jar")
     Write-TestFile (Join-Path $app 'runtime/bin/server/jvm.dll')
     Write-TestFile (Join-Path $game 'game-lib.jar')
-    $script = Join-Path $testRoot 'fixture.iss'
-    [IO.File]::WriteAllText($script, $source, [Text.UTF8Encoding]::new($true))
+    Write-TestFile (Join-Path $game 'assets/fixture.txt')
+    $script = Join-Path $testRoot "fixture-$Version.iss"
+    [IO.File]::WriteAllText($script, $ScriptSource, [Text.UTF8Encoding]::new($true))
     $output = Join-Path $testRoot "output-$Version"
     & $IsccPath /Q "/DAppVersion=$Version" "/DAppSource=$app" "/DGameSource=$game" `
         "/DRepoRoot=$repo" "/DInstallerOutput=$output" $script | Out-Host
@@ -52,15 +55,31 @@ function Build-TestInstaller([string]$Version) {
     return (Join-Path $output 'RWJS-Setup.exe')
 }
 function Run-TestInstaller([string]$Exe, [string]$ExtraArgs = '') {
-    $arguments = "/VERYSILENT /SUPPRESSMSGBOXES /SP- /NORESTART /LOG=`"$testRoot/setup.log`" $ExtraArgs"
+    $arguments = "/VERYSILENT /SUPPRESSMSGBOXES /SP- /NORESTART /LOG=`"$setupLog`" $ExtraArgs"
     $process = Start-Process -FilePath $Exe -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
     return $process.ExitCode
+}
+# 原版目录必须在落盘前被拒绝，且由指定的检查点（日志标记）拦下。
+function Assert-VanillaDirRejected([string]$Exe, [string]$Marker, [string]$Label) {
+    Assert-True ((Run-TestInstaller $Exe "/DIR=`"$vanillaDir`"") -ne 0) "$Label accepted the vanilla game directory"
+    Assert-True ([bool](Select-String -LiteralPath $setupLog -SimpleMatch $Marker -Quiet)) "$Label did not log: $Marker"
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $vanillaDir 'RWJS.exe'))) "$Label installed into the vanilla game directory"
+    Assert-True (([IO.File]::ReadAllText((Join-Path $vanillaDir 'game-lib.jar'))) -eq 'vanilla') "$Label overwrote vanilla game-lib.jar"
+    Assert-True (-not (Test-Path -LiteralPath $registryPath)) "$Label created installation registration"
 }
 
 try {
     $first = Build-TestInstaller '0.0.1'
     Assert-True ((Run-TestInstaller $first '/RWJS_UPDATE=1') -ne 0) 'Update without registration was accepted'
     Assert-True (-not (Test-Path -LiteralPath $registryPath)) 'Failed update created installation registration'
+    # 原版游戏目录：选择目录页拦截；去掉该检查的变体验证 PrepareToInstall 兜底。
+    Write-TestFile (Join-Path $vanillaDir 'game-lib.jar') 'vanilla'
+    Write-TestFile (Join-Path $vanillaDir 'assets/units/tank.ini') 'vanilla'
+    Assert-VanillaDirRejected $first 'Rejected vanilla game directory on the select-dir page' 'Select-dir check'
+    $selectDirCheck = '(CurPageID = wpSelectDir) and IsVanillaGameDir(WizardDirValue)'
+    Assert-True ($source.Contains($selectDirCheck)) 'Select-dir vanilla check not found in RWJS.iss'
+    $fallbackOnly = Build-TestInstaller '0.0.0' $source.Replace($selectDirCheck, 'False')
+    Assert-VanillaDirRejected $fallbackOnly 'Rejected vanilla game directory before installing' 'PrepareToInstall fallback'
     Assert-True ((Run-TestInstaller $first "/DIR=`"$installDir`"") -eq 0) 'Fresh install failed'
     $registered = Get-ItemProperty -LiteralPath $registryPath
     Assert-True ($registered.InstallDir -eq $installDir) 'InstallDir was not registered'
@@ -72,6 +91,8 @@ try {
     Assert-True (Test-Path -LiteralPath $menuShortcut) 'Start menu shortcut missing'
     $userFiles = @('io.github.rwpp.config.Settings.toml', 'saves/user.rwsave', 'replays/user', 'mods/units/user.ini')
     foreach ($relative in $userFiles) { Write-TestFile (Join-Path $installDir $relative) 'user data' }
+    # 已安装的 RWJS 目录同样带 game-lib.jar 和 assets，重装不能被当成原版目录。
+    Assert-True ((Run-TestInstaller $first "/DIR=`"$installDir`"") -eq 0) 'Reinstall into the RWJS directory was rejected'
     # Check directory locking for normal reinstalls. Update explicitly resets /DIR to the registered directory.
     $otherDir = Join-Path $testRoot 'wrong target'
     Assert-True ((Run-TestInstaller $first "/DIR=`"$otherDir`"") -ne 0) 'Second installation directory was accepted'
@@ -91,7 +112,7 @@ try {
         Assert-True (([IO.File]::ReadAllText((Join-Path $installDir $relative))) -eq 'user data') "User data was removed: $relative"
     }
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $installDir 'RWJS.exe'))) 'Installed executable survived uninstall'
-    Write-Host 'PASS: fresh install, registration, shortcuts, update locking, stale jars, uninstall and user-data preservation'
+    Write-Host 'PASS: vanilla directory rejection, fresh install, reinstall, registration, shortcuts, update locking, stale jars, uninstall and user-data preservation'
 } finally {
     $uninstaller = Join-Path $installDir 'unins000.exe'
     if (Test-Path -LiteralPath $uninstaller) { Run-TestInstaller $uninstaller | Out-Null }

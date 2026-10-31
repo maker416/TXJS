@@ -468,6 +468,7 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
    - 单 exe `RWJS-Setup.exe`，默认 `%ProgramFiles%\RWJS`，自带 Java 与游戏运行资源，仅保留 RWJS 入口。
    - 安装在 64 位 `HKLM\SOFTWARE\RWJS` 写入 `InstallDir` / `InstalledVersion`；Inno Setup 自动登记卸载项。
    - 更新参数 `/RWJS_UPDATE=1 /SILENT /SP- /NORESTART /LOG`：只允许覆盖有效的新 RWJS 安装路径，缺少记录则中止并要求正常安装。
+   - 拒绝装进原版游戏目录（有 `game-lib.jar` + `assets/` 但不是 RWJS 安装）：选择目录页 `NextButtonClick` 拦截，`PrepareToInstall` 兜底；否则卸载会删掉被覆盖的原版文件。回归见 `packaging/inno/tests/installer-test.ps1`。
    - 仅清理安装器管理的旧 app jar；卸载保留用户添加的配置、存档、回放与模组。详见 `packaging/README.md`。
 6. **网络配置**：桌面与 Android 的 `jvmArgs` / manifest 中都设置了 `preferIPv4Stack=true` 与 `usesCleartextTraffic="true"`。
 

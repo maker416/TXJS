@@ -101,6 +101,20 @@ begin
     FileExists(AddBackslash(Dir) + 'unins000.exe');
 end;
 
+// 原版游戏目录：有 game-lib.jar 和 assets 但不是 RWJS 安装。装进去会覆盖原版文件，卸载时还会一并删除。
+function IsVanillaGameDir(const Dir: String): Boolean;
+begin
+  Result := (Dir <> '') and FileExists(AddBackslash(Dir) + 'game-lib.jar') and
+    DirExists(AddBackslash(Dir) + 'assets') and not LooksLikeInstall(Dir);
+end;
+
+function VanillaGameDirMessage: String;
+begin
+  Result := '所选文件夹是原版铁锈战争的游戏目录。' + #13#10#13#10 +
+    '安装到这里会覆盖原版文件，以后卸载 RWJS 时这些文件也会被一起删除，导致原版游戏无法启动。' + #13#10#13#10 +
+    '请改选其他文件夹，例如默认的 ' + ExpandConstant('{autopf}\RWJS') + '。';
+end;
+
 function InitializeSetup: Boolean;
 begin
   UpdateMode := ExpandConstant('{param:RWJS_UPDATE|0}') = '1';
@@ -126,6 +140,17 @@ begin
     (PageID = wpSelectDir) or (PageID = wpSelectTasks) or (PageID = wpReady));
 end;
 
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if (CurPageID = wpSelectDir) and IsVanillaGameDir(WizardDirValue) then
+  begin
+    Log('Rejected vanilla game directory on the select-dir page: ' + WizardDirValue);
+    SuppressibleMsgBox(VanillaGameDirMessage, mbError, MB_OK, IDOK);
+    Result := False;
+  end;
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
@@ -137,6 +162,12 @@ begin
     (CompareText(RemoveBackslashUnlessRoot(ExpandConstant('{app}')),
       RemoveBackslashUnlessRoot(InstalledDir)) <> 0) then
     Result := '已安装 RWJS。如需更换安装目录，请先卸载已安装的 RWJS。';
+  // 选择目录页被跳过（自动更新、沿用上次安装目录）时的兜底。
+  if (Result = '') and IsVanillaGameDir(ExpandConstant('{app}')) then
+  begin
+    Log('Rejected vanilla game directory before installing: ' + ExpandConstant('{app}'));
+    Result := VanillaGameDirMessage;
+  end;
 end;
 
 // 不使用 [UninstallDelete] 通配清理：用户配置、存档、回放及自行添加的模组保留。

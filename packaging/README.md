@@ -94,6 +94,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File packaging/tests/UpdatePackag
 
 缺少有效 RWJS 安装记录时，更新模式中止并提示正常安装。客户端只调用新参数。覆盖更新清理安装器管理的 `app/*.jar`，避免版本改名后依赖冲突；保留用户配置和模组。更换已安装的 RWJS 目录前须先卸载。
 
+目标目录含 `game-lib.jar` 和 `assets/` 但不是 RWJS 安装时，视为原版游戏目录并拒绝安装：选择目录页拦截，选择目录页被跳过时由 `PrepareToInstall` 兜底。否则安装会覆盖原版文件，卸载时这些文件也会被删除。
+
 卸载仅移除安装器登记的文件、快捷方式、注册表值及空目录，不通配删除游戏根目录；用户自行添加的模组、存档、回放和配置保留。包内附带的资源属于安装文件，会随卸载删除。
 
 ## 验证
@@ -104,6 +106,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File packaging/inno/tests/install
 .\gradlew.bat :rwpp-core-api:test :rwpp-desktop:packageInnoDistribution
 ```
 
-安装器测试使用同一生产脚本，以独立 AppId、HKCU、临时目录和测试快捷方式隔离真实安装，覆盖注册表、更新、旧 jar 清理和卸载数据保留。发布前还需在 Windows 实际验证中文向导、普通用户启动游戏和占用文件提示。
+安装器测试使用同一生产脚本，以独立 AppId、HKCU、临时目录和测试快捷方式隔离真实安装，覆盖原版目录拦截、注册表、更新、旧 jar 清理和卸载数据保留。发布前还需在 Windows 实际验证中文向导、普通用户启动游戏和占用文件提示。
 
 简体中文消息文件来自 [Inno Setup 官方源码](https://github.com/jrsoftware/issrc/blob/2f452efbbba794d8329592c386576361ad611e6c/Files/Languages/ChineseSimplified.isl)，保留其维护者信息，随仓库固定以避免编译器安装缺少翻译文件。参数与身份规则见[官方文档](https://jrsoftware.org/ishelp/topic_setupcmdline.htm)和 [AppId 文档](https://jrsoftware.org/ishelp/topic_setup_appid.htm)。
