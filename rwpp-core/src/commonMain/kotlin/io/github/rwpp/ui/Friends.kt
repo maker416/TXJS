@@ -348,6 +348,9 @@ private fun FriendListPane(
     val outgoing = FriendsSession.outgoing
     val scope = rememberCoroutineScope()
     val enableAnimations = uiAnimationsEnabled()
+    // 列表展示了收到的申请即视为已查看，主菜单红点不再计入这些申请
+    val incomingIds = incoming.map { it.id }
+    LaunchedEffect(incomingIds) { FriendsSession.markIncomingRequestsSeen(incomingIds) }
     var showBlocked by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize()) {

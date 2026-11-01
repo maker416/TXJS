@@ -778,6 +778,10 @@ fun RoomInviteToastHost(modifier: Modifier = Modifier) {
                     onAccept = {
                         // 无论走哪条分支，悬浮卡片都先消失
                         UI.incomingInviteNotification = null
+                        // 玩家已在卡片上看过这条邀请，不再让它留在未读红点里
+                        scope.launch {
+                            runCatching { FriendsSession.markInviteRead(notification.peer.id, notification.messageId) }
+                        }
                         when {
                             UI.showRoomView ->
                                 UI.showWarning(readI18n("friends.inviteLeaveRoomFirst", I18nType.RWPP))

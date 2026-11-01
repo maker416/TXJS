@@ -338,7 +338,7 @@ open class UIProvider {
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 AccountMenuEntry(onClick = account)
-                val friendUnread = FriendsSession.chats.sumOf { it.unread } + FriendsSession.incoming.size
+                val friendUnread = FriendsSession.badgeCount()
                 FriendsMenuEntry(unread = friendUnread, onClick = friends)
             }
 
