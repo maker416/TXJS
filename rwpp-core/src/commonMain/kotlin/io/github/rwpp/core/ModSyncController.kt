@@ -12,6 +12,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.rwpp.app.LauncherVisibility
 import io.github.rwpp.app.pollWhileVisible
+import io.github.rwpp.account.AccountSession
+import io.github.rwpp.config.AccountPreferences
+import io.github.rwpp.config.resolveAccountAppKey
+import io.github.rwpp.net.sync.ModSyncCredentials
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.MultiplayerPreferences
@@ -208,10 +212,19 @@ object ModSyncController {
     private const val REJOIN_CONNECT_TIMEOUT_MS = 8_000L
 
     private var hostJob: Job? = null
+    @Volatile
+    private var hostScope: CoroutineScope? = null
+    @Volatile
+    private var hostClient: ModSyncClient? = null
+    @Volatile
+    private var retryHostRoom: Triple<String, String, String>? = null
+    private val hostGeneration = AtomicLong()
     private var heartbeatJob: Job? = null
     private var peerPollJob: Job? = null
     private var hostCleanupJob: Job? = null
+    @Volatile
     private var hostKey: String? = null
+    @Volatile
     private var hostSecret: String? = null
 
     private var preJoinJob: Job? = null
@@ -250,6 +263,7 @@ object ModSyncController {
         eventsBound = true
         GlobalEventChannel.filter(DisconnectEvent::class).subscribeAlways(priority = EventPriority.MONITOR) {
             val hostCleanup = stopHostSession()
+            retryHostRoom = null
             val presenceCleanup = clearRoomPresence()
             hostCleanup.join()
             presenceCleanup.join()
@@ -260,13 +274,13 @@ object ModSyncController {
         }
     }
 
-    private fun newClient(): ModSyncClient {
+    private fun newClient(credentials: ModSyncCredentials? = null, currentSession: () -> Boolean = { true }): ModSyncClient {
         val prefs = appKoin.get<MultiplayerPreferences>()
         val baseUrls = prefs.modSyncApiUrls
             .split(';')
             .map { it.trim().trimEnd('/') }
             .filter { it.isNotEmpty() }
-        return ModSyncClient(baseUrls, appKoin.get<Net>().client)
+        return ModSyncClient(baseUrls, appKoin.get<Net>().client, credentials, currentSession)
     }
 
     // ---------------- 房主侧 ----------------
@@ -278,17 +292,34 @@ object ModSyncController {
         if (!hostSyncRequested) return
         val key = forAddress(roomCode).firstOrNull() ?: return
         if (hostKey == key && (hostJob?.isActive == true || hostSyncState is HostSyncState.Ready)) return
+        val session = AccountSession.sessionSnapshotOrNull()
+        if (session == null) {
+            hostSyncRequested = false
+            setHostState(HostSyncState.Error(readI18n("modSync.loginRequired")))
+            return
+        }
+        val credentials = ModSyncCredentials(
+            resolveAccountAppKey(appKoin.get<AccountPreferences>().appKey), session.token,
+        )
+        lateinit var client: ModSyncClient
+        client = newClient(credentials) { AccountSession.isCurrentSession(session) && hostClient === client }
         val cleanup = stopHostSession(clearRequest = false)
+        hostClient = client
+        val lifetime = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
+        hostScope = lifetime
         hostKey = key
-        val secret = UUID.randomUUID().toString().replace("-", "")
+        val secret = retryHostRoom?.takeIf { it.first == key }?.third
+            ?: UUID.randomUUID().toString().replace("-", "")
+        retryHostRoom = Triple(key, roomCode, secret)
         hostSecret = secret
-        hostJob = scope.launch(Dispatchers.IO) {
+        hostJob = lifetime.launch(Dispatchers.IO) {
             cleanup.join()
-            runHostSession(key, secret)
+            runHostSession(key, secret, client)
         }
     }
 
-    private suspend fun runHostSession(key: String, secret: String) {
+    private suspend fun runHostSession(key: String, secret: String, client: ModSyncClient) {
+        fun publishHostState(state: HostSyncState) = setHostState(state, client)
         val prepared = mutableListOf<ModPayload>()
         try {
             val manager = appKoin.get<ModManager>()
@@ -304,12 +335,12 @@ object ModSyncController {
             }
             if (enabled.isEmpty()) {
                 logger.info("[MODSYNC-HOST] no enabled mods, skip sync registration")
-                setHostState(HostSyncState.Off)
+                publishHostState(HostSyncState.Off)
                 return
             }
 
             logger.info("[MODSYNC-HOST] preparing manifest for ${enabled.size} mod(s), key=$key")
-            setHostState(HostSyncState.Preparing(0, enabled.size, 0L, 0L))
+            publishHostState(HostSyncState.Preparing(0, enabled.size, 0L, 0L))
             // Stable disk snapshots keep the manifest/upload bytes identical without retaining all mods.
             val prepareContext = currentCoroutineContext()
             enabled.forEach { mod ->
@@ -318,7 +349,6 @@ object ModSyncController {
             val descriptors = prepared.map { it.descriptor }
             val totalBytes = descriptors.sumOf { it.payloadSize }
 
-            val client = newClient()
             client.register(
                 RoomRegisterRequest(
                     key = key,
@@ -330,7 +360,7 @@ object ModSyncController {
                 )
             )
             // 注册成功后即轮询加入者进度（preparing 阶段也会有 waiting_host 上报）
-            startPeerPolling(key, secret)
+            startPeerPolling(key, secret, client)
 
             val missing = client.checkFiles(key, secret, descriptors.map { it.normalizedSha256 }).toSet()
             logger.info("[MODSYNC-HOST] registered; server missing ${missing.size}/${descriptors.size} blob(s)")
@@ -340,8 +370,8 @@ object ModSyncController {
             prepared.forEach { payload ->
                 val descriptor = payload.descriptor
                 if (descriptor.normalizedSha256 in missing) {
-                    client.uploadFile(descriptor.normalizedSha256, secret, payload.file) { progress ->
-                        setHostState(
+                    client.uploadFile(key, descriptor.normalizedSha256, secret, payload.file) { progress ->
+                        publishHostState(
                             HostSyncState.Preparing(
                                 doneCount, prepared.size,
                                 uploadedBytes + (descriptor.payloadSize * progress).toLong(), totalBytes,
@@ -351,48 +381,54 @@ object ModSyncController {
                 }
                 uploadedBytes += descriptor.payloadSize
                 doneCount++
-                setHostState(HostSyncState.Preparing(doneCount, prepared.size, uploadedBytes, totalBytes))
+                publishHostState(HostSyncState.Preparing(doneCount, prepared.size, uploadedBytes, totalBytes))
             }
             client.markReady(key, secret)
             logger.info("[MODSYNC-HOST] sync room ready: key=$key, total=${totalBytes}B")
-            setHostState(HostSyncState.Ready)
-            startHeartbeat(key, secret)
+            publishHostState(HostSyncState.Ready)
+            startHeartbeat(key, secret, client)
         } catch (e: CancellationException) {
             throw e
         } catch (e: OutOfMemoryError) {
             stopAfterTransferMemoryFailure("host-transfer")
         } catch (e: Exception) {
             logger.error("[MODSYNC-HOST] host session failed: ${e.stackTraceToString()}")
-            setHostState(HostSyncState.Error(e.message ?: e.javaClass.simpleName))
+            if (!handleHostAuthFailure(e, client)) publishHostState(HostSyncState.Error(hostErrorText(e)))
         } finally {
             prepared.forEach { it.close() }
         }
     }
 
-    private fun startHeartbeat(key: String, secret: String) {
+    private fun startHeartbeat(key: String, secret: String, client: ModSyncClient) {
         heartbeatJob?.cancel()
-        heartbeatJob = scope.launch(Dispatchers.IO) {
+        heartbeatJob = hostScope?.launch(Dispatchers.IO) {
             while (true) {
                 delay(HEARTBEAT_MS)
-                runCatching { newClient().heartbeat(key, secret) }
-                    .onFailure { logger.warn("[MODSYNC-HOST] heartbeat failed: ${it.message}") }
+                runCatching { client.heartbeat(key, secret) }.onFailure {
+                    if (it is CancellationException) throw it
+                    if (handleHostAuthFailure(it, client)) return@launch
+                    logger.warn("[MODSYNC-HOST] heartbeat failed: ${it.message}")
+                }
             }
         }
     }
 
-    private fun startPeerPolling(key: String, secret: String) {
+    private fun startPeerPolling(key: String, secret: String, client: ModSyncClient) {
         peerPollJob?.cancel()
-        peerPollJob = scope.launch(Dispatchers.IO) {
+        peerPollJob = hostScope?.launch(Dispatchers.IO) {
             LauncherVisibility.visible.pollWhileVisible(PEER_POLL_MS) {
                 if (!withContext(Dispatchers.Main.immediate) { RoomSnapshotStore.shouldSample(appKoin.get<Game>()) }) {
                     return@pollWhileVisible
                 }
                 runCatching {
-                    val peers = newClient().listPeers(key, secret).map { it.toSnapshot() }
+                    val peers = client.listPeers(key, secret).map { it.toSnapshot() }
                     withContext(Dispatchers.Main.immediate) { hostPeerSnapshots = peers }
                 }.onFailure {
                     if (it is CancellationException) throw it
-                    logger.warn("[MODSYNC-HOST] listPeers failed: ${it.message}")
+                    if (!handleHostAuthFailure(it, client)) {
+                        logger.warn("[MODSYNC-HOST] listPeers failed: ${it.message}")
+                        delay(if (it is ModSyncException && it.statusCode == 429) (it.retryAfterSeconds ?: 2) * 1000L else 2_000L)
+                    }
                 }
             }
         }
@@ -402,13 +438,14 @@ object ModSyncController {
     fun clearHostPeers() {
         val key = hostKey ?: return
         val secret = hostSecret ?: return
-        scope.launch(Dispatchers.IO) {
-            runCatching { newClient().clearPeers(key, secret) }
+        val client = hostClient ?: return
+        hostScope?.launch(Dispatchers.IO) {
+            runCatching { client.clearPeers(key, secret) }
                 .onSuccess {
                     withContext(Dispatchers.Main.immediate) { hostPeerSnapshots = emptyList() }
                     logger.info("[MODSYNC-HOST] cleared all peer presence for key=$key")
                 }
-                .onFailure { logger.warn("[MODSYNC-HOST] clearPeers failed: ${it.message}") }
+                .onFailure { if (it is CancellationException) throw it; handleHostAuthFailure(it, client); logger.warn("[MODSYNC-HOST] clearPeers failed: ${it.message}") }
         }
     }
 
@@ -417,9 +454,10 @@ object ModSyncController {
         val key = hostKey ?: return
         val secret = hostSecret ?: return
         if (serverId.isBlank()) return
-        scope.launch(Dispatchers.IO) {
-            runCatching { newClient().addAlias(key, secret, SID_PREFIX + serverId) }
-                .onFailure { logger.warn("[MODSYNC-HOST] bind server_id alias failed: ${it.message}") }
+        val client = hostClient ?: return
+        hostScope?.launch(Dispatchers.IO) {
+            runCatching { client.addAlias(key, secret, SID_PREFIX + serverId) }
+                .onFailure { if (it is CancellationException) throw it; handleHostAuthFailure(it, client); logger.warn("[MODSYNC-HOST] bind server_id alias failed: ${it.message}") }
         }
     }
 
@@ -427,8 +465,13 @@ object ModSyncController {
     fun stopHostSession(clearRequest: Boolean = true): Job {
         val key = hostKey
         val secret = hostSecret
+        val client = hostClient
+        val lifetime = hostScope?.coroutineContext?.get(Job)
+        hostGeneration.incrementAndGet()
+        hostClient = null
+        hostScope = null
         val previousCleanup = hostCleanupJob
-        val stoppedJobs = listOfNotNull(hostJob, heartbeatJob, peerPollJob)
+        val stoppedJobs = listOfNotNull(lifetime, hostJob, heartbeatJob, peerPollJob)
         stoppedJobs.forEach { it.cancel() }
         hostJob = null
         heartbeatJob = null
@@ -443,11 +486,45 @@ object ModSyncController {
                 hostSyncState = HostSyncState.Off
                 hostPeerSnapshots = emptyList()
             }
-            if (key != null && secret != null) {
-                runCatching { newClient().unregister(key, secret) }
+            if (key != null && secret != null && client != null) {
+                runCatching { client.unregister(key, secret) }
                     .onFailure { logger.warn("[MODSYNC-HOST] unregister failed: ${it.message}") }
             }
         }.also { hostCleanupJob = it; it.start() }
+    }
+
+    /** 只停止房主分享；加入者下载不依赖账号。 */
+    fun onAccountInvalidated(): Job? = if (hostClient != null) stopHostSession() else null
+
+    fun retryHostSession() {
+        if (AccountSession.sessionSnapshotOrNull() == null) {
+            UI.showAccountView = true
+            return
+        }
+        val room = retryHostRoom ?: return
+        hostSyncRequested = true
+        startHostSession(room.second)
+    }
+
+    private fun hostErrorText(error: Throwable): String = when {
+        error is ModSyncException && error.statusCode == 401 -> readI18n("modSync.loginRequired")
+        error is ModSyncException && error.statusCode == 403 -> readI18n("modSync.accountForbidden")
+        error is ModSyncException && error.message == "authenticated_upload_unavailable" -> readI18n("modSync.authServiceUnavailable")
+        else -> error.message ?: error.javaClass.simpleName
+    }
+
+    private fun handleHostAuthFailure(error: Throwable, client: ModSyncClient): Boolean {
+        if (error !is ModSyncException || error.statusCode !in setOf(401, 403)) return false
+        if (hostClient !== client) return true
+        val cleanup = stopHostSession()
+        val generation = hostGeneration.get()
+        scope.launch {
+            cleanup.join()
+            withContext(Dispatchers.Main.immediate) {
+                if (hostGeneration.get() == generation) hostSyncState = HostSyncState.Error(hostErrorText(error))
+            }
+        }
+        return true
     }
 
     // ---------------- 加入者侧 ----------------
@@ -1295,8 +1372,11 @@ object ModSyncController {
         withContext(Dispatchers.Main.immediate) { inRoomSyncPhase = phase }
     }
 
-    private fun setHostState(state: HostSyncState) {
-        scope.launch(Dispatchers.Main.immediate) { hostSyncState = state }
+    private fun setHostState(state: HostSyncState, client: ModSyncClient? = null) {
+        val generation = hostGeneration.get()
+        scope.launch(Dispatchers.Main.immediate) {
+            if (hostGeneration.get() == generation && (client == null || hostClient === client)) hostSyncState = state
+        }
     }
 
     private suspend fun setDownloadingTitle(missing: List<NetworkModDescriptor>) {

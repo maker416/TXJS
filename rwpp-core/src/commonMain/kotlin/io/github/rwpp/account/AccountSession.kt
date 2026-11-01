@@ -11,6 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.config.AccountPreferences
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.resolveAccountApiUrl
@@ -340,6 +341,7 @@ object AccountSession : KoinComponent {
             AccountSessionSnapshot(token, sessionEpoch)
         }
         try {
+            ModSyncController.onAccountInvalidated()?.join()
             if (networkEnabled && attempt.token.isNotBlank()) {
                 withContext(Dispatchers.IO) { client().logout(attempt.token) }
             }
@@ -379,6 +381,7 @@ object AccountSession : KoinComponent {
 
     @Synchronized
     private fun beginAuthentication(): Long {
+        ModSyncController.onAccountInvalidated()
         sessionEpoch++
         ModPlaytimeController.onAccountInvalidated()
         ForumSsoSession.onAccountInvalidated()
@@ -402,7 +405,7 @@ object AccountSession : KoinComponent {
 
     @Synchronized
     internal fun sessionSnapshotOrNull(): AccountSessionSnapshot? =
-        if (loggedIn && networkEnabled && token.isNotBlank()) AccountSessionSnapshot(token, sessionEpoch) else null
+        if (loggedIn && networkEnabled && token.isNotBlank() && authenticationEpoch == null) AccountSessionSnapshot(token, sessionEpoch) else null
 
     @Synchronized
     internal fun playtimeIdentityOrNull(): Pair<AccountSessionSnapshot, Long>? {
@@ -424,6 +427,7 @@ object AccountSession : KoinComponent {
 
     private fun applySession(newToken: String, newUser: AccountUser, persist: Boolean) {
         if (token != newToken || user?.id != newUser.id) {
+            ModSyncController.onAccountInvalidated()
             ForumSsoSession.onAccountInvalidated()
             stopPresenceHeartbeat()
             FriendsSession.clear()
@@ -456,6 +460,7 @@ object AccountSession : KoinComponent {
 
     @Synchronized
     private fun clearSession(persist: Boolean) {
+        ModSyncController.onAccountInvalidated()
         ForumSsoSession.onAccountInvalidated()
         ModPlaytimeController.onAccountInvalidated()
         sessionEpoch++

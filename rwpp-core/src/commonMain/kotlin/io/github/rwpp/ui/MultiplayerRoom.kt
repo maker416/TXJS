@@ -3659,6 +3659,9 @@ private fun ModSyncHostStatusBar(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        if (state is ModSyncController.HostSyncState.Error) {
+            RWTextButton(readI18n("modSync.retrySharing")) { ModSyncController.retryHostSession() }
+        }
         if (hasUnsyncedPeers) {
             RWTextButton(
                 readI18n("modSync.clearPeers"),

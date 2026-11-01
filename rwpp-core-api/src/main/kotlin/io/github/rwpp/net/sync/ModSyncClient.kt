@@ -10,6 +10,8 @@ package io.github.rwpp.net.sync
 import io.github.rwpp.logger
 import io.github.rwpp.net.useCancellable
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.withLock
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -42,7 +44,7 @@ private val OCTET_STREAM_MEDIA_TYPE = "application/octet-stream".toMediaType()
  * [statusCode] 为服务端返回的 HTTP 状态码（含 4xx/5xx）；
  * 网络层失败（连接失败、超时、下载数据不完整）时为 null。
  */
-class ModSyncException(message: String, val statusCode: Int?) : IOException(message)
+class ModSyncException(message: String, val statusCode: Int?, val retryAfterSeconds: Long? = null) : IOException(message)
 
 private class InvalidBlob(message: String) : IOException(message)
 
@@ -50,12 +52,15 @@ private class InvalidBlob(message: String) : IOException(message)
  * 模组同步服务器（Go 端 relaymod）的 HTTP 客户端。
  *
  * - 全部方法为 suspend，并在 [Dispatchers.IO] 上执行，支持协程取消（取消即中断底层 OkHttp 调用）；
- * - 多 [baseUrls] 按序 failover：网络错误与 5xx 换下一个地址，4xx（含 404/409）立即抛出不再重试；
+ * - 加入者多 [baseUrls] failover：网络错误与 5xx 换地址，4xx 立即失败；
+ * - 房主携带登录凭据，仅连接声明强制认证的 HTTPS 节点；一次会话固定节点，写入失败不换镜像；
  * - 服务端错误体会按 [ErrorResponse] 解析，提取其中的 `error` 作为异常信息。
  */
 class ModSyncClient(
     baseUrls: List<String>,
     private val client: OkHttpClient,
+    private val hostCredentials: ModSyncCredentials? = null,
+    private val isHostSessionCurrent: () -> Boolean = { true },
 ) {
     /** 规范化后的 baseUrl 列表（trim 并去掉尾部斜杠，丢弃空白项）。 */
     private val baseUrls: List<String> = baseUrls
@@ -85,19 +90,66 @@ class ModSyncClient(
             .build()
     }
 
+    // 房主固定在验证过能力的节点；不把凭据发往旧节点，也不把状态散落到多个镜像。
+    private val hostHttp = client.newBuilder().followRedirects(false).followSslRedirects(false).build()
+    private val hostMutex = kotlinx.coroutines.sync.Mutex()
+    private var hostBaseUrl: String? = null
+
+    private suspend fun <T> hostRequest(
+        path: String,
+        customize: Request.Builder.() -> Unit,
+        checkSession: Boolean = true,
+        onSuccess: (Response) -> T,
+    ): T = withContext(Dispatchers.IO) {
+        val credentials = hostCredentials ?: throw ModSyncException("account_login_required", 401)
+        if (checkSession && !isHostSessionCurrent()) throw ModSyncException("account_session_changed", 401)
+        val base = hostMutex.withLock {
+            hostBaseUrl ?: selectHostServer().also { hostBaseUrl = it }
+        }
+        if (checkSession && !isHostSessionCurrent()) throw ModSyncException("account_session_changed", 401)
+        val request = Request.Builder().url(base + path)
+            .header("X-App-Key", credentials.appKey)
+            .header("Authorization", "Bearer ${credentials.token}")
+            .apply(customize).build()
+        hostHttp.useCancellable(request) { response ->
+            if (!response.isSuccessful) throw response.toModSyncException()
+            onSuccess(response)
+        }
+    }
+
+    private suspend fun selectHostServer(): String {
+        for (base in baseUrls) {
+            currentCoroutineContext().ensureActive()
+            val url = base.toHttpUrl()
+            if (url.scheme != "https" && url.host !in setOf("localhost", "127.0.0.1", "::1")) continue
+            try {
+                val available = hostHttp.useCancellable(Request.Builder().url("$base$API_PREFIX/capabilities").build()) { response ->
+                    if (!response.isSuccessful) false else {
+                        val caps = json.decodeFromString<ModSyncCapabilities>(response.body?.string().orEmpty())
+                        caps.protocolVersion >= 2 && caps.uploadAuthRequired && caps.uploadEnabled
+                    }
+                }
+                if (available) return base
+            } catch (e: CancellationException) { throw e }
+              catch (e: IOException) { currentCoroutineContext().ensureActive() }
+              catch (e: kotlinx.serialization.SerializationException) { /* 旧节点不接收凭据。 */ }
+        }
+        throw ModSyncException("authenticated_upload_unavailable", 503)
+    }
+
     /**
      * 注册房间同步记录（status=preparing）。对应 `POST /rooms`。
      * secret 随请求体传输；重复 key 且 secret 不匹配时服务端返回 409（抛 [ModSyncException]）。
      */
     suspend fun register(req: RoomRegisterRequest) {
-        withFailover("$API_PREFIX/rooms", {
+        hostRequest("$API_PREFIX/rooms", {
             post(json.encodeToString(req).toRequestBody(JSON_MEDIA_TYPE))
         }) { }
     }
 
     /** 标记房间全部模组已上传完毕（status=ready）。对应 `POST /rooms/{key}/ready`。 */
     suspend fun markReady(key: String, secret: String) {
-        withFailover("$API_PREFIX/rooms/${enc(key)}/ready", {
+        hostRequest("$API_PREFIX/rooms/${enc(key)}/ready", {
             header(SECRET_HEADER, secret)
             post(EMPTY_BODY)
         }) { }
@@ -105,7 +157,7 @@ class ModSyncClient(
 
     /** 为房间追加别名（发布到列表后绑定 `sid:<server_id>`）。对应 `POST /rooms/{key}/alias`。 */
     suspend fun addAlias(key: String, secret: String, alias: String) {
-        withFailover("$API_PREFIX/rooms/${enc(key)}/alias", {
+        hostRequest("$API_PREFIX/rooms/${enc(key)}/alias", {
             header(SECRET_HEADER, secret)
             post(json.encodeToString(AliasRequest(alias)).toRequestBody(JSON_MEDIA_TYPE))
         }) { }
@@ -113,7 +165,7 @@ class ModSyncClient(
 
     /** 心跳续期房间记录（推荐每 60s 一次）。对应 `POST /rooms/{key}/heartbeat`。 */
     suspend fun heartbeat(key: String, secret: String) {
-        withFailover("$API_PREFIX/rooms/${enc(key)}/heartbeat", {
+        hostRequest("$API_PREFIX/rooms/${enc(key)}/heartbeat", {
             header(SECRET_HEADER, secret)
             post(EMPTY_BODY)
         }) { }
@@ -121,20 +173,20 @@ class ModSyncClient(
 
     /** 注销房间同步记录并解除 blob 引用。对应 `DELETE /rooms/{key}`。 */
     suspend fun unregister(key: String, secret: String) {
-        withFailover("$API_PREFIX/rooms/${enc(key)}", {
+        hostRequest("$API_PREFIX/rooms/${enc(key)}", checkSession = false, customize = {
             header(SECRET_HEADER, secret)
             delete()
         }) { }
     }
 
     /**
-     * 批量查询服务端缺失的 blob。对应 `POST /files/check`（key 以查询参数附带，供服务端校验/审计）。
+     * 批量查询服务端缺失的 blob。对应 `POST /files/check`（key 以查询参数附带，强制校验账号归属与房间清单）。
      *
      * @return 服务端尚不存在的 sha256 列表（需要上传的）。
      */
     suspend fun checkFiles(key: String, secret: String, hashes: List<String>): List<String> {
         val encodedKey = enc(key)
-        return withFailover("$API_PREFIX/files/check?key=$encodedKey", {
+        return hostRequest("$API_PREFIX/files/check?key=$encodedKey", {
             header(SECRET_HEADER, secret)
             post(json.encodeToString(FilesCheckRequest(hashes)).toRequestBody(JSON_MEDIA_TYPE))
         }) { response ->
@@ -149,19 +201,20 @@ class ModSyncClient(
      * @param onProgress 按缓冲区回调上传进度（0..1）。
      */
     suspend fun uploadFile(
+        key: String,
         sha256: String,
         secret: String,
         bytes: ByteArray,
         onProgress: (Float) -> Unit = {},
     ) {
-        withFailover("$API_PREFIX/files/$sha256", {
+        hostRequest("$API_PREFIX/files/$sha256?key=${enc(key)}", {
             header(SECRET_HEADER, secret)
             put(progressRequestBody(bytes, onProgress))
         }) { }
     }
 
     /** Upload an immutable snapshot; retries reopen the file instead of retaining it in memory. */
-    suspend fun uploadFile(sha256: String, secret: String, file: File, onProgress: (Float) -> Unit = {}) {
+    suspend fun uploadFile(key: String, sha256: String, secret: String, file: File, onProgress: (Float) -> Unit = {}) {
         val size = file.length()
         val context = currentCoroutineContext()
         val body = object : RequestBody() {
@@ -185,7 +238,7 @@ class ModSyncClient(
                 onProgress(1f)
             }
         }
-        withFailover("$API_PREFIX/files/$sha256", {
+        hostRequest("$API_PREFIX/files/$sha256?key=${enc(key)}", {
             header(SECRET_HEADER, secret)
             put(body)
         }) { }
@@ -234,18 +287,21 @@ class ModSyncClient(
         peerSecret: String? = null,
         roomSecret: String? = null,
     ) {
-        withFailover("$API_PREFIX/rooms/${enc(key)}/peers/${enc(peerId)}", {
+        val customize: Request.Builder.() -> Unit = {
             if (!peerSecret.isNullOrEmpty()) header(PEER_SECRET_HEADER, peerSecret)
             if (!roomSecret.isNullOrEmpty()) header(SECRET_HEADER, roomSecret)
             delete()
-        }) { }
+        }
+        val path = "$API_PREFIX/rooms/${enc(key)}/peers/${enc(peerId)}"
+        if (!roomSecret.isNullOrEmpty()) hostRequest(path, customize = customize) { }
+        else withFailover(path, customize) { }
     }
 
     /**
      * 房主清空该房全部 Presence。对应 `DELETE /rooms/{key}/peers`。
      */
     suspend fun clearPeers(key: String, roomSecret: String) {
-        withFailover("$API_PREFIX/rooms/${enc(key)}/peers", {
+        hostRequest("$API_PREFIX/rooms/${enc(key)}/peers", {
             header(SECRET_HEADER, roomSecret)
             delete()
         }) { }
@@ -256,7 +312,7 @@ class ModSyncClient(
      * 房间不存在时抛 [ModSyncException]（404）。
      */
     suspend fun listPeers(key: String, roomSecret: String): List<SyncPeerProgress> =
-        withFailover("$API_PREFIX/rooms/${enc(key)}/peers", {
+        hostRequest("$API_PREFIX/rooms/${enc(key)}/peers", {
             header(SECRET_HEADER, roomSecret)
             get()
         }) { response ->
@@ -528,6 +584,7 @@ class ModSyncClient(
         return ModSyncException(
             if (detail.isNotBlank()) detail else "HTTP $code",
             code,
+            header("Retry-After")?.toLongOrNull()?.takeIf { it > 0 },
         )
     }
 

@@ -456,6 +456,10 @@ sourceTypeUnknown = "未知"
 networkMod = "网络下载"
 
 [modSync]
+retrySharing = "重新分享"
+loginRequired = "分享模组需要有效的账号登录，请登录后重试。"
+accountForbidden = "账号无权操作此同步房间，或账号/应用已被停用。"
+authServiceUnavailable = "未找到可用的账号认证同步服务，请配置 HTTPS 同步地址并确认服务端已升级。"
 hostPreparing = "房主正在准备模组同步，请稍候…（已等待 {0} 秒）"
 hostPreparingTimeout = "等待房主准备模组同步超时，请稍后重试。"
 hostPreparingGone = "房主已取消模组同步或离开房间，无法继续加入。"

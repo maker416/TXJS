@@ -643,6 +643,11 @@ fun MultiplayerView(
             }
 
             fun beginHost() {
+                if (transferMod && enableMods && AccountSession.sessionSnapshotOrNull() == null) {
+                    UI.showAccountView = true
+                    UI.showWarning(readI18n("modSync.loginRequired"), false)
+                    return
+                }
                 dismiss()
                 roomJoinContext.beginConnection()
                 pendingHostTransferMods = transferMod && enableMods
@@ -859,7 +864,10 @@ fun MultiplayerView(
                         enabled = enableMods,
                     ) {
                         // 开启「传输模组」前需阅读免责声明并二次确认；关闭则直接关闭。
-                        if (!transferMod) showTransferConfirm = true else transferMod = false
+                        if (!transferMod && AccountSession.sessionSnapshotOrNull() == null) {
+                            UI.showAccountView = true
+                            UI.showWarning(readI18n("modSync.loginRequired"), false)
+                        } else if (!transferMod) showTransferConfirm = true else transferMod = false
                     }
                     if (hasNetworkMods) {
                         Text(

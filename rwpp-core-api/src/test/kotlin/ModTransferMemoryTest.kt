@@ -8,6 +8,7 @@ import com.sun.net.httpserver.HttpServer
 import io.github.rwpp.game.mod.*
 import io.github.rwpp.io.HashUtils
 import io.github.rwpp.io.zipFolderToByte
+import io.github.rwpp.net.sync.ModSyncCredentials
 import io.github.rwpp.net.sync.ModSyncClient
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
@@ -45,14 +46,20 @@ class ModTransferMemoryTest {
             }
             exchange.close()
         }
+        server.createContext("/api/v1/capabilities") { exchange ->
+            val bytes = """{"protocol_version":2,"upload_auth_required":true,"upload_enabled":true}""".toByteArray()
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+            exchange.close()
+        }
         server.start()
         val http = OkHttpClient()
         try {
-            val client = ModSyncClient(listOf("http://127.0.0.1:${server.address.port}"), http)
+            val client = ModSyncClient(listOf("http://127.0.0.1:${server.address.port}"), http, ModSyncCredentials("app", "token"))
             val download = File(root, "download.tmp")
             client.downloadFileTo(hash, size, download)
             assertEquals(hash, HashUtils.sha256(download))
-            client.uploadFile(hash, "test", download)
+            client.uploadFile("room", hash, "test", download)
             assertEquals(size, uploaded.get())
             val descriptor = NetworkModDescriptor("large", size, hash)
             val key = ByteArray(32) { it.toByte() }
