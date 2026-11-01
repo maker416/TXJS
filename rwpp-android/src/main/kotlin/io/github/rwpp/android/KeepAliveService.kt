@@ -10,7 +10,6 @@ package io.github.rwpp.android
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -125,13 +124,6 @@ class KeepAliveService : Service() {
                 setShowBadge(false)
             }
         )
-        // 用启动器 Intent 把已有任务带回前台，不新建 Activity 实例（对局页仍在栈顶）
-        val launch = packageManager.getLaunchIntentForPackage(packageName)?.apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
-        }
-        val contentIntent = launch?.let {
-            PendingIntent.getActivity(this, 0, it, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        }
         return NotificationCompat.Builder(this, KEEP_ALIVE_NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_2)
             .setContentTitle(title)
@@ -140,7 +132,7 @@ class KeepAliveService : Service() {
             .setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .apply { contentIntent?.let { setContentIntent(it) } }
+            .setContentIntent(MultiplayerNotificationActivity.contentIntent(this))
             .build()
     }
 

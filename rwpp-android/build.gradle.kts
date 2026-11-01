@@ -45,6 +45,7 @@ dependencies {
     testImplementation(kotlin("test-junit"))
     testImplementation("org.javassist:javassist:3.30.2-GA")
     testImplementation("net.peanuuutz.tomlkt:tomlkt:0.3.7")
+    testImplementation("org.robolectric:robolectric:4.17")
 }
 
 // 单元测试无需生成注入元数据；否则测试源的空扫描会覆盖主变体 build/generated/config.toml。

@@ -2,6 +2,11 @@
 
 后台模式保持连接、收发网络包并暂停音乐，不推进游戏模拟、不绘制。房主退到后台时其他玩家会等待；房客回来后由原版逻辑追帧。遭遇战和沙盒属于本地单人服务器，不启动保活服务。
 
+## 更新记录（2026-11-02）
+
+- 修复点击联机保活通知时误退出对局、返回多人列表的问题；保活、多人状态和聊天通知统一返回当前房间或对局。
+- 修复从通知返回房间后，再次切到后台时聊天通知可能不显示的问题。
+
 ## 会话与服务
 
 - `Game.acquireMultiplayerKeepAlive()` 在 Main 线程申请可关闭的连接 token。多人 Loading 在等待旧房间清理和带外预同步前申请；Android `directJoinServer` 与直接开房另有嵌套 token，覆盖后台重试与外部调用。
@@ -11,6 +16,14 @@
 - 服务阶段为 `STOPPED / STARTING / RUNNING / STOPPING`。`startForegroundService` 仅表示发出请求，`startForeground` 成功后的服务回调才确认 RUNNING。每次启动有独立 generation，迟到的停止/销毁回调不能覆盖新请求。
 - 服务只在应用可见时发起启动。服务停止期间如果用户在前台又加入新房，会立即发出下一代启动请求，避免等到旧 `onDestroy` 时应用已退到后台。
 - 活跃连接和前台期间每秒采样一次引擎状态作为兜底；没有会话且已经退到后台时停止轮询。服务维持 `START_NOT_STICKY`，进程丢失后不会单独重启一个没有游戏会话的服务。
+
+## 通知返回
+
+- 保活服务、原版多人状态和聊天通知统一使用 `MultiplayerNotificationActivity.contentIntent()`，通过不可变的 Activity PendingIntent 进入同一个无界面返回页。
+- 返回页沿用应用默认任务亲和性，`NEW_TASK` 找回现有任务并临时压栈；引擎已加载且原页面栈还在时只 `finish()` 自己，恢复原房间或对局，不调用引擎、不改导航和会话状态。
+- 进程已丢失或返回页已经是任务根时，才打开 `LoadingScreen` 完整初始化。热返回禁止使用应用启动 Intent、`CLEAR_TOP`、`CLEAR_TASK`、`RESET_TASK_IF_NEEDED` 或 `singleTask`；这些路径可能清掉 `CustomInGameActivity`，触发主页的对局结果回调并主动退房。
+- 聊天通知的前台抑制同样使用 `BackgroundKeepAlive.isAppInForeground`。Compose 房间不走原版 Activity 的 View 暂停回调，不能用原版 `MultiplayerBattleroomActivity.isActivityVisible()` 或 `gameView.isPaused` 代替真实可见性，否则通知返回后再次切后台可能不再显示聊天通知。
+- `MultiplayerNotificationActivityTest` 在 Android 10/14 的 Robolectric 环境覆盖房间/对局热返回和冷启动；`MultiplayerNotificationWiringTest` 校验三个通知都接到共同入口，以及 Manifest 的任务栈约束。系统任务恢复与真实连接仍需真机验证。
 
 ## 线程与资源
 
@@ -65,6 +78,8 @@ Android 单元测试的 KSP 任务禁用，避免测试源的空扫描覆盖主�
 
 ## 真机验收
 
+2026-11-02 在 Redmi K30 Pro（Android 10）沿用原 Release 签名覆盖安装后，用独立 RW-HPS 测试服和 AI 对局完成通知返回验收：等待房间、实际对局分别点击保活、多人状态和聊天通知，六项均恢复原页面。全程应用进程和 TCP 连接保持不变，房间 `MainActivity`、对局 `CustomInGameActivity` 实例保持不变；验收结束前无主动断连、对局页销毁或崩溃记录。聊天通知在先返回房间、再次切后台后接收真实服务端消息生成，覆盖旧 View 暂停标记导致的误抑制。证据与同一已验收 APK 存于本地 `build/artifacts/notification-return-redmi-20261102/`（不纳入 Git）。
+
 编译与 JVM 测试无法证明设备后台策略和真实网络行为。发布前至少覆盖 Android 10..13 与 Android 14+ 各一台设备，并分别以房主和房客执行：
 
 | 场景 | 预期 |
@@ -76,6 +91,8 @@ Android 单元测试的 KSP 任务禁用，避免测试源的空扫描覆盖主�
 | 后台同步失败、退房、音乐 prepare 完成 | 无后台音乐；必要的菜单刷新仍执行 |
 | 遭遇战/沙盒切后台 | 不显示联机保活通知，保留单人停线程流程 |
 | 快速切换、多窗口、配置重建 | 无重复服务，回前台后恢复绘制与音乐 |
+| 等待房间和对局内分别切后台，点击保活、多人状态、聊天通知，连续重复点击 | 返回原页面，无重开对局页、退出回调或主动断连；聊天通知仍按原规则自动消失 |
+| 旧聊天通知保留后进程被回收，再点击通知 | 走完整初始化，不尝试恢复失效引擎或原版菜单；不能假装旧联机仍存在 |
 | 真正退房、取消所有连接 | 服务停止，WakeLock/WifiLock 释放 |
 | 房客长期后台后返回 | 追帧可完成，关注命令积压的内存和恢复耗时 |
 | 房主后台后返回 | 后台其他玩家等待，返回后对局继续 |

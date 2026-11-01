@@ -10,14 +10,12 @@ package io.github.rwpp.android.impl.inject
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationManager
-import android.app.PendingIntent
-import android.content.Intent
 import android.os.Build
-import com.corrodinggames.rts.appFramework.ClosingActivity
-import com.corrodinggames.rts.appFramework.MultiplayerBattleroomActivity
 import com.corrodinggames.rts.gameFramework.j.ae
 import com.corrodinggames.rts.gameFramework.k
 import io.github.rwpp.*
+import io.github.rwpp.android.BackgroundKeepAlive
+import io.github.rwpp.android.MultiplayerNotificationActivity
 import io.github.rwpp.android.cachePlayerSet
 import io.github.rwpp.android.impl.ClientImpl
 import io.github.rwpp.android.impl.GameEngine
@@ -58,26 +56,7 @@ object NetInject {
     fun notify1() {
         if (!GameEngine.aR) {
             val t: k = GameEngine.t()
-            val intent = Intent(
-                t.al,
-                ClosingActivity::class.java
-            )
-            // support for android 12
-            val activity = if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                PendingIntent.getActivity(
-                    t.al, 0, Intent(
-                        t.al,
-                        ClosingActivity::class.java
-                    ), PendingIntent.FLAG_IMMUTABLE
-                )
-            } else {
-                PendingIntent.getActivity(
-                    t.al, 0, Intent(
-                        t.al,
-                        ClosingActivity::class.java
-                    ), PendingIntent.FLAG_UPDATE_CURRENT
-                )
-            }
+            val activity = MultiplayerNotificationActivity.contentIntent(t.al)
             val notificationManager =
                 t.al.getSystemService("notification") as NotificationManager
             if (Build.VERSION.SDK_INT >= 11) {
@@ -104,13 +83,9 @@ object NetInject {
         if (!GameEngine.aR) {
             val t: k = GameEngine.t()
             if (!this.G && !t.bY.g()) {
-                var isActivityVisible: Boolean =
-                    MultiplayerBattleroomActivity.isActivityVisible()
-                val abVar = t.an
-                if (abVar != null && !abVar.isPaused) {
-                    isActivityVisible = true
-                }
-                if (isActivityVisible) {
+                // Compose 房间不经过原版 Activity 的 View 暂停回调；旧 isPaused 会误判后台仍可见。
+                // 与保活统一使用应用生命周期，覆盖房间和对局，以及通知返回后的再次切后台。
+                if (BackgroundKeepAlive.isAppInForeground) {
                     if (Reflect.get<Boolean>(this, "bD") == true) {
                         Reflect.call<ae, Any>(null, "f", listOf(Int::class), listOf(2))
                         return Unit
@@ -119,26 +94,7 @@ object NetInject {
                 }
                 val notificationManager: NotificationManager =
                     t.al.getSystemService("notification") as NotificationManager
-                val intent = Intent(
-                    t.al,
-                    ClosingActivity::class.java
-                )
-                // support for android 12
-                val activity = if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    PendingIntent.getActivity(
-                        t.al, 0, Intent(
-                            t.al,
-                            ClosingActivity::class.java
-                        ), PendingIntent.FLAG_IMMUTABLE
-                    )
-                } else {
-                    PendingIntent.getActivity(
-                        t.al, 0, Intent(
-                            t.al,
-                            ClosingActivity::class.java
-                        ), PendingIntent.FLAG_UPDATE_CURRENT
-                    )
-                }
+                val activity = MultiplayerNotificationActivity.contentIntent(t.al)
                 if (Build.VERSION.SDK_INT >= 11) {
                     val builder: Notification.Builder = Notification.Builder(t.al)
                     builder.setContentTitle("Rusted Warfare Multiplayer")

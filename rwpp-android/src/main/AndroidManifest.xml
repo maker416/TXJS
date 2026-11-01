@@ -65,6 +65,12 @@
                     android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                     android:value="Keeps a real-time multiplayer game session connected while the app is in the background"/>
         </service>
+        <!-- 通知返回只临时覆盖现有任务，finish 后恢复原房间/对局，禁止设置清栈启动模式。 -->
+        <activity
+                android:name="io.github.rwpp.android.MultiplayerNotificationActivity"
+                android:exported="false"
+                android:screenOrientation="behind"
+                android:theme="@android:style/Theme.NoDisplay"/>
         <activity
                 android:name="io.github.rwpp.android.LoadingScreen"
                 android:alwaysRetainTaskState="true"
