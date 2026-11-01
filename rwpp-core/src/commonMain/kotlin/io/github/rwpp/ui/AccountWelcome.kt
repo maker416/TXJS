@@ -52,7 +52,10 @@ internal fun AccountWelcomeView(onLogin: () -> Unit, onRegister: () -> Unit, onE
     val card = colors.onSurface.copy(alpha = 0.035f).compositeOver(base)
     val muted = colors.onSurface.copy(alpha = 0.58f)
     BoxWithConstraints(
-        Modifier.fillMaxSize().background(base.copy(alpha = 0.97f)),
+        // 卡片外的空白区域沿用好友页的主题背景和透明度，保留底层游戏画面。
+        Modifier.fillMaxSize().background(
+            colors.background.copy(alpha = (UI.backgroundTransparency + 0.2f).coerceAtMost(1f)),
+        ),
         contentAlignment = Alignment.Center,
     ) {
         val wide = maxWidth >= 600.dp
