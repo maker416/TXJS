@@ -951,6 +951,13 @@ apply = "应用注入配置"
 compile = "编译 DEX"
 
 [account]
+
+centerTitle = "个人中心"
+securitySection = "账号安全"
+profilePageHint = "管理头像、昵称与账号资料"
+pointsPageHint = "查看积分余额与收支记录"
+privacyPageHint = "设置谁可以看到你的在线状态"
+securityPageHint = "管理绑定邮箱与登录状态"
 title = "用户"
 loginTitle = "登录"
 loginHint = "使用账号或邮箱加密码登录，也可以用邮箱验证码免密登录。不登录也能玩游戏。"

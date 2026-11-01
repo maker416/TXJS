@@ -950,6 +950,13 @@ apply = "Apply injection config"
 compile = "Compile DEX"
 
 [account]
+
+centerTitle = "Account center"
+securitySection = "Security"
+profilePageHint = "Manage your avatar, nickname and profile"
+pointsPageHint = "View your points and transaction history"
+privacyPageHint = "Choose who can see your online status"
+securityPageHint = "Manage your email and sign-in status"
 title = "Account"
 loginTitle = "Sign in"
 loginHint = "Sign in with your account or email and password, or use an email code instead. Playing without signing in is fine."

@@ -26,6 +26,17 @@ class BundleParseTest {
     private val bundleNames = listOf("bundle_zh.toml", "bundle_en.toml")
 
     @Test
+    fun accountCenterKeysExistInAllBundles() {
+        bundleNames.forEach { name ->
+            val account = Toml.parseToTomlTable(File(bundleDir, name).readText())["account"] as TomlTable
+            listOf("centerTitle", "securitySection", "profilePageHint", "pointsPageHint",
+                "privacyPageHint", "securityPageHint").forEach { key ->
+                assertTrue((account[key] as? TomlLiteral)?.content?.isNotBlank() == true, "$name: missing account.$key")
+            }
+        }
+    }
+
+    @Test
     fun connectionFailureKeysExistAndFormatInAllBundles() {
         bundleNames.forEach { name ->
             val root = Toml.parseToTomlTable(File(bundleDir, name).readText())

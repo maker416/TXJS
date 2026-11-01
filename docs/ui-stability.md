@@ -65,6 +65,10 @@
 
 ## 人工验收
 
+账号页使用 `AccountCenterLayout` 的左侧功能导航，右侧仅组合「账号资料 / 积分 / 隐私 / 账号安全」中的当前页。标题、刷新与关闭入口不参与正文滚动；窄屏保留图标和文字导航。每个分类通过 `SaveableStateHolder` 保存独立滚动位置。刷新资料只在顶栏显示进度，避免销毁分类及其状态。隐私保存的作用域和乐观状态属于整个账号页，切换分类不能取消请求；积分流水沿用原有分页弹窗，并纳入账号弹窗焦点恢复门控。
+
+可运行 `:rwpp-core:desktopTest --tests AccountCenterUiTest --tests AccountAccessUiTest --tests AccountDialogInteractionTest` 检查分类隔离、横竖屏入口、滚动恢复及原有弹窗。账号页截图输出到 `rwpp-core/build/reports/account-center/`；双语资源由 `:rwpp-core:testDebugUnitTest --tests BundleParseTest` 实解析验证。
+
 - Windows 100%/125%/150%/200% 缩放下拖动窗口、跨显示器移动、切菜单与游戏、按住再松开 F11；检查画布覆盖与点击位置。
 - 快速进入并关闭设置、任务、模组、地图选择、账号、好友；退出动画期间点击下一页 X；检查没有无形遮罩。
 - 等待房间打开地图选择，输入长地图名、筛选、选择、重开、刷新；检查定位、空结果、地图类型切换和滚动稳定。

@@ -10,8 +10,6 @@ package io.github.rwpp.ui
 import io.github.rwpp.widget.UiSwitch
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -19,19 +17,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Email
@@ -42,10 +35,13 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -67,7 +63,6 @@ import androidx.compose.ui.unit.dp
 import io.github.rwpp.app.LauncherVisibility
 import io.github.rwpp.app.whileVisible
 import io.github.rwpp.AppContext
-import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
 import io.github.rwpp.account.accountErrorText
@@ -87,13 +82,11 @@ import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.file_open
 import io.github.rwpp.rwpp_core.generated.resources.login
-import io.github.rwpp.rwpp_core.generated.resources.logo
 import io.github.rwpp.widget.AnimatedAlertDialog
 import io.github.rwpp.widget.BorderCard
 import io.github.rwpp.widget.ExitButton
 import io.github.rwpp.widget.RWSingleOutlinedTextField
 import io.github.rwpp.widget.UiCircularProgressIndicator
-import io.github.rwpp.widget.WindowManager
 import io.github.rwpp.widget.autoClearFocus
 import io.github.rwpp.widget.desktopEscapeToBackDispatcher
 import io.github.rwpp.widget.v2.ExpandedCard
@@ -117,8 +110,6 @@ fun AccountView(onExit: () -> Unit) {
         }
     }
 
-    val windowManager = LocalWindowManager.current
-    val isSmall = windowManager == WindowManager.Small
     val scope = rememberCoroutineScope()
 
     val loggedIn = AccountSession.loggedIn
@@ -134,11 +125,13 @@ fun AccountView(onExit: () -> Unit) {
     var showNicknameDialog by remember { mutableStateOf(false) }
     var showAvatarDialog by remember { mutableStateOf(false) }
     var showChangeEmail by remember { mutableStateOf(false) }
+    var showLedgers by remember { mutableStateOf(false) }
     var profileBanner by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) { AccountSession.restoreIfNeeded() }
 
     LaunchedEffect(loggedIn) {
+        if (!loggedIn) showLedgers = false
         LauncherVisibility.visible.whileVisible {
             if (loggedIn && AccountSession.networkEnabled) {
                 runCatching { AccountSession.refreshPresenceSettings() }
@@ -151,7 +144,7 @@ fun AccountView(onExit: () -> Unit) {
         }
     }
 
-    val showLoading = (refreshing || restoring) && loggedIn
+    val showLoading = restoring && loggedIn
 
     // 个人中心文字密集，背景不透明度设下限：
     // 低透明度主题下页面会被游戏画面穿透（部分设备整页几乎全透明），这里保底可读
@@ -160,7 +153,7 @@ fun AccountView(onExit: () -> Unit) {
     )
     val appContext = koinInject<AppContext>()
     val accountModalOpen = showNicknameDialog || showAvatarDialog || showChangeEmail ||
-        showLogoutConfirm || authKind != null
+        showLogoutConfirm || showLedgers || authKind != null
     val pageFocusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         pageFocusRequester.requestFocus()
@@ -210,41 +203,48 @@ fun AccountView(onExit: () -> Unit) {
             )
         } else {
             ExpandedCard(
-                modifier = Modifier
-                    .verticalScroll(rememberScrollState())
-                    .autoClearFocus(
-                        restoreFocus = if (appContext.isDesktop()) pageFocusRequester else null,
-                    ),
+                modifier = Modifier.autoClearFocus(
+                    restoreFocus = if (appContext.isDesktop()) pageFocusRequester else null,
+                ),
                 backgroundColor = pageBackground,
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = if (isSmall) 14.dp else 18.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    // 紧凑顶栏：标题居中、关闭按钮居右，替代原大标题 + 长留白
-                    Spacer(Modifier.height(if (isSmall) 8.dp else 12.dp))
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            readI18n("account.title", I18nType.RWPP),
-                            style = if (isSmall) {
-                                MaterialTheme.typography.titleLarge
-                            } else {
-                                MaterialTheme.typography.headlineSmall
-                            },
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.align(Alignment.Center),
-                        )
-                        ExitButton(onExit)
+                val refreshProfile: () -> Unit = refresh@{
+                    if (refreshing || loggingOut) return@refresh
+                    scope.launch {
+                        refreshing = true
+                        profileBanner = ""
+                        runCatching {
+                            AccountSession.refreshProfile()
+                            FriendsSession.refreshLists()
+                        }.onFailure { e ->
+                            profileBanner = (e as? AccountApiException)?.let { accountErrorText(it) }
+                                ?: readI18n("account.profileFailed", I18nType.RWPP)
+                        }
+                        refreshing = false
                     }
-                    Spacer(Modifier.height(if (isSmall) 10.dp else 14.dp))
-
+                }
+                Box(Modifier.fillMaxWidth().height(56.dp)) {
+                    Text(
+                        readI18n("account.centerTitle", I18nType.RWPP),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.align(Alignment.CenterStart).padding(start = 20.dp, end = 112.dp),
+                    )
+                    IconButton(
+                        onClick = refreshProfile,
+                        enabled = !refreshing && !restoring && !loggingOut,
+                        modifier = Modifier.align(Alignment.CenterEnd).padding(end = 56.dp),
+                    ) {
+                        if (refreshing) UiCircularProgressIndicator(Modifier.size(22.dp))
+                        else Icon(Icons.Default.Refresh, readI18n("account.refresh", I18nType.RWPP))
+                    }
+                    ExitButton(onExit)
+                }
+                HorizontalDivider()
+                Box(Modifier.weight(1f).fillMaxWidth()) {
                     when {
                         showLoading -> AccountLoadingState()
                         loggedIn && user != null -> AccountLoggedInState(
-                            isSmall = isSmall,
                             userId = user.id,
                             hasAvatar = user.hasAvatar,
                             username = user.username,
@@ -252,33 +252,19 @@ fun AccountView(onExit: () -> Unit) {
                             email = user.email,
                             displayName = displayName,
                             banner = profileBanner.ifBlank { FriendsSession.listError },
-                            onRefresh = {
-                                if (refreshing || loggingOut) return@AccountLoggedInState
-                                scope.launch {
-                                    refreshing = true
-                                    profileBanner = ""
-                                    runCatching {
-                                        AccountSession.refreshProfile()
-                                        FriendsSession.refreshLists()
-                                    }.onFailure { e ->
-                                        profileBanner = (e as? AccountApiException)?.let { accountErrorText(it) }
-                                            ?: readI18n("account.profileFailed", I18nType.RWPP)
-                                    }
-                                    refreshing = false
-                                }
-                            },
                             onChangeNickname = { showNicknameDialog = true },
                             onChangeEmail = { showChangeEmail = true },
                             onAvatarClick = { showAvatarDialog = true },
                             onLogout = { showLogoutConfirm = true },
+                            onPointLedgers = { showLedgers = true },
                         )
                         else -> AccountLoadingState()
                     }
-
-                    Spacer(Modifier.height(if (isSmall) 16.dp else 24.dp))
                 }
             }
         }
+
+    PointLedgersDialog(visible = showLedgers, onDismiss = { showLedgers = false })
 
     AccountLoginDialog(
         inlineDesktop = appContext.isDesktop(),
@@ -411,7 +397,6 @@ private fun AccountLoadingState() {
 
 @Composable
 private fun AccountLoggedInState(
-    isSmall: Boolean,
     userId: Long,
     hasAvatar: Boolean,
     username: String,
@@ -419,327 +404,208 @@ private fun AccountLoggedInState(
     email: String?,
     displayName: String,
     banner: String,
-    onRefresh: () -> Unit,
     onChangeNickname: () -> Unit,
     onChangeEmail: () -> Unit,
     onAvatarClick: () -> Unit,
     onLogout: () -> Unit,
+    onPointLedgers: () -> Unit,
 ) {
-    AccountProfileHeroCard {
-        if (isSmall) {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                AccountHeroAvatar(displayName, userId, hasAvatar, onAvatarClick)
-                Spacer(Modifier.height(2.dp))
-                AccountHeroName(displayName, username)
-                AccountStatusPill(readI18n("account.loggedIn", I18nType.RWPP))
-            }
-        } else {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                AccountHeroAvatar(displayName, userId, hasAvatar, onAvatarClick)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    AccountHeroName(displayName, username)
-                    AccountStatusPill(readI18n("account.loggedIn", I18nType.RWPP))
+    var selectedName by rememberSaveable(userId) { mutableStateOf(AccountCenterPage.Profile.name) }
+    val selectedPage = AccountCenterPage.valueOf(selectedName)
+    // 状态和请求作用域属于整个账号页，切换分类不能取消正在保存的隐私设置。
+    val presenceSettings = AccountSession.presenceSettings
+    val scope = rememberCoroutineScope()
+    var privacyError by remember { mutableStateOf("") }
+    // 乐观显示的本地覆盖值：切换后立即生效，请求完成（成败）后清掉回退到会话值
+    var localHideStrangers by remember { mutableStateOf<Boolean?>(null) }
+    var localHideFriends by remember { mutableStateOf<Boolean?>(null) }
+    val hideStrangers = localHideStrangers ?: (presenceSettings?.hideFromStrangers ?: false)
+    val hideFriends = localHideFriends ?: (presenceSettings?.hideFromFriends ?: false)
+
+    AccountCenterLayout(
+        selectedPage = selectedPage,
+        onSelectPage = { selectedName = it.name },
+        displayName = displayName,
+        username = username,
+        banner = banner,
+        avatar = { AccountHeroAvatar(displayName, userId, hasAvatar, onAvatarClick, compact = true) },
+    ) { compact ->
+        when (selectedPage) {
+            AccountCenterPage.Profile -> {
+                if (compact) AccountProfileHeroCard {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        AccountHeroAvatar(displayName, userId, hasAvatar, onAvatarClick, compact = true)
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(displayName, style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("@$username", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
                 }
-            }
-        }
-    }
-
-    if (banner.isNotBlank()) {
-        Spacer(Modifier.height(10.dp))
-        AccountMessageBanner(banner, isError = true)
-    }
-
-    Spacer(Modifier.height(if (isSmall) 12.dp else 18.dp))
-    AccountSectionHeader(
-        title = readI18n("account.profileSection", I18nType.RWPP),
-        icon = {
-            Icon(
-                Icons.Default.Person,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp),
-            )
-        },
-    )
-    Spacer(Modifier.height(if (isSmall) 6.dp else 8.dp))
-    BorderCard(
-        modifier = Modifier.fillMaxWidth(),
-        backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-    ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            AccountInfoRow(Icons.Default.Person, readI18n("account.username", I18nType.RWPP), username)
-            AccountInfoDivider()
-            AccountInfoRow(Icons.Default.Face, readI18n("account.nickname", I18nType.RWPP), nickname)
-            AccountInfoDivider()
-            AccountInfoRow(
-                Icons.Default.Email,
-                readI18n("account.email", I18nType.RWPP),
-                email?.ifBlank { null } ?: readI18n("account.emailUnbound", I18nType.RWPP),
-            )
-        }
-    }
-
-    Spacer(Modifier.height(if (isSmall) 10.dp else 14.dp))
-    AccountSectionHeader(
-        title = readI18n("account.pointsSection", I18nType.RWPP),
-        icon = {
-            Icon(
-                Icons.Default.Star,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp),
-            )
-        },
-    )
-    Spacer(Modifier.height(if (isSmall) 6.dp else 8.dp))
-    BorderCard(
-        modifier = Modifier.fillMaxWidth(),
-        backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-    ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            val points = AccountSession.points
-            var showLedgers by remember { mutableStateOf(false) }
-            if (points.isEmpty()) {
-                // 空态与「查看流水」合并为一行，节省纵向空间
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                BorderCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
                 ) {
-                    Text(
-                        readI18n("account.pointsEmpty", I18nType.RWPP),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                        modifier = Modifier.weight(1f),
-                    )
-                    AccountCompactButton(
-                        label = readI18n("account.pointLedgers", I18nType.RWPP),
-                        onClick = { showLedgers = true },
-                    )
-                }
-            } else {
-                points.forEachIndexed { index, point ->
-                    if (index > 0) AccountInfoDivider()
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                point.name,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                            if (point.code.isNotBlank()) {
-                                Text(
-                                    point.code,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                                )
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        AccountInfoRow(Icons.Default.Person, readI18n("account.username", I18nType.RWPP), username)
+                        AccountInfoDivider()
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.weight(1f)) {
+                                AccountInfoRow(Icons.Default.Face, readI18n("account.nickname", I18nType.RWPP), nickname)
+                            }
+                            IconButton(onClick = onChangeNickname, modifier = Modifier.padding(end = 8.dp)) {
+                                Icon(Icons.Default.Edit, readI18n("account.changeNickname", I18nType.RWPP))
                             }
                         }
-                        Text(
-                            point.balance.toString(),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontWeight = FontWeight.Bold,
+                        AccountInfoDivider()
+                        AccountInfoRow(
+                            Icons.Default.Email,
+                            readI18n("account.email", I18nType.RWPP),
+                            email?.ifBlank { null } ?: readI18n("account.emailUnbound", I18nType.RWPP),
                         )
                     }
                 }
-                Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
-                    AccountCompactButton(
-                        label = readI18n("account.pointLedgers", I18nType.RWPP),
-                        onClick = { showLedgers = true },
-                    )
-                }
-            }
-            PointLedgersDialog(visible = showLedgers, onDismiss = { showLedgers = false })
-        }
-    }
 
-    Spacer(Modifier.height(if (isSmall) 10.dp else 14.dp))
-    AccountSectionHeader(
-        title = readI18n("account.privacySection", I18nType.RWPP),
-        icon = {
-            Icon(
-                Icons.Default.Lock,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp),
-            )
-        },
-    )
-    Spacer(Modifier.height(if (isSmall) 6.dp else 8.dp))
-    BorderCard(
-        modifier = Modifier.fillMaxWidth(),
-        backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-    ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            val presenceSettings = AccountSession.presenceSettings
-            val scope = rememberCoroutineScope()
-            var privacyError by remember { mutableStateOf("") }
-            // 乐观显示的本地覆盖值：切换后立即生效，请求完成（成败）后清掉回退到会话值
-            var localHideStrangers by remember { mutableStateOf<Boolean?>(null) }
-            var localHideFriends by remember { mutableStateOf<Boolean?>(null) }
-            val hideStrangers = localHideStrangers ?: (presenceSettings?.hideFromStrangers ?: false)
-            val hideFriends = localHideFriends ?: (presenceSettings?.hideFromFriends ?: false)
-
-            if (privacyError.isNotBlank()) {
-                Box(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
-                    AccountMessageBanner(privacyError, isError = true)
-                }
+                AccountActionTile(Icons.Default.Person, readI18n("account.avatarTitle", I18nType.RWPP),
+                    onAvatarClick, modifier = Modifier.fillMaxWidth())
+                AccountMessageBanner(readI18n("account.multiplayerNameBound", I18nType.RWPP), icon = Icons.Default.Info)
             }
-            AccountPresenceSwitchRow(
-                label = readI18n("account.hideFromStrangers", I18nType.RWPP),
-                checked = hideStrangers,
-                enabled = presenceSettings != null,
-                onToggle = {
-                    val target = !hideStrangers
-                    localHideStrangers = target
-                    scope.launch {
-                        runCatching {
-                            AccountSession.updatePresenceSettings(hideFromStrangers = target, hideFromFriends = null)
-                        }.onSuccess {
-                            privacyError = ""
-                        }.onFailure { e ->
-                            privacyError = (e as? AccountApiException)?.let { accountErrorText(it) }
-                                ?: readI18n("account.presenceSettingsFailed", I18nType.RWPP)
+            AccountCenterPage.Points -> {
+                BorderCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        val points = AccountSession.points
+                        if (points.isEmpty()) {
+                            // 空态与「查看流水」合并为一行，节省纵向空间
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    readI18n("account.pointsEmpty", I18nType.RWPP),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                    modifier = Modifier.weight(1f),
+                                )
+                                AccountCompactButton(
+                                    label = readI18n("account.pointLedgers", I18nType.RWPP),
+                                    onClick = onPointLedgers,
+                                )
+                            }
+                        } else {
+                            points.forEachIndexed { index, point ->
+                                if (index > 0) AccountInfoDivider()
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            point.name,
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                        if (point.code.isNotBlank()) {
+                                            Text(
+                                                point.code,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        point.balance.toString(),
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                }
+                            }
+                            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
+                                AccountCompactButton(
+                                    label = readI18n("account.pointLedgers", I18nType.RWPP),
+                                    onClick = onPointLedgers,
+                                )
+                            }
                         }
-                        localHideStrangers = null
                     }
-                },
-            )
-            AccountPresenceSwitchRow(
-                label = readI18n("account.hideFromFriends", I18nType.RWPP),
-                checked = hideFriends,
-                enabled = presenceSettings != null,
-                onToggle = {
-                    val target = !hideFriends
-                    localHideFriends = target
-                    scope.launch {
-                        runCatching {
-                            AccountSession.updatePresenceSettings(hideFromStrangers = null, hideFromFriends = target)
-                        }.onSuccess {
-                            privacyError = ""
-                        }.onFailure { e ->
-                            privacyError = (e as? AccountApiException)?.let { accountErrorText(it) }
-                                ?: readI18n("account.presenceSettingsFailed", I18nType.RWPP)
+                }
+
+            }
+            AccountCenterPage.Privacy -> {
+                BorderCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+
+                        if (privacyError.isNotBlank()) {
+                            Box(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                                AccountMessageBanner(privacyError, isError = true)
+                            }
                         }
-                        localHideFriends = null
+                        AccountPresenceSwitchRow(
+                            label = readI18n("account.hideFromStrangers", I18nType.RWPP),
+                            checked = hideStrangers,
+                            enabled = presenceSettings != null && localHideStrangers == null,
+                            onToggle = {
+                                val target = !hideStrangers
+                                localHideStrangers = target
+                                scope.launch {
+                                    runCatching {
+                                        AccountSession.updatePresenceSettings(hideFromStrangers = target, hideFromFriends = null)
+                                    }.onSuccess {
+                                        privacyError = ""
+                                    }.onFailure { e ->
+                                        privacyError = (e as? AccountApiException)?.let { accountErrorText(it) }
+                                            ?: readI18n("account.presenceSettingsFailed", I18nType.RWPP)
+                                    }
+                                    localHideStrangers = null
+                                }
+                            },
+                        )
+                        AccountPresenceSwitchRow(
+                            label = readI18n("account.hideFromFriends", I18nType.RWPP),
+                            checked = hideFriends,
+                            enabled = presenceSettings != null && localHideFriends == null,
+                            onToggle = {
+                                val target = !hideFriends
+                                localHideFriends = target
+                                scope.launch {
+                                    runCatching {
+                                        AccountSession.updatePresenceSettings(hideFromStrangers = null, hideFromFriends = target)
+                                    }.onSuccess {
+                                        privacyError = ""
+                                    }.onFailure { e ->
+                                        privacyError = (e as? AccountApiException)?.let { accountErrorText(it) }
+                                            ?: readI18n("account.presenceSettingsFailed", I18nType.RWPP)
+                                    }
+                                    localHideFriends = null
+                                }
+                            },
+                        )
                     }
-                },
-            )
-        }
-    }
+                }
 
-    Spacer(Modifier.height(if (isSmall) 10.dp else 14.dp))
-
-    if (isSmall) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            AccountActionTile(
-                Icons.Default.Edit,
-                readI18n("account.changeNickname", I18nType.RWPP),
-                onChangeNickname,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            AccountActionTile(
-                Icons.Default.Email,
-                readI18n("account.changeEmail", I18nType.RWPP),
-                onChangeEmail,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            AccountActionTile(
-                Icons.Default.Refresh,
-                readI18n("account.refresh", I18nType.RWPP),
-                onRefresh,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            AccountActionTile(
-                Icons.Default.ExitToApp,
-                readI18n("account.logout", I18nType.RWPP),
-                onLogout,
-                modifier = Modifier.fillMaxWidth(),
-                danger = true,
-            )
-        }
-    } else {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                AccountActionTile(
-                    Icons.Default.Edit,
-                    readI18n("account.changeNickname", I18nType.RWPP),
-                    onChangeNickname,
-                    modifier = Modifier.weight(1f),
-                )
-                AccountActionTile(
-                    Icons.Default.Email,
-                    readI18n("account.changeEmail", I18nType.RWPP),
-                    onChangeEmail,
-                    modifier = Modifier.weight(1f),
-                )
             }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                AccountActionTile(
-                    Icons.Default.Refresh,
-                    readI18n("account.refresh", I18nType.RWPP),
-                    onRefresh,
-                    modifier = Modifier.weight(1f),
-                )
-                AccountActionTile(
-                    Icons.Default.ExitToApp,
-                    readI18n("account.logout", I18nType.RWPP),
-                    onLogout,
-                    modifier = Modifier.weight(1f),
-                    danger = true,
-                )
+            AccountCenterPage.Security -> {
+                BorderCard(modifier = Modifier.fillMaxWidth(),
+                    backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)) {
+                    AccountInfoRow(Icons.Default.Email, readI18n("account.email", I18nType.RWPP),
+                        email?.ifBlank { null } ?: readI18n("account.emailUnbound", I18nType.RWPP))
+                }
+                AccountActionTile(Icons.Default.Email, readI18n("account.changeEmail", I18nType.RWPP),
+                    onChangeEmail, modifier = Modifier.fillMaxWidth())
+                AccountMessageBanner(readI18n("account.changeEmailHint", I18nType.RWPP))
+                AccountActionTile(Icons.Default.ExitToApp, readI18n("account.logout", I18nType.RWPP),
+                    onLogout, modifier = Modifier.fillMaxWidth(), danger = true)
             }
         }
-    }
-
-    Spacer(Modifier.height(12.dp))
-    AccountMessageBanner(
-        text = readI18n("account.multiplayerNameBound", I18nType.RWPP),
-        icon = Icons.Default.Info,
-    )
-}
-
-@Composable
-private fun AccountHeroName(displayName: String, username: String) {
-    Text(
-        displayName,
-        style = MaterialTheme.typography.headlineLarge,
-        color = MaterialTheme.colorScheme.onSurface,
-        fontWeight = FontWeight.Bold,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-    )
-    if (displayName != username) {
-        Text(
-            "@$username",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
     }
 }
 
@@ -1528,11 +1394,12 @@ private fun AccountHeroAvatar(
     userId: Long,
     hasAvatar: Boolean,
     onClick: () -> Unit,
+    compact: Boolean = false,
 ) {
     Box {
         AccountAvatarBox(
             displayName,
-            size = 84.dp,
+            size = if (compact) 48.dp else 84.dp,
             avatar = AccountAvatar(userId, hasAvatar, AccountSession.avatarVersion),
             online = true,
         )
@@ -1540,7 +1407,7 @@ private fun AccountHeroAvatar(
             modifier = Modifier
                 .matchParentSize()
                 .clip(CircleShape)
-                .clickable(onClick = onClick),
+                .clickable(onClickLabel = readI18n("account.avatarTitle", I18nType.RWPP), onClick = onClick),
         )
     }
 }
