@@ -14,6 +14,22 @@ import kotlin.test.assertTrue
 
 class UpdateDownloadPlanTest {
 
+    @Test fun `browser kernel attachments cannot become client installers`() {
+        val kernels = arrayOf("RWJS-Browser-gecko-157-v1-android-arm64-v8a.kernel.001",
+            "RWJS-Browser-jcef-146-v1-windows-amd64.kernel.001",
+            "RWJS-Browser-jcef-146-v1-windows-amd64.kernel.002", "RWJS-Browser-jcef-146-v1-windows-amd64.json",
+            "RWJS-Browser-gecko-android-arm64-v8a-v1.0.0.kernel.001",
+            "RWJS-Browser-jcef-windows-amd64-v1.0.0.kernel.001",
+            "RWJS-Browser-jcef-windows-amd64-v1.0.0.kernel.002",
+            "RWJS-Browser-jcef-windows-amd64-v1.0.0.json")
+        assertNull(profileOf(*kernels).resolveDesktopUpdatePlan())
+        assertNull(profileOf(*kernels).resolveAndroidUpdatePlan())
+        val mixed = profileOf(*kernels, "RWJS-Setup.zip.001", "RWJS-Setup.zip.002",
+            "RWJS-Android.zip.001", "RWJS-Android.zip.sha256")
+        assertEquals(2, mixed.resolveDesktopUpdatePlan()!!.partUrls.size)
+        assertEquals(listOf("https://gitee.com/dl/RWJS-Android.zip.001"), mixed.resolveAndroidUpdatePlan()!!.partUrls)
+    }
+
     private fun profileOf(vararg assetNames: String): LatestVersionProfile =
         LatestVersionProfile(
             version = "1.6.4",

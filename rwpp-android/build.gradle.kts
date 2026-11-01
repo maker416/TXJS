@@ -104,7 +104,7 @@ android {
 
     packaging {
         resources.excludes.add("META-INF/*")
-        // Gecko ships a large native engine; compress it in the APK and extract on install.
+        // Keep the remaining Lua/Android libraries compressed; Gecko is downloaded separately.
         jniLibs.useLegacyPackaging = true
     }
 

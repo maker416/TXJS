@@ -25,6 +25,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -95,6 +97,18 @@ private object BrowserGeckoRuntime {
 
 @Composable
 actual fun EmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifier) {
+    if (browserKernelDownloadRequired) {
+        val environment = rememberBrowserKernelEnvironment()
+        if (BrowserKernelRuntime.directory(environment.requirement.id) == null) {
+            Box(modifier) { BrowserKernelGate(true, onReady = {}) { AndroidEmbeddedBrowser(state, Modifier.fillMaxSize()) } }
+            return
+        }
+    }
+    AndroidEmbeddedBrowser(state, modifier)
+}
+
+@Composable
+private fun AndroidEmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifier) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()

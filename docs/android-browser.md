@@ -1,6 +1,6 @@
 # Android 内置浏览器
 
-资源站使用随 APK 打包的稳定版 GeckoView `157.0.20260924084938`，不再调用系统 WebView。桌面端继续使用 JCEF。Mozilla Maven 仓库仅用于 `org.mozilla.geckoview` 依赖。
+资源站使用稳定版 GeckoView `157.0.20260924084938`，不调用系统 WebView。APK 只保留 Java API 和最小加载适配，官方原生库及 `omni.ja` 从我们最新的 Gitee Release 按需下载。组件使用独立版本，进入页面时检查兼容更新，离线时复用已验证的本地组件。桌面端 JCEF 使用同一组件下载管理器。Mozilla Maven 仓库只用于构建时获取上游依赖。发布命令、版本规则和清单信任方式见 [browser-kernel-distribution.md](browser-kernel-distribution.md)。
 
 一个应用进程共用一个 `GeckoRuntime`；每次打开资源站新建 `GeckoSession`，关闭时释放 View/session、消息端口及待确认下载流。Gecko 的子进程通过 `MainApplication` 的进程检查跳过游戏核心和 Koin 初始化。View 使用 TextureView 后端，以参与 Compose 动画、裁剪和弹窗合成。
 
@@ -23,4 +23,6 @@ node --test rwpp-core/src/androidMain/bridge-tests/forum-bridge.test.cjs
 
 设备验收需包括：华为游戏内横屏打开资源站、点击头像进入主页、帖子设置菜单、客户端登录/退出/切号、前进后退刷新、带登录态模组下载及取消、关闭并重开资源站。编译和单元测试不能替代这些设备操作。
 
-GeckoView 提供 arm64-v8a、armeabi-v7a、x86_64 内核，应用仅打包这三种 ABI。x86 32 位缺少 Gecko 内核，不再声明该 ABI。原生库启用 `useLegacyPackaging=true`，压缩进 APK、安装时解压，降低下载体积；通用 APK 仍会明显增大。发布到 Gitee 前必须核对其单文件 100MB 限制，当前 Android 更新器仍按单 APK 下载；不能直接复用桌面的 zip 分卷方案。
+GeckoView 提供 arm64-v8a、armeabi-v7a、x86_64 内核，客户端按当前进程 ABI 下载其中一份；x86 32 位不支持。Gecko 组件不进入 APK，剩余 Lua/Android 原生库仍使用 `useLegacyPackaging=true`。Android 与桌面客户端更新继续沿用现有安装包分卷规则；浏览器组件使用独立 `.kernel.001` 命名，不能与安装包分卷混用。
+
+外置加载在 Redmi K30 Pro（Android 10、arm64）独立宿主上通过，覆盖真实 GPU/网页子进程、论坛票据和游客桥接、带 Cookie 下载及私有文件上传。加载层必须显式使用绝对路径并按 ELF 的 `DT_NEEDED` 依赖预加载，辅助服务还须先取得 Application Context；不能只修改 `getLibraryPath`。Android 17、32 位和 x86_64 尚需相应设备验证。

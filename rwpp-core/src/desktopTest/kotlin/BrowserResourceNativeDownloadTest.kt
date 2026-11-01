@@ -35,6 +35,7 @@ import kotlin.test.assertTrue
 class BrowserResourceNativeDownloadTest {
     @Test fun nativeResourceDownloadsUseTheResourceInstaller() {
         assumeTrue(System.getenv("RWJS_BROWSER_NATIVE_TEST") == "1")
+        prepareDesktopKernelForTest()
         val directory = Files.createTempDirectory("browser-native-resources-").toFile()
         val map = "<map width=\"1\" height=\"1\"/>".toByteArray()
         val thumbnail = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 1, 2, 3)

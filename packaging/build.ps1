@@ -13,13 +13,22 @@ https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
     支持交互式菜单与命令行参数两种方式。
 
 .PARAMETER Target
-    构建目标。可选：desktop / installer / test / android-debug / android-release / clean
+    构建目标。可选：desktop / installer / test / android-debug / android-release / browser-kernels / clean
     省略时进入交互式菜单。
 
 .PARAMETER Channel
     安装包渠道标识（字母/数字/下划线/连字符，1-64 字符），打包时通过
     -PonlineChannel 注入 BuildConfig，随在线上报传给统计服务器。
     省略时默认为 official；交互式菜单中每次构建前会询问。
+
+.PARAMETER KernelReleaseTag
+    兼容旧命令的已停用参数。浏览器组件始终从最新 Release 查找。
+
+.PARAMETER GeckoComponentVersion
+    覆盖 Android Gecko 组件独立版本（默认读取 browser-kernels.properties）。
+
+.PARAMETER JcefComponentVersion
+    覆盖桌面 JCEF 组件独立版本（默认读取 browser-kernels.properties）。
 
 .EXAMPLE
     .\build.ps1                 # 打开交互式菜单
@@ -35,6 +44,15 @@ param(
     [string]$Target,
 
     [string]$Channel,
+
+    [ValidatePattern('^[A-Za-z0-9._+-]+$')]
+    [string]$KernelReleaseTag,
+
+    [ValidatePattern('^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')]
+    [string]$GeckoComponentVersion,
+
+    [ValidatePattern('^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')]
+    [string]$JcefComponentVersion,
 
     [switch]$Help
 )
@@ -58,12 +76,19 @@ $Script:Version      = 'unknown'
 $Script:Channel      = 'official'
 $Script:ChannelPattern = '^[A-Za-z0-9_-]{1,64}$'
 # 这些目标不参与渠道注入（不打渠道包）
-$Script:NoChannelTargets = @('test', 'clean')
+$Script:NoChannelTargets = @('test', 'clean', 'browser-kernels')
 
 # ---------------------------------------------------------------------------
 # 目标定义表
 # ---------------------------------------------------------------------------
 $Script:Targets = [ordered]@{
+    'browser-kernels' = @{
+        Name          = 'Browser kernel Release attachments'
+        Tasks         = @('browserKernels')
+        Subdir        = 'browser-kernels'
+        Collect       = 'browser-kernels'
+        Aliases       = @('7', 'kernels')
+    }
     'desktop' = @{
         Name          = 'Desktop fat jar'
         Tasks         = @(':rwpp-desktop:packageReleaseUberJarForCurrentOS')
@@ -228,6 +253,10 @@ function Show-Menu {
     Write-Host '  [6] Safe clean (保留 build\build.* / build\key / build\artifacts)'
     Write-Host '      Task:   clean'
     Write-Host ''
+    Write-Host '  [7] Browser kernels (Gitee Release 附件)'
+    Write-Host '      Task:   browserKernels'
+    Write-Host '      Output: build\artifacts\browser-kernels\'
+    Write-Host ''
     Write-Host '  [H] Help    [0] Exit'
     Write-Host ''
     Write-Host '------------------------------------------------------------'
@@ -242,9 +271,10 @@ function Show-Usage {
     Write-Host '  build.ps1 test            运行核心测试'
     Write-Host '  build.ps1 android-debug   构建 Android Debug APK'
     Write-Host '  build.ps1 android-release 构建 Android Release APK'
+    Write-Host '  build.ps1 browser-kernels 生成浏览器内核附件和清单'
     Write-Host '  build.ps1 clean           运行受保护的 Gradle clean'
     Write-Host ''
-    Write-Host 'Channel（打包渠道，test/clean 无需指定）:'
+    Write-Host 'Channel（打包渠道，test/clean/browser-kernels 无需指定）:'
     Write-Host '  build.ps1 android-release -Channel tt_ad   构建 tt_ad 渠道包'
     Write-Host '  - 渠道标识只允许字母、数字、下划线、连字符（1-64 字符），默认 official'
     Write-Host '  - 交互式菜单中每次构建前会询问渠道，回车沿用上次值'
@@ -252,6 +282,8 @@ function Show-Usage {
     Write-Host '  - 渠道随在线上报传给统计服务器，用于按渠道统计新增/留存'
     Write-Host ''
     Write-Host 'Aliases:'
+    Write-Host '  browser-kernels, kernels'
+    Write-Host '  -GeckoComponentVersion / -JcefComponentVersion 覆盖浏览器组件独立版本（如 1.0.0）'
     Write-Host '  desktop, jar, fatjar'
     Write-Host '  installer, inno, setup'
     Write-Host '  test, tests'
@@ -350,6 +382,9 @@ function Resolve-RwGameRoot {
 # ---------------------------------------------------------------------------
 function Invoke-Gradle ([string[]]$Tasks) {
     $allArgs = $GradleArgs + "-PonlineChannel=$($Script:Channel)" + $Tasks
+    if ($KernelReleaseTag) { Write-Info 'KernelReleaseTag 已停用；浏览器组件始终从最新 Release 查找。' }
+    if ($GeckoComponentVersion) { $allArgs += "-PgeckoComponentVersion=$GeckoComponentVersion" }
+    if ($JcefComponentVersion) { $allArgs += "-PjcefComponentVersion=$JcefComponentVersion" }
     Write-Host "[Gradle] $GradlewBat $($allArgs -join ' ')" -ForegroundColor DarkGray
     Write-Host ''
     # 通过 Out-Host 让 Gradle 输出直接写入终端，避免它混入函数返回值（success stream），从而保证退出码判断正确
@@ -454,6 +489,7 @@ function Invoke-CollectArtifacts ([string]$Key) {
     Write-Step '正在收集产物到 build\artifacts\ ...'
 
     switch ($def.Collect) {
+            'browser-kernels' { Copy-BrowserKernelFiles }
             'desktop'         { Copy-DesktopJar  $Key }
             'installer'       { Copy-InstallerFiles $Key }
             'test'            { Copy-TestReports $Key }
@@ -461,6 +497,26 @@ function Invoke-CollectArtifacts ([string]$Key) {
             'android-release' { Copy-Apk $Key 'rwpp-android\build\outputs\apk\release' 'rwpp-android-release' }
             default           { }
     }
+}
+
+function Copy-BrowserKernelFiles {
+    $dest = Reset-Destination 'browser-kernels'
+    foreach ($platform in @('android', 'desktop')) {
+        $source = Join-Path $BuildDir "browser-kernels/$platform"
+        Get-ChildItem -LiteralPath $source -File | Where-Object { $_.Name -like 'RWJS-Browser-*' } |
+            ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $dest $_.Name) -Force }
+    }
+    $notes = @(
+        '将全部 RWJS-Browser-*.json 和 *.kernel.001/.002/... 上传到最新 Gitee Release。',
+        '客户端只查询最新 Release，按文件名中的独立版本选择兼容组件。',
+        'packaging/browser-kernels.properties 分别维护 Gecko/JCEF 独立组件版本，与客户端版本无关。',
+        '每次发布新 Release，原样携带仍受支持的内核清单和全部分卷；未变更的组件不用重新打包。',
+        '版本号不变时不可替换组件内容。内核 API/适配格式改变时，还需发布匹配的新版客户端。',
+        '不要上传 gecko-thin.aar 和 gecko-input-classes.jar。',
+        '本脚本仅生成产物，不上传或修改 Gitee Release。'
+    )
+    Set-Content -LiteralPath (Join-Path $dest '发布说明.txt') -Value $notes -Encoding UTF8
+    Write-Step "浏览器内核附件已收集到: $dest"
 }
 
 function Copy-DesktopJar ([string]$Key) {
@@ -595,7 +651,7 @@ function Invoke-Main {
     # 交互式菜单模式
     while ($true) {
         Show-Menu
-        $choice = Read-Host 'Select [0-6/H]'
+        $choice = Read-Host 'Select [0-7/H]'
         if ([string]::IsNullOrWhiteSpace($choice)) { continue }
 
         switch -Regex ($choice.Trim().ToLowerInvariant()) {

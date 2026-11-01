@@ -32,6 +32,7 @@ import kotlin.test.assertTrue
 class BrowserModNativeUploadTest {
     @Test fun cancelledChooserCanReopenAndSelectedModReachesWebUpload() {
         assumeTrue(System.getenv("RWJS_BROWSER_NATIVE_TEST") == "1")
+        prepareDesktopKernelForTest()
         val directory = Files.createTempDirectory("browser-native-upload-").toFile()
         val file = File(directory, "native-test.rwmod").apply { writeBytes(ByteArray(4096) { (it % 251).toByte() }) }
         val title = "破境边缘 V0.33（烛烬华章：革新）"

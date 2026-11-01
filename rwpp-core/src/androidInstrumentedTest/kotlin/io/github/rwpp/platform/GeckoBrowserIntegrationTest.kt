@@ -19,8 +19,10 @@ import androidx.compose.ui.Modifier
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.lifecycle.Lifecycle
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.Before
 import org.junit.runner.RunWith
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -44,6 +46,25 @@ class GeckoBrowserTestActivity : ComponentActivity() {
 
 @RunWith(AndroidJUnit4::class)
 class GeckoBrowserIntegrationTest {
+    @Before fun prepareExternalKernel() {
+        if (!browserKernelDownloadRequired) return
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val abi = if (android.os.Process.is64Bit()) android.os.Build.SUPPORTED_64_BIT_ABIS[0] else android.os.Build.SUPPORTED_32_BIT_ABIS[0]
+        val baseline = io.github.rwpp.net.browser.BrowserKernelRequirement.read(context.assets.open("browser-kernels/android-$abi.json").bufferedReader().use { it.readText() })
+        val client = okhttp3.OkHttpClient()
+        val manager = io.github.rwpp.net.browser.BrowserKernelManager(File(context.noBackupFilesDir, "browser/kernels"), client)
+        val base = InstrumentationRegistry.getArguments().getString("kernelBaseUrl") ?: "http://127.0.0.1:8765"
+        val manifestName = InstrumentationRegistry.getArguments().getString("kernelManifest")
+        val requirement = if (manifestName == null) baseline else {
+            require(manifestName.matches(Regex("[A-Za-z0-9_.+-]+")))
+            client.newCall(okhttp3.Request.Builder().url("$base/$manifestName").build()).execute().use { response ->
+                check(response.isSuccessful)
+                io.github.rwpp.net.browser.BrowserKernelRequirement.fromManifest(requireNotNull(response.body).string(), manifestName)
+            }.also { require(io.github.rwpp.net.browser.BrowserKernelManager.compatible(baseline, it)) }
+        }
+        val installed = manager.install(requirement, io.github.rwpp.net.browser.BrowserKernelSource { _, name, _ -> "$base/$name" }, io.github.rwpp.app.UpdateDownloadSession())
+        BrowserKernelRuntime.bindVerified(baseline.id, requirement, installed, manager)
+    }
     private class Fixture(private val mode: String = "login", private val downloadName: String = "protected.rwmod") : AutoCloseable {
         val server = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
         val received = AtomicReference<String?>()
@@ -112,12 +133,16 @@ class GeckoBrowserIntegrationTest {
         override fun close() { server.close(); executor.shutdownNow() }
     }
 
-    private fun checkHandoff(ticket: String?) {
+    private fun checkHandoff(ticket: String?, resumeFromBackground: Boolean = false) {
         Fixture().use { fixture ->
             val bootstrap = "${fixture.base}/sso/client"
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             val intent = Intent(context, GeckoBrowserTestActivity::class.java).putExtra("bootstrap", bootstrap)
             ActivityScenario.launch<GeckoBrowserTestActivity>(intent).use { scenario ->
+                if (resumeFromBackground) {
+                    scenario.moveToState(Lifecycle.State.CREATED)
+                    scenario.moveToState(Lifecycle.State.RESUMED)
+                }
                 scenario.onActivity { it.browserState.submitClientLogin(bootstrap, ticket) }
                 val deadline = System.nanoTime() + 30_000_000_000L
                 var error: String? = null
@@ -137,6 +162,7 @@ class GeckoBrowserIntegrationTest {
         checkHandoff("b".repeat(64))
     }
     @Test fun packagedExtensionSubmitsGuestNull() { checkHandoff(null) }
+    @Test fun browserWorksAfterActivityBackgroundAndResume() { checkHandoff("c".repeat(64), resumeFromBackground = true) }
 
     @Test fun authenticatedDownloadUsesGeckoResponseStream() = runBlocking {
         checkAuthenticatedDownload("protected.rwmod", "protected.rwmod")

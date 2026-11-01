@@ -37,6 +37,7 @@ import kotlin.test.assertTrue
 class BrowserModNativeDownloadTest {
     @Test fun nativeDownloadWaitsForConsentAndUsesRequestedDestination() {
         assumeTrue(System.getenv("RWJS_BROWSER_NATIVE_TEST") == "1")
+        prepareDesktopKernelForTest()
         val directory = Files.createTempDirectory("browser-native-mod-").toFile()
         val archive = ByteArrayOutputStream().also { output ->
             ZipOutputStream(output).use { zip ->

@@ -48,6 +48,7 @@ import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.net.account.ForumSsoUrls
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.platform.EmbeddedBrowser
+import io.github.rwpp.platform.BrowserKernelGate
 import io.github.rwpp.platform.EmbeddedBrowserState
 import io.github.rwpp.platform.ResourceBrowserLayout
 import io.github.rwpp.widget.UiLinearProgressIndicator
@@ -114,10 +115,11 @@ private fun BrowserPage(
     val overlaysAvailable = active && !UI.showFriendsView && !UI.showAccountView &&
         browser.modDownload == null && browser.fileUpload == null
     var attempt by remember { mutableIntStateOf(0) }
+    var kernelReady by remember(browser) { mutableStateOf(false) }
     if (clientLogin != null) {
         browser.retryClientLogin = { attempt++ }
-        LaunchedEffect(browser, attempt, orientation, active) {
-            if (!active || orientation == null) return@LaunchedEffect
+        LaunchedEffect(browser, attempt, orientation, active, kernelReady) {
+            if (!active || orientation == null || !kernelReady) return@LaunchedEffect
             browser.beginClientLogin()
             try {
                 clientLogin()
@@ -146,10 +148,12 @@ private fun BrowserPage(
         BoxWithConstraints(Modifier.fillMaxSize()) {
             // 选择完成后才创建原生浏览器，让首次弹窗拥有完整的输入焦点。
             if (orientation != null) {
-                key(browser) { EmbeddedBrowser(browser, Modifier.fillMaxSize()) }
+                BrowserKernelGate(active, onReady = { kernelReady = it }) {
+                    key(browser) { EmbeddedBrowser(browser, Modifier.fillMaxSize()) }
+                }
             }
 
-            if (browser.isLoading && orientation != null && overlaysAvailable) {
+            if (kernelReady && browser.isLoading && orientation != null && overlaysAvailable) {
                 Popup(alignment = Alignment.TopStart, properties = PopupProperties(focusable = false)) {
                     val progress = browser.progress
                     if (progress == null) {

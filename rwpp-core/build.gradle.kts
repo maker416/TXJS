@@ -17,6 +17,10 @@ plugins {
     id("maven-publish")
 }
 
+// Client builds use the external kernel. JitPack publishes a library AAR, which cannot
+// embed a local AAR dependency; retain the upstream dependency for that library workflow.
+val externalBrowserKernel = providers.gradleProperty("externalBrowserKernel").map { it.toBooleanStrict() }.orElse(System.getenv("JITPACK") == null)
+
 kotlin {
     androidTarget()
     jvm("desktop")
@@ -57,7 +61,11 @@ kotlin {
                 api("androidx.activity:activity-compose:1.10.1")
                 api("androidx.appcompat:appcompat:1.7.1")
                 api("androidx.core:core-ktx:1.16.0")
-                implementation("org.mozilla.geckoview:geckoview:157.0.20260924084938")
+                if (externalBrowserKernel.get()) {
+                    implementation(files(rootProject.layout.buildDirectory.file("browser-kernels/android/gecko-thin.aar")).builtBy(rootProject.tasks.named("prepareGeckoKernel")))
+                } else {
+                    implementation("org.mozilla.geckoview:geckoview:157.0.20260924084938")
+                }
             }
         }
 
@@ -70,22 +78,8 @@ kotlin {
                 implementation(compose.desktop.common)
                 // 读取当前进程工作集 / RSS；与桌面应用已有 JNA 版本保持一致。
                 implementation("net.java.dev.jna:jna:5.15.0")
-                // Chromium runtime 随桌面包提供；每个构建只包含当前平台的 native 库。
-                val jcefVersion = "jcef-d3de827+cef-146.0.10+g8219561+chromium-146.0.7680.179"
-                val osName = System.getProperty("os.name").lowercase()
-                val jcefOs = when {
-                    osName.contains("win") -> "windows"
-                    osName.contains("mac") -> "macosx"
-                    else -> "linux"
-                }
-                val jcefArch = when (System.getProperty("os.arch")) {
-                    "aarch64", "arm64" -> "arm64"
-                    "x86", "i386" -> "i386"
-                    "arm" -> "arm"
-                    else -> "amd64"
-                }
                 implementation("me.friwi:jcefmaven:146.0.10")
-                runtimeOnly("me.friwi:jcef-natives-$jcefOs-$jcefArch:$jcefVersion")
+                // Native binaries are exported by prepareDesktopKernel, not included in the application.
                 // 主题美术包背景音乐：桌面端 OGG 解码（仓库 lib/ 已有的纯 Java 库）
                 implementation(fileTree(
                     "dir" to "$rootDir/lib",
@@ -127,16 +121,19 @@ afterEvaluate {
 }
 
 android {
+    buildFeatures { buildConfig = true }
     compileSdk = (findProperty("android.compileSdk") as String).toInt()
     compileSdkMinor = 1
     namespace = "io.github.rwpp.core"
     defaultConfig {
+        buildConfigField("boolean", "EXTERNAL_BROWSER_KERNEL", externalBrowserKernel.get().toString())
         minSdk = (findProperty("android.minSdk") as String).toInt()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     sourceSets["main"].res.srcDirs("src/androidMain/res")
     sourceSets["main"].assets.srcDir("src/androidMain/assets")
+    if (externalBrowserKernel.get()) sourceSets["main"].assets.srcDir(rootProject.layout.buildDirectory.dir("browser-kernel-resources/android").get().asFile)
     sourceSets["main"].resources.srcDirs("src/commonMain/resources")
 
     compileOptions {
@@ -146,6 +143,32 @@ android {
     }
     kotlin {
         jvmToolchain(21)
+    }
+}
+
+kotlin.sourceSets.getByName("desktopMain").resources.srcDir(rootProject.layout.buildDirectory.dir("browser-kernel-resources/desktop").get().asFile)
+if (externalBrowserKernel.get()) tasks.matching { it.name.contains("Assets") }.configureEach { dependsOn(rootProject.tasks.named("prepareGeckoKernel")) }
+tasks.matching { it.name == "desktopProcessResources" }.configureEach { dependsOn(rootProject.tasks.named("prepareDesktopKernel")) }
+tasks.withType<Test>().matching { it.name == "desktopTest" }.configureEach {
+    systemProperty("rwjs.test.kernelAssets", rootProject.layout.buildDirectory.dir("browser-kernels/desktop").get().asFile.absolutePath)
+    jvmArgs("--add-opens=java.base/java.net=ALL-UNNAMED", "--add-opens=java.desktop/sun.awt=ALL-UNNAMED")
+    if (System.getenv("RWJS_BROWSER_NATIVE_TEST") == "1") {
+        forkEvery = 1; maxParallelForks = 1
+        systemProperty("user.home", layout.buildDirectory.dir("tmp/browser-kernel-native-home").get().asFile.absolutePath)
+    }
+}
+apply(from = rootProject.file("packaging/gecko-runtime.gradle.kts"))
+
+// The diagnostic host can instrument itself under its already-approved package/signature.
+// This flag is never used for client artifacts; only its debug variant contains the tests.
+if (providers.gradleProperty("browserKernelIntegrationHost").orNull == "true") {
+    kotlin.sourceSets.maybeCreate("androidDebug").apply {
+        kotlin.srcDir("src/androidInstrumentedTest/kotlin")
+        dependencies {
+            implementation("androidx.test.ext:junit:1.2.1")
+            implementation("androidx.test:runner:1.6.2")
+            implementation("androidx.test:core:1.6.1")
+        }
     }
 }
 

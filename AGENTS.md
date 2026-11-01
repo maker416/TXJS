@@ -23,7 +23,7 @@
 | LWJGL | — | 桌面端 OpenGL 渲染（`lib/lwjgl.jar` 等） |
 | Javassist | 3.30.2-GA | 运行时字节码操作与注入 |
 | OkHttp | 4.12.0 | 网络请求 |
-| GeckoView | 157.0.20260924084938 | Android 内置浏览器内核，不依赖系统 WebView；详见 `docs/android-browser.md` |
+| GeckoView | 157.0.20260924084938 | Android 内置浏览器内核，从 Gitee Release 按需下载，不依赖系统 WebView；详见 `docs/android-browser.md`、`docs/browser-kernel-distribution.md` |
 | kotlinx.serialization | — | 序列化（通过 Gradle plugin 引入） |
 | markdown renderer | 0.29.0 | `multiplatform-markdown-renderer` 用于渲染更新日志 |
 | reorderable | 2.4.3 | Compose 拖拽排序 |
@@ -32,7 +32,7 @@
 
 ## 模块架构
 
-项目包含 6 个 Gradle 子模块，依赖流向为：`rwpp-core-api` ← `rwpp-core` ← `rwpp-android` / `rwpp-desktop`。`rwpp-ksp` 作为 KSP 插件被 android/desktop 使用。独立 Swing 工具 `rwpp-mod-heap-tool` 依赖 `rwpp-core-api` 及桌面游戏库，在独立 JVM 中用真实核心和离屏 OpenGL 加载模组，测量堆净增及去重单位对象图；运行需完整桌面游戏资源和 native 库（见 `docs/mod-heap-tool.md`）。
+项目包含 7 个 Gradle 子模块，依赖流向为：`rwpp-core-api` ← `rwpp-core` ← `rwpp-android` / `rwpp-desktop`。`rwpp-ksp` 作为 KSP 插件被 android/desktop 使用。独立 Swing 工具 `rwpp-mod-heap-tool` 依赖 `rwpp-core-api` 及桌面游戏库，在独立 JVM 中用真实核心和离屏 OpenGL 加载模组，测量堆净增及去重单位对象图；运行需完整桌面游戏资源和 native 库（见 `docs/mod-heap-tool.md`）。
 
 | 模块 | 类型 | 职责 | 源文件数（约） |
 |------|------|------|--------------|
@@ -42,8 +42,9 @@
 | `rwpp-desktop` | Compose Desktop Application | 桌面入口（`Main.kt` — Swing `JFrame` + `ComposePanel` + OpenGL `Canvas`）+ `impl/` 平台实现 + `impl/inject/` 注入模块 | ~55 |
 | `rwpp-ksp` | KSP Processor | 编译期代码生成：扫描 `lib/` 中的游戏库 jar，为平台模块生成注入配置与元数据 | 2 |
 | `rwpp-mod-heap-tool` | JVM Desktop Tool | 独立模组堆内存实测工具，真实核心加载、共享对象去重、批量分析与报告导出 | — |
+| `rwpp-browser-kernel-test` | Android Test Host | 独立包名验证外置 Gecko 加载、真实子进程、论坛桥接和认证传输，不覆盖正式客户端 | — |
 
-当环境变量 `JITPACK` 被设置时，`settings.gradle.kts` 会排除 `rwpp-android`、`rwpp-desktop` 与 `rwpp-mod-heap-tool`，仅保留 library 模块，以支持 JitPack 发布。
+当环境变量 `JITPACK` 被设置时，`settings.gradle.kts` 会排除 `rwpp-android`、`rwpp-desktop` 、`rwpp-mod-heap-tool` 与 `rwpp-browser-kernel-test`，仅保留 library 模块，以支持 JitPack 发布。
 
 ## 代码组织
 
@@ -224,6 +225,8 @@ git ls-files --others --ignored --exclude-standard -z \
 - Android：`rwpp-android/build/outputs/apk/` 下生成 APK
 
 ### 自动更新（Gitee release）
+
+浏览器组件与客户端更新分开：组件独立版本在 `packaging/browser-kernels.properties` 中维护，文件名携带版本；运行时只检查最新 Release 并选择兼容的组件。每个新 Release 必须携带仍受支持的组件清单和完整分卷。按用户确认信任最新 Release 清单，校验分卷/完整 ZIP/文件 SHA-256；已有内核的进程不热替换，升级安装后提示重启。详见 `docs/browser-kernel-distribution.md`。
 
 - 版本检查：`Net.getLatestVersionProfile()` 拉取 `gitee.com/maker416/TXJS` 的最新 release 资产列表。
 - **Gitee 单文件限制 100MB**，桌面安装包（`RWJS-Setup.exe` 超 100MB）以 **zip 分卷**发布：`packaging/build.ps1` 的 `installer` 目标收集产物时自动生成 `RWJS-Setup.zip.001/.002/…`（7-Zip/WinRAR 分卷命名约定，用户可直接解压）与 `RWJS-Setup.zip.sha256`（合并 zip 的 SHA-256）。

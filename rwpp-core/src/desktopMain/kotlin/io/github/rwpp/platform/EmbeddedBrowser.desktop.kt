@@ -11,6 +11,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.awt.SwingPanel
 import me.friwi.jcefmaven.CefAppBuilder
 import me.friwi.jcefmaven.CefBuildInfo
@@ -53,6 +55,16 @@ import io.github.rwpp.net.browser.BrowserModUploadCache
 
 @Composable
 actual fun EmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifier) {
+    val environment = rememberBrowserKernelEnvironment()
+    if (BrowserKernelRuntime.directory(environment.requirement.id) == null) {
+        Box(modifier) { BrowserKernelGate(true, onReady = {}) { DesktopEmbeddedBrowser(state, Modifier.fillMaxSize()) } }
+        return
+    }
+    DesktopEmbeddedBrowser(state, modifier)
+}
+
+@Composable
+private fun DesktopEmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifier) {
     val browser = remember(state) { DesktopBrowserController(state) }
     DisposableEffect(browser) {
         state.controller = browser
@@ -72,12 +84,17 @@ private object DesktopBrowserRuntime {
     fun getApplication(): CefApp {
         app?.let { return it }
         val profileRoot = File(System.getProperty("user.home"), ".rwjs/browser")
+        val environment = DesktopKernelEnvironment.value
+        val kernel = BrowserKernelRuntime.directory(environment.requirement.id)
+            ?: io.github.rwpp.net.browser.BrowserKernelManager(environment.root, okhttp3.OkHttpClient()).installed(environment.requirement)
+            ?: error("Browser kernel must be prepared before Chromium initialization")
         val builder = CefAppBuilder().apply {
-            setInstallDir(File(profileRoot, "runtime-${CefBuildInfo.fromClasspath().releaseTag}"))
+            setInstallDir(kernel)
+            setSkipInstallation(true)
             cefSettings.windowless_rendering_enabled = false
             cefSettings.cache_path = File(profileRoot, "cache").absolutePath
             cefSettings.persist_session_cookies = true
-            // runtime 随桌面包提供，首次打开仅解压，无需在线下载。
+            // 下载与校验由公共组件管理器完成；JCEF 不访问默认境外镜像。
             setMirrors(emptyList())
             setProgressHandler { _, _ -> }
             setAppHandler(object : MavenCefAppHandlerAdapter() {
