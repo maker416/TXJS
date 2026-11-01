@@ -45,6 +45,21 @@ class LauncherPageTest {
     }
 
     @Test
+    fun resourceDestinationsReturnToResourceCenterThenHome() {
+        SwingUtilities.invokeAndWait {
+            resetNavigation(LauncherPage.MainMenu)
+            navigateTo(LauncherPage.ResourceCenter)
+            listOf(LauncherPage.ResourceBrowser, LauncherPage.Esports, LauncherPage.Extensions).forEach { child ->
+                navigateTo(child)
+                closePage(child)
+                assertEquals(LauncherPage.ResourceCenter, launcherPage)
+            }
+            closePage(LauncherPage.ResourceCenter)
+            assertEquals(LauncherPage.MainMenu, launcherPage)
+        }
+    }
+
+    @Test
     fun backgroundMutationFailsBeforeChangingNavigation() {
         assertFailsWith<IllegalStateException> { navigateTo(LauncherPage.Room) }
         assertFailsWith<IllegalStateException> { navigateBack() }

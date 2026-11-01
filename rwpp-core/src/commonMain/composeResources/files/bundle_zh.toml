@@ -621,6 +621,33 @@ announcementUpdateAvailable = "发现新版本，请及时更新"
 announcementNoData = "暂无公告信息"
 friends = "好友"
 
+[menu.home]
+greeting = "你好，"
+commander = "指挥官"
+edition = "极速版"
+tagline = "— 即时策略 · 沙盒战场 —"
+singleDescription = "战役 | 挑战 | 自定义"
+multiDescription = "联机对战 | 合作 | 服务器"
+resources = "资源获取"
+resourcesDescription = "论坛 | 赛事 | 扩展"
+modsDescription = "管理 | 导入 | 创作"
+settingsDescription = "画面 | 操作 | 其他"
+infoDescription = "问题反馈 | 更新日志"
+exit = "退出游戏"
+footer = "小小战场 · 无限可能"
+
+[resources]
+title = "资源中心"
+back = "返回主页"
+heading = "发现更多玩法"
+subtitle = "探索社区创作、关注精彩赛事，让你的战场更丰富。"
+community = "玩家社区"
+forumDescription = "发现模组与地图，分享攻略与创作，和更多指挥官交流。"
+openForum = "进入论坛"
+esportsDescription = "关注赛事动态与对战资讯"
+extensionsDescription = "管理扩展，自由定制游戏体验"
+more = "更多工具"
+
 [menu.singlePlayer]
 title = "单人游戏"
 subtitle = "选择你想进行的单人游戏模式"

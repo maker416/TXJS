@@ -417,6 +417,20 @@ fun App(
                 }
 
                 LauncherPageHost(
+                    LauncherPage.ResourceCenter,
+                    enter = if (enableAnimations) fadeIn() + slideInHorizontally { it / 12 } else EnterTransition.None,
+                    exit = if (enableAnimations) fadeOut() else ExitTransition.None,
+                ) {
+                    ResourceCenterView(
+                        onExit = { closePage(LauncherPage.ResourceCenter) },
+                        onForum = { navigateTo(LauncherPage.ResourceBrowser) },
+                        onEsports = { navigateTo(LauncherPage.Esports) },
+                        onExtensions = { navigateTo(LauncherPage.Extensions) },
+                        extraMenus = UI.UiProvider.extraMenuList,
+                    )
+                }
+
+                LauncherPageHost(
                     LauncherPage.ResourceBrowser,
                     enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
                     exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,

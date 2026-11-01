@@ -290,6 +290,15 @@ open class UIProvider {
         account: () -> Unit,
         friends: () -> Unit,
     ) {
+        if (ArtThemeController.activeTheme == null) {
+            LauncherMainMenu(
+                multiplayer = multiplayer, singlePlayer = singlePlayer,
+                settings = settings, mods = mods,
+                resources = { navigateTo(LauncherPage.ResourceCenter) },
+                openSourceInfo = openSourceInfo, account = account, friends = friends,
+            )
+            return
+        }
         val windowManager = LocalWindowManager.current
         val buttonSpacing = when (windowManager) {
             WindowManager.Small -> 8.dp

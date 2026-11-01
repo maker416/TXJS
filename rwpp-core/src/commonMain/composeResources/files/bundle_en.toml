@@ -620,6 +620,33 @@ announcementUpdateAvailable = "A new version is available, please update"
 announcementNoData = "No announcement data"
 friends = "Friends"
 
+[menu.home]
+greeting = "Welcome,"
+commander = "Commander"
+edition = "Speed Edition"
+tagline = "— REAL-TIME STRATEGY · SANDBOX —"
+singleDescription = "Campaign | Challenges | Custom"
+multiDescription = "Online battles | Co-op | Servers"
+resources = "Resources"
+resourcesDescription = "Forum | Esports | Extensions"
+modsDescription = "Manage | Import | Create"
+settingsDescription = "Graphics | Controls | More"
+infoDescription = "Feedback | Release notes"
+exit = "Exit game"
+footer = "Small battlefield · Endless possibilities"
+
+[resources]
+title = "Resource Center"
+back = "Back to home"
+heading = "Discover more ways to play"
+subtitle = "Explore community creations, follow esports, and make the battlefield your own."
+community = "PLAYER COMMUNITY"
+forumDescription = "Discover mods and maps, share guides and creations, and meet fellow commanders."
+openForum = "Explore the forum"
+esportsDescription = "Follow tournaments and competitive news"
+extensionsDescription = "Manage extensions and customize your game"
+more = "More tools"
+
 [menu.singlePlayer]
 title = "Single Player"
 subtitle = "Choose the single-player mode you want to play"

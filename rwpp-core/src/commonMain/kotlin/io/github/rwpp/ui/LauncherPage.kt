@@ -50,6 +50,8 @@ sealed interface LauncherPage {
     data object Mods : LauncherPage
     /** 扩展页。 */
     data object Extensions : LauncherPage
+    /** 资源中心（论坛、赛事与扩展入口）。 */
+    data object ResourceCenter : LauncherPage
     /** 资源浏览器页（极速论坛）。 */
     data object ResourceBrowser : LauncherPage
     /** 赛事资讯站页（普通网页，不走论坛登录）。 */

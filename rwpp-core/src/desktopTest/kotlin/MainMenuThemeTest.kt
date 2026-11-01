@@ -18,7 +18,12 @@ import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import io.github.rwpp.AppContext
 import io.github.rwpp.LocalWindowManager
@@ -28,6 +33,7 @@ import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
 import io.github.rwpp.i18n.i18nTable
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.i18n.reloadI18n
 import io.github.rwpp.koinInit
 import io.github.rwpp.logger
 import io.github.rwpp.net.LatestVersionProfile
@@ -35,6 +41,11 @@ import io.github.rwpp.net.Net
 import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.ui.UI
 import io.github.rwpp.ui.UIProvider
+import io.github.rwpp.ui.LauncherPage
+import io.github.rwpp.ui.ResourceCenterView
+import io.github.rwpp.ui.launcherPage
+import io.github.rwpp.ui.resetNavigation
+import io.github.rwpp.ui.navigateBack
 import io.github.rwpp.widget.RWPPTheme
 import io.github.rwpp.widget.WindowManager
 import net.peanuuutz.tomlkt.Toml
@@ -48,6 +59,7 @@ import java.io.File
 import java.lang.reflect.Proxy
 import java.nio.file.Files
 import javax.imageio.ImageIO
+import javax.swing.SwingUtilities
 import kotlin.math.abs
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -83,6 +95,7 @@ class MainMenuThemeTest {
 
     @AfterTest
     fun tearDown() {
+        SwingUtilities.invokeAndWait { resetNavigation(LauncherPage.MainMenu) }
         ArtThemeController.apply(null)
         ArtThemeController.themeRootOverride = null
         UI.latestVersionProfile = null
@@ -172,6 +185,7 @@ class MainMenuThemeTest {
 
     @Test
     fun forumAndEsportsShareOneGridCell() = runDesktopComposeUiTest(width = 1000, height = 700) {
+        activate("")
         var forumClicks = 0
         var esportsClicks = 0
         menu(onResourceBrowser = { forumClicks++ }, onEsports = { esportsClicks++ })
@@ -208,11 +222,139 @@ class MainMenuThemeTest {
     @Test
     fun pairedButtonsStayOnOneLineInEnglish() = runDesktopComposeUiTest(width = 1000, height = 700) {
         i18nTable = Toml.parseToTomlTable(File("src/commonMain/composeResources/files/bundle_en.toml").readText())
+        activate("")
         menu()
         val settings = button("menu.settings").fetchSemanticsNode().boundsInRoot
         listOf("browser.resourceBrowser", "browser.esportsSite").forEach {
             closeTo(settings.height, button(it).fetchSemanticsNode().boundsInRoot.height)
         }
+    }
+
+    @Test
+    fun defaultDashboardKeepsPrimaryAndUtilityActionsReachable() = runDesktopComposeUiTest(width = 1280, height = 582) {
+        val clicks = mutableListOf<String>()
+        menu(
+            onSinglePlayer = { clicks += "single" }, onMultiplayer = { clicks += "multi" },
+            onMods = { clicks += "mods" }, onSettings = { clicks += "settings" },
+            onInfo = { clicks += "info" }, onFriends = { clicks += "friends" },
+            onResourceBrowser = { clicks += "forum" }, onEsports = { clicks += "esports" },
+            onExtension = { clicks += "extensions" },
+        )
+        val single = button("menu.singlePlayerGame").fetchSemanticsNode().boundsInRoot
+        val multi = button("menu.multiplayer").fetchSemanticsNode().boundsInRoot
+        closeTo(single.top, multi.top)
+        assertTrue(single.right < multi.left)
+        val utilityKeys = listOf("menu.home.resources", "menu.modsAndMaps", "menu.settings", "menu.openSourceInfo")
+        utilityKeys.forEach { key ->
+            button(key).assertIsDisplayed()
+            closeTo(button("menu.settings").fetchSemanticsNode().boundsInRoot.top, button(key).fetchSemanticsNode().boundsInRoot.top)
+        }
+        save("default-dashboard.png")
+        listOf("menu.singlePlayerGame", "menu.multiplayer", "menu.modsAndMaps", "menu.settings", "menu.openSourceInfo").forEach {
+            button(it).performClick()
+        }
+        onNodeWithContentDescription(readI18n("menu.friends")).performClick()
+        button("menu.home.resources").performSemanticsAction(SemanticsActions.OnClick) { action ->
+            action()
+        }
+        runOnIdle {
+            assertEquals(LauncherPage.ResourceCenter, launcherPage)
+            navigateBack()
+            assertEquals(LauncherPage.MainMenu, launcherPage)
+            assertEquals(listOf("single", "multi", "mods", "settings", "info", "friends"), clicks)
+        }
+    }
+
+    @Test
+    fun defaultDashboardFitsPortrait() = runDesktopComposeUiTest(width = 400, height = 800) {
+        menu()
+        button("menu.singlePlayerGame").assertIsDisplayed()
+        button("menu.multiplayer").assertIsDisplayed()
+        button("menu.settings").assertIsDisplayed()
+        button("menu.home.exit").assertIsDisplayed()
+        val single = button("menu.singlePlayerGame").fetchSemanticsNode().boundsInRoot
+        val multi = button("menu.multiplayer").fetchSemanticsNode().boundsInRoot
+        assertTrue(single.bottom < multi.top)
+        save("default-dashboard-portrait.png")
+    }
+
+    @Test
+    fun shortLandscapeKeepsActionsAboveExit() = runDesktopComposeUiTest(width = 800, height = 360) {
+        reloadI18n()
+        i18nTable = Toml.parseToTomlTable(File("src/commonMain/composeResources/files/bundle_en.toml").readText())
+        var settingsClicks = 0
+        menu(onSettings = { settingsClicks++ })
+        button("menu.singlePlayerGame").assertIsDisplayed()
+        button("menu.multiplayer").assertIsDisplayed()
+        button("menu.settings").assertIsDisplayed()
+        button("menu.home.exit").assertIsDisplayed()
+        onNodeWithContentDescription(readI18n("menu.friends")).assertIsDisplayed()
+        button("menu.settings").performScrollTo().performClick()
+        button("menu.openSourceInfo").assertIsDisplayed()
+        runOnIdle { assertEquals(1, settingsClicks) }
+        val settings = button("menu.settings").fetchSemanticsNode().boundsInRoot
+        val exit = button("menu.home.exit").fetchSemanticsNode().boundsInRoot
+        assertTrue(settings.bottom <= exit.top)
+        save("default-dashboard-small-landscape.png")
+    }
+
+    @Test
+    fun phoneLandscapeFitsSixCards() = runDesktopComposeUiTest(width = 640, height = 320) {
+        menu()
+        listOf("menu.singlePlayerGame", "menu.multiplayer", "menu.home.resources", "menu.modsAndMaps",
+            "menu.settings", "menu.openSourceInfo", "menu.home.exit").forEach {
+            button(it).assertIsDisplayed()
+        }
+        save("default-dashboard-phone.png")
+    }
+
+    @Test
+    fun resourceCenterUsesPageCardsAndKeepsEveryAction() = runDesktopComposeUiTest(width = 1280, height = 720) {
+        val clicks = mutableListOf<String>()
+        resources(clicks, includeExtra = true)
+        listOf("browser.resourceBrowser", "browser.esportsSite", "menu.extension").forEach { key ->
+            button(key).assertIsDisplayed().performClick()
+        }
+        onNode(hasClickAction() and hasText("Extra tool")).performScrollTo().performClick()
+        onNodeWithContentDescription(readI18n("resources.back")).performClick()
+        runOnIdle { assertEquals(listOf("forum", "esports", "extensions", "extra", "back"), clicks) }
+        save("resource-center.png")
+    }
+
+    @Test
+    fun resourceCenterFitsPhoneLandscape() = runDesktopComposeUiTest(width = 640, height = 320) {
+        resources()
+        listOf("browser.resourceBrowser", "browser.esportsSite", "menu.extension").forEach {
+            button(it).assertIsDisplayed()
+            assertTrue(button(it).fetchSemanticsNode().boundsInRoot.bottom <= 320f)
+        }
+        onNodeWithContentDescription(readI18n("resources.back")).assertIsDisplayed()
+        save("resource-center-phone.png")
+    }
+
+    @Test
+    fun resourceCenterFitsPortraitAndEnglish() = runDesktopComposeUiTest(width = 400, height = 800) {
+        reloadI18n()
+        i18nTable = Toml.parseToTomlTable(File("src/commonMain/composeResources/files/bundle_en.toml").readText())
+        resources()
+        listOf("browser.resourceBrowser", "browser.esportsSite", "menu.extension").forEach { button(it).performScrollTo().assertIsDisplayed() }
+        onNodeWithContentDescription(readI18n("resources.back")).assertIsDisplayed()
+        save("resource-center-portrait.png")
+    }
+
+    private fun ComposeUiTest.resources(clicks: MutableList<String> = mutableListOf(), includeExtra: Boolean = false) {
+        setContent {
+            KoinContext(appKoin) {
+                RWPPTheme(default = true) {
+                    ResourceCenterView(
+                        onExit = { clicks += "back" }, onForum = { clicks += "forum" },
+                        onEsports = { clicks += "esports" }, onExtensions = { clicks += "extensions" },
+                        extraMenus = if (includeExtra) listOf(UIProvider.Menu("Extra tool", null) { clicks += "extra" }) else emptyList(),
+                    )
+                }
+            }
+        }
+        waitForIdle()
     }
 
     private fun activate(config: String, withImages: Boolean = false) {
@@ -232,6 +374,12 @@ class MainMenuThemeTest {
         onMods: () -> Unit = {},
         onResourceBrowser: () -> Unit = {},
         onEsports: () -> Unit = {},
+        onSinglePlayer: () -> Unit = {},
+        onMultiplayer: () -> Unit = {},
+        onSettings: () -> Unit = {},
+        onInfo: () -> Unit = {},
+        onFriends: () -> Unit = {},
+        onExtension: () -> Unit = {},
     ) {
         setContent {
             KoinContext(appKoin) {
@@ -239,9 +387,9 @@ class MainMenuThemeTest {
                     CompositionLocalProvider(LocalWindowManager provides WindowManager.Middle) {
                         Box(Modifier.fillMaxSize().background(Color(53, 57, 53))) {
                             UIProvider().MainMenu(
-                                multiplayer = {}, singlePlayer = {}, settings = {}, mods = onMods,
-                                extension = {}, resourceBrowser = onResourceBrowser, esports = onEsports,
-                                openSourceInfo = {}, account = {}, friends = {},
+                                multiplayer = onMultiplayer, singlePlayer = onSinglePlayer, settings = onSettings, mods = onMods,
+                                extension = onExtension, resourceBrowser = onResourceBrowser, esports = onEsports,
+                                openSourceInfo = onInfo, account = {}, friends = onFriends,
                             )
                         }
                     }
