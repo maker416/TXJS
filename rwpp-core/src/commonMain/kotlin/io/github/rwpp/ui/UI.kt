@@ -290,7 +290,7 @@ open class UIProvider {
         account: () -> Unit,
         friends: () -> Unit,
     ) {
-        if (ArtThemeController.activeTheme == null) {
+        if (ArtThemeController.activeTheme?.hasCustomMenuLayout != true) {
             LauncherMainMenu(
                 multiplayer = multiplayer, singlePlayer = singlePlayer,
                 settings = settings, mods = mods,

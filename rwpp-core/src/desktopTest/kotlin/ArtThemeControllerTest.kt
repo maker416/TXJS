@@ -78,6 +78,18 @@ class ArtThemeControllerTest {
     }
 
     @Test
+    fun textureAndColorPacksDoNotRequestCustomMenuLayout() = runBlocking {
+        val pack = buildPack(mapOf(
+            "theme.toml" to "[theme]\nid = \"texture\"\nname = \"材质主题\"\n[colors]\nprimary = \"#00FF96\"\n",
+            "game/units/tank.png" to "fake-png",
+        ))
+        assertTrue(ArtThemeController.import(pack).success)
+        val theme = ArtThemeController.installedThemes.single()
+        assertNotNull(theme.gameOverlayDir)
+        assertFalse(theme.hasCustomMenuLayout)
+    }
+
+    @Test
     fun importApplyDisableDeletePipeline() {
         runBlocking {
         val pack = buildPack(
@@ -119,6 +131,7 @@ class ArtThemeControllerTest {
         assertEquals(1, ArtThemeController.installedThemes.size)
         val theme = ArtThemeController.installedThemes.single()
         assertEquals("sample", theme.id)
+        assertTrue(theme.hasCustomMenuLayout)
         assertNotNull(theme.titleFile)
         assertNotNull(theme.stringsZhFile)
         // v2：按钮图只承认语义 id，字体文件按包内相对路径解析

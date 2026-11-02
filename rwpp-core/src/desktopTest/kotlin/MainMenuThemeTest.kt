@@ -20,6 +20,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
@@ -185,7 +186,7 @@ class MainMenuThemeTest {
 
     @Test
     fun forumAndEsportsShareOneGridCell() = runDesktopComposeUiTest(width = 1000, height = 700) {
-        activate("")
+        activate("[menu.layout]\nbuttonHeight = 45")
         var forumClicks = 0
         var esportsClicks = 0
         menu(onResourceBrowser = { forumClicks++ }, onEsports = { esportsClicks++ })
@@ -222,7 +223,7 @@ class MainMenuThemeTest {
     @Test
     fun pairedButtonsStayOnOneLineInEnglish() = runDesktopComposeUiTest(width = 1000, height = 700) {
         i18nTable = Toml.parseToTomlTable(File("src/commonMain/composeResources/files/bundle_en.toml").readText())
-        activate("")
+        activate("[menu.layout]\nbuttonHeight = 45")
         menu()
         val settings = button("menu.settings").fetchSemanticsNode().boundsInRoot
         listOf("browser.resourceBrowser", "browser.esportsSite").forEach {
@@ -309,6 +310,34 @@ class MainMenuThemeTest {
     }
 
     @Test
+    fun textureThemeKeepsModernDashboardAndResourceCenter() = runDesktopComposeUiTest(width = 1280, height = 582) {
+        activate("[colors]\nprimary = \"#00FF96\"")
+        menu()
+        onNodeWithTag("launcher-main-menu").assertIsDisplayed()
+        val single = button("menu.singlePlayerGame").fetchSemanticsNode().boundsInRoot
+        val multi = button("menu.multiplayer").fetchSemanticsNode().boundsInRoot
+        closeTo(single.top, multi.top)
+        assertTrue(single.right < multi.left)
+        button("menu.home.resources").assertIsDisplayed().performSemanticsAction(SemanticsActions.OnClick) { it() }
+        runOnIdle { assertEquals(LauncherPage.ResourceCenter, launcherPage) }
+        save("texture-theme-dashboard.png")
+    }
+
+    @Test
+    fun titleThemeKeepsItsImageOnModernDashboard() = runDesktopComposeUiTest(width = 1000, height = 700) {
+        activate("[menu]\nshowTitleBadge = false", withTitle = true)
+        menu()
+        onNodeWithTag("launcher-main-menu").assertIsDisplayed()
+        val logo = onNodeWithContentDescription("RWJS")
+        waitUntil(timeoutMillis = 10_000) {
+            val image = logo.captureToImage().toAwtImage()
+            image.getRGB(image.width / 2, image.height / 2) == 0xFF204080.toInt()
+        }
+        button("menu.home.resources").assertIsDisplayed()
+        save("title-theme-dashboard.png")
+    }
+
+    @Test
     fun resourceCenterUsesPageCardsAndKeepsEveryAction() = runDesktopComposeUiTest(width = 1280, height = 720) {
         val clicks = mutableListOf<String>()
         resources(clicks, includeExtra = true)
@@ -357,7 +386,7 @@ class MainMenuThemeTest {
         waitForIdle()
     }
 
-    private fun activate(config: String, withImages: Boolean = false) {
+    private fun activate(config: String, withImages: Boolean = false, withTitle: Boolean = false) {
         val dir = File(themesRoot, "test").apply { mkdirs() }
         File(dir, "theme.toml").writeText("[theme]\nid = \"test\"\nname = \"测试主题\"\n\n$config")
         if (withImages) {
@@ -365,6 +394,11 @@ class MainMenuThemeTest {
             val image = BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB)
             for (y in 0 until image.height) for (x in 0 until image.width) image.setRGB(x, y, 0xFF204080.toInt())
             ImageIO.write(image, "png", File(buttons, "multiplayer.png"))
+        }
+        if (withTitle) {
+            val image = BufferedImage(16, 8, BufferedImage.TYPE_INT_ARGB)
+            for (y in 0 until image.height) for (x in 0 until image.width) image.setRGB(x, y, 0xFF204080.toInt())
+            ImageIO.write(image, "png", File(dir, "title.png"))
         }
         ArtThemeController.scan()
         ArtThemeController.apply("test")

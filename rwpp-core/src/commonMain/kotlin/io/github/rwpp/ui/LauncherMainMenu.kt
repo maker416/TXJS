@@ -28,6 +28,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -43,13 +44,17 @@ import io.github.rwpp.coil.AccountAvatar
 import io.github.rwpp.coreVersion
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.projectVersion
+import io.github.rwpp.theme.ArtThemeController
+import coil3.compose.AsyncImage
 import io.github.rwpp.rwpp_core.generated.resources.*
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
 
 private val MenuWhite = Color(0xFFF2F5F3)
 private val MenuMuted = Color(0xFFACB5B1)
-private val MenuGreen = Color(0xFF5FCE89)
+private val MenuGreen: Color
+    @Composable get() = ArtThemeController.activeTheme?.takeIf { "primary" in it.spec.colors }?.colorScheme?.primary
+        ?: Color(0xFF5FCE89)
 
 /** 默认主菜单只叠加轻量遮罩；背景继续由平台既有的游戏/自定义背景负责。 */
 @Composable
@@ -64,6 +69,10 @@ internal fun LauncherMainMenu(
     friends: () -> Unit,
 ) {
     val appContext = koinInject<AppContext>()
+    val artTheme = ArtThemeController.activeTheme
+    val primaryAccent = if (artTheme != null && "primary" in artTheme.spec.colors) {
+        lerp(Color(0xFF14231B), MenuGreen, 0.52f)
+    } else Color(0xFF287D44)
     BoxWithConstraints(Modifier.fillMaxSize().testTag("launcher-main-menu")) {
         val short = maxHeight < 500.dp
         val narrow = maxWidth < 600.dp
@@ -99,18 +108,25 @@ internal fun LauncherMainMenu(
                     if (minimalHeight) 160.dp else if (compactLandscape) 240.dp else 490.dp,
                 )
                 Box(Modifier.width(logoWidth).height(logoWidth / 5f)) {
-                    Image(
-                        painterResource(Res.drawable.title), "RWJS",
-                        Modifier.fillMaxSize(), contentScale = ContentScale.Fit,
-                        colorFilter = ColorFilter.tint(MenuWhite),
-                    )
-                    // 沿用内置标志的几何轮廓，仅保留 J 的品牌绿。
-                    Image(
-                        painterResource(Res.drawable.title), null,
-                        Modifier.fillMaxSize().drawWithContent {
-                            clipRect(left = size.width * 0.53f, right = size.width * 0.775f) { this@drawWithContent.drawContent() }
-                        }, contentScale = ContentScale.Fit,
-                    )
+                    if (artTheme?.titleFile != null) {
+                        AsyncImage(
+                            model = artTheme.titleFile, contentDescription = "RWJS",
+                            modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit,
+                        )
+                    } else {
+                        Image(
+                            painterResource(Res.drawable.title), "RWJS",
+                            Modifier.fillMaxSize(), contentScale = ContentScale.Fit,
+                            colorFilter = ColorFilter.tint(MenuWhite),
+                        )
+                        // 沿用内置标志的几何轮廓，仅保留 J 的品牌绿。
+                        Image(
+                            painterResource(Res.drawable.title), null,
+                            Modifier.fillMaxSize().drawWithContent {
+                                clipRect(left = size.width * 0.53f, right = size.width * 0.775f) { this@drawWithContent.drawContent() }
+                            }, contentScale = ContentScale.Fit,
+                        )
+                    }
                 }
                 if (minimalHeight) {
                     Spacer(Modifier.height(12.dp))
@@ -127,7 +143,7 @@ internal fun LauncherMainMenu(
                 val primaryCards: @Composable RowScope.() -> Unit = {
                     LauncherMenuCard(
                         readI18n("menu.singlePlayerGame"), readI18n("menu.home.singleDescription"),
-                        singlePlayer, Modifier.weight(1f), primaryHeight, Color(0xFF287D44),
+                        singlePlayer, Modifier.weight(1f), primaryHeight, primaryAccent,
                         prominent = true, compact = compactLandscape,
                     ) { Icon(Icons.Default.Person, null, Modifier.size(if (compactLandscape) 32.dp else 44.dp), tint = MenuWhite) }
                     LauncherMenuCard(
@@ -141,7 +157,7 @@ internal fun LauncherMainMenu(
                     Column(verticalArrangement = Arrangement.spacedBy(gap)) {
                         LauncherMenuCard(
                             readI18n("menu.singlePlayerGame"), readI18n("menu.home.singleDescription"),
-                            singlePlayer, Modifier.fillMaxWidth(), 94.dp, Color(0xFF287D44), true,
+                            singlePlayer, Modifier.fillMaxWidth(), 94.dp, primaryAccent, true,
                         ) { Icon(Icons.Default.Person, null, Modifier.size(40.dp), tint = MenuWhite) }
                         LauncherMenuCard(
                             readI18n("menu.multiplayer"), readI18n("menu.home.multiDescription"),
@@ -196,10 +212,10 @@ internal fun LauncherMainMenu(
                 if (!narrow) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text("$coreVersion (app $projectVersion)", color = MenuMuted, fontSize = 12.sp)
-                        LauncherEditionBadge()
+                        if (artTheme?.spec?.menu?.showTitleBadge != false) LauncherEditionBadge()
                     }
                 } else {
-                    LauncherEditionBadge()
+                    if (artTheme?.spec?.menu?.showTitleBadge != false) LauncherEditionBadge()
                     Text("$coreVersion · $projectVersion", color = MenuMuted, fontSize = 9.sp,
                         modifier = Modifier.padding(top = 3.dp))
                 }

@@ -52,6 +52,10 @@ object ArtThemeController {
     ) {
         val id: String get() = spec.theme.id
 
+        /** 材质、配色或标题主题继续使用新版首页；只有定制菜单的主题才使用自有排布。 */
+        val hasCustomMenuLayout: Boolean
+            get() = spec.menu.layout != MenuLayoutSpec() || spec.menu.buttons.isNotEmpty() || buttonImages.isNotEmpty()
+
         /**
          * 游戏内贴图覆盖层（v4）：包内 `game/` 目录（镜像 assets 结构），
          * 仅在目录存在且含文件时非 null。

@@ -35,12 +35,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.platform.BackHandler
+import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.rwpp_core.generated.resources.*
 import org.jetbrains.compose.resources.painterResource
 
 private val ResourceText = Color(0xFFF0F4F2)
 private val ResourceMuted = Color(0xFFA5B2AB)
-private val ResourceAccent = Color(0xFF90D4AE)
+private val ResourceAccent: Color
+    @Composable get() = ArtThemeController.activeTheme?.takeIf { "primary" in it.spec.colors }?.colorScheme?.primary
+        ?: Color(0xFF90D4AE)
 
 /** 普通页面参与返回栈，子页关闭后回到这里；不创建原生弹窗或提前启动网页。 */
 @Composable
