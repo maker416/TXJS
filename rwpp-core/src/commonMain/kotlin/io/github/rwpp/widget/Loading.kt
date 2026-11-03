@@ -107,6 +107,7 @@ internal data class StructuredLoadingMessage(
     val detail: String?
 )
 
+/** 保留已编译扩展使用的原签名；普通及嵌套加载弹层继续使用原生窗口。 */
 @Composable
 fun LoadingView(
     visible: Boolean,
@@ -119,6 +120,37 @@ fun LoadingView(
     onLoadingFinished: () -> Unit = {},
     failureContent: (@Composable (ConnectionFailure, () -> Unit) -> Unit)? = null,
     externalFailure: ConnectionFailure? = null,
+    loadContent: suspend LoadingContext.() -> Boolean?
+) = LoadingView(
+    visible = visible,
+    onLoaded = onLoaded,
+    enableAnimation = enableAnimation,
+    cancellable = cancellable,
+    showProtectedModHint = showProtectedModHint,
+    showMemoryUsage = showMemoryUsage,
+    onLoadingFinished = onLoadingFinished,
+    failureContent = failureContent,
+    externalFailure = externalFailure,
+    inlineDesktop = false,
+    loadContent = loadContent,
+)
+
+/**
+ * 整窗根容器下的桌面重载提示使用内联遮罩。
+ * 游戏线程长时间解析模组时不泵 Win32 消息，此时新建原生 Dialog 的 pShow 会阻塞 EDT。
+ */
+@Composable
+fun LoadingView(
+    visible: Boolean,
+    onLoaded: () -> Unit,
+    enableAnimation: Boolean = true,
+    cancellable: Boolean = false,
+    showProtectedModHint: Boolean = false,
+    showMemoryUsage: Boolean = false,
+    onLoadingFinished: () -> Unit = {},
+    failureContent: (@Composable (ConnectionFailure, () -> Unit) -> Unit)? = null,
+    externalFailure: ConnectionFailure? = null,
+    inlineDesktop: Boolean,
     loadContent: suspend LoadingContext.() -> Boolean?
 ) {
     // 必须持有可取消的 Job：关闭对话框时立刻 cancel，避免退出动画期间后台仍跑完
@@ -138,7 +170,9 @@ fun LoadingView(
             cancelLoadIfRunning()
             onLoaded()
         },
-        enableDismiss = cancellable
+        enableDismiss = cancellable,
+        inlineDesktop = inlineDesktop,
+        onDismissStarted = ::cancelLoadIfRunning,
     ) { dismiss ->
         var cancel by remember { mutableStateOf(false) }
         var localFailure by remember { mutableStateOf<ConnectionFailure?>(null) }

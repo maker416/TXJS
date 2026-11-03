@@ -13,6 +13,7 @@ import io.github.rwpp.desktop.GameEngine
 import io.github.rwpp.desktop.IAClass
 import io.github.rwpp.desktop.DesktopGameThreadDispatcher
 import io.github.rwpp.desktop.DesktopReloadGlContext
+import io.github.rwpp.desktop.DesktopLoadedModSnapshot
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.ReloadModEvent
 import io.github.rwpp.event.events.ReloadModFinishedEvent
@@ -22,6 +23,8 @@ import io.github.rwpp.game.mod.Mod
 import io.github.rwpp.game.mod.ModLoadSafety
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.game.mod.ModReloadSelection
+import io.github.rwpp.game.mod.NetworkModCache
+import io.github.rwpp.game.mod.NetworkModDescriptor
 import io.github.rwpp.game.mod.ReloadAbortToVanilla
 import io.github.rwpp.game.mod.requireModSelectionApplied
 import io.github.rwpp.game.mod.resolveModEnabledByFileName
@@ -34,6 +37,8 @@ import io.github.rwpp.widget.refreshProtectedModLoadHint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.koin.core.annotation.Single
 import org.koin.core.component.get
@@ -47,6 +52,13 @@ class ModManagerImpl : ModManager {
 
     private val gameThreadDispatcher by lazy {
         DesktopGameThreadDispatcher(game::post, DesktopReloadGlContext::isOwnerThread)
+    }
+
+    override suspend fun isLoadedModSetExact(
+        descriptors: List<NetworkModDescriptor>, cache: NetworkModCache,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val context = currentCoroutineContext()
+        !isReloadingMods.get() && DesktopLoadedModSnapshot.isExact(getAllMods(), descriptors, cache, context::ensureActive)
     }
 
     override suspend fun modReload(forceImmediate: Boolean, enabledByFileName: Map<String, Boolean>?) =
@@ -63,6 +75,7 @@ class ModManagerImpl : ModManager {
         if (!isReloadingMods.compareAndSet(false, true)) {
             error("模组仍在重载，请等待完成")
         }
+        val loadedSnapshotToken = DesktopLoadedModSnapshot.beginLoad()
         try {
             logger.info("[MODSYNC] modReload start, broadcasting ReloadModEvent (forceImmediate=$forceImmediate)")
             game.invalidateModPlaytimeSnapshot()
@@ -83,6 +96,7 @@ class ModManagerImpl : ModManager {
                 isReloadingMods.set(false)
             }
         }
+        DesktopLoadedModSnapshot.completeLoad(loadedSnapshotToken, getAllMods())
     }
 
     /**
@@ -94,6 +108,7 @@ class ModManagerImpl : ModManager {
         if (!isReloadingMods.compareAndSet(false, true)) {
             error("模组仍在重载，请等待完成")
         }
+        val loadedSnapshotToken = DesktopLoadedModSnapshot.beginLoad()
         try {
             logger.info("[MODSYNC] modReloadKeepConnected start, broadcasting ReloadModEvent")
             game.invalidateModPlaytimeSnapshot()
@@ -138,6 +153,7 @@ class ModManagerImpl : ModManager {
                 isReloadingMods.set(false)
             }
         }
+        DesktopLoadedModSnapshot.completeLoad(loadedSnapshotToken, getAllMods())
     }
 
     override suspend fun modReloadKeepConnectedVanillaOnly() {
@@ -148,6 +164,7 @@ class ModManagerImpl : ModManager {
         if (!isReloadingMods.compareAndSet(false, true)) {
             error("模组仍在重载，请等待完成")
         }
+        val loadedSnapshotToken = DesktopLoadedModSnapshot.beginLoad()
         try {
             game.invalidateModPlaytimeSnapshot()
             gameThreadDispatcher.run { KeepConnectedReload.begin() }
@@ -180,6 +197,7 @@ class ModManagerImpl : ModManager {
             clearProtectedModLoadHint()
             isReloadingMods.set(false)
         }
+        DesktopLoadedModSnapshot.completeLoad(loadedSnapshotToken, getAllMods())
     }
 
     private fun allModsDisabledByFileName(): Map<String, Boolean> =
@@ -336,6 +354,7 @@ class ModManagerImpl : ModManager {
     private suspend fun auxiliaryReload(stage: String, action: () -> Unit) {
         io.github.rwpp.game.GameStartSafety.requireCanReload()
         check(isReloadingMods.compareAndSet(false, true)) { "模组仍在重载，请等待完成" }
+        val loadedSnapshotToken = DesktopLoadedModSnapshot.beginLoad()
         try {
             game.invalidateModPlaytimeSnapshot()
             gameThreadDispatcher.run {
@@ -346,6 +365,7 @@ class ModManagerImpl : ModManager {
             game.invalidateModPlaytimeSnapshot()
             isReloadingMods.set(false)
         }
+        DesktopLoadedModSnapshot.completeLoad(loadedSnapshotToken, getAllMods())
     }
 
     override fun getModByName(name: String): Mod? {

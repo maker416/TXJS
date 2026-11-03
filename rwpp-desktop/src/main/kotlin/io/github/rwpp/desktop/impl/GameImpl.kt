@@ -188,6 +188,7 @@ class GameImpl : AbstractGame() {
         }
 
         container.post {
+            val loadedSnapshotToken = io.github.rwpp.desktop.DesktopLoadedModSnapshot.beginLoad()
             io.github.rwpp.game.mod.ModLoadSafety.run("startup") {
             DesktopReloadGlContext.initialize(Display.getDrawable())
             val nHelper = object : n() {
@@ -363,6 +364,7 @@ class GameImpl : AbstractGame() {
 
             //Display.destroy()
             }
+            io.github.rwpp.desktop.DesktopLoadedModSnapshot.completeLoad(loadedSnapshotToken, appKoin.get<ModManager>().getAllMods())
             startup.completeInitialization()
         }
 

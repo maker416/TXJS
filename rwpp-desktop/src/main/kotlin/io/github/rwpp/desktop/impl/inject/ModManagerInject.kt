@@ -9,6 +9,7 @@ package io.github.rwpp.desktop.impl.inject
 
 import com.corrodinggames.rts.gameFramework.i.a
 import com.corrodinggames.rts.gameFramework.i.b
+import io.github.rwpp.desktop.DesktopLoadedModSnapshot
 import io.github.rwpp.game.mod.ModReloadSelection
 import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
@@ -42,5 +43,6 @@ object ModManagerInject {
                 mod.f = !enabled
             }
         }
+        DesktopLoadedModSnapshot.beforeLoad(mods)
     }
 }

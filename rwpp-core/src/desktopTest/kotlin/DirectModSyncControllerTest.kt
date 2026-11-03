@@ -15,6 +15,8 @@ import io.github.rwpp.net.ConnectionFailureReason
 import io.github.rwpp.net.ConnectionFailureStage
 import io.github.rwpp.net.sync.direct.DirectJoinEndpoint
 import io.github.rwpp.net.sync.direct.DirectModManifest
+import io.github.rwpp.net.sync.direct.DirectModDownloadPhase
+import io.github.rwpp.net.sync.direct.DirectModDownloadProgress
 import io.github.rwpp.net.sync.direct.DirectModSyncErrorCode
 import io.github.rwpp.net.sync.direct.DirectModSyncServerException
 import io.github.rwpp.net.sync.direct.DirectModSyncTransport
@@ -30,6 +32,59 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 
 class DirectModSyncControllerTest {
+    @Test
+    fun loadedContentSkipsParsingButStillRechecksManifestAndChecksum() = runBlocking<Unit> {
+        val value = manifest(emptyList()).copy(hostUnitsChecksum = 123)
+        val transport = FakeTransport().also { it.manifestResults += { value }; it.manifestResults += { value } }
+        val environment = FakeEnvironment().also { it.loaded = true; it.checksum = 123 }
+        val subject = controller(environment, transport)
+        assertIs<DirectJoinSyncResult.Applied>(subject.preJoinSync("localhost", LoadingContext {}))
+        assertTrue(environment.applied.isEmpty())
+        assertTrue(environment.refreshed)
+        assertEquals(2, transport.manifestCalls)
+        assertFalse(subject.isApplyingMods.value)
+
+        val mismatchTransport = FakeTransport().also { it.manifestResults += { value }; it.manifestResults += { value } }
+        environment.checksum = 124
+        environment.refreshed = false
+        val result = controller(environment, mismatchTransport).preJoinSync("localhost", LoadingContext {})
+        assertEquals(ConnectionFailureReason.CHECKSUM_MISMATCH, assertIs<DirectJoinSyncResult.Failed>(result).failure.reason)
+        assertFalse(environment.refreshed)
+    }
+
+    @Test
+    fun existingJoinLoaderOwnsApplyUntilItCompletesOrFails() = runBlocking<Unit> {
+        val value = manifest(emptyList())
+        val transport = FakeTransport().also { it.manifestResults += { value }; it.manifestResults += { value } }
+        val environment = FakeEnvironment()
+        val subject = controller(environment, transport)
+        environment.onApply = {
+            assertTrue(subject.isApplyingMods.value)
+            throw CancellationException("cancelled apply")
+        }
+        assertFailsWith<CancellationException> { subject.preJoinSync("localhost", LoadingContext {}) }
+        assertFalse(subject.isApplyingMods.value)
+        assertFalse(environment.refreshed)
+    }
+
+    @Test
+    fun byteAndVerificationProgressReachTheJoinLoader() = runBlocking<Unit> {
+        val descriptor = NetworkModDescriptor.fromBytes("m", byteArrayOf(1, 2))
+        val value = manifest(listOf(descriptor))
+        val progress = DirectModDownloadProgress(DirectModDownloadPhase.DOWNLOADING, 1, 2)
+        val transport = FakeTransport().also {
+            it.manifestResults += { value }; it.manifestResults += { value }
+            it.progress += progress
+            it.progress += progress.copy(phase = DirectModDownloadPhase.VERIFYING, downloadedBytes = 2)
+            it.progress += progress.copy(phase = DirectModDownloadPhase.CACHING, downloadedBytes = 2)
+        }
+        val messages = mutableListOf<String>()
+        assertIs<DirectJoinSyncResult.Applied>(controller(FakeEnvironment(), transport)
+            .preJoinSync("localhost", LoadingContext { messages += it }))
+        assertEquals(7, messages.size)
+        transport.progress.forEach { assertTrue(directDownloadMessage(1, 1, descriptor.name, it) in messages) }
+    }
+
     @Test
     fun onlyInitialUnsupportedAllowsRelayFallback() = runBlocking<Unit> {
         val transport = FakeTransport()
@@ -217,10 +272,19 @@ class DirectModSyncControllerTest {
         val downloads = mutableListOf<NetworkModDescriptor>()
         var manifestCalls = 0
         var onDownload: (NetworkModDescriptor) -> Unit = {}
+        val progress = mutableListOf<DirectModDownloadProgress>()
         override suspend fun getManifest(): DirectModManifest = manifestResults[manifestCalls++].invoke()
         override suspend fun download(descriptor: NetworkModDescriptor, stagingDirectory: File?) {
             downloads += descriptor
             onDownload(descriptor)
+        }
+        override suspend fun downloadWithProgress(
+            descriptor: NetworkModDescriptor,
+            stagingDirectory: File?,
+            onProgress: suspend (DirectModDownloadProgress) -> Unit,
+        ) {
+            download(descriptor, stagingDirectory)
+            progress.forEach { onProgress(it) }
         }
     }
 
@@ -229,8 +293,10 @@ class DirectModSyncControllerTest {
         val applied = mutableListOf<List<NetworkModDescriptor>>()
         var checksum = 0
         var refreshed = false
+        var loaded = false
         var onApply: () -> Unit = {}
         override fun getAllMods(): List<Mod> = emptyList()
+        override suspend fun isLoadedModSetExact(descriptors: List<NetworkModDescriptor>) = loaded
         override suspend fun applyMods(descriptors: List<NetworkModDescriptor>) {
             onApply()
             applied += descriptors

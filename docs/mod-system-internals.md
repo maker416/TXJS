@@ -11,6 +11,10 @@ PC 使用原版的 `mods/units/`，导入、资源浏览器下载、网络缓存
 
 PC 普通重载由 `DesktopGameThreadDispatcher` 调度到原版 GL 游戏线程，未开始任务超时只撤销、报错，不切 IO 内联。保连接重载由 `DesktopReloadGlContext` 在工作线程绑定共享上下文，主线程继续网络 tick 并暂时跳过绘制；结束后清 Slick 纹理绑定缓存。共享上下文不可用时明确失败，不能退回无 GL 上下文解析。
 
+Windows 上普通重载会占用 LWJGL 游戏线程，该线程同时负责原生子窗口消息泵。在解析期间新建原生 Dialog，可能使 Swing EDT 卡在 `WComponentPeer.pShow` 等待游戏线程，表现为整个启动器无响应。App 根容器的重载及取消提示使用内联遮罩，普通/嵌套弹层仍保留原生 Dialog；Direct 应用阶段复用已有入房加载框，不再叠加第二个重载窗口。真实引擎隔离探针中，同一 1049 单位模组旧版重载 25.99 秒、EDT 连续阻塞 26.17 秒；修复后完整新版重载 23.87 秒，期间处理 227 次心跳，最大延迟 323ms。首次解析仍需等待，不能把界面恢复响应等同于解析时间已经消除。
+
+Direct 下载通过 `downloadWithProgress` 上报累计已收字节（含续传保留部分）、校验和缓存阶段，字节进度每 200ms 最多更新一次。PC 的 `LoadedModSnapshot` 只在启动或重载成功后发布，核对解析前后来源指纹、实际内容 SHA-256 与启用集合；查询再次核对当前文件。仅当它与二次 manifest 完全一致时跳过重复解析，仍执行核心 checksum 检查。仅修改启用开关、文件替换、加载失败和未知快照均不能跳过；Android 默认不启用此优化。
+
 PC 每次启动保存独立的 `logs/rwjs-*.log`，保留最近 10 次；目录不可写时回落到 `%LOCALAPPDATA%/RWJS/logs`。日志覆盖引擎输出、启动器日志、未捕获异常、游戏更新异常、窗口关闭和主动退出来源堆栈；`Runtime.halt` 前主动刷新，不能只依赖 JVM shutdown hook。游戏循环遥测与同类更新异常最多每分钟输出一次，避免刷屏淹没关键事件。安装版及启动脚本将 JVM 原生崩溃报告保存到 `logs/hs_err_pid*.log`；断连 EOF 本身不能作为窗口崩溃的证据。
 
 ## 1. 核心类映射
@@ -296,11 +300,12 @@ ModName1|/path/to/mod1.rwmod|enabled,ModName2|/path/to/mod2.rwmod|disabled
 
 ### 10.1 原版的三道模组关卡
 
-- **注册握手（包 110 REGISTER_CONNECTION，服务器侧）**：桌面 `ad.c(au)` / Android `ae.a(bi)` 的 case 110 依次检查名字长度 → 封禁 → 版本 → **单位校验和**（`l.z():I` / Android `k.r():I`，即 getAllUnitsChecksum；不匹配则 `"New Player kicked: Unit checksum mismatch"` + `sendKick(c, "Your core units are different to the server's core units. Game can not be synchronized")` + `c.a("kicked")`，见 `build/tmp-decompile/work/ad_code.txt:6622-6650`、`ae_android_full.txt:10396-10425`）→ 完整性应答 → 房间锁/已开局/密码。该校验和由当前启用模组集合决定，模组不一致的客户端**连房间都进不去**。
+- **注册握手（包 110 REGISTER_CONNECTION，服务器侧）**：桌面 `ad.c(au)` / Android `ae.a(bi)` 的 case 110 依次检查名字长度 → 封禁 → 版本 → **核心单位校验和**（`l.z():I` / Android `k.r():I`，即 getAllUnitsChecksum；不匹配则 `"New Player kicked: Unit checksum mismatch"` + `sendKick(c, "Your core units are different to the server's core units. Game can not be synchronized")` + `c.a("kicked")`，见 `build/tmp-decompile/work/ad_code.txt:6622-6650`、`ae_android_full.txt:10396-10425`）→ 完整性应答 → 房间锁/已开局/密码。桌面该值是 init 时保存的内置核心校验，并不代表当前启用模组内容；自定义单位另走下述定义校验。
 - **缺单位自断（客户端，注册后立刻）**：主机把要求的单位表塞进注册/房间信息；客户端 `l.a(j)` 读完整段后对缺失项调用 `l.a(ab, HashMap)` 抛 `custom.bw`，`ae.a(bi)`/`ad.c(au)` 捕获后 `b("Missing unit:"+msg)` 自断并 `closeBattleroom`。握手放行只绕过校验和，**不**过这一关——下载未完成时聊天必然 `not networked`。RWPP 在 `shouldDeferMissingUnitsCheck()` 为真时跳过该抛出并兜底拦截 `Missing unit:` 自断，连接保持到带外同步完成。
 - **开局推送**：SERVER_INFO(106) 时服务器把全量单位表推给客户端覆盖本地；客户端缺单位定义直接抛异常断连（"Server sync mismatch"）。同步完成前开局门控应挡住；完成后单位表已齐，这一关按原版走。
 - 校验和踢人之后仍有兜底价值：RWPP 放行只是跳过踢人，客户端必须在开局前完成下载+重载，否则开局推送阶段照样崩。
-- **校验和是 init 缓存值**：`l.z()`/`k.r()` 返回的字段只在引擎完整 init 时由 `ce.bt()`（桌面 `am.bM()`）实时计算并缓存，模组重载（`bW.a(false,false)`）**不会刷新**（`ce.bt()` 全库仅引擎 init 一处调用）。因此模组同步的注册/校验（`Game.getUnitsChecksum()`）改用实时重算；保连接重载成功后还须 `Game.refreshHandshakeChecksumCache()` 把 Android 字段 `c` / 桌面字段 `d` 写成新值，否则包 110 **发送端**仍读旧缓存。`redirectUnitsChecksum` 的回退分支仍返回该字段（写入后即新值，与原版握手行为一致）。
+- **桌面保留稳定 init 缓存（本次修复）**：`Game.getUnitsChecksum()` 读取原版 `l.z()`（字段 `d`），`refreshHandshakeChecksumCache()` 不再写缓存。实时 `am.bM()` 只折叠 52 种内置单位；建造者、运输艇的模板参数读取当前菜单地图水陆状态，实时结果会漂移，不能用于覆盖包 110 的缓存。模组文件 SHA-256、实际启用集合与原版自定义单位定义校验须分开处理，不能用核心 checksum 代替。
+- **Android 尚未调整**：仍使用实时 `ce.bt()` 并在握手准备时写字段 `c`；须独立核对 Android 的单位范围、地形依赖和调用线程，再逐点验证，不能将桌面修复结论直接套用到 Android。
 
 ### 10.2 RWPP 握手放行（`shouldAllowMismatch`）
 
@@ -332,7 +337,7 @@ ModName1|/path/to/mod1.rwmod|enabled,ModName2|/path/to/mod2.rwmod|disabled
 
 - Android `BaseEngineInject.onMainLoop`（`a(float,int)`）、桌面 `GameInject.onMainLoop`（`b(float,int)`）只泵网络并 `InterruptResult` 跳过原方法体（避免单位 tick 与注册表重建打架）。
 - 看门狗线程 `rwpp-modsync-net-watchdog`：若超过约 50ms 主循环未 `markGameTick`（GameView 暂停等），补调同一对网络方法；与主循环用 `lastGameTickAt` 互斥，避免双泵。
-- 结束后写回握手校验和缓存。
+- 结束后调用平台握手准备钩子；桌面保持原版核心缓存，Android 原实现待独立验证（见 10.1）。
 - apply 后读 `gameRoom.isConnecting`：须**连续稳定约 1s** 才算活着（`directJoinServer` 在 relay TCP 成功即返回，随后 `PACKET_RECONNECT_TO` 还会再断一次）；仍连接则 upsert `phase=synced`；已死则保持 `applying` Presence（握手放行要求 `phase != synced`）并用本轮加入地址重连（再等稳定），失败 `failInRoom`，禁止僵尸房。
 - 仍吞 `OutOfMemoryError` 并置 `UI.modReloadMemoryExhausted`。
 
