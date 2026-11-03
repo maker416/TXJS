@@ -57,6 +57,88 @@ class DirectModSyncProtocolTest {
     }
 
     @Test
+    fun rejectsMalformedUtf8BooleanAndMissingManifestIdentity() {
+        val malformedUtf8 = DirectModSyncProtocol.encodeManifest(manifest)
+        // 帧头、版本和字符串长度之后是 gameVersion 的首字节。
+        malformedUtf8[16] = 0xc0.toByte()
+        assertFailsWith<IOException> { DirectModSyncProtocol.readManifest(malformedUtf8.inputStream()) }
+
+        val invalidBoolean = DirectModSyncProtocol.encodeManifest(manifest)
+        val lobbyOffset = 8 + 4 + 4 + manifest.gameVersion.toByteArray().size +
+            4 + manifest.scope.toByteArray().size + 4 + manifest.status.toByteArray().size
+        invalidBoolean[lobbyOffset] = 2
+        assertFailsWith<IOException> { DirectModSyncProtocol.readManifest(invalidBoolean.inputStream()) }
+
+        listOf(manifest.copy(scope = ""), manifest.copy(gameVersion = " "), manifest.copy(status = "")).forEach {
+            assertFailsWith<IOException> {
+                DirectModSyncProtocol.readManifest(DirectModSyncProtocol.encodeManifest(it).inputStream())
+            }
+        }
+    }
+
+    @Test
+    fun rejectsConflictingSizesForTheSameContentHash() {
+        assertFailsWith<IOException> {
+            validateManifest(manifest.copy(mods = listOf(descriptor, descriptor.copy(name = "other", payloadSize = 4))))
+        }
+    }
+
+    @Test
+    fun contentRecheckIncludesGameAndProtocolVersion() {
+        assertFalse(manifest.sameRoomContent(manifest.copy(gameVersion = "other")))
+        assertFalse(manifest.sameRoomContent(manifest.copy(protocolVersion = 2)))
+    }
+
+    @Test
+    fun leaseRequestsAndResponsesMatchV2GoldenBytes() {
+        val token = ByteArray(32) { it.toByte() }
+        val request = ByteArrayOutputStream()
+        DirectModSyncProtocol.writeLeaseRequest(request, DirectModSyncProtocol.RESERVE, "scope", token)
+        assertEquals("54584a534d44320a00000029000000060000000573636f7065" + token.toHex(), request.toByteArray().toHex())
+        val lease = DirectModLease("scope", 45_000, 15_000, "reserved", 2, 10, 1)
+        val response = DirectModSyncProtocol.encodeLease(lease)
+        assertEquals("00000031000000070000000573636f7065000000000000afc80000000000003a98000000087265736572766564000000020000000a00000001", response.toHex())
+        assertEquals(lease, DirectModSyncProtocol.readLease(response.inputStream(), "scope"))
+        assertEquals("000000000000000a", DirectModSyncProtocol.encodeReleased().toHex())
+        DirectModSyncProtocol.readReleased(DirectModSyncProtocol.encodeReleased().inputStream())
+    }
+
+    @Test
+    fun rejectsInvalidLeaseScopeStateLifetimeAndCapacity() {
+        val lease = DirectModLease("scope", 45_000, 15_000, "reserved", 2, 10, 1)
+        listOf(
+            lease.copy(scope = "old"), lease.copy(ttlMillis = 0), lease.copy(ttlMillis = 999),
+            lease.copy(ttlMillis = 300_001), lease.copy(ttlMillis = Long.MAX_VALUE), lease.copy(renewAfterMillis = -1),
+            lease.copy(renewAfterMillis = 45_000), lease.copy(state = "unknown"),
+            lease.copy(occupiedSlots = -1), lease.copy(occupiedSlots = 11),
+            lease.copy(reservedSlots = -1), lease.copy(reservedSlots = 3), lease.copy(reservedSlots = 11), lease.copy(slotLimit = -1),
+        ).forEach {
+            assertFailsWith<IOException> { DirectModSyncProtocol.readLease(DirectModSyncProtocol.encodeLease(it).inputStream(), "scope") }
+        }
+        val trailing = DirectModSyncProtocol.encodeLease(lease) + 0
+        java.nio.ByteBuffer.wrap(trailing).putInt(trailing.size - 8)
+        assertFailsWith<IOException> { DirectModSyncProtocol.readLease(trailing.inputStream(), "scope") }
+        val invalidReleased = DirectModSyncProtocol.encodeReleased() + 0
+        java.nio.ByteBuffer.wrap(invalidReleased).putInt(1)
+        assertFailsWith<IOException> { DirectModSyncProtocol.readReleased(invalidReleased.inputStream()) }
+        assertFailsWith<IllegalArgumentException> {
+            DirectModSyncProtocol.writeLeaseRequest(ByteArrayOutputStream(), DirectModSyncProtocol.RESERVE, "scope", ByteArray(31))
+        }
+    }
+
+    @Test
+    fun leaseAndReleaseKeepServerErrors() {
+        DirectModSyncErrorCode.entries.forEach { code ->
+            assertEquals(code, assertFailsWith<DirectModSyncServerException> {
+                DirectModSyncProtocol.readLease(DirectModSyncProtocol.encodeError(code).inputStream(), "scope")
+            }.code)
+            assertEquals(code, assertFailsWith<DirectModSyncServerException> {
+                DirectModSyncProtocol.readReleased(DirectModSyncProtocol.encodeError(code).inputStream())
+            }.code)
+        }
+    }
+
+    @Test
     fun rejectsFileCountAndTotalSizeLimitViolations() {
         assertFailsWith<IOException> {
             validateManifest(manifest.copy(mods = listOf(descriptor.copy(payloadSize = DIRECT_MOD_SYNC_MAX_FILE_BYTES + 1))))

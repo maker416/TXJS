@@ -26,6 +26,8 @@ import io.github.rwpp.inject.RedirectMethod
 import io.github.rwpp.net.Client
 import io.github.rwpp.net.InternalPacketType
 import io.github.rwpp.net.Net
+import io.github.rwpp.net.sync.direct.DirectJoinReservationCredentials
+import io.github.rwpp.net.sync.direct.DIRECT_JOIN_RESERVATION_QUERY_PREFIX
 import io.github.rwpp.ui.UI
 import java.io.ByteArrayInputStream
 import java.io.DataInputStream
@@ -34,6 +36,14 @@ import java.io.IOException
 
 @InjectClass(ad::class)
 object NetworkInject {
+    /** 沿用原版 preregistration query，不把短期租约写进连接地址或 relay UUID。 */
+    @Inject("a", InjectMode.InsertBefore, "(Ljava/net/Socket;)Z")
+    fun ad.applyDirectReservationCredential(socket: java.net.Socket): Any {
+        val query = DirectJoinReservationCredentials.queryFor(socket)
+        if (query != null || L?.startsWith(DIRECT_JOIN_RESERVATION_QUERY_PREFIX) == true) L = query
+        return Unit
+    }
+
     @Inject("a", injectMode = InjectMode.InsertBefore)
     fun onBanUnits(netPacket: e): Any {
         // 服务器侧拦截：收到被禁单位的命令时直接丢弃，不再入队与转发。

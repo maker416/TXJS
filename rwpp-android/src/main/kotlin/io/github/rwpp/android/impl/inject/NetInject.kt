@@ -36,6 +36,8 @@ import io.github.rwpp.inject.RedirectMethod
 import io.github.rwpp.net.Client
 import io.github.rwpp.net.InternalPacketType
 import io.github.rwpp.net.Net
+import io.github.rwpp.net.sync.direct.DirectJoinReservationCredentials
+import io.github.rwpp.net.sync.direct.DIRECT_JOIN_RESERVATION_QUERY_PREFIX
 import io.github.rwpp.ui.UI
 import io.github.rwpp.utils.Reflect
 import java.io.ByteArrayInputStream
@@ -44,6 +46,14 @@ import java.util.*
 
 @InjectClass(ae::class)
 object NetInject {
+    /** 只在 Socket 已连接且与租约目标匹配后设置原版包 160 的 query。 */
+    @Inject("a", InjectMode.InsertBefore, "(Ljava/net/Socket;)Z")
+    fun ae.applyDirectReservationCredential(socket: java.net.Socket): Any {
+        val query = DirectJoinReservationCredentials.queryFor(socket)
+        if (query != null || N?.startsWith(DIRECT_JOIN_RESERVATION_QUERY_PREFIX) == true) N = query
+        return Unit
+    }
+
 
     /** 原版 `drawable/icon` 来自游戏 res，仓库默认不收录；缺失时回退启动器图标。 */
     private fun multiplayerNotificationIcon(context: android.content.Context): Int {

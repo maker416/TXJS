@@ -76,7 +76,11 @@ fun connectionFailure(
         .distinct().joinToString("\n")
     causes.forEach { cause ->
         val reason = when (cause) {
-            is DirectModSyncServerException -> ConnectionFailureReason.valueOf(cause.code.name)
+            is DirectModSyncServerException -> when (cause.code) {
+                io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.LEASE_EXPIRED,
+                io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.LEASE_INVALID -> ConnectionFailureReason.SYNC_FAILED
+                else -> ConnectionFailureReason.valueOf(cause.code.name)
+            }
             is SocketTimeoutException, is TimeoutException -> ConnectionFailureReason.TIMEOUT
             is UnknownHostException, is UnresolvedAddressException -> ConnectionFailureReason.DNS
             is NoRouteToHostException -> ConnectionFailureReason.UNREACHABLE
