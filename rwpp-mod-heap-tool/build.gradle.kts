@@ -5,9 +5,25 @@
  * https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
  */
 
+import java.util.zip.ZipFile
+
 plugins {
     kotlin("jvm")
     application
+}
+
+// 与 rwpp-desktop 相同：android.jar 只取游戏库缺失的 android 兼容类，
+// 其中的 java.* 占位类会遮蔽 JDK（File.toPath、Process.waitFor(long, TimeUnit) 等无法解析）。
+val heapAndroidCompatJar = tasks.register<Jar>("heapAndroidCompatJar") {
+    archiveFileName.set("rwjs-heap-android-compat.jar")
+    destinationDirectory.set(layout.buildDirectory.dir("generated/android-compat"))
+    val gameLib = rootProject.file("lib/game-lib.jar")
+    inputs.file(gameLib)
+    val engineEntries = ZipFile(gameLib).use { jar -> jar.entries().asSequence().map { it.name }.toSet() }
+    from(zipTree(rootProject.file("lib/android.jar"))) {
+        include("android/**/*.class", "dalvik/**/*.class", "javax/microedition/**/*.class", "org/xmlpull/**/*.class")
+        exclude { it.path in engineEntries }
+    }
 }
 
 dependencies {
@@ -16,9 +32,12 @@ dependencies {
     implementation(files(rootProject.file("lib/game-lib.jar")))
     implementation(fileTree(rootProject.file("lib")) {
         include("*.jar")
-        exclude("game-lib.jar", "android-game-lib.jar", "android-platform-lib.jar", "natives-*.jar")
+        exclude("game-lib.jar", "android-game-lib.jar", "android-platform-lib.jar", "android.jar", "natives-*.jar")
     })
+    implementation(files(heapAndroidCompatJar))
     testImplementation(kotlin("test-junit"))
+    // ModReloadRetentionIntegrationTest 调用桌面客户端实际使用的缓存清理（DesktopModResourceCache）。
+    testImplementation(project(":rwpp-desktop"))
 }
 
 application {
@@ -53,10 +72,14 @@ tasks.register<JavaExec>("measureModHeap") {
 
 tasks.test {
     systemProperty("rwpp.heap.workerClasspath", sourceSets.main.get().runtimeClasspath.asPath)
+    // 重载残留复现的子进程入口在测试源码中。
+    systemProperty("rwpp.heap.testWorkerClasspath", sourceSets.test.get().runtimeClasspath.asPath)
     // 显式开启真核心集成测试；常规 CI 无 GPU/游戏资源仍能运行对象图与界面测试。
     System.getProperty("rwpp.heap.integrationGameRoot")?.let {
         systemProperty("rwpp.heap.integrationGameRoot", it)
     }
+    // -Drwpp.retention.sweep=false：关闭缓存清理，复现原版残留作对照。
+    System.getProperty("rwpp.retention.sweep")?.let { systemProperty("rwpp.retention.sweep", it) }
 }
 
 tasks.register<Jar>("packageTool") {

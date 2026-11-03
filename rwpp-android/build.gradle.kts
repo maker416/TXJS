@@ -43,6 +43,8 @@ dependencies {
     ksp("io.insert-koin:koin-ksp-compiler:$koinAnnotationsVersion")
     ksp(project(":rwpp-ksp"))
     testImplementation(kotlin("test-junit"))
+    // AndroidModResourceCacheTest 用真实引擎类验证适配器字段绑定（主源集为 compileOnly）。
+    testImplementation(files(rootProject.file("lib/android-game-lib.jar")))
     testImplementation("org.javassist:javassist:3.30.2-GA")
     testImplementation("net.peanuuutz.tomlkt:tomlkt:0.3.7")
     testImplementation("org.robolectric:robolectric:4.17")

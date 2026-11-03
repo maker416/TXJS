@@ -45,6 +45,9 @@ import org.koin.core.component.get
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
+private typealias DetachedResources = io.github.rwpp.game.mod.DetachedModResources<
+    com.corrodinggames.rts.gameFramework.m.e, com.corrodinggames.rts.gameFramework.a.i>?
+
 @Single
 class ModManagerImpl : ModManager {
     private val game: Game = get()
@@ -85,6 +88,8 @@ class ModManagerImpl : ModManager {
             gameThreadDispatcher.run {
                 DesktopReloadGlContext.requireOwnerContext()
                 runReloadCore(enabledByFileName, refreshGameArt)
+                // 重载成功后才到这里：释放本轮未使用的贴图/音效缓存（需主 GL 上下文）。
+                DesktopModResourceCache.sweep()
                 appKoin.get<Game>().getAllMaps(true)
             }
             logger.info("[MODSYNC] modReload main work finished")
@@ -116,6 +121,7 @@ class ModManagerImpl : ModManager {
             refreshProtectedModLoadHint(getAllMods(), enabledByFileName)
             gameThreadDispatcher.run { KeepConnectedReload.begin() }
             val watchdog = startNetWatchdog()
+            var detached: DetachedResources = null
             try {
                 withContext(Dispatchers.IO) {
                     DesktopReloadGlContext.withSharedContext {
@@ -127,6 +133,8 @@ class ModManagerImpl : ModManager {
                             aborted = true
                         }
                         runVanillaFallbackIfRequested(aborted)
+                        // 只移出缓存；GL 纹理与 Slick 缓存在 finishKeepConnectedReload 的游戏线程上释放。
+                        detached = DesktopModResourceCache.detach()
                     }
                 }
                 if (!io.github.rwpp.game.GameStartSafety.requiresRestart) {
@@ -134,7 +142,7 @@ class ModManagerImpl : ModManager {
                 }
             } finally {
                 withContext(NonCancellable) {
-                    try { finishKeepConnectedReload() } finally {
+                    try { finishKeepConnectedReload(detached) } finally {
                         watchdog.interrupt()
                         watchdog.join(2_000L)
                     }
@@ -169,11 +177,13 @@ class ModManagerImpl : ModManager {
             game.invalidateModPlaytimeSnapshot()
             gameThreadDispatcher.run { KeepConnectedReload.begin() }
             val watchdog = startNetWatchdog()
+            var detached: DetachedResources = null
             try {
                 withContext(Dispatchers.IO) {
                     DesktopReloadGlContext.withSharedContext {
                         KeepConnectedReload.disarmAbortInject()
                         runVanillaFallbackIfRequested(aborted = true)
+                        detached = DesktopModResourceCache.detach()
                     }
                 }
                 if (!io.github.rwpp.game.GameStartSafety.requiresRestart) {
@@ -181,7 +191,7 @@ class ModManagerImpl : ModManager {
                 }
             } finally {
                 withContext(NonCancellable) {
-                    try { finishKeepConnectedReload() } finally {
+                    try { finishKeepConnectedReload(detached) } finally {
                         watchdog.interrupt()
                         watchdog.join(2_000L)
                     }
@@ -216,7 +226,7 @@ class ModManagerImpl : ModManager {
         KeepConnectedReload.markVanillaFallbackDone()
     }
 
-    private suspend fun finishKeepConnectedReload() {
+    private suspend fun finishKeepConnectedReload(detached: DetachedResources) {
         try {
             if (!io.github.rwpp.game.GameStartSafety.requiresRestart && KeepConnectedReload.shouldRefreshMenuAfterAbort) {
                 logger.info("[MODSYNC] refresh menu after abort-to-vanilla, before releasing keep-connected gate")
@@ -226,7 +236,11 @@ class ModManagerImpl : ModManager {
             logger.warn("[MODSYNC] refresh menu after abort failed: ${e.message}")
         }
         try {
-            gameThreadDispatcher.run { DesktopReloadGlContext.resetOwnerTextureBinding() }
+            gameThreadDispatcher.run {
+                // 闸门仍开、主循环不绘制：在主 GL 上下文删除已移出的纹理，再重建 Slick 绑定缓存。
+                try { DesktopModResourceCache.release(detached) }
+                finally { DesktopReloadGlContext.resetOwnerTextureBinding() }
+            }
         } finally {
             KeepConnectedReload.end()
         }
@@ -340,18 +354,21 @@ class ModManagerImpl : ModManager {
     }
 
     override suspend fun modReregister() {
-        auxiliaryReload("reregister") { GameEngine.B().bZ.a(false, false) }
+        auxiliaryReload("reregister") { GameEngine.B().bZ.a(false, false); true }
     }
 
     override suspend fun modSaveChange(enabledByFileName: Map<String, Boolean>?) {
         auxiliaryReload("save-reload") {
             val b = GameEngine.B()
             saveModSelection(enabledByFileName)
-            if (!b.bX.B) reloadUnitsWithSelection(enabledByFileName)
+            val rebuild = !b.bX.B
+            if (rebuild) reloadUnitsWithSelection(enabledByFileName)
+            rebuild
         }
     }
 
-    private suspend fun auxiliaryReload(stage: String, action: () -> Unit) {
+    /** [action] 返回是否重建了单位表；只有重建过才清理缓存（未重建时上一轮标记仍有效但不应动）。 */
+    private suspend fun auxiliaryReload(stage: String, action: () -> Boolean) {
         io.github.rwpp.game.GameStartSafety.requireCanReload()
         check(isReloadingMods.compareAndSet(false, true)) { "模组仍在重载，请等待完成" }
         val loadedSnapshotToken = DesktopLoadedModSnapshot.beginLoad()
@@ -359,7 +376,7 @@ class ModManagerImpl : ModManager {
             game.invalidateModPlaytimeSnapshot()
             gameThreadDispatcher.run {
                 DesktopReloadGlContext.requireOwnerContext()
-                ModLoadSafety.run(stage, action)
+                if (ModLoadSafety.run(stage, action)) DesktopModResourceCache.sweep()
             }
         } finally {
             game.invalidateModPlaytimeSnapshot()

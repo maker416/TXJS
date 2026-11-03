@@ -65,6 +65,8 @@ dependencies {
     testImplementation(kotlin("test-junit"))
     testImplementation(files(rootProject.file("lib/game-lib.jar")))
     testImplementation(files(rootProject.file("lib/lwjgl.jar")))
+    // DesktopModResourceCacheTest 构造真实 java.s（Slick 贴图包装），无 GL 上下文。
+    testImplementation(files(rootProject.file("lib/slick.jar")))
 }
 
 tasks.test {

@@ -62,8 +62,10 @@ class ModManagerImpl : ModManager {
             game.invalidateModPlaytimeSnapshot()
             ReloadModEvent().broadcastIn()
             refreshProtectedModLoadHint(getAllMods(), enabledByFileName)
-            if (forceImmediate) runReloadCore(enabledByFileName, refreshGameArt)
-            else runOnGameThread { runReloadCore(enabledByFileName, refreshGameArt) }
+            // 重载成功后才执行清理；与解析同一线程，不触碰 GL。
+            val reload = { runReloadCore(enabledByFileName, refreshGameArt); AndroidModResourceCache.sweep() }
+            if (forceImmediate) reload()
+            else runOnGameThread(reload)
             game.getAllMaps(true)
         } finally {
             game.invalidateModPlaytimeSnapshot()
@@ -99,6 +101,7 @@ class ModManagerImpl : ModManager {
                     aborted = true
                 }
                 runVanillaFallbackIfRequested(aborted)
+                AndroidModResourceCache.sweep()
                 if (!io.github.rwpp.game.GameStartSafety.requiresRestart) {
                     game.refreshHandshakeChecksumCache()
                 }
@@ -135,6 +138,7 @@ class ModManagerImpl : ModManager {
             try {
                 KeepConnectedReload.disarmAbortInject()
                 runVanillaFallbackIfRequested(aborted = true)
+                AndroidModResourceCache.sweep()
                 if (!io.github.rwpp.game.GameStartSafety.requiresRestart) {
                     game.refreshHandshakeChecksumCache()
                 }
@@ -315,7 +319,11 @@ class ModManagerImpl : ModManager {
         check(isReloadingMods.compareAndSet(false, true)) { "模组仍在重载，请等待完成" }
         try {
             game.invalidateModPlaytimeSnapshot()
-            runOnGameThread { ModLoadSafety.run(stage, action) }
+            runOnGameThread {
+                ModLoadSafety.run(stage, action)
+                // 两个入口都重建了单位表；成功后清理本轮未使用的缓存。
+                AndroidModResourceCache.sweep()
+            }
         } finally {
             game.invalidateModPlaytimeSnapshot()
             isReloadingMods.set(false)
