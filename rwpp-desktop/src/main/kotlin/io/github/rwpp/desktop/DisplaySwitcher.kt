@@ -29,7 +29,8 @@ class DisplaySwitcher(
     private val gameCanvas: Canvas,
     private val displayHost: JComponent,
     private val displayLayout: CardLayout,
-    private val window: Window
+    private val window: Window,
+    private val launcherOverlay: DesktopLauncherOverlay? = null,
 ) {
     private val _currentMode = mutableStateOf<DisplayMode>(DisplayMode.Menu)
     val currentMode: State<DisplayMode> = _currentMode
@@ -87,8 +88,9 @@ class DisplaySwitcher(
     }
 
     private fun showMenu() {
-        logger.info("[DisplaySwitcher] showMenu: hiding canvas, showing menu")
-        displayLayout.show(displayHost, DisplayMode.Menu.cardName)
+        logger.info("[DisplaySwitcher] showMenu: showing launcher")
+        if (launcherOverlay != null) launcherOverlay.showMenu()
+        else displayLayout.show(displayHost, DisplayMode.Menu.cardName)
         refreshWindow()
         SwingUtilities.invokeLater {
             menuPanel.requestFocusInWindow()
@@ -97,7 +99,8 @@ class DisplaySwitcher(
 
     private fun showGame() {
         logger.info("[DisplaySwitcher] showGame: showing canvas (canvasDisplayable={})", gameCanvas.isDisplayable)
-        displayLayout.show(displayHost, DisplayMode.Game.cardName)
+        if (launcherOverlay != null) launcherOverlay.showGame()
+        else displayLayout.show(displayHost, DisplayMode.Game.cardName)
         refreshWindow()
         window.toFront()
         window.requestFocus()

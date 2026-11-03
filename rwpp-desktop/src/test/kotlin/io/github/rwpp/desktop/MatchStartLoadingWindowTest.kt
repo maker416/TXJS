@@ -31,6 +31,7 @@ import org.koin.dsl.module
 import org.slf4j.LoggerFactory
 import java.awt.Canvas
 import java.awt.CardLayout
+import java.awt.GraphicsDevice.WindowTranslucency.PERPIXEL_TRANSLUCENT
 import java.awt.GraphicsEnvironment
 import java.awt.Window
 import java.io.File
@@ -44,10 +45,15 @@ import kotlin.test.*
 class MatchStartLoadingWindowTest {
     @Test fun sandboxStartDoesNotLeaveLoadingWindowOverGame() = verify(GameStartMode.Skirmish(true), true)
     @Test fun multiplayerStartWithAnimationsDisabledDoesNotLeaveLoadingWindowOverGame() = verify(GameStartMode.Multiplayer, false)
+    @Test fun liveBackgroundSandboxStartDoesNotLeaveLoadingWindowOverGame() = verify(GameStartMode.Skirmish(true), true, useOverlay = true)
+    @Test fun liveBackgroundMultiplayerStartWithAnimationsDisabledDoesNotLeaveLoadingWindowOverGame() =
+        verify(GameStartMode.Multiplayer, false, useOverlay = true)
 
-    private fun verify(mode: GameStartMode, animations: Boolean) {
+    private fun verify(mode: GameStartMode, animations: Boolean, useOverlay: Boolean = false) {
         assumeTrue(System.getProperty("os.name").startsWith("Windows", ignoreCase = true))
         assumeFalse(GraphicsEnvironment.isHeadless())
+        if (useOverlay) assumeTrue(GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice
+            .isWindowTranslucencySupported(PERPIXEL_TRANSLUCENT))
         val previousLayers = System.getProperty("compose.layers.type")
         System.setProperty("compose.layers.type", "WINDOW")
         assertTrue(DesktopWindowLayers.install())
@@ -65,14 +71,16 @@ class MatchStartLoadingWindowTest {
         lateinit var launcher: ComposePanel
         lateinit var canvas: Canvas
         lateinit var switcher: DisplaySwitcher
+        var launcherOverlay: DesktopLauncherOverlay? = null
+        var launcherWindow: Window? = null
         var started: GameStartMode? = null
         try {
             onEdt {
-                launcher = ComposePanel()
-                canvas = Canvas().apply { isVisible = false }
+                launcher = DesktopLauncherOverlay.createMenuPanel(liveBackground = useOverlay).apply { isOpaque = false }
+                canvas = Canvas().apply { isVisible = useOverlay }
                 val cards = CardLayout()
                 val host = JPanel(cards).apply {
-                    add(launcher, DisplayMode.Menu.cardName)
+                    if (!useOverlay) add(launcher, DisplayMode.Menu.cardName)
                     add(canvas, DisplayMode.Game.cardName)
                 }
                 frame = JFrame("RWJS loading overlay regression").apply {
@@ -81,7 +89,9 @@ class MatchStartLoadingWindowTest {
                     setLocationRelativeTo(null)
                 }
                 owner = frame
-                switcher = DisplaySwitcher(launcher, canvas, host, cards, frame)
+                if (useOverlay) launcherOverlay = DesktopLauncherOverlay(launcher, host, frame)
+                launcherWindow = SwingUtilities.getWindowAncestor(launcher)
+                switcher = DisplaySwitcher(launcher, canvas, host, cards, frame, launcherOverlay = launcherOverlay)
                 launcher.setContent {
                     // 在当前重组作用域读取，SideEffect 才能确认这一轮可见状态已提交。
                     val currentLoading = loading
@@ -93,11 +103,12 @@ class MatchStartLoadingWindowTest {
                     SideEffect { composed.set(currentLoading) }
                 }
                 frame.isVisible = true
+                launcherOverlay?.showMenu()
                 attempt = gate.beginLoading()!!
                 loading = true
             }
             await("loading overlay") {
-                launcher.isShowing && (composed.get() || frame.ownedWindows.any { it.isVisible })
+                launcher.isShowing && composed.get()
             }
             // 让原生弹层有机会实际显示，再复现 production 的「先切画面、再 commit」顺序。
             onEdt {
@@ -111,21 +122,28 @@ class MatchStartLoadingWindowTest {
             }
             onEdt {
                 assertEquals(mode, started)
-                assertTrue(frame.ownedWindows.none { it.isVisible },
+                assertTrue(descendantWindows(frame).none { it.isVisible },
                     "加载已完成且启动器已隐藏，原生加载窗仍盖在游戏上")
                 switcher.switchTo(DisplayMode.Menu)
             }
             await("return to launcher") {
-                launcher.isShowing && !composed.get() && frame.ownedWindows.none { it.isVisible }
+                launcher.isShowing && !composed.get() &&
+                    descendantWindows(frame).filter { it !== launcherWindow }.none { it.isVisible }
             }
         } finally {
-            onEdt { owner?.let { it.ownedWindows.forEach(Window::dispose); it.dispose() } }
+            onEdt {
+                launcherOverlay?.dispose()
+                owner?.let { descendantWindows(it).forEach(Window::dispose); it.dispose() }
+            }
             stopKoin()
             reloadI18n()
             if (previousLayers == null) System.clearProperty("compose.layers.type")
             else System.setProperty("compose.layers.type", previousLayers)
         }
     }
+
+    private fun descendantWindows(owner: Window): List<Window> =
+        owner.ownedWindows.flatMap { listOf(it) + descendantWindows(it) }
 
     private fun onEdt(action: () -> Unit) {
         if (SwingUtilities.isEventDispatchThread()) action() else SwingUtilities.invokeAndWait(action)

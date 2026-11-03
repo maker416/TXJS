@@ -28,6 +28,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -217,7 +219,14 @@ fun main(array: Array<String>) {
 }
 
 fun swingApplication() = SwingUtilities.invokeLater {
-    val panel = ComposePanel()
+    val window = JFrame()
+    mainJFrame = window
+    val useMenuOverlay = !requireReloadingLib && DesktopLauncherOverlay.isSupported(window)
+    // 只有菜单使用 Swing 绘制到透明窗口；战场仍直接走原生 OpenGL，不逐帧回读游戏画面。
+    // 默认 SkiaSurface 在透明 AWT 窗口中会填白色底，不能透出下面的游戏窗口。
+    val panel = DesktopLauncherOverlay.createMenuPanel(useMenuOverlay)
+    var launcherOverlay: DesktopLauncherOverlay? = null
+    var menuBackgroundEnabled = false
     panel.isVisible = true
     panel.size = displaySize.size
     panel.isOpaque = false
@@ -299,10 +308,17 @@ fun swingApplication() = SwingUtilities.invokeLater {
                     null
                 }
             }
+            val backgroundAvailable by DesktopMenuBackgroundEngine.available.collectAsState()
+            SideEffect {
+                menuBackgroundEnabled = useMenuOverlay && !isLoading && startupError == null && painter == null
+                DesktopMenuBackgroundEngine.request(menuBackgroundEnabled && launcherOverlay?.isMenuVisible == true)
+            }
 
             Box(
-                modifier = Modifier.fillMaxSize().composed {
-                    if (effectiveBackgroundPath.isBlank() || !isPremium || painter == null) {
+                modifier = Modifier.fillMaxSize()
+                    // Windows 将 alpha=0 的原生窗口区域视为鼠标穿透；透明页边缘也应由菜单接收。
+                    .background(Color.Black.copy(alpha = 1f / 255f)).composed {
+                    if (painter == null && !backgroundAvailable) {
                         background(
                             brush = Brush.verticalGradient(
                                 listOf(
@@ -356,8 +372,6 @@ fun swingApplication() = SwingUtilities.invokeLater {
         }
     }
 
-    val window = JFrame()
-    mainJFrame = window
     if (requireReloadingLib) {
         window.defaultCloseOperation = JFrame.EXIT_ON_CLOSE
     } else {
@@ -408,7 +422,7 @@ fun swingApplication() = SwingUtilities.invokeLater {
     val canvas = Canvas()
     gameCanvas = canvas
     canvas.size = displaySize.size
-    canvas.isVisible = false
+    canvas.isVisible = useMenuOverlay
     canvas.background = java.awt.Color.BLACK
     canvas.isFocusable = true
 
@@ -416,19 +430,28 @@ fun swingApplication() = SwingUtilities.invokeLater {
     val displayHost = JPanel(displayLayout).apply {
         isOpaque = true
         background = java.awt.Color.BLACK
-        add(panel, DisplayMode.Menu.cardName)
+        if (!useMenuOverlay) add(panel, DisplayMode.Menu.cardName)
         add(canvas, DisplayMode.Game.cardName)
     }
 
     window.layout = BorderLayout()
     window.add(displayHost, BorderLayout.CENTER)
 
+    if (useMenuOverlay) {
+        launcherOverlay = DesktopLauncherOverlay(panel, displayHost, window) { visible ->
+            DesktopMenuBackgroundEngine.request(menuBackgroundEnabled && visible)
+        }
+    } else if (!requireReloadingLib) {
+        logger.warn("[UI] Per-pixel translucent windows unavailable; using the static launcher background")
+    }
+
     displaySwitcher = DisplaySwitcher(
         menuPanel = panel,
         gameCanvas = gameCanvas,
         displayHost = displayHost,
         displayLayout = displayLayout,
-        window = window
+        window = window,
+        launcherOverlay = launcherOverlay,
     )
 
     // Windows 下需要全屏启动时，先创建原生句柄再在窗口可见前应用无边框样式，避免闪现标题栏
@@ -437,7 +460,7 @@ fun swingApplication() = SwingUtilities.invokeLater {
         FullscreenController.enterFullscreenAtStartup(window)
     }
     window.isVisible = true
-    panel.requestFocus()
+    if (launcherOverlay != null) launcherOverlay.showMenu() else panel.requestFocus()
 
     focusRequester = FocusRequester()
     val panel2 = ComposePanel()
@@ -563,12 +586,15 @@ fun swingApplication() = SwingUtilities.invokeLater {
 
     // F11 即时切换全屏/窗口（与设置页中的「沉浸式全屏」开关等价，并立即持久化配置）
     var fullscreenKeyDown = false
-    window.addWindowFocusListener(object : WindowAdapter() {
-        override fun windowLostFocus(e: WindowEvent?) {
-            fullscreenKeyDown = false
+    val keyboardFocusManager = KeyboardFocusManager.getCurrentKeyboardFocusManager()
+    keyboardFocusManager.addPropertyChangeListener("focusedWindow") {
+        SwingUtilities.invokeLater {
+            var focused = keyboardFocusManager.focusedWindow
+            while (focused != null && focused !== window) focused = focused.owner
+            if (focused !== window) fullscreenKeyDown = false
         }
-    })
-    KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher { e ->
+    }
+    keyboardFocusManager.addKeyEventDispatcher { e ->
         if (!requireReloadingLib && e.keyCode == KeyEvent.VK_F11 && e.id == KeyEvent.KEY_RELEASED) {
             fullscreenKeyDown = false
             true
