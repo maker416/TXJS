@@ -421,6 +421,8 @@ fun MultiplayerView(
         },
         onLoadingFinished = { isConnecting = false },
         cancellable = true,
+        showProtectedModHint = true,
+        showMemoryUsage = true,
     ) {
         var address = connectionRequest.address
         val capturedRoomDescription = connectionRequest.room

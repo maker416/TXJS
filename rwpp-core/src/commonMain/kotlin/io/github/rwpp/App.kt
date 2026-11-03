@@ -56,6 +56,7 @@ import io.github.rwpp.coil.ImageableKeyer
 import io.github.rwpp.config.CoreData
 import io.github.rwpp.config.Settings
 import io.github.rwpp.core.GameSessionController
+import io.github.rwpp.core.DirectModSyncController
 import io.github.rwpp.core.MatchStartController
 import io.github.rwpp.core.ModPlaytimeController
 import io.github.rwpp.core.ModSyncController
@@ -730,13 +731,14 @@ fun App(
                 // showNetworkDialog。此条件仍挡住残留 true，避免回列表后漏出下载卡片。
                 val inRoomSyncPhase = ModSyncController.inRoomSyncPhase
                 val inRoomSyncActive = inRoomSyncPhase != null && inRoomSyncPhase != SyncPeerPhase.SYNCED
+                val directApplying by DirectModSyncController.shared.isApplyingMods.collectAsState()
 
                 var reloadingModViewVisible by remember { mutableStateOf(false) }
                 GlobalEventChannel.filter(ReloadModEvent::class).onDispose {
                     subscribeAlways(Dispatchers.Main.immediate) {
                         // 清除启动阶段残留的最后一个引擎加载消息（如 "init complete"），
                         // 避免重载弹窗一直显示陈旧文本。
-                        loadingMessage = ""
+                        if (!DirectModSyncController.shared.isApplyingMods.value) loadingMessage = ""
                         reloadingModViewVisible = true
                     }
                 }
@@ -748,10 +750,11 @@ fun App(
                 }
 
                 LoadingView(
-                    reloadingModViewVisible && !inRoomSyncActive && !ModSyncController.cancellingReload,
+                    reloadingModViewVisible && !inRoomSyncActive && !directApplying && !ModSyncController.cancellingReload,
                     onLoaded = {},
                     showProtectedModHint = true,
                     showMemoryUsage = true,
+                    inlineDesktop = appContext.isDesktop(),
                 ) { null }
 
                 LoadingView(
@@ -759,6 +762,7 @@ fun App(
                     onLoaded = {},
                     cancellable = false,
                     showMemoryUsage = true,
+                    inlineDesktop = appContext.isDesktop(),
                 ) {
                     message(readI18n("modSync.cancellingDetail", I18nType.RWPP))
                     null

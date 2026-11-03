@@ -17,8 +17,6 @@ import io.github.rwpp.game.Game
 import io.github.rwpp.game.base.Difficulty
 import io.github.rwpp.game.map.MissionType
 import io.github.rwpp.game.units.UnitType
-import io.github.rwpp.logger
-import io.github.rwpp.utils.Reflect
 import io.github.rwpp.core.LoadingContext
 import io.github.rwpp.event.events.HostSinglePlayerGameEvent
 import io.github.rwpp.event.events.PlayerJoinEvent
@@ -190,30 +188,11 @@ abstract class AbstractGame : Game {
         return (com.corrodinggames.rts.game.units.ar.ae as ArrayList<UnitType>)
     }
 
-    /**
-     * 实时重算的全部启用单位校验和（`am.bM()`）。
-     * 不用 `l.z()`：那是引擎 init 时缓存的字段，模组重载后不会刷新，同步校验需要真实状态。
-     */
-    override fun getUnitsChecksum(): Int {
-        val checksum = com.corrodinggames.rts.game.units.am.bM()
-        if (System.getenv("RWJS_CHECKSUM_DEBUG") == "1") {
-            com.corrodinggames.rts.game.units.ar.values().forEach { type ->
-                val unit = com.corrodinggames.rts.game.units.am.a(type)
-                logger.info("[CHECKSUM] $type bw=${unit.bw()}")
-            }
-        }
-        return checksum
-    }
+    /** 原版初始化时保存的核心单位校验和；实时 bM() 会受菜单地图水面影响。 */
+    override fun getUnitsChecksum(): Int = GameEngine.B().z()
 
     override fun refreshHandshakeChecksumCache() {
-        val checksum = com.corrodinggames.rts.game.units.am.bM()
-        try {
-            // i.z() 读的 init 缓存字段 `d`；重载后必须写回，否则包 110 仍发旧值。
-            Reflect.set(GameEngine.B(), "d", checksum)
-            logger.info("[MODSYNC] handshake checksum cache refreshed to $checksum")
-        } catch (e: Throwable) {
-            logger.warn("[MODSYNC] failed to write handshake checksum cache: ${e.message}")
-        }
+        // 保留共享同步流程的兼容入口。包 110 必须沿用 init 缓存，重载模组不能覆写它。
     }
 
     override suspend fun refreshMenuAfterDisconnect() {

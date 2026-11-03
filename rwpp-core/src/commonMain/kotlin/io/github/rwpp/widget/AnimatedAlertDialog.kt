@@ -100,11 +100,25 @@ fun AnimatedTransitionDialog(
     contentAlignment: Alignment = Alignment.Center,
     inlineDesktop: Boolean,
     content: @Composable (AnimatedTransitionDialogHelper) -> Unit
+) = AnimatedTransitionDialog(
+    onDismissRequest, enableDismiss, contentAlignment, inlineDesktop, onDismissStarted = {}, content,
+)
+
+/** [onDismissStarted] runs immediately; [onDismissRequest] still waits for the exit animation. */
+@Composable
+fun AnimatedTransitionDialog(
+    onDismissRequest: () -> Unit,
+    enableDismiss: Boolean,
+    contentAlignment: Alignment = Alignment.Center,
+    inlineDesktop: Boolean,
+    onDismissStarted: () -> Unit,
+    content: @Composable (AnimatedTransitionDialogHelper) -> Unit,
 ) {
     val visibility = remember { MutableTransitionState(false).apply { targetState = true } }
     var dismissRequested by remember { mutableStateOf(false) }
     val enableAnimations = uiAnimationsEnabled()
     val currentOnDismissRequest by rememberUpdatedState(onDismissRequest)
+    val currentOnDismissStarted by rememberUpdatedState(onDismissStarted)
     val currentEnableDismiss by rememberUpdatedState(enableDismiss)
     val modalFocus = remember { FocusRequester() }
     val escapeScope = rememberCoroutineScope()
@@ -115,6 +129,7 @@ fun AnimatedTransitionDialog(
                 if (inlineDesktop) modalFocus.requestFocus()
                 dismissRequested = true
                 visibility.targetState = false
+                currentOnDismissStarted()
             }
         }
     }
@@ -240,12 +255,26 @@ fun AnimatedAlertDialog(
     enableDismiss: Boolean = true,
     inlineDesktop: Boolean,
     content: @Composable (dismiss: () -> Unit) -> Unit
+) = AnimatedAlertDialog(
+    visible, onDismissRequest, enableDismiss, inlineDesktop, onDismissStarted = {}, content,
+)
+
+/** Keeps dismissal cleanup immediate while the dialog remains composed for its exit animation. */
+@Composable
+fun AnimatedAlertDialog(
+    visible: Boolean,
+    onDismissRequest: () -> Unit,
+    enableDismiss: Boolean = true,
+    inlineDesktop: Boolean,
+    onDismissStarted: () -> Unit,
+    content: @Composable (dismiss: () -> Unit) -> Unit,
 ) {
     if (visible && LocalDialogInteractive.current) {
         AnimatedTransitionDialog(
             onDismissRequest = onDismissRequest,
             enableDismiss = enableDismiss,
             inlineDesktop = inlineDesktop,
+            onDismissStarted = onDismissStarted,
         ) { animatedTransitionDialogHelper ->
             content(animatedTransitionDialogHelper::triggerAnimatedDismiss)
         }

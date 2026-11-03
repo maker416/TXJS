@@ -28,14 +28,19 @@ import io.github.rwpp.net.sync.direct.DirectModSyncErrorCode
 import io.github.rwpp.net.sync.direct.DirectModSyncServerException
 import io.github.rwpp.net.sync.direct.DirectJoinEndpoint
 import io.github.rwpp.net.sync.direct.DirectModManifest
+import io.github.rwpp.net.sync.direct.DirectModDownloadPhase
+import io.github.rwpp.net.sync.direct.DirectModDownloadProgress
 import io.github.rwpp.net.sync.direct.DirectModSyncClient
 import io.github.rwpp.net.sync.direct.DirectModSyncTransport
 import io.github.rwpp.net.sync.direct.DirectModSyncUnsupportedException
 import io.github.rwpp.net.sync.direct.validateManifest
 import java.io.File
+import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 sealed interface DirectJoinSyncResult {
     data object Applied : DirectJoinSyncResult
@@ -47,6 +52,8 @@ sealed interface DirectJoinSyncResult {
 interface DirectModSyncEnvironment {
     val cache: NetworkModCache
     fun getAllMods(): List<Mod>
+    /** Only a successfully loaded content snapshot may bypass engine parsing. */
+    suspend fun isLoadedModSetExact(descriptors: List<NetworkModDescriptor>): Boolean = false
     suspend fun applyMods(descriptors: List<NetworkModDescriptor>)
     fun getUnitsChecksum(): Int
     fun refreshHandshakeChecksumCache()
@@ -59,6 +66,11 @@ private object DefaultDirectModSyncEnvironment : DirectModSyncEnvironment {
     override fun getAllMods(): List<Mod> = appKoin.get<ModManager>().getAllMods()
     override fun getUnitsChecksum(): Int = appKoin.get<Game>().getUnitsChecksum()
     override fun refreshHandshakeChecksumCache() = appKoin.get<Game>().refreshHandshakeChecksumCache()
+
+    override suspend fun isLoadedModSetExact(descriptors: List<NetworkModDescriptor>): Boolean {
+        GameStartSafety.requireCanReload()
+        return appKoin.get<ModManager>().isLoadedModSetExact(descriptors, cache)
+    }
 
     override suspend fun applyMods(descriptors: List<NetworkModDescriptor>) {
         val manager = appKoin.get<ModManager>()
@@ -91,6 +103,10 @@ class DirectModSyncController(
     private val transportFactory: (DirectJoinEndpoint, NetworkModCache) -> DirectModSyncTransport =
         { endpoint, cache -> DirectModSyncClient(endpoint, cache) },
 ) {
+    private val applyingMods = MutableStateFlow(false)
+    /** The existing join loader owns progress while Direct applies mods. */
+    val isApplyingMods = applyingMods.asStateFlow()
+
     suspend fun preJoinSync(address: String, loadingContext: LoadingContext): DirectJoinSyncResult {
         val endpoint = DirectJoinEndpoint.parseOrNull(address) ?: return DirectJoinSyncResult.Unsupported
         val transport = transportFactory(endpoint, environment.cache)
@@ -113,10 +129,13 @@ class DirectModSyncController(
                 environment.getAllMods(), first.mods, environment.cache,
             )
             stage = ConnectionFailureStage.SYNC_DOWNLOAD
-            first.mods.filter { it.cacheKey() in missing }.forEachIndexed { index, descriptor ->
+            val downloads = first.mods.filter { it.cacheKey() in missing }
+            downloads.forEachIndexed { index, descriptor ->
                 currentCoroutineContext().ensureActive()
-                loadingContext.message(readI18n("modSync.directDownloading", I18nType.RWPP, (index + 1).toString(), first.mods.size.toString(), descriptor.name))
-                transport.download(descriptor)
+                loadingContext.message(readI18n("modSync.directDownloading", I18nType.RWPP, (index + 1).toString(), downloads.size.toString(), descriptor.name))
+                transport.downloadWithProgress(descriptor) { progress ->
+                    loadingContext.message(directDownloadMessage(index + 1, downloads.size, descriptor.name, progress))
+                }
             }
             currentCoroutineContext().ensureActive()
             stage = ConnectionFailureStage.SYNC_MANIFEST
@@ -134,7 +153,17 @@ class DirectModSyncController(
 
             stage = ConnectionFailureStage.SYNC_APPLY
             loadingContext.message(readI18n("modSync.directApplying", I18nType.RWPP))
-            environment.applyMods(second.mods)
+            applyingMods.value = true
+            try {
+                if (environment.isLoadedModSetExact(second.mods)) {
+                    org.slf4j.LoggerFactory.getLogger(DirectModSyncController::class.java)
+                        .info("[MODSYNC-DIRECT] manifest matches successfully loaded content; skipping engine reload")
+                } else {
+                    environment.applyMods(second.mods)
+                }
+            } finally {
+                applyingMods.value = false
+            }
             currentCoroutineContext().ensureActive()
             val localChecksum = environment.getUnitsChecksum().toLong()
             if (second.hostUnitsChecksum != -1L && localChecksum != second.hostUnitsChecksum) {
@@ -182,4 +211,19 @@ class DirectModSyncController(
     companion object {
         val shared by lazy { DirectModSyncController(DefaultDirectModSyncEnvironment) }
     }
+}
+
+internal fun directDownloadMessage(index: Int, count: Int, name: String, progress: DirectModDownloadProgress): String {
+    val key = when (progress.phase) {
+        DirectModDownloadPhase.DOWNLOADING -> "modSync.directDownloading"
+        DirectModDownloadPhase.VERIFYING -> "modSync.directVerifying"
+        DirectModDownloadPhase.CACHING -> "modSync.directCaching"
+    }
+    val title = readI18n(key, I18nType.RWPP, index.toString(), count.toString(), name)
+    val percent = if (progress.totalBytes > 0) {
+        (progress.downloadedBytes.coerceIn(0, progress.totalBytes) * 100 / progress.totalBytes).toString()
+    } else "100"
+    fun mebibytes(bytes: Long) = String.format(Locale.ROOT, "%.1f", bytes / 1048576.0)
+    return readI18n("modSync.directDownloadProgress", I18nType.RWPP, title, percent,
+        mebibytes(progress.downloadedBytes), mebibytes(progress.totalBytes))
 }

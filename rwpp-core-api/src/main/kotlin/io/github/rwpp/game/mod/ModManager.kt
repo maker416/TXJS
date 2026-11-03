@@ -10,6 +10,12 @@ package io.github.rwpp.game.mod
 import org.koin.core.component.KoinComponent
 
 interface ModManager : KoinComponent {
+    /** 仅在成功加载的内容快照与清单、当前来源及启用状态均一致时返回 true。未实现的平台保守重载。 */
+    suspend fun isLoadedModSetExact(
+        descriptors: List<NetworkModDescriptor>,
+        cache: NetworkModCache,
+    ): Boolean = false
+
     /**
      * 重新加载 mod 列表。
      *

@@ -9,7 +9,6 @@ package io.github.rwpp.net.sync.direct
 
 import io.github.rwpp.game.mod.NetworkModCache
 import io.github.rwpp.game.mod.NetworkModDescriptor
-import io.github.rwpp.io.HashUtils
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
@@ -17,7 +16,6 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
-import java.net.SocketTimeoutException
 import java.security.MessageDigest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +27,55 @@ import kotlinx.coroutines.withContext
 interface DirectModSyncTransport {
     suspend fun getManifest(): DirectModManifest
     suspend fun download(descriptor: NetworkModDescriptor, stagingDirectory: File? = null)
+
+    /** Existing transports may keep implementing [download] without progress support. */
+    suspend fun downloadWithProgress(
+        descriptor: NetworkModDescriptor,
+        stagingDirectory: File? = null,
+        onProgress: suspend (DirectModDownloadProgress) -> Unit,
+    ) = download(descriptor, stagingDirectory)
+}
+
+enum class DirectModDownloadPhase { DOWNLOADING, VERIFYING, CACHING }
+
+/** [downloadedBytes] includes retained bytes from a previous attempt, never their retransmission sum. */
+data class DirectModDownloadProgress(
+    val phase: DirectModDownloadPhase,
+    val downloadedBytes: Long,
+    val totalBytes: Long,
+)
+
+private class DirectModProgressCallbackException(val callbackError: Exception) : Exception(callbackError)
+
+/** Reports on the caller's IO coroutine; callbacks may suspend or cancel the transfer. */
+internal class DirectModDownloadProgressReporter(
+    private val totalBytes: Long,
+    private val onProgress: suspend (DirectModDownloadProgress) -> Unit,
+    private val nanoTime: () -> Long = System::nanoTime,
+) {
+    private var previous: DirectModDownloadProgress? = null
+    private var lastReportedAt = 0L
+
+    suspend fun report(phase: DirectModDownloadPhase, downloadedBytes: Long, force: Boolean = false) {
+        currentCoroutineContext().ensureActive()
+        val progress = DirectModDownloadProgress(phase, downloadedBytes, totalBytes)
+        val now = nanoTime()
+        if (force || previous == null || previous?.phase != phase ||
+            (progress != previous && now - lastReportedAt >= 200_000_000L)
+        ) {
+            try {
+                onProgress(progress)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                // UI/observer failures are not network failures and must never trigger retransmission.
+                throw DirectModProgressCallbackException(error)
+            }
+            currentCoroutineContext().ensureActive()
+            previous = progress
+            lastReportedAt = now
+        }
+    }
 }
 
 /** 一连接一请求的阻塞 Socket 客户端；协程取消通过关闭活动 Socket 打断阻塞读。 */
@@ -58,20 +105,34 @@ class DirectModSyncClient(
         }
     }
 
-    override suspend fun download(descriptor: NetworkModDescriptor, stagingDirectory: File?) = withContext(Dispatchers.IO) {
+    override suspend fun download(descriptor: NetworkModDescriptor, stagingDirectory: File?) =
+        downloadWithProgress(descriptor, stagingDirectory) {}
+
+    override suspend fun downloadWithProgress(
+        descriptor: NetworkModDescriptor,
+        stagingDirectory: File?,
+        onProgress: suspend (DirectModDownloadProgress) -> Unit,
+    ) = withContext(Dispatchers.IO) {
         require(descriptor.payloadSize <= DIRECT_MOD_SYNC_MAX_FILE_BYTES) { "Direct mod exceeds size limit" }
         val staging = File.createTempFile("rwjs-direct-", ".part", stagingDirectory)
+        val progress = DirectModDownloadProgressReporter(descriptor.payloadSize, onProgress)
         var lastError: Exception? = null
         try {
             repeat(maxAttempts) { attempt ->
                 currentCoroutineContext().ensureActive()
                 try {
-                    downloadAttempt(descriptor, staging)
+                    downloadAttempt(descriptor, staging, progress)
+                    currentCoroutineContext().ensureActive()
                     if (!descriptor.matches(staging)) throw IOException("Downloaded direct mod hash mismatch")
+                    currentCoroutineContext().ensureActive()
+                    progress.report(DirectModDownloadPhase.CACHING, staging.length())
+                    currentCoroutineContext().ensureActive()
                     cache.storeVerified(descriptor, staging)
                     return@withContext
                 } catch (error: CancellationException) {
                     throw error
+                } catch (error: DirectModProgressCallbackException) {
+                    throw error.callbackError
                 } catch (error: Exception) {
                     currentCoroutineContext().ensureActive()
                     lastError = error
@@ -89,18 +150,28 @@ class DirectModSyncClient(
         }
     }
 
-    private suspend fun downloadAttempt(descriptor: NetworkModDescriptor, staging: File) {
+    private suspend fun downloadAttempt(
+        descriptor: NetworkModDescriptor,
+        staging: File,
+        progress: DirectModDownloadProgressReporter,
+    ) {
         val offset = staging.length()
         if (offset > descriptor.payloadSize) {
             staging.delete()
             staging.createNewFile()
         }
         val actualOffset = staging.length()
+        progress.report(DirectModDownloadPhase.DOWNLOADING, actualOffset, force = true)
+        currentCoroutineContext().ensureActive()
         withSocket(downloadReadTimeoutMillis) { socket, input, output ->
             DirectModSyncProtocol.writeGetFile(output, descriptor, actualOffset)
             val response = DirectModSyncProtocol.readFileResponse(input, expected = descriptor, requestedOffset = actualOffset)
             val digest = MessageDigest.getInstance("SHA-256")
-            if (actualOffset > 0) staging.inputStream().use { existing -> updateDigest(digest, existing) }
+            if (actualOffset > 0) {
+                progress.report(DirectModDownloadPhase.VERIFYING, actualOffset)
+                staging.inputStream().use { existing -> updateDigest(digest, existing) }
+                progress.report(DirectModDownloadPhase.DOWNLOADING, actualOffset)
+            }
             FileOutputStream(staging, actualOffset > 0).use { file ->
                 var remaining = response.bodyBytes
                 val buffer = ByteArray(64 * 1024)
@@ -111,8 +182,15 @@ class DirectModSyncClient(
                     file.write(buffer, 0, read)
                     digest.update(buffer, 0, read)
                     remaining -= read
+                    progress.report(
+                        DirectModDownloadPhase.DOWNLOADING,
+                        actualOffset + response.bodyBytes - remaining,
+                        force = remaining == 0L,
+                    )
                 }
             }
+            progress.report(DirectModDownloadPhase.VERIFYING, staging.length())
+            currentCoroutineContext().ensureActive()
             if (staging.length() != descriptor.payloadSize || sha256Hex(digest) != descriptor.normalizedSha256) {
                 throw IOException("Direct mod size or hash mismatch")
             }
@@ -144,9 +222,10 @@ class DirectModSyncClient(
             }
         }
 
-    private fun updateDigest(digest: MessageDigest, input: java.io.InputStream) {
+    private suspend fun updateDigest(digest: MessageDigest, input: java.io.InputStream) {
         val buffer = ByteArray(64 * 1024)
         while (true) {
+            currentCoroutineContext().ensureActive()
             val read = input.read(buffer)
             if (read < 0) return
             digest.update(buffer, 0, read)

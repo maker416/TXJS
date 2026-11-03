@@ -12,6 +12,7 @@ import io.github.rwpp.net.ConnectionFailureReason
 import java.text.MessageFormat
 import java.io.File
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -202,6 +203,9 @@ class BundleParseTest {
                 "syncFailedDetail",
                 "directChecking",
                 "directDownloading",
+                "directVerifying",
+                "directCaching",
+                "directDownloadProgress",
                 "directRechecking",
                 "directApplying",
                 "directFailed",
@@ -222,6 +226,10 @@ class BundleParseTest {
             ).forEach { key ->
                 assertTrue(modSync.containsKey(key), "modSync.$key missing in $name")
             }
+            val progress = (modSync["directDownloadProgress"] as TomlLiteral).content
+            assertEquals("example.rwmod\n50% · 1.0/2.0 MiB",
+                MessageFormat.format(progress, "example.rwmod", "50", "1.0", "2.0"),
+                "$name: direct download progress must format all arguments and a real line break")
             val room = table["multiplayer"] as? TomlTable
             val roomTable = room?.get("room") as? TomlTable
             assertNotNull(roomTable, "[multiplayer.room] missing in $name")

@@ -13,6 +13,8 @@ import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
 import androidx.compose.material3.Text
 import io.github.rwpp.core.LoadingContext
+import io.github.rwpp.event.broadcast
+import io.github.rwpp.event.events.KeyboardEvent
 import io.github.rwpp.net.ConnectionFailure
 import io.github.rwpp.net.ConnectionFailureReason
 import java.util.concurrent.atomic.AtomicReference
@@ -46,6 +48,7 @@ class LoadingCancellationTest {
     }
     @Test fun firstAttemptCloseCancelsBeforeExitAnimationCompletes() = verifyClose(false)
     @Test fun retryCloseCancelsBeforeExitAnimationCompletes() = verifyClose(true)
+    @Test fun escapeCancelsBeforeExitAnimationCompletes() = verifyClose(false, escape = true)
 
     @Test
     fun cancelledAttemptCannotPublishIntoTheNextAttempt() = runDesktopComposeUiTest {
@@ -94,7 +97,7 @@ class LoadingCancellationTest {
         assertEquals(currentFailure, shown)
     }
 
-    private fun verifyClose(failOnce: Boolean) = runDesktopComposeUiTest {
+    private fun verifyClose(failOnce: Boolean, escape: Boolean = false) = runDesktopComposeUiTest {
         var visible by mutableStateOf(true)
         var secondAttempt by mutableStateOf(!failOnce)
         val entered = AtomicBoolean()
@@ -135,7 +138,13 @@ class LoadingCancellationTest {
         waitUntil(timeoutMillis = 3_000) { entered.get() }
         waitForIdle()
         mainClock.autoAdvance = false
-        onNode(hasClickAction()).performClick()
+        if (escape) {
+            runBlocking { KeyboardEvent(0x1B).broadcast() }
+            SwingUtilities.invokeAndWait { }
+            assertTrue(visible, "The exit animation must still be running when cancellation is checked")
+        } else {
+            onNode(hasClickAction()).performClick()
+        }
         release.complete(Unit)
         waitUntil(timeoutMillis = 3_000) { cancelled.get() || connected.get() }
         assertFalse(connected.get(), "User closed the loading dialog but the connection still completed during the exit animation")
