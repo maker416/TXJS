@@ -15,6 +15,7 @@ import io.github.rwpp.net.ConnectionFailureReason
 import io.github.rwpp.net.ConnectionFailureStage
 import io.github.rwpp.net.sync.direct.DirectJoinEndpoint
 import io.github.rwpp.net.sync.direct.DirectModManifest
+import io.github.rwpp.net.sync.direct.DirectModLease
 import io.github.rwpp.net.sync.direct.DirectModSyncErrorCode
 import io.github.rwpp.net.sync.direct.DirectModSyncServerException
 import io.github.rwpp.net.sync.direct.DirectModSyncTransport
@@ -53,12 +54,76 @@ class DirectModSyncControllerTest {
     @Test
     fun emptyManifestStillAppliesVanillaAndRefreshesChecksum() = runBlocking<Unit> {
         val manifest = manifest(emptyList())
-        val transport = FakeTransport().also { it.manifestResults += { manifest }; it.manifestResults += { manifest } }
+        val transport = FakeTransport().also { repeat(3) { _ -> it.manifestResults += { manifest } } }
         val environment = FakeEnvironment()
         val result = controller(environment, transport).preJoinSync("localhost", LoadingContext {})
         assertIs<DirectJoinSyncResult.Applied>(result)
         assertEquals(listOf(emptyList()), environment.applied)
         assertTrue(environment.refreshed)
+        assertEquals(3, transport.manifestCalls)
+    }
+
+    @Test
+    fun incompatibleGameVersionStopsBeforeDownloadOrApply() = runBlocking<Unit> {
+        val descriptor = NetworkModDescriptor.fromBytes("m", byteArrayOf(1))
+        val transport = FakeTransport().also {
+            it.manifestResults += { manifest(listOf(descriptor)).copy(gameVersion = "175") }
+        }
+        val environment = FakeEnvironment()
+        val failure = assertIs<DirectJoinSyncResult.Failed>(
+            controller(environment, transport).preJoinSync("localhost", LoadingContext {}),
+        ).failure
+        assertEquals(ConnectionFailureReason.DATA_MISMATCH, failure.reason)
+        assertEquals(ConnectionFailureStage.SYNC_MANIFEST, failure.stage)
+        assertTrue(transport.downloads.isEmpty())
+        assertTrue(environment.applied.isEmpty())
+        assertFalse(environment.refreshed)
+    }
+
+    @Test
+    fun roomChangeDuringApplyStopsBeforeConnecting() = runBlocking<Unit> {
+        val original = manifest(emptyList())
+        val transport = FakeTransport().also {
+            it.manifestResults += { original }
+            it.manifestResults += { original }
+            it.manifestResults += { original.copy(scope = "next-room") }
+        }
+        val failure = assertIs<DirectJoinSyncResult.Failed>(
+            controller(FakeEnvironment(), transport).preJoinSync("localhost", LoadingContext {}),
+        ).failure
+        assertEquals(ConnectionFailureReason.MANIFEST_CHANGED, failure.reason)
+        assertEquals(ConnectionFailureStage.SYNC_MANIFEST, failure.stage)
+        assertEquals(3, transport.manifestCalls)
+    }
+
+    @Test
+    fun serverStartingDuringApplyStopsBeforeConnecting() = runBlocking<Unit> {
+        val original = manifest(emptyList())
+        val transport = FakeTransport().also {
+            it.manifestResults += { original }
+            it.manifestResults += { original }
+            it.manifestResults += { throw DirectModSyncServerException(DirectModSyncErrorCode.NOT_LOBBY) }
+        }
+        val failure = assertIs<DirectJoinSyncResult.Failed>(
+            controller(FakeEnvironment(), transport).preJoinSync("localhost", LoadingContext {}),
+        ).failure
+        assertEquals(ConnectionFailureReason.NOT_LOBBY, failure.reason)
+        assertEquals(ConnectionFailureStage.SYNC_MANIFEST, failure.stage)
+    }
+
+    @Test
+    fun finalRecheckFailureDoesNotUsePreviousReadyManifest() = runBlocking<Unit> {
+        val original = manifest(emptyList())
+        val transport = FakeTransport().also {
+            it.manifestResults += { original }
+            it.manifestResults += { original }
+            it.manifestResults += { throw DirectModSyncUnsupportedException("server disappeared") }
+        }
+        val failure = assertIs<DirectJoinSyncResult.Failed>(
+            controller(FakeEnvironment(), transport).preJoinSync("localhost", LoadingContext {}),
+        ).failure
+        assertEquals(ConnectionFailureReason.SYNC_FAILED, failure.reason)
+        assertEquals(ConnectionFailureStage.SYNC_MANIFEST, failure.stage)
     }
 
     @Test
@@ -117,6 +182,9 @@ class DirectModSyncControllerTest {
             DirectModSyncErrorCode.BUSY to ConnectionFailureReason.BUSY,
             DirectModSyncErrorCode.BAD_REQUEST to ConnectionFailureReason.BAD_REQUEST,
             DirectModSyncErrorCode.INTERNAL_ERROR to ConnectionFailureReason.INTERNAL_ERROR,
+            DirectModSyncErrorCode.ROOM_FULL to ConnectionFailureReason.ROOM_FULL,
+            DirectModSyncErrorCode.LEASE_EXPIRED to ConnectionFailureReason.SYNC_FAILED,
+            DirectModSyncErrorCode.LEASE_INVALID to ConnectionFailureReason.SYNC_FAILED,
         )
         reasons.forEach { (code, reason) ->
             val transport = FakeTransport().also {
@@ -208,20 +276,92 @@ class DirectModSyncControllerTest {
         }
     }
 
+    @Test
+    fun v2KeepsReservedSlotUntilCallerFinishesActualAdmission() = runBlocking<Unit> {
+        val value = manifest(emptyList()).copy(protocolVersion = 2)
+        val transport = FakeTransport().also { repeat(3) { _ -> it.manifestResults += { value } } }
+        val environment = FakeEnvironment()
+        val result = assertIs<DirectJoinSyncResult.Applied>(
+            controller(environment, transport).preJoinSync("localhost", LoadingContext {}),
+        )
+        val reservation = checkNotNull(result.reservation)
+        try {
+            assertEquals(1, transport.reserveCalls)
+            assertEquals(0, transport.releaseCalls)
+            assertEquals(1, transport.renewCalls)
+            assertEquals(listOf(emptyList()), environment.applied)
+            transport.onRenew = { lease().copy(state = "admitted") }
+            reservation.awaitAdmission()
+        } finally {
+            reservation.close()
+        }
+        assertEquals(1, transport.releaseCalls)
+    }
+
+    @Test
+    fun fullRoomIsRejectedBeforeAnyDownloadOrApply() = runBlocking<Unit> {
+        val descriptor = NetworkModDescriptor.fromBytes("m", byteArrayOf(1))
+        val transport = FakeTransport().also {
+            it.manifestResults += { manifest(listOf(descriptor)).copy(protocolVersion = 2) }
+            it.onReserve = { throw DirectModSyncServerException(DirectModSyncErrorCode.ROOM_FULL) }
+        }
+        val environment = FakeEnvironment()
+        val failure = assertIs<DirectJoinSyncResult.Failed>(
+            controller(environment, transport).preJoinSync("localhost", LoadingContext {}),
+        ).failure
+        assertEquals(ConnectionFailureReason.ROOM_FULL, failure.reason)
+        assertEquals(1, transport.reserveCalls)
+        assertTrue(transport.downloads.isEmpty())
+        assertTrue(environment.applied.isEmpty())
+    }
+
+    @Test
+    fun failedApplyReleasesV2Reservation() = runBlocking<Unit> {
+        val value = manifest(emptyList()).copy(protocolVersion = 2)
+        val transport = FakeTransport().also { repeat(2) { _ -> it.manifestResults += { value } } }
+        val environment = FakeEnvironment().also { it.onApply = { error("reload failed") } }
+        assertIs<DirectJoinSyncResult.Failed>(controller(environment, transport).preJoinSync("localhost", LoadingContext {}))
+        assertEquals(1, transport.reserveCalls)
+        assertEquals(1, transport.releaseCalls)
+    }
+
+    @Test
+    fun cancelledDownloadReleasesV2Reservation() = runBlocking<Unit> {
+        val descriptor = NetworkModDescriptor.fromBytes("m", byteArrayOf(1))
+        val transport = FakeTransport().also {
+            it.manifestResults += { manifest(listOf(descriptor)).copy(protocolVersion = 2) }
+            it.onDownload = { throw CancellationException("cancelled") }
+        }
+        assertFailsWith<CancellationException> {
+            controller(FakeEnvironment(), transport).preJoinSync("localhost", LoadingContext {})
+        }
+        assertEquals(1, transport.releaseCalls)
+    }
+
     private fun controller(environment: FakeEnvironment, transport: FakeTransport) = DirectModSyncController(environment) { _, _ -> transport }
 
-    private fun manifest(mods: List<NetworkModDescriptor>) = DirectModManifest(1, "1.15", "scope", "ready", true, -1, mods)
+    private fun manifest(mods: List<NetworkModDescriptor>) = DirectModManifest(1, "176", "scope", "ready", true, -1, mods)
+
+    private fun lease() = DirectModLease("scope", 90_000, 30_000, "reserved", 1, 10, 1)
 
     private class FakeTransport : DirectModSyncTransport {
         val manifestResults = mutableListOf<() -> DirectModManifest>()
         val downloads = mutableListOf<NetworkModDescriptor>()
         var manifestCalls = 0
+        var reserveCalls = 0
+        var renewCalls = 0
+        var releaseCalls = 0
+        var onReserve: () -> DirectModLease = { DirectModLease("scope", 90_000, 30_000, "reserved", 1, 10, 1) }
+        var onRenew: () -> DirectModLease = { DirectModLease("scope", 90_000, 30_000, "reserved", 1, 10, 1) }
         var onDownload: (NetworkModDescriptor) -> Unit = {}
         override suspend fun getManifest(): DirectModManifest = manifestResults[manifestCalls++].invoke()
         override suspend fun download(descriptor: NetworkModDescriptor, stagingDirectory: File?) {
             downloads += descriptor
             onDownload(descriptor)
         }
+        override suspend fun reserve(scope: String, token: ByteArray): DirectModLease { reserveCalls++; return onReserve() }
+        override suspend fun renew(scope: String, token: ByteArray): DirectModLease { renewCalls++; return onRenew() }
+        override suspend fun release(scope: String, token: ByteArray) { releaseCalls++ }
     }
 
     private class FakeEnvironment : DirectModSyncEnvironment {

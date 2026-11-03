@@ -15,33 +15,46 @@ import java.io.EOFException
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 
 const val DIRECT_MOD_SYNC_PROTOCOL_VERSION = 1
+const val DIRECT_MOD_SYNC_RESERVATION_PROTOCOL_VERSION = 2
 const val DIRECT_MOD_SYNC_MAX_MODS = 256
 const val DIRECT_MOD_SYNC_MAX_FILE_BYTES = 512L * 1024L * 1024L
 const val DIRECT_MOD_SYNC_MAX_TOTAL_BYTES = 2L * 1024L * 1024L * 1024L
 private const val MAX_MANIFEST_PAYLOAD = 1024 * 1024
 private const val MAX_ERROR_PAYLOAD = 16 * 1024
 private const val MAX_STRING_BYTES = 64 * 1024
+private const val MAX_LEASE_PAYLOAD = MAX_STRING_BYTES + 64
 
 /** 独立 TCP 控制连接协议；与原版游戏 Socket 和 relaymod HTTP 完全隔离。 */
 object DirectModSyncProtocol {
     val MAGIC = byteArrayOf('T'.code.toByte(), 'X'.code.toByte(), 'J'.code.toByte(), 'S'.code.toByte(),
         'M'.code.toByte(), 'D'.code.toByte(), '1'.code.toByte(), '\n'.code.toByte())
+    val MAGIC_V2 = "TXJSMD2\n".toByteArray(StandardCharsets.US_ASCII)
     const val GET_MANIFEST = 1
     const val MANIFEST = 2
     const val GET_FILE = 3
     const val ERROR = 4
     const val FILE = 5
+    const val RESERVE = 6
+    const val LEASE = 7
+    const val RENEW = 8
+    const val RELEASE = 9
+    const val RELEASED = 10
 
-    fun writeGetManifest(output: OutputStream) {
-        output.write(MAGIC)
+    @JvmOverloads
+    fun writeGetManifest(output: OutputStream, protocolVersion: Int = DIRECT_MOD_SYNC_PROTOCOL_VERSION) {
+        output.write(magic(protocolVersion))
         DataOutputStream(output).apply { writeInt(0); writeInt(GET_MANIFEST); flush() }
     }
 
-    fun writeGetFile(output: OutputStream, descriptor: NetworkModDescriptor, offset: Long) {
+    @JvmOverloads
+    fun writeGetFile(output: OutputStream, descriptor: NetworkModDescriptor, offset: Long, protocolVersion: Int = DIRECT_MOD_SYNC_PROTOCOL_VERSION) {
         require(offset in 0..descriptor.payloadSize)
         val bytes = ByteArrayOutputStream(48)
         DataOutputStream(bytes).use { data ->
@@ -50,9 +63,58 @@ object DirectModSyncProtocol {
             data.write(decodeSha256(descriptor.normalizedSha256))
             data.writeLong(offset)
         }
-        output.write(MAGIC)
+        output.write(magic(protocolVersion))
         output.write(bytes.toByteArray())
         output.flush()
+    }
+
+    fun writeLeaseRequest(output: OutputStream, kind: Int, scope: String, token: ByteArray) {
+        require(kind == RESERVE || kind == RENEW || kind == RELEASE) { "Invalid direct lease request kind" }
+        require(scope.isNotBlank()) { "Missing direct room scope" }
+        require(token.size == 32) { "Direct lease token must contain 32 bytes" }
+        val payload = ByteArrayOutputStream()
+        DataOutputStream(payload).use { out -> out.writeProtocolString(scope); out.write(token) }
+        output.write(MAGIC_V2)
+        output.write(frame(kind, payload.toByteArray()))
+        output.flush()
+    }
+
+    fun encodeLease(lease: DirectModLease): ByteArray = frame(LEASE, ByteArrayOutputStream().also { bytes ->
+        DataOutputStream(bytes).use { out ->
+            out.writeProtocolString(lease.scope)
+            out.writeLong(lease.ttlMillis)
+            out.writeLong(lease.renewAfterMillis)
+            out.writeProtocolString(lease.state)
+            out.writeInt(lease.occupiedSlots)
+            out.writeInt(lease.slotLimit)
+            out.writeInt(lease.reservedSlots)
+        }
+    }.toByteArray())
+
+    fun encodeReleased(): ByteArray = frame(RELEASED, byteArrayOf())
+
+    fun readLease(input: InputStream, expectedScope: String): DirectModLease {
+        val response = readBoundedFrame(input, MAX_LEASE_PAYLOAD)
+        if (response.kind == ERROR) throw DirectModSyncServerException(readErrorPayload(response.payload))
+        if (response.kind != LEASE) throw IOException("Unexpected direct lease response kind: ${response.kind}")
+        val data = DataInputStream(response.payload.inputStream())
+        val lease = DirectModLease(data.readProtocolString(), data.readLong(), data.readLong(),
+            data.readProtocolString(), data.readInt(), data.readInt(), data.readInt())
+        if (data.available() != 0) throw IOException("Trailing direct lease bytes")
+        validateLease(lease, expectedScope)
+        return lease
+    }
+
+    fun readReleased(input: InputStream) {
+        val response = readBoundedFrame(input, MAX_ERROR_PAYLOAD)
+        if (response.kind == ERROR) throw DirectModSyncServerException(readErrorPayload(response.payload))
+        if (response.kind != RELEASED || response.payload.isNotEmpty()) throw IOException("Invalid direct release response")
+    }
+
+    private fun magic(protocolVersion: Int): ByteArray = when (protocolVersion) {
+        DIRECT_MOD_SYNC_PROTOCOL_VERSION -> MAGIC
+        DIRECT_MOD_SYNC_RESERVATION_PROTOCOL_VERSION -> MAGIC_V2
+        else -> throw IllegalArgumentException("Unsupported direct protocol version")
     }
 
     fun encodeManifest(manifest: DirectModManifest): ByteArray {
@@ -101,13 +163,24 @@ object DirectModSyncProtocol {
             gameVersion = data.readProtocolString(),
             scope = data.readProtocolString(),
             status = data.readProtocolString(),
-            lobby = data.readBoolean(),
+            lobby = when (val flag = data.readUnsignedByte()) {
+                0 -> false
+                1 -> true
+                else -> throw IOException("Invalid direct lobby flag: $flag")
+            },
             hostUnitsChecksum = data.readLong(),
             mods = mutableListOf<NetworkModDescriptor>().also { mods ->
                 val count = data.readInt()
                 if (count !in 0..DIRECT_MOD_SYNC_MAX_MODS) throw IOException("Invalid direct mod count: $count")
                 repeat(count) {
-                    mods += NetworkModDescriptor(data.readProtocolString(), data.readLong(), encodeSha256(data.readNBytesStrict(32)))
+                    val name = data.readProtocolString()
+                    val size = data.readLong()
+                    val hash = encodeSha256(data.readNBytesStrict(32))
+                    mods += try {
+                        NetworkModDescriptor(name, size, hash)
+                    } catch (error: IllegalArgumentException) {
+                        throw IOException("Invalid direct mod descriptor", error)
+                    }
                 }
             },
         )
@@ -184,13 +257,26 @@ data class DirectModManifest(
     val mods: List<NetworkModDescriptor>,
 ) {
     fun sameRoomContent(other: DirectModManifest): Boolean =
-        scope == other.scope && hostUnitsChecksum == other.hostUnitsChecksum && mods == other.mods
+        protocolVersion == other.protocolVersion && gameVersion == other.gameVersion &&
+            scope == other.scope && hostUnitsChecksum == other.hostUnitsChecksum && mods == other.mods
 }
 
 data class DirectFileResponseHeader(val bodyBytes: Long)
 
+/** 租约仅用于本轮同步及随后真实连接的准入；不包含可打印的凭证。 */
+data class DirectModLease(
+    val scope: String,
+    val ttlMillis: Long,
+    val renewAfterMillis: Long,
+    val state: String,
+    val occupiedSlots: Int,
+    val slotLimit: Int,
+    val reservedSlots: Int,
+)
+
 enum class DirectModSyncErrorCode {
     NO_ROOM, NOT_LOBBY, PREPARING, NOT_FOUND, BUSY, BAD_REQUEST, INTERNAL_ERROR,
+    ROOM_FULL, LEASE_EXPIRED, LEASE_INVALID,
 }
 
 open class DirectModSyncException(message: String, cause: Throwable? = null) : IOException(message, cause)
@@ -198,17 +284,35 @@ class DirectModSyncUnsupportedException(message: String, cause: Throwable? = nul
 class DirectModSyncServerException(val code: DirectModSyncErrorCode) : DirectModSyncException("Direct server error: $code")
 
 fun validateManifest(manifest: DirectModManifest) {
-    if (manifest.protocolVersion != DIRECT_MOD_SYNC_PROTOCOL_VERSION) throw IOException("Unsupported direct protocol version")
+    if (manifest.protocolVersion != DIRECT_MOD_SYNC_PROTOCOL_VERSION &&
+        manifest.protocolVersion != DIRECT_MOD_SYNC_RESERVATION_PROTOCOL_VERSION) throw IOException("Unsupported direct protocol version")
+    if (manifest.gameVersion.isBlank()) throw IOException("Missing direct game version")
+    if (manifest.scope.isBlank()) throw IOException("Missing direct room scope")
+    if (manifest.status.isBlank()) throw IOException("Missing direct manifest status")
     if (manifest.mods.size > DIRECT_MOD_SYNC_MAX_MODS) throw IOException("Too many direct mods")
     var total = 0L
     val identities = mutableSetOf<String>()
     val names = mutableSetOf<String>()
+    val sizesByHash = mutableMapOf<String, Long>()
     manifest.mods.forEach { mod ->
         if (mod.payloadSize > DIRECT_MOD_SYNC_MAX_FILE_BYTES) throw IOException("Direct mod exceeds size limit")
         total = Math.addExact(total, mod.payloadSize)
         if (!identities.add(mod.cacheKey()) || !names.add(mod.name)) throw IOException("Duplicate direct mod descriptor")
+        val previousSize = sizesByHash.putIfAbsent(mod.normalizedSha256, mod.payloadSize)
+        if (previousSize != null && previousSize != mod.payloadSize) throw IOException("Conflicting direct mod sizes for SHA-256")
     }
     if (total > DIRECT_MOD_SYNC_MAX_TOTAL_BYTES) throw IOException("Direct manifest exceeds total size limit")
+}
+
+fun validateLease(lease: DirectModLease, expectedScope: String) {
+    if (lease.scope.isBlank() || lease.scope != expectedScope) throw IOException("Direct lease room scope mismatch")
+    if (lease.ttlMillis !in 1_000L..300_000L || lease.renewAfterMillis <= 0 || lease.renewAfterMillis >= lease.ttlMillis) {
+        throw IOException("Invalid direct lease lifetime")
+    }
+    if (lease.state !in setOf("reserved", "claimed", "admitted")) throw IOException("Invalid direct lease state")
+    if (lease.slotLimit < 0 || lease.occupiedSlots !in 0..lease.slotLimit || lease.reservedSlots !in 0..lease.occupiedSlots) {
+        throw IOException("Invalid direct lease capacity")
+    }
 }
 
 fun sha256Hex(digest: MessageDigest): String = DirectModSyncProtocol.encodeSha256(digest.digest())
@@ -223,7 +327,15 @@ internal fun DataOutputStream.writeProtocolString(value: String) {
 internal fun DataInputStream.readProtocolString(): String {
     val length = readInt()
     if (length !in 0..MAX_STRING_BYTES) throw IOException("Invalid direct string length: $length")
-    return String(readNBytesStrict(length), StandardCharsets.UTF_8)
+    return try {
+        StandardCharsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+            .decode(ByteBuffer.wrap(readNBytesStrict(length)))
+            .toString()
+    } catch (error: CharacterCodingException) {
+        throw IOException("Invalid UTF-8 in direct protocol string", error)
+    }
 }
 
 internal fun InputStream.readNBytesStrict(length: Int): ByteArray {

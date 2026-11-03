@@ -38,7 +38,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
 sealed interface DirectJoinSyncResult {
-    data object Applied : DirectJoinSyncResult
+    data class Applied(val reservation: DirectJoinReservation? = null) : DirectJoinSyncResult
     data object Unsupported : DirectJoinSyncResult
     data class Failed(val failure: ConnectionFailure) : DirectJoinSyncResult
 }
@@ -46,6 +46,7 @@ sealed interface DirectJoinSyncResult {
 /** 可替换的引擎边界，便于在不启动原版连接的情况下验证 Direct 编排。 */
 interface DirectModSyncEnvironment {
     val cache: NetworkModCache
+    val gameVersion: String get() = io.github.rwpp.gameVersion.toString()
     fun getAllMods(): List<Mod>
     suspend fun applyMods(descriptors: List<NetworkModDescriptor>)
     fun getUnitsChecksum(): Int
@@ -66,8 +67,11 @@ private object DefaultDirectModSyncEnvironment : DirectModSyncEnvironment {
         val selectedFiles = selectModSyncFiles(allMods, descriptors, cache) { mod, error ->
             logger.warn("[MODSYNC-DIRECT] failed to hash local mod '${mod.name}': ${error.message}")
         }
-        allMods.forEach { mod -> mod.isEnabled = File(mod.path).canonicalFile in selectedFiles }
-        val enabledByFileName = allMods.associate { File(it.path).canonicalPath to it.isEnabled }.toMutableMap()
+        // 只提交目标选择。平台重载在实际解析前应用；排队超时或取消时不能提前改坏当前开关。
+        val enabledByFileName = allMods.associate {
+            val file = File(it.path).canonicalFile
+            file.path to (file in selectedFiles)
+        }.toMutableMap()
         selectedFiles.forEach { enabledByFileName[it.path] = true }
         // 此时尚无游戏连接：使用普通重载，绝不能改成房内保连接重载。
         manager.modReload(forceImmediate = true, enabledByFileName = enabledByFileName)
@@ -106,47 +110,61 @@ class DirectModSyncController(
         }
 
         var stage = ConnectionFailureStage.SYNC_MANIFEST
+        var reservation: DirectJoinReservation? = null
+        var handedOff = false
         return try {
             prepare(first)
-            loadingContext.message(readI18n("modSync.directChecking", I18nType.RWPP))
-            val missing = first.mods.map { it.cacheKey() }.toSet() - findMatchingModSyncKeys(
-                environment.getAllMods(), first.mods, environment.cache,
-            )
-            stage = ConnectionFailureStage.SYNC_DOWNLOAD
-            first.mods.filter { it.cacheKey() in missing }.forEachIndexed { index, descriptor ->
+            if (first.protocolVersion >= 2) {
+                loadingContext.message(readI18n("modSync.directReserving", I18nType.RWPP))
+                reservation = DirectJoinReservation.acquire(endpoint, transport, first.scope)
+            }
+            suspend fun synchronize(): DirectJoinSyncResult {
                 currentCoroutineContext().ensureActive()
-                loadingContext.message(readI18n("modSync.directDownloading", I18nType.RWPP, (index + 1).toString(), first.mods.size.toString(), descriptor.name))
-                transport.download(descriptor)
-            }
-            currentCoroutineContext().ensureActive()
-            stage = ConnectionFailureStage.SYNC_MANIFEST
-            loadingContext.message(readI18n("modSync.directRechecking", I18nType.RWPP))
-            val second = transport.getManifest()
-            validateManifest(second)
-            requireReady(second)
-            if (!first.sameRoomContent(second)) {
-                return DirectJoinSyncResult.Failed(ConnectionFailure(
-                    ConnectionFailureReason.MANIFEST_CHANGED,
-                    stage,
-                    details = "Direct room manifest changed during download",
-                ))
-            }
+                loadingContext.message(readI18n("modSync.directChecking", I18nType.RWPP))
+                val missing = first.mods.map { it.cacheKey() }.toSet() - findMatchingModSyncKeys(
+                    environment.getAllMods(), first.mods, environment.cache,
+                )
+                stage = ConnectionFailureStage.SYNC_DOWNLOAD
+                first.mods.filter { it.cacheKey() in missing }.forEachIndexed { index, descriptor ->
+                    currentCoroutineContext().ensureActive()
+                    loadingContext.message(readI18n("modSync.directDownloading", I18nType.RWPP, (index + 1).toString(), first.mods.size.toString(), descriptor.name))
+                    transport.download(descriptor)
+                }
+                currentCoroutineContext().ensureActive()
+                stage = ConnectionFailureStage.SYNC_MANIFEST
+                loadingContext.message(readI18n("modSync.directRechecking", I18nType.RWPP))
+                val second = transport.getManifest()
+                prepare(second)
+                requireSameContent(first, second)
 
-            stage = ConnectionFailureStage.SYNC_APPLY
-            loadingContext.message(readI18n("modSync.directApplying", I18nType.RWPP))
-            environment.applyMods(second.mods)
-            currentCoroutineContext().ensureActive()
-            val localChecksum = environment.getUnitsChecksum().toLong()
-            if (second.hostUnitsChecksum != -1L && localChecksum != second.hostUnitsChecksum) {
-                return DirectJoinSyncResult.Failed(ConnectionFailure(
-                    ConnectionFailureReason.CHECKSUM_MISMATCH,
-                    stage,
-                    details = "Direct unit checksum mismatch (local $localChecksum / host ${second.hostUnitsChecksum})",
-                ))
+                stage = ConnectionFailureStage.SYNC_APPLY
+                loadingContext.message(readI18n("modSync.directApplying", I18nType.RWPP))
+                environment.applyMods(second.mods)
+                currentCoroutineContext().ensureActive()
+                val localChecksum = environment.getUnitsChecksum().toLong()
+                if (second.hostUnitsChecksum != -1L && localChecksum != second.hostUnitsChecksum) {
+                    return DirectJoinSyncResult.Failed(ConnectionFailure(
+                        ConnectionFailureReason.CHECKSUM_MISMATCH,
+                        stage,
+                        details = "Direct unit checksum mismatch (local $localChecksum / host ${second.hostUnitsChecksum})",
+                    ))
+                }
+                environment.refreshHandshakeChecksumCache()
+                currentCoroutineContext().ensureActive()
+                // 重载可能耗时数十秒；下载后检查不能代表此时仍是同一大厅。
+                // v2 保留预约直到原版握手真正注册；密码、版本等仍由原版验证。
+                stage = ConnectionFailureStage.SYNC_MANIFEST
+                loadingContext.message(readI18n("modSync.directRechecking", I18nType.RWPP))
+                val finalManifest = transport.getManifest()
+                prepare(finalManifest)
+                requireSameContent(second, finalManifest)
+                currentCoroutineContext().ensureActive()
+                reservation?.renewNow()
+                return DirectJoinSyncResult.Applied(reservation)
             }
-            environment.refreshHandshakeChecksumCache()
-            currentCoroutineContext().ensureActive()
-            DirectJoinSyncResult.Applied
+            val result = reservation?.protect { synchronize() } ?: synchronize()
+            handedOff = result is DirectJoinSyncResult.Applied
+            result
         } catch (error: CancellationException) {
             throw error
         } catch (error: OutOfMemoryError) {
@@ -158,12 +176,31 @@ class DirectModSyncController(
             ))
         } catch (error: Exception) {
             failed(error, stage)
+        } finally {
+            if (!handedOff) reservation?.close()
         }
     }
 
     private fun prepare(manifest: DirectModManifest) {
         validateManifest(manifest)
         requireReady(manifest)
+        if (manifest.gameVersion != environment.gameVersion) {
+            throw DirectSyncFailure(ConnectionFailure(
+                ConnectionFailureReason.DATA_MISMATCH,
+                ConnectionFailureStage.SYNC_MANIFEST,
+                details = "Direct game protocol version mismatch (client ${environment.gameVersion} / server ${manifest.gameVersion})",
+            ))
+        }
+    }
+
+    private fun requireSameContent(expected: DirectModManifest, actual: DirectModManifest) {
+        if (!expected.sameRoomContent(actual)) {
+            throw DirectSyncFailure(ConnectionFailure(
+                ConnectionFailureReason.MANIFEST_CHANGED,
+                ConnectionFailureStage.SYNC_MANIFEST,
+                details = "Direct room manifest changed during synchronization",
+            ))
+        }
     }
 
     private fun requireReady(manifest: DirectModManifest) {

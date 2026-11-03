@@ -98,13 +98,17 @@ class JoinFailureMessageTest {
     }
 
     @Test
-    fun allSevenDirectServerCodesAreMappedIndependentlyOfTheirMessage() {
+    fun allDirectServerCodesAreMappedIndependentlyOfTheirMessage() {
         DirectModSyncErrorCode.entries.forEach { code ->
             val failure = assertNotNull(connectionFailure(
                 IllegalStateException("wrapper", DirectModSyncServerException(code)),
                 ConnectionFailureStage.SYNC_MANIFEST,
             ))
-            assertEquals(ConnectionFailureReason.valueOf(code.name), failure.reason)
+            val expected = when (code) {
+                DirectModSyncErrorCode.LEASE_EXPIRED, DirectModSyncErrorCode.LEASE_INVALID -> ConnectionFailureReason.SYNC_FAILED
+                else -> ConnectionFailureReason.valueOf(code.name)
+            }
+            assertEquals(expected, failure.reason)
             assertEquals(ConnectionFailureStage.SYNC_MANIFEST, failure.stage)
             assertTrue(failure.details.contains(code.name))
         }

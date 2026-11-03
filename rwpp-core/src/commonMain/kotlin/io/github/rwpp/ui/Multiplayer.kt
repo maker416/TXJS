@@ -433,6 +433,7 @@ fun MultiplayerView(
             GameSessionController.beginSession {
                 var joined = false
                 var opened = false
+                var directReservation: io.github.rwpp.core.DirectJoinReservation? = null
                 logger.info("[JOIN] begin room entry")
                 try {
                     ModSyncController.awaitJoinEntryCleanup()
@@ -465,7 +466,8 @@ fun MultiplayerView(
                     } else {
                         // Direct 在原版连接前完成下载、普通重载与校验；只有未识别协议才回落旧 relay。
                         when (val direct = io.github.rwpp.core.DirectModSyncController.shared.preJoinSync(address, this)) {
-                            io.github.rwpp.core.DirectJoinSyncResult.Applied -> {
+                            is io.github.rwpp.core.DirectJoinSyncResult.Applied -> {
+                                directReservation = direct.reservation
                                 // 本轮未创建 relay joining Presence，也清掉任何旧会话遗留上下文。
                                 ModSyncController.finishJoinerPresence()
                             }
@@ -487,11 +489,31 @@ fun MultiplayerView(
                     game.setUserName(userName)
                     configIO.setGameConfig("lastNetworkIP", address)
 
-                    val result = game.directJoinServer(
-                        address,
-                        capturedRoomDescription?.joinRelayUuid(),
-                        this,
-                    )
+                    suspend fun connectAndConfirmAdmission(): Result<String> {
+                        val result = game.directJoinServer(address, capturedRoomDescription?.joinRelayUuid(), this)
+                        if (result.isSuccess) {
+                            joined = true
+                            directReservation?.let { reservation ->
+                                message(readI18n("modSync.directConfirmingSeat"))
+                                reservation.awaitAdmission()
+                            }
+                        }
+                        return result
+                    }
+                    val result = try {
+                        val reservation = directReservation
+                        if (reservation == null) connectAndConfirmAdmission()
+                        else reservation.protect {
+                            reservation.openCredentials().use { connectAndConfirmAdmission() }
+                        }
+                    } catch (error: kotlinx.coroutines.CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        val model = connectionFailure(error, io.github.rwpp.net.ConnectionFailureStage.SYNC_MANIFEST)
+                            ?: throw error
+                        failure(model)
+                        return@beginSession false
+                    }
                     logger.info("[JOIN] engine connection returned; success={}", result.isSuccess)
                     result.exceptionOrNull()?.let { logger.warn("[JOIN] connection failed", it) }
                     if(result.isSuccess) {
@@ -523,13 +545,17 @@ fun MultiplayerView(
                     }
                 } finally {
                     logger.info("[JOIN] entry finished; joined={} roomOpened={}", joined, opened)
-                    if (joined && !opened) {
-                        withContext(NonCancellable + Dispatchers.Main.immediate) {
-                            game.gameRoom.disconnectAndWait()
+                    try {
+                        if (joined && !opened) {
+                            withContext(NonCancellable + Dispatchers.Main.immediate) {
+                                game.gameRoom.disconnectAndWait()
+                            }
                         }
+                    } finally {
+                        directReservation?.close()
+                        // 成功时为空操作；被踢重试已排定时保留 Presence。
+                        ModSyncController.finishJoinerPresence()
                     }
-                    // 成功时为空操作；被踢重试已排定时保留 Presence。
-                    ModSyncController.finishJoinerPresence()
                 }
             } ?: false
         } finally {
