@@ -20,13 +20,13 @@ const val DEFAULT_ACCOUNT_API_URL = "http://210.16.170.71:11455"
  * 统一账号客户端配置与会话持久化。
  *
  * 不读写 [CoreData.loginCookie] / `userId`，与 BBS / rtsbox 隔离。
- * AppKey 可被设置页、环境变量 `RWJS_ACCOUNT_APP_KEY` 或系统属性 `rwjs.account.appKey` 覆盖。
+ * 服务地址与 AppKey 不在玩家设置页展示；仍可通过本地配置、环境变量或系统属性覆盖。
  */
 @Single
 @Serializable
 data class AccountPreferences(
     var apiUrl: String = DEFAULT_ACCOUNT_API_URL,
-    /** 空则使用出厂默认；可用设置页或环境变量覆盖。 */
+    /** 空则使用出厂默认；可用本地配置、环境变量或系统属性覆盖。 */
     var appKey: String = "",
     var token: String = "",
     var lastUsername: String = "",

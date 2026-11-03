@@ -12,7 +12,7 @@ import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.koin.core.annotation.Single
 
-/** 模组云端游玩时长服务基址；设置、环境变量或系统属性可以覆盖。 */
+/** 模组云端游玩时长服务基址；本地配置、环境变量或系统属性可以覆盖，不在玩家设置页展示。 */
 const val DEFAULT_MOD_PLAYTIME_API_URL = "http://210.16.170.71:11456"
 
 @Single

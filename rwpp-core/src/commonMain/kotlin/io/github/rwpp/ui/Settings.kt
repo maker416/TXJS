@@ -23,12 +23,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.AppContext
-import io.github.rwpp.config.AccountPreferences
 import io.github.rwpp.config.ConfigIO
-import io.github.rwpp.config.ModPlaytimePreferences
 import io.github.rwpp.config.Settings
-import io.github.rwpp.config.resolveAccountApiUrl
-import io.github.rwpp.config.resolveAccountAppKey
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.external.ExternalHandler
@@ -61,8 +57,6 @@ fun SettingsView(
     val configIO = koinInject<ConfigIO>()
     val appContext = koinInject<AppContext>()
     val settings = koinInject<Settings>()
-    val accountPrefs = koinInject<AccountPreferences>()
-    val playtimePrefs = koinInject<ModPlaytimePreferences>()
     val i18nResolver = koinInject<GameI18nResolver>()
     val scope = rememberCoroutineScope()
 
@@ -435,43 +429,6 @@ fun SettingsView(
 
                                             ResourceBrowserOrientationSetting(settings, configIO)
                                             BrowserUploadSourceSetting(settings, configIO)
-
-                                            var forumUrl by remember { mutableStateOf(accountPrefs.forumUrl) }
-                                            SettingsTextField(readI18n("settings.forumUrl"), forumUrl) {
-                                                forumUrl = it
-                                                accountPrefs.forumUrl = it.trim()
-                                                configIO.saveConfig(accountPrefs)
-                                            }
-
-                                            var accountApiUrl by remember {
-                                                mutableStateOf(resolveAccountApiUrl(accountPrefs.apiUrl))
-                                            }
-                                            var accountAppKey by remember {
-                                                mutableStateOf(resolveAccountAppKey(accountPrefs.appKey))
-                                            }
-                                            SettingsTextField(
-                                                readI18n("settings.accountApiUrl", I18nType.RWPP),
-                                                accountApiUrl,
-                                            ) {
-                                                accountApiUrl = it
-                                                accountPrefs.apiUrl = it
-                                            }
-                                            SettingsTextField(
-                                                readI18n("settings.accountAppKey", I18nType.RWPP),
-                                                accountAppKey,
-                                            ) {
-                                                accountAppKey = it
-                                                accountPrefs.appKey = it
-                                            }
-                                            var playtimeApiUrl by remember { mutableStateOf(playtimePrefs.apiUrl) }
-                                            SettingsTextField(
-                                                readI18n("settings.modPlaytimeApiUrl", I18nType.RWPP),
-                                                playtimeApiUrl,
-                                            ) {
-                                                playtimeApiUrl = it
-                                                playtimePrefs.apiUrl = it.trim()
-                                                configIO.saveConfig(playtimePrefs)
-                                            }
                                         }
                                     }
 
