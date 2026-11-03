@@ -7,17 +7,21 @@
 
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
+import io.github.rwpp.game.Game
+import io.github.rwpp.game.GameRoom
 import io.github.rwpp.i18n.i18nOverrideTable
 import io.github.rwpp.i18n.setI18nOverride
 import io.github.rwpp.koinInit
 import io.github.rwpp.logger
 import io.github.rwpp.theme.ArtThemeController
+import io.github.rwpp.ui.UI
 import kotlinx.coroutines.runBlocking
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
 import org.koin.dsl.module
 import org.slf4j.LoggerFactory
 import java.io.File
+import java.lang.reflect.Proxy
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.test.AfterTest
@@ -42,7 +46,7 @@ class ArtThemeControllerTest {
     @BeforeTest
     fun setup() {
         runCatching { stopKoin() }
-        settings = Settings(autoCheckUpdate = false, language = "zh")
+        settings = Settings(autoCheckUpdate = false, language = "zh", launcherMusicVolume = 0f)
         val koin = startKoin {
             modules(module { single { settings } })
         }.koin
@@ -166,6 +170,70 @@ class ArtThemeControllerTest {
         assertTrue(ArtThemeController.installedThemes.isEmpty())
         assertFalse(File(themesRoot, "sample").exists())
         }
+    }
+
+    @Test
+    fun activeSessionRejectsTextureSelectionAndDeletionBeforeChangingState() = runBlocking {
+        val pack = buildPack(mapOf(
+            "theme.toml" to "[theme]\nid = \"guarded\"\nname = \"Game art\"\n",
+            "game/units/tank.png" to "fake-png",
+        ))
+        assertTrue(ArtThemeController.import(pack).success)
+        var active = true
+        var resumable = false
+        val room = Proxy.newProxyInstance(GameRoom::class.java.classLoader, arrayOf(GameRoom::class.java)) { _, method, _ ->
+            when (method.name) {
+                "isStartGame" -> active
+                "isConnecting", "isStartingGame" -> false
+                else -> error(method.name)
+            }
+        } as GameRoom
+        val game = Proxy.newProxyInstance(Game::class.java.classLoader, arrayOf(Game::class.java)) { _, method, _ ->
+            when (method.name) {
+                "getGameRoom" -> room
+                "isGameCouldContinue" -> resumable
+                else -> error(method.name)
+            }
+        } as Game
+        appKoin.loadModules(listOf(module { single<Game> { game } }))
+        try {
+            assertFalse(ArtThemeController.apply("guarded"))
+            assertNull(ArtThemeController.activeTheme)
+            assertNull(settings.selectedThemePack)
+            assertNotNull(UI.warning)
+            active = false
+            assertTrue(ArtThemeController.apply("guarded"))
+            active = true
+            assertFalse(ArtThemeController.apply(null))
+            assertFalse(ArtThemeController.delete("guarded"))
+            assertEquals("guarded", ArtThemeController.activeTheme?.id)
+            assertEquals("guarded", settings.selectedThemePack)
+            assertTrue(File(themesRoot, "guarded/game/units/tank.png").isFile)
+            active = false
+            resumable = true
+            // 原版“退出游戏”也保留单人对局，不能据此永久禁止美术包切换。
+            assertTrue(ArtThemeController.apply(null))
+            assertNull(settings.selectedThemePack)
+        } finally {
+            active = false
+            resumable = false
+            UI.warning = null
+        }
+    }
+
+    @Test
+    fun overlaySourceIsResolvedAgainAfterThemeWasScanned() = runBlocking {
+        val pack = buildPack(mapOf(
+            "theme.toml" to "[theme]\nid = \"late-art\"\nname = \"Late art\"\n",
+        ))
+        assertTrue(ArtThemeController.import(pack).success)
+        assertNull(ArtThemeController.installedThemes.single().gameOverlayDir)
+        assertTrue(ArtThemeController.apply("late-art"))
+        val overlay = File(themesRoot, "late-art/game")
+        File(overlay, "units/tank.png").apply { parentFile.mkdirs(); writeText("fake-png") }
+        assertEquals(overlay, io.github.rwpp.theme.GameArtOverlayManager.currentThemeOverlayDir())
+        assertTrue(ArtThemeController.apply(null))
+        assertNull(io.github.rwpp.theme.GameArtOverlayManager.currentThemeOverlayDir())
     }
 
     @Test

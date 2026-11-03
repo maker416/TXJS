@@ -438,6 +438,13 @@ class BundleParseTest {
             listOf(
                 "title",
                 "manageEntry",
+                "pageSubtitle",
+                "installedCount",
+                "currentAppearance",
+                "builtIn",
+                "restoreDefault",
+                "emptyTitle",
+                "importFirst", "gameArtFailed", "retryGameArt", "gameArtSessionActive",
                 "import",
                 "importing",
                 "refresh",

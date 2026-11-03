@@ -216,6 +216,7 @@ class ThemeSettingsUiTest {
     private fun ComposeUiTest.themeTab() {
         onNodeWithText(readI18n("settings.theme")).performScrollTo().performClick()
         waitForIdle()
+        onNodeWithText(readI18n("themes.manageEntry")).assertDoesNotExist()
     }
 
     private fun ComposeUiTest.saveScreenshot(name: String) {

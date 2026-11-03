@@ -14,12 +14,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
+import io.github.rwpp.game.Game
 import io.github.rwpp.i18n.LanguageHelper
+import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.i18n.setI18nOverride
 import io.github.rwpp.logger
 import io.github.rwpp.platform.LauncherMusic
 import io.github.rwpp.platform.themeFontFamily
 import io.github.rwpp.themeDir
+import io.github.rwpp.ui.UI
 import io.github.rwpp.widget.defaultRWPPColorScheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -116,6 +119,10 @@ object ArtThemeController {
 
     private val themesRoot: File get() = themeRootOverride ?: File(themeDir)
 
+    /** 运行期按真实目录核对，不能把早期扫描时缺少游戏资源的结果永久缓存为 null。 */
+    internal fun resolveGameOverlayDir(id: String): File? =
+        File(themesRoot, "$id/game").takeIf { it.isDirectory && it.walkTopDown().any { file -> file.isFile } }
+
     private val settings: Settings get() = appKoin.get<Settings>()
 
     /** 进程内一次：扫描并按 [Settings.selectedThemePack] 恢复激活项。 */
@@ -170,17 +177,26 @@ object ArtThemeController {
     }
 
     /** 启用指定主题包；传 null 停用并回落内置外观。配色/标题/背景/音乐经 Compose 状态与播放器热生效。 */
-    fun apply(id: String?) {
-        val oldOverlay = activeTheme?.gameOverlayDir
+    fun apply(id: String?): Boolean {
+        val oldOverlay = GameArtOverlayManager.currentThemeOverlayDir()
         val target = if (id == null) null else installedThemes.firstOrNull { it.id == id }
+        if (oldOverlay != target?.gameOverlayDir) {
+            if (GameArtOverlayManager.applying) return false
+            val game = appKoin.getOrNull<Game>()
+            val room = game?.gameRoom
+            // 联网/开局中拒绝切换前不能先改选择/持久化；离线暂停由专用重载保留场景。
+            if (room != null && (room.isConnecting || room.isStartGame || room.isStartingGame)) {
+                UI.showWarning(readI18n("themes.gameArtSessionActive"))
+                return false
+            }
+        }
         activeTheme = target
         settings.selectedThemePack = target?.id
         applyStringOverrides()
         LauncherMusicController.sync()
-        // 游戏内贴图覆盖层变化时重建 resource_generated/ 并重载单位（幂等：启动期已同步则跳过）
-        if (oldOverlay != target?.gameOverlayDir) {
-            GameArtOverlayManager.syncAsync()
-        }
+        // 以磁盘/内存的实际来源做幂等核对，不能只靠已扫描主题对象的目录比较跳过。
+        GameArtOverlayManager.syncAsync()
+        return true
     }
 
     /**
@@ -218,7 +234,7 @@ object ArtThemeController {
         val dir = File(themesRoot, id)
         if (!dir.exists()) return false
         if (!dir.canonicalFile.path.startsWith(root.path)) return false
-        if (activeTheme?.id == id) apply(null)
+        if (activeTheme?.id == id && !apply(null)) return false
         val ok = runCatching { dir.deleteRecursively() }.getOrDefault(false)
         scan()
         return ok

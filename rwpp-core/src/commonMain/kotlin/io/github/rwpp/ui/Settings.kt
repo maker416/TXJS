@@ -504,7 +504,6 @@ fun SettingsView(
                                                 configIO.saveConfig(settings)
                                                 onChangeBackgroundImage("")
                                             },
-                                            onManageThemes = { navigateTo(LauncherPage.Themes) },
                                             onRestoreThemeBackground = {
                                                 backgroundImageEnabled = true
                                                 settings.backgroundImageEnabled = true

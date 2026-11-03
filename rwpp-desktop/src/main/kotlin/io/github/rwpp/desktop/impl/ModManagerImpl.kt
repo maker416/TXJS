@@ -49,7 +49,16 @@ class ModManagerImpl : ModManager {
         DesktopGameThreadDispatcher(game::post, DesktopReloadGlContext::isOwnerThread)
     }
 
-    override suspend fun modReload(forceImmediate: Boolean, enabledByFileName: Map<String, Boolean>?) {
+    override suspend fun modReload(forceImmediate: Boolean, enabledByFileName: Map<String, Boolean>?) =
+        reloadLocal(forceImmediate, enabledByFileName, refreshGameArt = false)
+
+    override suspend fun reloadGameArt() = reloadLocal(false, null, refreshGameArt = true)
+
+    private suspend fun reloadLocal(
+        forceImmediate: Boolean,
+        enabledByFileName: Map<String, Boolean>?,
+        refreshGameArt: Boolean,
+    ) {
         io.github.rwpp.game.GameStartSafety.requireCanReload()
         if (!isReloadingMods.compareAndSet(false, true)) {
             error("模组仍在重载，请等待完成")
@@ -62,7 +71,7 @@ class ModManagerImpl : ModManager {
             // PC 的 forceImmediate 也不能绕过 GL 所有权；已在游戏线程时直接执行，否则排队。
             gameThreadDispatcher.run {
                 DesktopReloadGlContext.requireOwnerContext()
-                runReloadCore(enabledByFileName)
+                runReloadCore(enabledByFileName, refreshGameArt)
                 appKoin.get<Game>().getAllMaps(true)
             }
             logger.info("[MODSYNC] modReload main work finished")
@@ -242,15 +251,27 @@ class ModManagerImpl : ModManager {
      * 重载内核：调用引擎扫描 mods 目录并重新加载。
      * 必须在持有主窗口 GL 上下文的游戏线程执行。
      */
-    private fun runReloadCore(enabledByFileName: Map<String, Boolean>?) {
+    private fun runReloadCore(enabledByFileName: Map<String, Boolean>?, refreshGameArt: Boolean) {
+        if (refreshGameArt) {
+            check(!game.gameRoom.isConnecting && !game.gameRoom.isStartGame && !game.gameRoom.isStartingGame) { io.github.rwpp.i18n.readI18n("themes.gameArtSessionActive") }
+        }
         ModLoadSafety.run("local-reload") {
             val engine = GameEngine.B()
+            val preserveScene = refreshGameArt && game.isGameCouldContinue()
             saveModSelection(enabledByFileName)
             try {
                 engine.br = true
-                engine.e()
+                // 纯贴图刷新不能通过 e()/x() 清掉可继续的单人场景。
+                if (!preserveScene) engine.e()
+                if (refreshGameArt) {
+                    // 引擎按资源逻辑路径缓存图片，覆盖目录变化不会改变 key。
+                    // 不能回收旧图：旧菜单场景仍可能引用它们，重建场景后交给引擎/GC 释放。
+                    com.corrodinggames.rts.game.units.custom.ag.g.clear()
+                    com.corrodinggames.rts.game.units.am.bH()
+                    logger.info("[GAMEART] image cache invalidated; native unit images reloaded; scene preserved=$preserveScene")
+                }
                 reloadUnitsWithSelection(enabledByFileName)
-                engine.x()
+                if (!preserveScene) engine.x()
             } finally { engine.br = false }
         }
     }

@@ -46,15 +46,24 @@ class ModManagerImpl : ModManager {
         const val GAME_POST_START_TIMEOUT_MS = 5000L
     }
 
-    override suspend fun modReload(forceImmediate: Boolean, enabledByFileName: Map<String, Boolean>?) {
+    override suspend fun modReload(forceImmediate: Boolean, enabledByFileName: Map<String, Boolean>?) =
+        reloadLocal(forceImmediate, enabledByFileName, refreshGameArt = false)
+
+    override suspend fun reloadGameArt() = reloadLocal(false, null, refreshGameArt = true)
+
+    private suspend fun reloadLocal(
+        forceImmediate: Boolean,
+        enabledByFileName: Map<String, Boolean>?,
+        refreshGameArt: Boolean,
+    ) {
         io.github.rwpp.game.GameStartSafety.requireCanReload()
         check(isReloadingMods.compareAndSet(false, true)) { "模组仍在重载，请等待完成" }
         try {
             game.invalidateModPlaytimeSnapshot()
             ReloadModEvent().broadcastIn()
             refreshProtectedModLoadHint(getAllMods(), enabledByFileName)
-            if (forceImmediate) runReloadCore(enabledByFileName)
-            else runOnGameThread { runReloadCore(enabledByFileName) }
+            if (forceImmediate) runReloadCore(enabledByFileName, refreshGameArt)
+            else runOnGameThread { runReloadCore(enabledByFileName, refreshGameArt) }
             game.getAllMaps(true)
         } finally {
             game.invalidateModPlaytimeSnapshot()
@@ -212,17 +221,31 @@ class ModManagerImpl : ModManager {
      * 重载内核：调用引擎扫描 mods 目录并重新加载。
      * 默认应在游戏主线程执行；forceImmediate 时为绕过主循环在调用线程直接执行。
      */
-    private fun runReloadCore(enabledByFileName: Map<String, Boolean>?) {
+    private fun runReloadCore(enabledByFileName: Map<String, Boolean>?, refreshGameArt: Boolean) {
+        if (refreshGameArt) {
+            check(!game.gameRoom.isConnecting && !game.gameRoom.isStartGame && !game.gameRoom.isStartingGame) { io.github.rwpp.i18n.readI18n("themes.gameArtSessionActive") }
+        }
         ModLoadSafety.run("local-reload") {
             val t = GameEngine.t()
+            val preserveScene = refreshGameArt && game.isGameCouldContinue()
             t.bW.d()
             t.bN.save()
             t.bo = true
             try {
-                t.f()
-                reloadUnitsWithSelection(enabledByFileName)
+                // f()/q() 会销毁暂停中的地图；纯贴图刷新保留场景，由原版单位重载重绑现有单位。
+                if (!preserveScene) t.f()
+                if (refreshGameArt) {
+                    // 引擎按资源逻辑路径缓存图片，覆盖目录变化不会改变 key。
+                    // 不能回收旧图：旧菜单场景仍可能引用它们，重建场景后交给引擎/GC 释放。
+                    synchronized(t.ai) {
+                        com.corrodinggames.rts.game.units.custom.ag.g.clear()
+                        com.corrodinggames.rts.game.units.ce.bp()
+                        reloadUnitsWithSelection(enabledByFileName)
+                    }
+                    logger.info("[GAMEART] image cache invalidated; native unit images reloaded; scene preserved=$preserveScene")
+                } else reloadUnitsWithSelection(enabledByFileName)
             } finally { t.bo = false }
-            t.q()
+            if (!preserveScene) t.q()
         }
     }
 

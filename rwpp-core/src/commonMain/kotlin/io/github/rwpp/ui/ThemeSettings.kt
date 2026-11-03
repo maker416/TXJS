@@ -40,7 +40,6 @@ internal fun ThemeSettingsContent(
     onChooseBackground: () -> Unit,
     onClearBackground: () -> Unit,
     onRestoreThemeBackground: () -> Unit,
-    onManageThemes: () -> Unit,
 ) {
     val activeTheme = ArtThemeController.activeTheme
     Column(
@@ -71,9 +70,6 @@ internal fun ThemeSettingsContent(
                     if (activeTheme == null) readI18n("settings.themePackHint")
                     else readI18n("settings.themePackActive", arg = arrayOf(activeTheme.spec.theme.name))
                 )
-                OutlinedButton(onClick = onManageThemes) {
-                    Text(readI18n("themes.manageEntry"))
-                }
                 HorizontalDivider()
                 ThemeSettingsSwitch("settings.changeGameTheme", settings.changeGameTheme) { settings.changeGameTheme = it }
             }
