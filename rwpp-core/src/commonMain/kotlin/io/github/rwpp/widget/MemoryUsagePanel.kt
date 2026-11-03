@@ -10,10 +10,15 @@ package io.github.rwpp.widget
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -25,9 +30,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.core.MemoryUsage
 import io.github.rwpp.i18n.I18nType
@@ -85,6 +92,103 @@ fun MemoryUsagePanel(
     }
 
     MemoryUsageContent(usage, modifier, compact, darkBackground)
+}
+
+/** 顶栏仅展示堆占用比例，点击后查看完整口径；采样变化只影响组件内部。 */
+@Composable
+fun MemoryUsageButton(modifier: Modifier = Modifier) {
+    var usage by remember { mutableStateOf<MemoryUsage?>(null) }
+    LaunchedEffect(Unit) {
+        memoryUsageSamples.collect { usage = it }
+    }
+    MemoryUsageButtonContent(usage, modifier)
+}
+
+/** 与采样分离，方便验证摘要、压力颜色和矮屏详情弹窗。 */
+@Composable
+internal fun MemoryUsageButtonContent(
+    usage: MemoryUsage?,
+    modifier: Modifier = Modifier,
+) {
+    var showDetails by remember { mutableStateOf(false) }
+    val scheme = MaterialTheme.colorScheme
+    val fraction = usage?.heapUsageFraction ?: 0f
+    val accentColor = when {
+        usage != null && fraction >= 0.90f -> scheme.error
+        usage != null && fraction >= 0.80f -> scheme.tertiary
+        else -> scheme.primary
+    }
+
+    Surface(
+        onClick = { showDetails = true },
+        modifier = modifier
+            .widthIn(max = 160.dp)
+            .heightIn(min = 48.dp)
+            .testTag("memory-summary"),
+        shape = RoundedCornerShape(10.dp),
+        color = accentColor.copy(alpha = 0.08f),
+        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.3f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
+        ) {
+            Text(
+                readI18n("memory.title"),
+                color = scheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = usage?.let { "${(fraction * 100).roundToInt()}%" } ?: "—",
+                modifier = Modifier.fillMaxWidth(),
+                color = accentColor,
+                style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+            LinearProgressIndicator(
+                progress = { fraction },
+                modifier = Modifier.fillMaxWidth().height(2.dp),
+                color = accentColor,
+                trackColor = accentColor.copy(alpha = 0.16f),
+            )
+        }
+    }
+
+    AnimatedAlertDialog(
+        visible = showDetails,
+        onDismissRequest = { showDetails = false },
+    ) { dismiss ->
+        BorderCard(
+            backgroundColor = scheme.surfaceContainerHigh,
+            modifier = Modifier
+                .widthIn(max = 560.dp)
+                .fillMaxWidth(0.94f)
+                .heightIn(max = 520.dp)
+                .testTag("memory-details"),
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    MemoryUsageContent(usage)
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    RWTextButton(readI18n("common.close"), onClick = dismiss)
+                }
+            }
+        }
+    }
 }
 
 /** 不启动采样的展示层，便于预览不同内存压力与窄屏布局。 */
