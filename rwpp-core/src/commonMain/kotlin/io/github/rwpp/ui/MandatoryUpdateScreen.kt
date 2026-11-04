@@ -8,23 +8,24 @@
 package io.github.rwpp.ui
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mikepenz.markdown.compose.Markdown
@@ -38,53 +39,109 @@ import io.github.rwpp.net.LatestVersionProfile
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.projectVersion
 import io.github.rwpp.widget.UiLinearProgressIndicator
+import io.github.rwpp.widget.UiMotionTheme
 
-private val UpdateMint = Color(0xFF83E8C2)
-private val UpdateMuted = Color(0xFF9BAAB9)
+private val UpdateColors = darkColorScheme(
+    primary = Color(0xFFABCF95),
+    onPrimary = Color(0xFF192B12),
+    background = Color(0xFF111412),
+    onBackground = Color(0xFFF0F2EE),
+    surface = Color(0xFF1B1F1C),
+    onSurface = Color(0xFFF0F2EE),
+    onSurfaceVariant = Color(0xFFADB5AD),
+    outline = Color(0xFF626C62),
+    outlineVariant = Color(0xFF353D35),
+    error = Color(0xFFFFB4AB),
+)
+
 private fun updateText(key: String) = readI18n("mandatoryUpdate.$key", I18nType.RWPP)
 
 /** 全屏根页面：不组合启动器，返回键不会关闭更新闸门。 */
 @Composable
 fun MandatoryUpdateScreen(
-    release: LatestVersionProfile, progress: UpdateProgress,
-    onUpdate: () -> Unit, onCancel: () -> Unit, onExit: () -> Unit, onOpenRelease: () -> Unit,
+    release: LatestVersionProfile,
+    progress: UpdateProgress,
+    onUpdate: () -> Unit,
+    onCancel: () -> Unit,
+    onExit: () -> Unit,
+    onOpenRelease: () -> Unit,
 ) {
     BackHandler(true) {}
-    MaterialTheme(colorScheme = darkColorScheme(primary = UpdateMint, onPrimary = Color(0xFF08291E),
-        surface = Color(0xFF15222E), onSurface = Color(0xFFEEF4F8), onSurfaceVariant = UpdateMuted)) {
-        CompositionLocalProvider(LocalContentColor provides Color(0xFFEEF4F8)) {
-            BoxWithConstraints(Modifier.fillMaxSize().background(Brush.linearGradient(
-                listOf(Color(0xFF0C1520), Color(0xFF142936), Color(0xFF102B2A))))) {
-                val compact = maxHeight < 500.dp
-                val wide = maxWidth >= 760.dp
-                Column(Modifier.fillMaxSize().padding(horizontal = if (wide) 32.dp else 20.dp,
-                    vertical = if (compact) 12.dp else 24.dp), verticalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 22.dp)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Surface(color = UpdateMint, shape = RoundedCornerShape(10.dp)) {
-                            Text("R", Modifier.padding(horizontal = 13.dp, vertical = 7.dp), color = Color(0xFF08291E),
-                                fontWeight = FontWeight.Black, fontSize = 20.sp)
-                        }
-                        Column(Modifier.padding(start = 12.dp).weight(1f)) {
-                            Text("RWJS", fontWeight = FontWeight.Bold, letterSpacing = 3.sp)
-                            Text("UPDATE CENTER", color = UpdateMuted, fontSize = 10.sp, letterSpacing = 2.sp)
-                        }
-                        TextButton(onClick = onExit) { Text(updateText("exit"), color = UpdateMuted) }
+    val inheritedTypography = MaterialTheme.typography
+    // 保留美术包字体，文字颜色统一跟随本页配色，避免浅色主题的深色字落到深背景上。
+    val typography = remember(inheritedTypography) {
+        inheritedTypography.copy(
+            displayLarge = inheritedTypography.displayLarge.copy(color = Color.Unspecified),
+            displayMedium = inheritedTypography.displayMedium.copy(color = Color.Unspecified),
+            displaySmall = inheritedTypography.displaySmall.copy(color = Color.Unspecified),
+            headlineLarge = inheritedTypography.headlineLarge.copy(color = Color.Unspecified),
+            headlineMedium = inheritedTypography.headlineMedium.copy(color = Color.Unspecified),
+            headlineSmall = inheritedTypography.headlineSmall.copy(color = Color.Unspecified),
+            titleLarge = inheritedTypography.titleLarge.copy(color = Color.Unspecified),
+            titleMedium = inheritedTypography.titleMedium.copy(color = Color.Unspecified),
+            titleSmall = inheritedTypography.titleSmall.copy(color = Color.Unspecified),
+            bodyLarge = inheritedTypography.bodyLarge.copy(color = UpdateColors.onSurface),
+            bodyMedium = inheritedTypography.bodyMedium.copy(color = Color.Unspecified),
+            bodySmall = inheritedTypography.bodySmall.copy(color = Color.Unspecified),
+            labelLarge = inheritedTypography.labelLarge.copy(color = Color.Unspecified),
+            labelMedium = inheritedTypography.labelMedium.copy(color = Color.Unspecified),
+            labelSmall = inheritedTypography.labelSmall.copy(color = Color.Unspecified),
+        )
+    }
+    UiMotionTheme(colorScheme = UpdateColors, typography = typography) {
+        BoxWithConstraints(
+            Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            val compact = maxHeight < 500.dp
+            val wide = maxWidth >= 600.dp
+            Column(
+                Modifier.widthIn(max = 880.dp).fillMaxSize()
+                    .padding(horizontal = if (wide) 24.dp else 16.dp, vertical = if (compact) 12.dp else 24.dp),
+                verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 16.dp),
+            ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        updateText("brand"),
+                        modifier = Modifier.weight(1f).padding(end = 12.dp),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    TextButton(onClick = onExit, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text(updateText("exit"), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    if (wide) {
-                        Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-                            Column(Modifier.weight(0.95f).fillMaxHeight().verticalScroll(rememberScrollState())) {
-                                UpdateHero(release, compact)
-                            }
-                            ReleaseNotes(release, Modifier.weight(1.05f).fillMaxHeight())
+                }
+                Surface(
+                    Modifier.weight(1f).fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                ) {
+                    Column {
+                        // 正文是唯一滚动区域；长日志不会把进度或安装按钮推到屏幕外。
+                        Column(
+                            Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
+                                .padding(
+                                    horizontal = if (wide) 28.dp else 20.dp,
+                                    vertical = if (compact) 16.dp else if (wide) 28.dp else 20.dp,
+                                ),
+                        ) {
+                            UpdateHeading(release, compact)
+                            Spacer(Modifier.height(if (compact) 20.dp else 28.dp))
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            Spacer(Modifier.height(20.dp))
+                            Text(
+                                updateText("notes"),
+                                modifier = Modifier.semantics { heading() },
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            ReleaseNotes(release)
                         }
-                    } else {
-                        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(22.dp)) {
-                            UpdateHero(release, compact)
-                            ReleaseNotes(release, Modifier.fillMaxWidth(), scroll = false)
-                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        UpdateControls(progress, onUpdate, onCancel, onOpenRelease, compact, wide)
                     }
-                    UpdateControls(progress, onUpdate, onCancel, onOpenRelease, compact)
                 }
             }
         }
@@ -92,85 +149,91 @@ fun MandatoryUpdateScreen(
 }
 
 @Composable
-private fun UpdateEmblem(modifier: Modifier) {
-    Box(modifier, contentAlignment = Alignment.Center) {
-        Canvas(Modifier.fillMaxSize()) {
-            val r = size.minDimension / 2
-            drawCircle(UpdateMint.copy(alpha = 0.05f), r)
-            drawCircle(UpdateMint.copy(alpha = 0.12f), r * 0.98f, style = Stroke(1.dp.toPx()))
-            drawCircle(UpdateMint.copy(alpha = 0.23f), r * 0.72f, style = Stroke(1.dp.toPx()))
-            drawCircle(UpdateMint, 4.dp.toPx(), center = Offset(size.width * 0.86f, size.height * 0.25f))
-            val center = Offset(size.width / 2, size.height / 2)
-            val arrow = r * 0.33f
-            val stroke = 2.dp.toPx()
-            drawLine(UpdateMint, center.copy(y = center.y - arrow), center.copy(y = center.y + arrow), stroke)
-            drawLine(UpdateMint, center.copy(y = center.y + arrow), Offset(center.x - arrow, center.y), stroke)
-            drawLine(UpdateMint, center.copy(y = center.y + arrow), Offset(center.x + arrow, center.y), stroke)
+private fun ReleaseNotes(release: LatestVersionProfile) {
+    val body = MaterialTheme.typography.bodyMedium.copy(
+        color = MaterialTheme.colorScheme.onSurface,
+        fontSize = 14.sp,
+        lineHeight = 22.sp,
+        fontWeight = FontWeight.Normal,
+    )
+    val heading = body.copy(fontWeight = FontWeight.SemiBold)
+    SelectionContainer {
+        Markdown(
+            release.body.ifBlank { updateText("emptyNotes") },
+            modifier = Modifier.fillMaxWidth(),
+            colors = markdownColor(),
+            typography = markdownTypography(
+                h1 = heading.copy(fontSize = 20.sp, lineHeight = 28.sp),
+                h2 = heading.copy(fontSize = 18.sp, lineHeight = 26.sp),
+                h3 = heading.copy(fontSize = 16.sp, lineHeight = 24.sp),
+                h4 = heading,
+                h5 = heading,
+                h6 = heading,
+                text = body,
+                paragraph = body,
+                ordered = body,
+                bullet = body,
+                list = body,
+            ),
+        )
+    }
+}
+
+@Composable
+private fun UpdateHeading(release: LatestVersionProfile, compact: Boolean) {
+    Text(
+        updateText("title"),
+        modifier = Modifier.semantics { heading() },
+        fontSize = if (compact) 24.sp else 28.sp,
+        lineHeight = if (compact) 32.sp else 36.sp,
+        fontWeight = FontWeight.SemiBold,
+    )
+    Spacer(Modifier.height(8.dp))
+    Text(
+        updateText("subtitle"),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        fontSize = 14.sp,
+        lineHeight = 22.sp,
+    )
+    Spacer(Modifier.height(if (compact) 12.dp else 20.dp))
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            "${updateText("current")} $projectVersion",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 13.sp,
+        )
+        Icon(
+            Icons.AutoMirrored.Filled.ArrowForward,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp),
+        )
+        Text(
+            "${updateText("latest")} ${release.version}",
+            color = MaterialTheme.colorScheme.primary,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        if (release.prerelease) {
+            Text(updateText("preview"), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
         }
     }
 }
 
 @Composable
-private fun UpdateHero(release: LatestVersionProfile, compact: Boolean) {
-    Column {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Surface(color = UpdateMint.copy(alpha = 0.12f), shape = RoundedCornerShape(50)) {
-                Text(updateText("required"), Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    color = UpdateMint, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            }
-            Text(if (release.prerelease) "PREVIEW" else "RELEASE", color = UpdateMuted, fontSize = 11.sp, letterSpacing = 2.sp)
-        }
-        Spacer(Modifier.height(if (compact) 14.dp else 22.dp))
-        Text(updateText("title"), fontSize = if (compact) 32.sp else 40.sp, lineHeight = if (compact) 40.sp else 50.sp,
-            fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(12.dp))
-        Text(updateText("subtitle"), color = UpdateMuted, style = MaterialTheme.typography.bodyMedium)
-        Spacer(Modifier.height(if (compact) 18.dp else 26.dp))
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Column {
-                Text(updateText("current"), color = UpdateMuted, fontSize = 12.sp)
-                Text(projectVersion, fontSize = 20.sp, fontWeight = FontWeight.Medium)
-            }
-            Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = UpdateMuted, modifier = Modifier.size(18.dp))
-            Column {
-                Text(updateText("latest"), color = UpdateMint, fontSize = 12.sp)
-                Text(release.version, fontSize = 25.sp, color = UpdateMint, fontWeight = FontWeight.Bold)
-            }
-        }
-        Spacer(Modifier.height(22.dp))
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            UpdateEmblem(Modifier.size(if (compact) 65.dp else 86.dp))
-            Column {
-                Text(updateText("safe"), fontWeight = FontWeight.Medium, fontSize = 14.sp)
-                Text(updateText("preserved"), color = UpdateMuted, fontSize = 12.sp)
-            }
-        }
-    }
-}
-
-@Composable
-private fun ReleaseNotes(release: LatestVersionProfile, modifier: Modifier, scroll: Boolean = true) {
-    Surface(modifier, color = Color.White.copy(alpha = 0.035f), shape = RoundedCornerShape(20.dp),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))) {
-        Column(Modifier.padding(20.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(updateText("notes"), fontWeight = FontWeight.Bold)
-                Text("CHANGELOG", fontSize = 10.sp, color = UpdateMuted, letterSpacing = 1.sp)
-            }
-            Spacer(Modifier.height(14.dp))
-            HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
-            Spacer(Modifier.height(14.dp))
-            val bodyModifier = if (scroll) Modifier.weight(1f).verticalScroll(rememberScrollState()) else Modifier
-            Markdown(release.body.ifBlank { updateText("emptyNotes") }, modifier = bodyModifier.fillMaxWidth(),
-                colors = markdownColor(), typography = markdownTypography())
-        }
-    }
-}
-
-@Composable
-private fun UpdateControls(progress: UpdateProgress, onUpdate: () -> Unit, onCancel: () -> Unit,
-    onOpenRelease: () -> Unit, compact: Boolean) {
+private fun UpdateControls(
+    progress: UpdateProgress,
+    onUpdate: () -> Unit,
+    onCancel: () -> Unit,
+    onOpenRelease: () -> Unit,
+    compact: Boolean,
+    wide: Boolean,
+) {
     val busy = progress.stage in listOf(UpdateStage.DOWNLOADING, UpdateStage.VERIFYING, UpdateStage.EXTRACTING)
+    val knownDownload = progress.stage == UpdateStage.DOWNLOADING && progress.totalBytes > 0
     val key = when (progress.stage) {
         UpdateStage.READY -> "ready"
         UpdateStage.DOWNLOADING -> "downloading"
@@ -180,45 +243,109 @@ private fun UpdateControls(progress: UpdateProgress, onUpdate: () -> Unit, onCan
         UpdateStage.PERMISSION_REQUIRED -> "permission"
         UpdateStage.FAILED -> "failed"
     }
-    Surface(color = Color(0xFF1B3037), shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, UpdateMint.copy(alpha = 0.16f))) {
-        Column(Modifier.fillMaxWidth().padding(if (compact) 14.dp else 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(updateText(key), fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f), fontSize = 14.sp)
-                if (busy) Text("${(progress.fraction * 100).toInt()}%", color = UpdateMint, fontWeight = FontWeight.Bold)
-            }
-            if (busy) {
-                if (progress.stage == UpdateStage.DOWNLOADING && progress.totalBytes > 0) {
-                    LinearProgressIndicator(progress = { progress.fraction }, modifier = Modifier.fillMaxWidth(), color = UpdateMint)
-                } else UiLinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = UpdateMint)
-                val eta = if (progress.totalBytes > progress.downloadedBytes && progress.bytesPerSecond > 0)
-                    " · ~${(progress.totalBytes - progress.downloadedBytes) / progress.bytesPerSecond}s" else ""
-                val transferDetails = if (progress.stage == UpdateStage.DOWNLOADING)
-                    " · ${updateBytes(progress.bytesPerSecond)}/s$eta" else ""
-                val volumeDetails = if (progress.parts > 0) " · ${progress.part}/${progress.parts}" else ""
-                Text("${updateBytes(progress.downloadedBytes)} / ${if (progress.totalBytes > 0) updateBytes(progress.totalBytes) else "—"}" +
-                    transferDetails + volumeDetails, color = UpdateMuted, fontSize = 12.sp)
-            }
-            if (progress.stage == UpdateStage.FAILED) {
-                Text(progress.error.orEmpty(), color = Color(0xFFFFB4AB), fontSize = 12.sp, maxLines = 3)
-            }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onOpenRelease) { Text(updateText("manual"), color = UpdateMuted, fontSize = 12.sp) }
-                Spacer(Modifier.weight(1f))
-                if (busy) {
-                    OutlinedButton(onClick = onCancel) { Text(updateText("stop"), color = UpdateMint) }
-                } else {
-                    Button(onClick = onUpdate, shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 22.dp, vertical = 12.dp)) {
-                        Text(updateText(when (progress.stage) {
-                            UpdateStage.INSTALLING -> "reinstall"
-                            UpdateStage.PERMISSION_REQUIRED -> "grant"
-                            UpdateStage.FAILED -> "retry"
-                            else -> "download"
-                        }), fontWeight = FontWeight.Bold)
-                    }
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = if (wide) 28.dp else 20.dp, vertical = if (compact) 12.dp else 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (progress.stage != UpdateStage.READY) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    updateText(key),
+                    modifier = Modifier.weight(1f),
+                    color = if (progress.stage == UpdateStage.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                if (knownDownload) {
+                    Text(
+                        "${(progress.fraction.coerceIn(0f, 1f) * 100).toInt()}%",
+                        modifier = Modifier.padding(start = 12.dp),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
                 }
             }
         }
+        if (busy) {
+            if (knownDownload) {
+                LinearProgressIndicator(
+                    progress = { progress.fraction.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth(),
+                    trackColor = MaterialTheme.colorScheme.outlineVariant,
+                )
+            } else {
+                UiLinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth(),
+                    trackColor = MaterialTheme.colorScheme.outlineVariant,
+                )
+            }
+            if (progress.stage == UpdateStage.DOWNLOADING) {
+                val total = if (knownDownload) " / ${updateBytes(progress.totalBytes)}" else ""
+                val speed = if (progress.bytesPerSecond > 0) " · ${updateBytes(progress.bytesPerSecond)}/s" else ""
+                val parts = if (progress.parts > 1) " · ${progress.part}/${progress.parts}" else ""
+                Text(
+                    "${updateBytes(progress.downloadedBytes)}$total$speed$parts",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                )
+            }
+        }
+        if (progress.stage == UpdateStage.FAILED && !progress.error.isNullOrBlank()) {
+            Text(
+                progress.error.orEmpty(),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val primaryAction: @Composable (Modifier) -> Unit = { modifier ->
+                if (busy) {
+                    OutlinedButton(onClick = onCancel, modifier = modifier.heightIn(min = 48.dp), shape = RoundedCornerShape(10.dp)) {
+                        Text(updateText("stop"), color = MaterialTheme.colorScheme.primary)
+                    }
+                } else {
+                    Button(
+                        onClick = onUpdate,
+                        modifier = modifier.heightIn(min = 48.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp),
+                    ) {
+                        Text(
+                            updateText(when (progress.stage) {
+                                UpdateStage.INSTALLING -> "reinstall"
+                                UpdateStage.PERMISSION_REQUIRED -> "grant"
+                                UpdateStage.FAILED -> "retry"
+                                else -> "download"
+                            }),
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+            }
+            if (maxWidth < 400.dp) {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    primaryAction(Modifier.fillMaxWidth())
+                    ManualInstallButton(onOpenRelease, Modifier.fillMaxWidth())
+                }
+            } else {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    ManualInstallButton(onOpenRelease)
+                    Spacer(Modifier.weight(1f))
+                    primaryAction(Modifier)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManualInstallButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    TextButton(onClick = onClick, modifier = modifier.heightIn(min = 48.dp)) {
+        Text(updateText("manual"), color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
