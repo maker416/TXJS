@@ -142,6 +142,9 @@ val isMainWindowInitialized: Boolean get() = ::mainJFrame.isInitialized
 
 private fun resolveLauncherExePath(): String {
     val dir = System.getProperty("user.dir")
+    if (System.getProperty("os.name").startsWith("Linux", ignoreCase = true)) {
+        return File(dir, "RWJS.sh").absolutePath
+    }
     val rwjs = "$dir/RWJS.exe"
     val rwpp = "$dir/RWPP.exe"
     return when {

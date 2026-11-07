@@ -149,6 +149,9 @@ Android 端有大量资源需要从原版铁锈战争客户端提取（assets、
 # 桌面端 fat jar（当前 OS）
 ./gradlew :rwpp-desktop:packageReleaseUberJarForCurrentOS
 
+# Linux 完整包（自动配置 JDK 21 / Python 3.9+，原版 ZIP 放 build/Rusted-Warfare-linux.zip）
+./packaging/build.sh linux --channel official
+
 # Windows Inno Setup 安装包（需要 Inno Setup 6.5+）
 ./gradlew :rwpp-desktop:packageInnoDistribution
 
@@ -172,8 +175,9 @@ Gradle JVM 参数在根目录 `gradle.properties` 中定义（`-Xmx2048M`）。
    - Android 端需要 `lib/android-game-lib.jar`
 2. Android 若缺少 assets/res，需从本地已安装的铁锈战争客户端对照补齐。
 3. Android Release 签名：`build/key/release.keystore` + `build/key/keystore.properties`（`gradlew clean` 不会删除 `build/key/`）。
-4. Windows 安装包需要 Inno Setup 6.5+（`ISCC.exe`），可通过 `INNO_SETUP_COMPILER` 指定编译器路径；构建入口为 `packaging/build.ps1 installer`。
+4. Windows 安装包需要 JDK 21 和 Inno Setup 6.5+（`ISCC.exe`）。`build/build.ps1` / `packaging/build.ps1` 自动检测并配置本次打包环境，缺少工具时优先通过 WinGet 安装，无 WinGet 或安装后仍不可用时下载并校验官方固定版本，配置到 `%LOCALAPPDATA%\RWJS\BuildTools`（JDK ZIP、Inno 当前用户便携模式）。Inno 版本须读取真实编译引擎，不能依赖可能为 0.0.0.0 的 EXE 文件版本；WinGet“无可用升级”应重新检测工具。`-NoInstall` 禁止安装，`-Check` 只检查。Windows 原版 ZIP 默认放在 `build/build.ps1` 同级，命名为 `Rusted-Warfare-win.zip`；可用 `-GameArchive` 覆盖。根 `clean` 必须保留同级 ZIP。
 5. 若首次运行或注入配置变更，`rwpp-desktop` 会在启动时进入「应用注入配置」模式，完成后自动重启。
+6. Linux 入口自动检测 Python 3.9+ 和完整 JDK 21，缺失时使用 apt-get / dnf 安装并配置当前进程环境；`--check` / `--no-install` 不安装软件。默认将 `Rusted-Warfare-linux.zip` 放到 `build/build.sh` 同级，显式 `--game-archive` 优先。Windows 与 Linux 同级 ZIP 都必须由根 `clean` 保留，整个 `build/` 不进 Git。
 
 ### Git 工作树（worktree）使用指引
 
@@ -192,9 +196,12 @@ Gradle JVM 参数在根目录 `gradle.properties` 中定义（`-Xmx2048M`）。
 必须同步的文件（相对于仓库根）：
 
 - `local.properties` — Android SDK 路径（无此文件 Android 模块无法配置）
-- `packaging/game-root.local.txt` — 本机游戏根路径（打包/桌面运行需要）
+- `packaging/game-archive.local.txt` — PC 原版 ZIP 的兼容自定义路径（未使用 build 同级 ZIP 时使用，可继续引用本机 ZIP）
+- `packaging/game-root.local.txt` — 兼容旧 Windows 流程的本机游戏根路径
 - `build/key/`（`release.keystore`、`keystore.properties`）— Android Release 签名
-- `build/*.ps1` — 发布打包脚本
+- `build/*.ps1`、`build/*.sh` — 本机打包入口（维护实现位于 `packaging/`）
+- `build/Rusted-Warfare-win.zip` — Windows 原版资源包（若本机使用同级 ZIP，工作树也需同步此文件）
+- `build/Rusted-Warfare-linux.zip` — Linux 原版资源包（若本机使用同级 ZIP，工作树也需同步此文件）
 - `rwpp-android/src/main/assets/` 全部 — 从原版客户端提取的资源（约 23MB）
 - `rwpp-android/src/main/res/` 下被忽略的文件（drawable/anim/raw/values 等，从原版客户端提取）
 - `listserver/` — 列表服务器资料
@@ -212,12 +219,14 @@ git ls-files --others --ignored --exclude-standard -z \
 同步后必须在新工作树完成以下检查：
 
 - 按清单核对文件确实已落盘；Android `assets/` 和被忽略的 `res/` 按相对路径、文件数及大小与源目录比对，不能只检查目录存在。
-- 确认 `local.properties` 指向本机有效的 Android SDK；确认 `packaging/game-root.local.txt` 指向有效且完整的 PC 游戏资源目录。游戏资源可继续引用该本机目录，无需复制到每个工作树。
+- 确认 `local.properties` 指向本机有效的 Android SDK；确认 `packaging/game-archive.local.txt` 指向有效且完整的原版 ZIP（Linux 包需 Linux x64 原生库，Windows 包需 Windows x64 DLL）；旧 Windows 流程也可用 `packaging/game-root.local.txt` 指向原版目录。游戏资源可继续引用该本机路径，无需复制到每个工作树。
 - 确认 `build/key/keystore.properties` 引用的 keystore 在新工作树可解析且存在；必须沿用原有 Release 签名，禁止为补齐依赖重新生成密钥。密钥及密码只作本地复制与校验，不输出内容、不纳入 Git 提交或上传。
 - 确认 Java 21、Android SDK、Inno Setup 6.5+（或 `INNO_SETUP_COMPILER`）等本机工具可用；这些工具不复制进仓库，缺失时报告。
 - 在新工作树运行 `./gradlew :rwpp-core-api:test` 冒烟验证，并告知同步结果及未满足条件。冒烟测试不能替代双端实际打包和运行测试；未执行完整构建时明确说明，不自动安装或发布客户端。
 
 用户可在工作树根目录使用 `powershell -NoProfile -File ./packaging/build.ps1 installer -Channel official` 构建 PC 安装包，或使用 `powershell -NoProfile -File ./packaging/build.ps1 android-release -Channel official` 构建 Android 正式 APK；`desktop`、`android-debug` 分别用于 PC JAR 与 Android 调试包。产物位于该工作树自己的 `build/artifacts/<目标>-official/`，不依赖先合入 `main`。
+
+Linux 使用 `./build/build.sh linux --channel official`（本机入口）或 `./packaging/build.sh linux --channel official`（仓库入口）生成自带 Java 21 的完整包，产物在 `build/artifacts/linux-official/`；先用 `--check` 检查依赖且不安装。`installer` 在 Linux 是完整包别名，在 Windows 继续生成 Inno Setup EXE。原版 ZIP 优先级为命令行 `--game-archive` / `-GameArchive` → `build/Rusted-Warfare-linux.zip`（Linux）或 `build/Rusted-Warfare-win.zip`（Windows）→ `RW_GAME_ARCHIVE` → `packaging/game-archive.local.txt`。详见 `packaging/README.md`。
 
 ### 发布产物
 
