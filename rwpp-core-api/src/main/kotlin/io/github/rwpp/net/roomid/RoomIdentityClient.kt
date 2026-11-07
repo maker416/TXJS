@@ -14,21 +14,33 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.io.IOException
+import java.net.Proxy
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 private const val API_PREFIX = "/api/v1/roomid"
+private const val CAPABILITIES_PATH = "/api/v1/capabilities"
+private const val MEMBERSHIP_UNAVAILABLE = "room_id_membership_unavailable"
 private const val APP_KEY_HEADER = "X-App-Key"
 private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
+
+@Serializable
+private data class RoomIdCapabilities(
+    @SerialName("room_id_membership_verified") val membershipVerified: Boolean = false,
+)
 
 /**
  * 房间身份公示调用失败。[statusCode] 为 HTTP 状态码；网络层失败时为 null。
@@ -39,8 +51,7 @@ open class RoomIdException(message: String, val statusCode: Int?) : IOException(
 class RoomIdUnauthorizedException(message: String) : RoomIdException(message, 401)
 
 /**
- * 服务端未提供身份公示功能：全部镜像返回 404（旧版 relay 无此路径）或 503（未配置该功能）。
- * 调用方应做会话内降级，不影响其它功能。
+ * 没有可用的成员核验节点，或服务端明确拒绝身份交换。调用方会话内停用身份公示。
  */
 class RoomIdFeatureUnavailableException(message: String) : RoomIdException(message, null)
 
@@ -49,28 +60,37 @@ class RoomIdFeatureUnavailableException(message: String) : RoomIdException(messa
  *
  * - 全部方法为 suspend，并在 [Dispatchers.IO] 上执行，支持协程取消；
  * - 请求带 [APP_KEY_HEADER] 与 `Authorization: Bearer`（由服务端向 UAS 转发核验）；
- * - 多 [baseUrls] failover 语义**与 [io.github.rwpp.net.sync.ModSyncClient.withFailover] 不同**：
- *   404 / 5xx / 网络错误换下一镜像；401 直接抛 [RoomIdUnauthorizedException] 不换镜像；
- *   2xx 返回；全部镜像 404/503 抛 [RoomIdFeatureUnavailableException]（会话内降级）。
+ * - 只在通过 HTTPS（本机联调除外）和成员核验能力探测后发送凭据，不跟随重定向。
+ * - 网络错误可换已验证的镜像，401 或明确拒绝成员身份交换时停止。
  */
 class RoomIdentityClient(
     baseUrls: List<String>,
     client: OkHttpClient,
 ) {
-    /** 规范化后的 baseUrl 列表（trim 并去掉尾部斜杠，丢弃空白项）。 */
-    private val baseUrls: List<String> = baseUrls
-        .map { it.trim().trimEnd('/') }
-        .filter { it.isNotEmpty() }
-
-    init {
-        require(this.baseUrls.isNotEmpty()) { "RoomIdentityClient 至少需要一个 baseUrl" }
-    }
+    private val baseUrls = baseUrls.mapNotNull { raw ->
+        val url = raw.trim().toHttpUrlOrNull() ?: return@mapNotNull null
+        val secure = url.isHttps || url.host in setOf("localhost", "127.0.0.1", "::1")
+        if (secure && url.username.isEmpty() && url.password.isEmpty() && url.query == null && url.fragment == null) {
+            url.toString().trimEnd('/')
+        } else null
+    }.distinct()
 
     /** 独立 15s 超时：身份公示是轻量请求，不沿用共享客户端的长读超时。 */
     private val http: OkHttpClient = client.newBuilder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .writeTimeout(15, TimeUnit.SECONDS)
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .addNetworkInterceptor { chain ->
+            val request = chain.request()
+            val connection = chain.connection()
+            if (!request.url.isHttps && (connection == null ||
+                    connection.route().proxy.type() != Proxy.Type.DIRECT ||
+                    !connection.socket().inetAddress.isLoopbackAddress)
+            ) throw IOException("房间身份服务的 HTTP 连接必须直连本机")
+            chain.proceed(request)
+        }
         .build()
 
     private val json = Json {
@@ -120,9 +140,8 @@ class RoomIdentityClient(
     }
 
     /**
-     * 多 baseUrl 按序 failover：任一地址 2xx 即返回；
-     * 404 / 503 / 5xx / 网络错误记录后尝试下一个；401 与其它 4xx 立即抛出；
-     * 全部镜像都是 404/503 抛 [RoomIdFeatureUnavailableException]，否则抛出最后记录的错误。
+     * 仅向通过无凭据探测并声明验证房间成员身份的节点发送账号凭据。
+     * 网络错误与临时服务错误可换到其他已验证节点，服务端明确拒绝成员身份交换时立即停止。
      */
     private suspend fun <T> requestWithFailover(
         path: String,
@@ -132,25 +151,23 @@ class RoomIdentityClient(
         onSuccess: (Response) -> T,
     ): T = withContext(Dispatchers.IO) {
         var lastError: IOException? = null
-        var featureUnavailableCount = 0
         for (base in baseUrls) {
             coroutineContext.ensureActive()
-            val request = Request.Builder()
-                .url(base + path)
-                .header(APP_KEY_HEADER, appKey)
-                .header("Authorization", "Bearer $token")
-                .header("Accept", "application/json")
-                .apply(customize)
-                .build()
             try {
+                if (!supportsVerifiedMembership(base)) continue
+                val request = Request.Builder()
+                    .url(base + path)
+                    .header(APP_KEY_HEADER, appKey)
+                    .header("Authorization", "Bearer $token")
+                    .header("Accept", "application/json")
+                    .apply(customize)
+                    .build()
                 http.useCancellable(request) { response ->
                     when {
                         response.isSuccessful -> return@withContext onSuccess(response)
                         // 旧版 relay 无此路径（404）/ 服务端未配置该功能（503）：换下一镜像
                         response.code == 404 || response.code == 503 -> {
                             logger.warn("房间身份服务 $base 返回 HTTP ${response.code}，尝试下一个地址")
-                            featureUnavailableCount++
-                            lastError = response.toRoomIdException()
                         }
                         response.code in 500..599 -> {
                             logger.warn("房间身份服务 $base 返回 HTTP ${response.code}，尝试下一个地址")
@@ -168,21 +185,31 @@ class RoomIdentityClient(
                 lastError = e
             }
         }
-        if (featureUnavailableCount == baseUrls.size) {
-            throw RoomIdFeatureUnavailableException("房间身份公示功能不可用（全部镜像返回 404/503）")
-        }
-        throw lastError ?: RoomIdException("没有可用的房间身份服务地址", null)
+        throw lastError ?: RoomIdFeatureUnavailableException("没有支持成员身份核验的房间身份服务")
     }
+
+    private suspend fun supportsVerifiedMembership(base: String): Boolean =
+        http.useCancellable(Request.Builder().url(base + CAPABILITIES_PATH).build()) { response ->
+            if (response.code in 500..599 && response.code != 503) {
+                throw IOException("HTTP ${response.code}")
+            }
+            if (!response.isSuccessful) return@useCancellable false
+            try {
+                json.decodeFromString<RoomIdCapabilities>(response.body?.string().orEmpty()).membershipVerified
+            } catch (_: SerializationException) {
+                false
+            }
+        }
 
     private fun Response.toRoomIdException(): RoomIdException {
         val detail = runCatching {
             json.decodeFromString<ErrorResponse>(body?.string().orEmpty()).error
         }.getOrNull().orEmpty()
         val message = if (detail.isNotBlank()) detail else "HTTP $code"
-        return if (code == 401) {
-            RoomIdUnauthorizedException(message)
-        } else {
-            RoomIdException(message, code)
+        return when {
+            code == 401 -> RoomIdUnauthorizedException(message)
+            code == 403 && detail == MEMBERSHIP_UNAVAILABLE -> RoomIdFeatureUnavailableException(message)
+            else -> RoomIdException(message, code)
         }
     }
 

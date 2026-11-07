@@ -307,6 +307,7 @@ class AccountSessionIsolationTest {
     }
 
     private fun defaultResponse(request: RecordedRequest): MockResponse = when (request.requestUrl!!.encodedPath) {
+        "/api/v1/capabilities" -> json("""{"room_id_membership_verified":true}""")
         "/api/v1/users/me" -> userResponse("alice")
         "/api/v1/users/login" -> json("""{"token":"token-B","user":{"id":2,"username":"bob","nickname":"Bob"}}""")
         "/api/v1/users/me/presence-settings" -> settings(false)

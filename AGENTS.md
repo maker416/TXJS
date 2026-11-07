@@ -149,6 +149,9 @@ Android 端有大量资源需要从原版铁锈战争客户端提取（assets、
 # 桌面端 fat jar（当前 OS）
 ./gradlew :rwpp-desktop:packageReleaseUberJarForCurrentOS
 
+# Linux 完整包（自动配置 JDK 21 / Python 3.9+，原版 ZIP 放 build/Rusted-Warfare-linux.zip）
+./packaging/build.sh linux --channel official
+
 # Windows Inno Setup 安装包（需要 Inno Setup 6.5+）
 ./gradlew :rwpp-desktop:packageInnoDistribution
 
@@ -172,8 +175,9 @@ Gradle JVM 参数在根目录 `gradle.properties` 中定义（`-Xmx2048M`）。
    - Android 端需要 `lib/android-game-lib.jar`
 2. Android 若缺少 assets/res，需从本地已安装的铁锈战争客户端对照补齐。
 3. Android Release 签名：`build/key/release.keystore` + `build/key/keystore.properties`（`gradlew clean` 不会删除 `build/key/`）。
-4. Windows 安装包需要 Inno Setup 6.5+（`ISCC.exe`），可通过 `INNO_SETUP_COMPILER` 指定编译器路径；构建入口为 `packaging/build.ps1 installer`。
+4. Windows 安装包需要 JDK 21 和 Inno Setup 6.5+（`ISCC.exe`）。`build/build.ps1` / `packaging/build.ps1` 自动检测并配置本次打包环境，缺少工具时优先通过 WinGet 安装，无 WinGet 或安装后仍不可用时下载并校验官方固定版本，配置到 `%LOCALAPPDATA%\RWJS\BuildTools`（JDK ZIP、Inno 当前用户便携模式）。Inno 版本须读取真实编译引擎，不能依赖可能为 0.0.0.0 的 EXE 文件版本；WinGet“无可用升级”应重新检测工具。`-NoInstall` 禁止安装，`-Check` 只检查。Windows 原版 ZIP 默认放在 `build/build.ps1` 同级，命名为 `Rusted-Warfare-win.zip`；可用 `-GameArchive` 覆盖。根 `clean` 必须保留同级 ZIP。
 5. 若首次运行或注入配置变更，`rwpp-desktop` 会在启动时进入「应用注入配置」模式，完成后自动重启。
+6. Linux 入口自动检测 Python 3.9+ 和完整 JDK 21，缺失时使用 apt-get / dnf 安装并配置当前进程环境；`--check` / `--no-install` 不安装软件。默认将 `Rusted-Warfare-linux.zip` 放到 `build/build.sh` 同级，显式 `--game-archive` 优先。Windows 与 Linux 同级 ZIP 都必须由根 `clean` 保留，整个 `build/` 不进 Git。
 
 ### Git 工作树（worktree）使用指引
 
@@ -192,9 +196,12 @@ Gradle JVM 参数在根目录 `gradle.properties` 中定义（`-Xmx2048M`）。
 必须同步的文件（相对于仓库根）：
 
 - `local.properties` — Android SDK 路径（无此文件 Android 模块无法配置）
-- `packaging/game-root.local.txt` — 本机游戏根路径（打包/桌面运行需要）
+- `packaging/game-archive.local.txt` — PC 原版 ZIP 的兼容自定义路径（未使用 build 同级 ZIP 时使用，可继续引用本机 ZIP）
+- `packaging/game-root.local.txt` — 兼容旧 Windows 流程的本机游戏根路径
 - `build/key/`（`release.keystore`、`keystore.properties`）— Android Release 签名
-- `build/*.ps1` — 发布打包脚本
+- `build/*.ps1`、`build/*.sh` — 本机打包入口（维护实现位于 `packaging/`）
+- `build/Rusted-Warfare-win.zip` — Windows 原版资源包（若本机使用同级 ZIP，工作树也需同步此文件）
+- `build/Rusted-Warfare-linux.zip` — Linux 原版资源包（若本机使用同级 ZIP，工作树也需同步此文件）
 - `rwpp-android/src/main/assets/` 全部 — 从原版客户端提取的资源（约 23MB）
 - `rwpp-android/src/main/res/` 下被忽略的文件（drawable/anim/raw/values 等，从原版客户端提取）
 - `listserver/` — 列表服务器资料
@@ -212,12 +219,14 @@ git ls-files --others --ignored --exclude-standard -z \
 同步后必须在新工作树完成以下检查：
 
 - 按清单核对文件确实已落盘；Android `assets/` 和被忽略的 `res/` 按相对路径、文件数及大小与源目录比对，不能只检查目录存在。
-- 确认 `local.properties` 指向本机有效的 Android SDK；确认 `packaging/game-root.local.txt` 指向有效且完整的 PC 游戏资源目录。游戏资源可继续引用该本机目录，无需复制到每个工作树。
+- 确认 `local.properties` 指向本机有效的 Android SDK；确认 `packaging/game-archive.local.txt` 指向有效且完整的原版 ZIP（Linux 包需 Linux x64 原生库，Windows 包需 Windows x64 DLL）；旧 Windows 流程也可用 `packaging/game-root.local.txt` 指向原版目录。游戏资源可继续引用该本机路径，无需复制到每个工作树。
 - 确认 `build/key/keystore.properties` 引用的 keystore 在新工作树可解析且存在；必须沿用原有 Release 签名，禁止为补齐依赖重新生成密钥。密钥及密码只作本地复制与校验，不输出内容、不纳入 Git 提交或上传。
 - 确认 Java 21、Android SDK、Inno Setup 6.5+（或 `INNO_SETUP_COMPILER`）等本机工具可用；这些工具不复制进仓库，缺失时报告。
 - 在新工作树运行 `./gradlew :rwpp-core-api:test` 冒烟验证，并告知同步结果及未满足条件。冒烟测试不能替代双端实际打包和运行测试；未执行完整构建时明确说明，不自动安装或发布客户端。
 
 用户可在工作树根目录使用 `powershell -NoProfile -File ./packaging/build.ps1 installer -Channel official` 构建 PC 安装包，或使用 `powershell -NoProfile -File ./packaging/build.ps1 android-release -Channel official` 构建 Android 正式 APK；`desktop`、`android-debug` 分别用于 PC JAR 与 Android 调试包。产物位于该工作树自己的 `build/artifacts/<目标>-official/`，不依赖先合入 `main`。
+
+Linux 使用 `./build/build.sh linux --channel official`（本机入口）或 `./packaging/build.sh linux --channel official`（仓库入口）生成自带 Java 21 的完整包，产物在 `build/artifacts/linux-official/`；先用 `--check` 检查依赖且不安装。`installer` 在 Linux 是完整包别名，在 Windows 继续生成 Inno Setup EXE。原版 ZIP 优先级为命令行 `--game-archive` / `-GameArchive` → `build/Rusted-Warfare-linux.zip`（Linux）或 `build/Rusted-Warfare-win.zip`（Windows）→ `RW_GAME_ARCHIVE` → `packaging/game-archive.local.txt`。详见 `packaging/README.md`。
 
 ### 发布产物
 
@@ -331,7 +340,7 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 - **TServer Direct**：`rwpp-core-api/net/sync/direct/` 使用独立 TCP 控制 Socket，一连接一请求，默认探测 v2 前缀 `TXJSMD2\n`；只有尚未识别合法 v2 MANIFEST/ERROR 时才可探测 v1 `TXJSMD1\n`，两个版本均未识别才可回落 relay。合法 v2 错误不能通过降级绕过；v1 兼容路径不预留槽位。入房前的统一 Loading 链覆盖手动 IP、列表直连、收藏与邀请：v2 先按 scope 预约真实容量，再完成缺失下载、断点续传、完整 SHA-256、二次 manifest 复核、普通 `modReload(forceImmediate=true)`、核心单位 checksum 校验与平台握手准备（桌面保留原版 init 缓存）、重载后第三次 manifest 复核，最后调用原版连接。空清单也必须禁用多余 Mod，重载沿用双端原有线程/GL 契约。独立心跳与到期观察覆盖下载、重载和真实注册，直到 RENEW 返回 `admitted` 才确认成功并关闭预约；取消/失败尽力 RELEASE，已注册后的 RELEASE 不踢玩家。凭证仅填入原版包 160 已有 query 字段 `txjsmd2_<短期token的64位小写hex>`，不改变加入地址、relay UUID、游戏包号或双端 `directJoinServer` 接口，不接管游戏 Socket，不跳过原版版本、密码与 checksum 检查。Direct 路径不调用 relay `preJoinSync`、不创建 Presence、不使用保连接重载。Loading 取消必须关闭活动 Socket，临时文件未校验不得发布；文件帧仍须流式读写并限制单项及总大小。协议与生命周期详见 [TServer Direct v2](docs/tserver-direct-mod-sync-v2.md)。
 - **中转服务端**：独立 Go 服务 `relaymod`（源码在 `D:\workspace\RW\relaymod`，非本仓库模块），部署在公网 IPv4；仅标准库 `net/http`。房间同步记录（清单 + TTL + secret + `host_units_checksum`）与内容寻址 blob（按 SHA-256 去重存储）；另提供加入者进度 Presence（内存态，45s TTL，不落盘；新建 PUT 返回一次性 `peer_secret`，后续须 `X-Peer-Secret`；连接 IP 仅房主可见）。`GET .../peers` 双通道：房主 `X-Secret` 得全量（含 ip），加入者 `X-Peer-Secret` 得脱敏列表。Direct 与该 HTTP 服务完全独立。
-- **模组上传账号认证（协议 v2）**：分享房主必须登录 UAS，下载及加入者 Presence 仍免账号登录。`ModSyncClient` 的房主方法要求 `ModSyncCredentials`，统一携带 `X-App-Key` + Bearer token；文件 check/PUT 必带 query `key`。先无凭据请求 `/api/v1/capabilities`，仅选择 `protocol_version >= 2`、`upload_auth_required=true`、`upload_enabled=true` 的 HTTPS 节点（本机联调允许 HTTP）；房主单次会话固定节点，禁止写入失败后回落旧节点，禁止认证请求重定向。relay 每次房主请求实时向 `/users/me` 核验，并验证持久化的 `owner_user_id` 和房间 secret；ready 确认清单文件齐全。房主客户端固定账号会话快照；登出/切号立即取消上传、轮询和心跳，使用原凭据尽力清理，不能误用新账号 token。401/403 结束分享并显示登录/权限提示；失败状态可点「重新分享」，同一房间保留原房间 secret 供同账号重新登录恢复，断线清除。旧任务 UI 回写受会话代次限制。默认同步 URL 历史上为 HTTP，部署必须配置实际 HTTPS 地址及 relay 的 `account_api_url`、`account_app_keys`；没有配置时拒绝上传。UAS 无需新增接口，房内名片缓存不用于上传。回归：`rwpp-core-api` 的 `ModSyncAuthenticationTest`；部署及迁移规则见相邻 relaymod 仓库 README。
+- **模组上传账号认证（协议 v2）**：分享房主必须登录 UAS，下载及加入者 Presence 仍免账号登录。`ModSyncClient` 的房主方法要求 `ModSyncCredentials`，统一携带 `X-App-Key` + Bearer token；文件 check/PUT 必带 query `key`。先无凭据请求 `/api/v1/capabilities`，仅选择 `protocol_version >= 2`、`upload_auth_required=true`、`upload_enabled=true` 的 HTTP/HTTPS 节点；兼容已部署的公网 HTTP 同步地址，房主单次会话固定节点，禁止写入失败后回落旧节点，禁止认证请求重定向。加入者按房间 key 查找各镜像，找到清单后在同一节点读取清单、下载和维护 Presence；这些请求不带 UAS 凭据。镜像有故障且均未找到清单时保留故障提示。relay 每次房主请求实时向 `/users/me` 核验，并验证持久化的 `owner_user_id` 和房间 secret；ready 确认清单文件齐全。房主客户端固定账号会话快照；登出/切号立即取消上传、轮询和心跳，使用原凭据尽力清理，不能误用新账号 token。401/403 结束分享并显示登录/权限提示；失败状态可点「重新分享」，同一房间保留原房间 secret 供同账号重新登录恢复，断线清除。旧任务 UI 回写受会话代次限制。默认同步 URL 为 HTTP；客户端允许 HTTP 上传，登录凭据会以明文传输，部署仍建议使用 HTTPS。relay 必须配置 `account_api_url`、`account_app_keys`；未配置认证时仍拒绝上传。UAS 无需新增接口，房内名片缓存不用于上传。回归：`rwpp-core-api` 的 `ModSyncAuthenticationTest`；部署及迁移规则见相邻 relaymod 仓库 README。
 - **客户端协议层**：`rwpp-core-api` 的 `net/sync/` —— `ModSyncModels.kt`（DTO，snake_case 与 Go 对齐）、`ModSyncKeys.kt`（relay 房间 key 推导：`code:<短码>`、发布后绑定 `sid:<server_id>` 别名；直连 IP 房不提供 relay 同步）、`ModSyncClient.kt`（OkHttp，多 baseUrl failover；Presence 带 peer/room secret）。
 - **编排层**：`rwpp-core` 的 `core/ModSyncController.kt` ——
   - 房主侧：开房勾选「传输模组」后进房拿到短码即注册（status=preparing，含 `hostUnitsChecksum`）→ `files/check` 查缺 → 上传缺失 blob → ready → 60s 心跳续期 → 发布列表后绑定 sid 别名 → 离房（`DisconnectEvent`）注销；注册成功后每 1s 带 `X-Secret` 拉 peers；可 `clearHostPeers()`。
@@ -455,13 +464,14 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 - **邀请悬浮卡片（房间外通知）**：收到好友邀请私信且不在等待房间/对局中时，屏幕右侧滑入悬浮卡片（`RoomInviteToastHost`，挂在 `App.kt` 根布局退出遮罩之前；卡片 `RoomInviteToastCard`），底部 3dp 进度条 10 秒线性耗尽后自动忽略（`Animatable` + `tween(LinearEasing)`），点「立即加入」关闭其他顶层页并写 `UI.pendingInviteJoin` 走既有加入链路（版本不符先经共用的 `InviteVersionMismatchDialog` 确认），点卡片空白处打开好友页并 `FriendsSession.openChat(peer)` 直达会话。检测在 `FriendsSession.refreshLists()` 末尾（`maybeNotifyRoomInvite`）：未读 >0、非自己发送、`RoomInviteCodec.decode` 命中且未过期才置位 `UI.incomingInviteNotification`，每会话同一条消息只弹一次（`inviteToastSeen`，被抑制也记，避免反复打扰）；正在查看该会话或 `showRoomView` 时不弹，进房瞬间已弹出的卡片由宿主侧的 `LaunchedEffect(UI.showRoomView)` 收起。轮询：主菜单局部轮询已上移到 `App.kt` 根的全局 5s 轮询（好友页/账号页打开时跳过，它们有自有轮询）。
 - **房主邀请策略（软约束）**：房主可开关「成员邀请」（`RoomInvitePolicy`，`ui/RoomInvite.kt`；开关为 `MultiplayerRoom.kt` 中设置项式的 `RoomToggleChip`——图标 + 功能名 + 尾部迷你开关指示，与锁房开关并排，整卡可点，仅 `isHost` 可点）。机制：邀请走账号私信带外通道，游戏协议无法硬阻断，故房主切换时经房间聊天广播控制消息 `[RWJSCTL1] invite=true|false`；`UI.onReceiveChatMessage(sender, message, color, senderPlayer)` **先校验 `senderPlayer.isRoomHost` 且发送者昵称在房内唯一**（成员侧注入层按昵称匹配玩家，同名可冒名；歧义时一律不信任）（`Player` 接口新增，桌面实现 `n.A()==-99 || n.r()`，Android 实现 `p.T==1 || p.t()==-99`，与引擎 ping 列的 "HOST"/" (HOST)" 标记同源），是房主才应用并抑制显示，非房主伪造的控制消息按普通聊天暴露；两端注入层（`NetworkInject`/`NetInject` 的 `onShowChat`）负责把匹配到的 `Player` 传入。禁止期间每个新进房真人玩家由房主补播一次（`PlayerJoinEvent` 订阅，`MultiplayerRoomView`）。成员端 `canInvite = isHost || membersCanInvite` 为 false 时隐藏邀请按钮与空槽位行。离房（房间视图 dispose）时重置为允许。回归测试 `rwpp-core` 的 `RoomInvitePolicyTest`。
 - **房间身份公示（房内名片/加好友）**：等待房间内点击成员 → 个人名片 → 加好友。带外机制，**游戏联机协议零改动**。
-  - **机制**：登录客户端在房内时每 25s 向 relaymod `/api/v1/roomid/publish` 公示 `{room_keys, player_name}`（PUT，头带 `X-App-Key` + `Authorization: Bearer`，服务端向 UAS 转发 token 核验身份；记录 TTL 90s，25s 心跳续期；离房 `DELETE` 撤销）。点击成员时按 `room_key + player_name` 调 `GET .../lookup`（room_key 重复 query 参数，一律 200 空数组兜底），命中得账号三元组（user_id/username/nickname），再调 UAS 公开接口 `lookup` + `presence` 补齐名片；加好友走既有 `FriendsSession.sendRequest`。
+  - **启用条件**：relaymod 当前没有可信的游戏成员核验，房间账号名片停用。客户端仅向能力接口声明 `room_id_membership_verified:true` 的节点发送房间身份凭据。
+  - **机制**：有可信的成员核验节点时，登录客户端在房内每 25s 向 relaymod `/api/v1/roomid/publish` 公示 `{room_keys, player_name}`（PUT，头带 `X-App-Key` + `Authorization: Bearer`，服务端向 UAS 转发 token 核验身份；记录 TTL 90s，25s 心跳续期；离房 `DELETE` 撤销）。点击成员时按 `room_key + player_name` 调 `GET .../lookup`（room_key 重复 query 参数，一律 200 空数组兜底），命中得账号三元组（user_id/username/nickname），再调 UAS 公开接口 `lookup` + `presence` 补齐名片；加好友走既有 `FriendsSession.sendRequest`。
   - **key 推导**（`rwpp-core-api` 的 `net/roomid/RoomIdentityKeys.kt`）：短码 → `code:XXX`（复用 `ModSyncKeys.forAddress`，归一大写）；直连地址 → `addr:host:port`（去空白、host 小写、无端口补 5123；`Qnews`/`QC6666` 等快速建房指令串不产出 key）；列表房间委托 `ModSyncKeys.forRoomDescription`（sid + code）。每玩家最多 8 个 key，按 sid > code > addr 截断（`prioritizeIdentityKeys`）。
-  - **failover 语义（与 `ModSyncClient.withFailover` 不同，独立实现）**：404/503/5xx/网络错换下一镜像；401 直接抛不换镜像；全部镜像 404/503 → `RoomIdFeatureUnavailableException`，会话内降级（`RoomIdentityController.featureUnavailable`），不影响其它功能。
+  - **连接和镜像**：先用无凭据的能力探测确认支持成员核验，公网必须使用 HTTPS，本机 HTTP 必须直连环回地址。请求不跟随重定向。401 或明确返回 `room_id_membership_unavailable` 时停止尝试镜像；全部节点均不支持时会话内停用账号名片。
   - **隐私**：开启「对陌生人隐身」（`AccountSession.presenceSettings.hideFromStrangers`）时不发布；未登录 / 预览模式（`networkEnabled=false`）不发布；单人/沙盒房不启动公示。
   - **UI 入口**：`RoomPlayerTableRow` 点击分派（房主/主机/自己 → 玩家配置弹窗，其余真人玩家 → `PlayerCardDialog`）；行尾「查看名片」图标按钮（`RoomPlayerCardActionCell`）；桌面右键菜单「查看名片」（`ContextMenuArea.kt`，踢出项仍仅房主）；`PlayerOverrideDialog` 底部「查看名片」按钮。名片弹窗 `ui/PlayerCard.kt`：游戏区（名字/队伍/延迟/房主标记）+ 账号区按 `RoomIdentityResult` 渲染（Self/NotLoggedIn/AiPlayer/FeatureUnavailable/Found/NotFound/Ambiguous/Error）。**名片按钮点亮门控**：非单人房内每秒一轮 `prefetchPlayerCards` 按玩家名预取公示记录，写入 `cardAvailability`（true=有名片/false=确认获取不到/无记录=未知）；按钮只在确认为 true（或是自己）时点亮并打开弹窗，未点亮点击按状态提示（未登录引导登录/服务端未升级/确认获取不到 `playerCard.unavailable`/查询中）；自己不参与预取（弹窗走 Self 分支常亮）。
   - **编排**：`rwpp-core` 的 `account/RoomIdentityController.kt`（不改 `AccountSession`）。挂点：`Multiplayer.kt` LoadingView 成功块 `onJoiningRoom(address, desc)`；`MultiplayerRoom.kt` 短码就绪 `addRoomCodeKey` + 非单人房 `startPublishing`、发布成功 `addServerIdKey`、onDispose `stopPublishing`；`DisconnectEvent` 订阅兜底 stop。baseUrls 复用 `MultiplayerPreferences.modSyncApiUrls`。
-  - **红线**：relaymod 必须同步部署承认 `/api/v1/roomid/` 端点组（否则全镜像 404，客户端按功能不可用降级）；回归测试 `rwpp-core-api` 的 `RoomIdentityModelsTest` / `RoomIdentityKeysTest` / `RoomIdentityClientTest`（MockWebServer）。
+  - **回归测试**：`rwpp-core-api` 的 `RoomIdentityModelsTest`、`RoomIdentityKeysTest` 和 `RoomIdentityClientTest`（MockWebServer）覆盖协议字段、房间 key 以及凭据发送条件。
 
 ## 安全与部署注意事项
 

@@ -1,0 +1,5 @@
+# 优先把 Rusted-Warfare-linux.zip / Rusted-Warfare-win.zip 放到 build/ 本机入口同级。
+# 如需兼容自定义位置，复制为 game-archive.local.txt 并填入路径，支持空格、中文。
+# ZIP 可直接包含 game-lib.jar、assets/，也可带 Rusted Warfare/ 外层目录。
+# Linux 完整包需 Linux x64 原版资源；Windows 安装包需 Windows x64 原版资源。
+/path/to/Rusted-Warfare-linux.zip

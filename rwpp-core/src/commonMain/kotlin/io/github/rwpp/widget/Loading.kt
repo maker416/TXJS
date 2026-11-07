@@ -150,6 +150,7 @@ fun LoadingView(
     onLoadingFinished: () -> Unit = {},
     failureContent: (@Composable (ConnectionFailure, () -> Unit) -> Unit)? = null,
     externalFailure: ConnectionFailure? = null,
+    waitingContent: (@Composable (() -> Unit) -> Unit)? = null,
     inlineDesktop: Boolean,
     loadContent: suspend LoadingContext.() -> Boolean?
 ) {
@@ -234,6 +235,8 @@ fun LoadingView(
         val failure = localFailure ?: externalFailure
         if (cancel && failure != null && failureContent != null) {
             failureContent(failure, ::dismissAndCancel)
+        } else if (!cancel && waitingContent != null) {
+            waitingContent(::dismissAndCancel)
         } else BorderCard(
             modifier = Modifier
                 .fillMaxWidth(0.72f)

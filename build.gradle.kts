@@ -31,17 +31,17 @@ allprojects {
     }
 }
 
-version = "1.20.55"
+version = "1.20.62"
 
 apply(from = "packaging/browser-kernels.gradle.kts")
 
-// 保留 build/key、artifacts 与构建脚本，避免 gradlew clean 误删
+// 保留 build/key、artifacts、构建脚本及同级原版 ZIP，避免 gradlew clean 误删
 tasks.named<Delete>("clean").configure {
     // 必须 clear 后重设：Base 插件默认会删除整个 build/，仅 append exclude 无效
     delete.clear()
     delete(
         fileTree(layout.buildDirectory) {
-            exclude("key/**", "artifacts/**", "*.bat", "*.cmd", "*.ps1")
+            exclude("key/**", "artifacts/**", "*.bat", "*.cmd", "*.ps1", "*.sh", "*.py", "*.zip", "*.ZIP")
         },
     )
 }

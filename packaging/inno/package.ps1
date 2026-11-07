@@ -11,12 +11,14 @@ param(
     [string]$Version,
     [string]$AppSource,
     [string]$GameRoot,
+    [string]$GameArchive,
     [string]$IsccPath
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 . (Join-Path $PSScriptRoot 'payload.ps1')
+. (Join-Path $PSScriptRoot '../windows-environment.ps1')
 
 if (-not $AppSource) {
     $AppSource = Join-Path $repoRoot 'rwpp-desktop/build/compose/binaries/main-release/app/RWJS'
@@ -34,22 +36,15 @@ if ($IsccPath) {
         throw "Inno Setup compiler does not exist: $IsccPath"
     }
 } else {
-    $compiler = Get-Command ISCC.exe -ErrorAction SilentlyContinue
-    if ($compiler) { $IsccPath = $compiler.Source }
-    foreach ($base in @(${env:ProgramFiles(x86)}, $env:ProgramFiles, $env:LOCALAPPDATA)) {
-        if ($IsccPath) { break }
-        if (-not $base) { continue }
-        foreach ($relative in @('Inno Setup 6/ISCC.exe', 'Programs/Inno Setup 6/ISCC.exe')) {
-            $candidate = Join-Path $base $relative
-            if (Test-Path -LiteralPath $candidate -PathType Leaf) { $IsccPath = $candidate; break }
-        }
-    }
+    $IsccPath = Find-RwInnoCompiler
 }
 if (-not $IsccPath) {
     throw 'Install Inno Setup 6.5+ or set INNO_SETUP_COMPILER to the full path of ISCC.exe.'
 }
 
+if ($GameArchive) { $GameRoot = $GameArchive }
 $GameRoot = Resolve-RwGameRoot -RepoRoot $repoRoot -GameRoot $GameRoot
+Assert-RwGameSource -Source $GameRoot -Windows
 $payload = Copy-RwGamePayload -RepoRoot $repoRoot -GameRoot $GameRoot
 $outputDir = Join-Path $repoRoot 'build/installer'
 New-Item -ItemType Directory -Path $outputDir -Force | Out-Null

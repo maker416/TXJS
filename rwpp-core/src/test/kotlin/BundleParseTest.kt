@@ -196,6 +196,13 @@ class BundleParseTest {
             val modSync = table["modSync"] as? TomlTable
             assertNotNull(modSync, "[modSync] table missing in $name")
             listOf(
+                "hostCheckingService",
+                "hostPreflightFailedTitle",
+                "hostPreflightFailedHint",
+                "hostContinueWithoutSharing",
+                "hostSharingFailed",
+                "uploadRequiresSecureService",
+                "uploadServiceUnreachable",
                 "hostPreparing",
                 "hostPreparingTimeout",
                 "hostPreparingGone",

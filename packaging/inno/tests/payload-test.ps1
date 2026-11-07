@@ -25,6 +25,7 @@ function Assert-True([bool]$Value, [string]$Message) {
 }
 
 $savedGameRoot = $env:RW_GAME_ROOT
+$savedGameArchive = $env:RW_GAME_ARCHIVE
 try {
     $included = @('game-lib.jar', 'lwjgl64.dll', 'steam_appid.txt', 'assets/units/tank.ini',
         'assets/maps/map.tmx', 'font/font.ttf', 'libs/lwjgl.jar', 'res/image.png')
@@ -36,8 +37,9 @@ try {
     foreach ($path in $included + $excluded) { Write-FixtureFile $game $path }
     Write-FixtureFile $fixture 'packaging/game-root.local.txt' ("# local setting`r`n$game")
     $env:RW_GAME_ROOT = $null
+    $env:RW_GAME_ARCHIVE = $null
     Assert-True ((Resolve-RwGameRoot $fixture) -eq $game) 'Local path file not resolved'
-    $env:RW_GAME_ROOT = 'C:\explicit env path'
+    $env:RW_GAME_ROOT = Join-Path $testRoot 'explicit env path'
     Assert-True ((Resolve-RwGameRoot $fixture) -eq $env:RW_GAME_ROOT) 'Environment should take precedence'
     Assert-True ((Resolve-RwGameRoot $fixture $game) -eq $game) 'Explicit source should take precedence'
     $payload = Copy-RwGamePayload $fixture $game
@@ -50,7 +52,8 @@ try {
     }
     # A junction into private data must not be traversed.
     $link = Join-Path $game 'assets/private-link'
-    New-Item -ItemType Junction -Path $link -Target (Join-Path $game 'saves') | Out-Null
+    $linkType = if ($env:OS -eq 'Windows_NT') { 'Junction' } else { 'SymbolicLink' }
+    New-Item -ItemType $linkType -Path $link -Target (Join-Path $game 'saves') | Out-Null
     Write-FixtureFile $payload 'stale.jar'
     $payload = Copy-RwGamePayload $fixture $game
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $payload 'stale.jar'))) 'Stale staging file survived'
@@ -68,6 +71,7 @@ try {
     Write-Host 'PASS: required resources, private data exclusion, source preservation, junction and deletion guards'
 } finally {
     $env:RW_GAME_ROOT = $savedGameRoot
+    $env:RW_GAME_ARCHIVE = $savedGameArchive
     # Remove the junction separately so recursive cleanup never follows its target.
     $link = Join-Path $game 'assets/private-link'
     if (Test-Path -LiteralPath $link) { [IO.Directory]::Delete($link) }

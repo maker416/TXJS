@@ -1,2 +1,7 @@
 # 构建产物目录仅本地保留（build/ 已由 .gitignore 完全排除）
 build/ export-ignore
+
+# Linux 入口必须使用 LF；Windows checkout 不应把 shebang 转成 CRLF。
+gradlew text eol=lf
+*.sh text eol=lf
+*.py text eol=lf

@@ -65,6 +65,8 @@ import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.RoomIdentityController
 import io.github.rwpp.config.*
 import io.github.rwpp.core.GameSessionController
+import io.github.rwpp.core.HostModSyncFailureAction
+import io.github.rwpp.core.awaitHostModSyncService
 import io.github.rwpp.core.Logic
 import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.event.broadcastIn
@@ -102,6 +104,7 @@ import io.github.rwpp.widget.UiCircularProgressIndicator
 import io.github.rwpp.widget.v2.*
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -126,6 +129,10 @@ private fun roomModSyncStatusI18nKey(desc: RoomDescription): String? = when {
 }
 
 private const val LIST_POSITION_APPLICATION_URL = "http://listup.xn--rhqr8xvr4ahqsgka.com:11452/"
+
+private class HostModSyncFailurePrompt(val message: String) {
+    val decision = CompletableDeferred<HostModSyncFailureAction>()
+}
 
 @Composable
 private fun FilterSectionCard(
@@ -338,6 +345,7 @@ fun MultiplayerView(
     /** 本次开房是否勾选了「启动模组」；仅 T 原版房在 Loading 阶段清空客户端模组。 */
     var pendingHostEnableMods by remember { mutableStateOf(false) }
     var pendingHostTransferMods by remember { mutableStateOf(false) }
+    var hostModSyncFailurePrompt by remember { mutableStateOf<HostModSyncFailurePrompt?>(null) }
 
     var editingServerConfig by remember { mutableStateOf<ServerConfig?>(null) }
     var showServerInfoConfig by remember { mutableStateOf(false) }
@@ -408,6 +416,17 @@ fun MultiplayerView(
         isConnecting,
         externalFailure = failureAttempt.failure,
         failureContent = { failure, dismiss -> io.github.rwpp.widget.ConnectionFailureCard(failure, dismiss) },
+        inlineDesktop = false,
+        waitingContent = hostModSyncFailurePrompt?.let { prompt ->
+            { dismiss ->
+                HostModSyncFailureCard(
+                    message = prompt.message,
+                    onRetry = { prompt.decision.complete(HostModSyncFailureAction.Retry) },
+                    onContinueWithoutSharing = { prompt.decision.complete(HostModSyncFailureAction.ContinueWithoutSharing) },
+                    onDismiss = dismiss,
+                )
+            }
+        },
         onLoaded = {
             // 取消 Loading：掐断带外同步（含已排定的被踢重试）+ 清 Presence + 取消游戏侧加入，避免关闭后仍进房
             failureAttempt.finish()
@@ -450,8 +469,25 @@ fun MultiplayerView(
                     address = roomJoinAddressForId(address)
 
                     if (hostSession) {
+                        val shareMods = hostTransferMods && awaitHostModSyncService(
+                            prepare = {
+                                message(readI18n("modSync.hostCheckingService"))
+                                ModSyncController.prepareHostSession()
+                            },
+                            onFailure = { error ->
+                                val prompt = HostModSyncFailurePrompt(ModSyncController.hostErrorText(error))
+                                try {
+                                    withContext(Dispatchers.Main.immediate) { hostModSyncFailurePrompt = prompt }
+                                    prompt.decision.await()
+                                } finally {
+                                    withContext(NonCancellable + Dispatchers.Main.immediate) {
+                                        if (hostModSyncFailurePrompt === prompt) hostModSyncFailurePrompt = null
+                                    }
+                                }
+                            },
+                        )
                         // 旧断线清理会清空 hostSyncRequested，必须在开始屏障之后提交本次选项。
-                        ModSyncController.hostSyncRequested = hostTransferMods
+                        withContext(Dispatchers.Main.immediate) { ModSyncController.hostSyncRequested = shareMods }
                         if (!hostEnableMods) {
                             if (!quickHostAddressSkipsClientVanillaModClear(address)) {
                                 val cleared = Logic.disableAllModsBeforeHosting()
@@ -554,6 +590,7 @@ fun MultiplayerView(
                             }
                         }
                     } finally {
+                        if (hostSession && !opened) ModSyncController.discardPreparedHostSession()
                         directReservation?.close()
                         // 成功时为空操作；被踢重试已排定时保留 Presence。
                         ModSyncController.finishJoinerPresence()

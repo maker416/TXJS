@@ -8,15 +8,20 @@
 package io.github.rwpp.net.roomid
 
 import kotlinx.coroutines.runBlocking
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Proxy
 import java.util.concurrent.TimeUnit
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class RoomIdentityClientTest {
@@ -47,8 +52,21 @@ class RoomIdentityClientTest {
     private fun newClient(vararg servers: MockWebServer): RoomIdentityClient =
         RoomIdentityClient(servers.map { url(it) }, OkHttpClient.Builder().build())
 
+    private fun MockWebServer.enqueueVerified() {
+        enqueue(MockResponse().setBody("""{"room_id_membership_verified":true}"""))
+    }
+
+    private fun MockWebServer.takeAnonymousProbe() {
+        val probe = takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("/api/v1/capabilities", probe.path)
+        assertEquals("GET", probe.method)
+        assertNull(probe.getHeader("Authorization"))
+        assertNull(probe.getHeader("X-App-Key"))
+    }
+
     @Test
     fun publishSendsHeadersAndBody() = runBlocking {
+        serverA.enqueueVerified()
         serverA.enqueue(MockResponse().setResponseCode(200).setBody("""{"ok":true}"""))
         newClient(serverA).publish(
             roomKeys = listOf("code:Q77182", "addr:1.2.3.4:5123"),
@@ -56,6 +74,7 @@ class RoomIdentityClientTest {
             appKey = "ak_test",
             token = "tok-1",
         )
+        serverA.takeAnonymousProbe()
         val recorded = serverA.takeRequest(2, TimeUnit.SECONDS)!!
         assertEquals("PUT", recorded.method)
         assertEquals("/api/v1/roomid/publish", recorded.path)
@@ -69,9 +88,11 @@ class RoomIdentityClientTest {
 
     @Test
     fun lookupParsesEmptyUsers() = runBlocking {
+        serverA.enqueueVerified()
         serverA.enqueue(MockResponse().setResponseCode(200).setBody("""{"users":[]}"""))
         val users = newClient(serverA).lookup(listOf("code:Q77182"), "萌新", "ak_test", "tok-1")
         assertTrue(users.isEmpty())
+        serverA.takeAnonymousProbe()
         val recorded = serverA.takeRequest(2, TimeUnit.SECONDS)!!
         assertEquals("GET", recorded.method)
         // room_key 为重复 query 参数，player_name 需 URL 编码
@@ -85,6 +106,7 @@ class RoomIdentityClientTest {
 
     @Test
     fun lookupParsesEntries() = runBlocking {
+        serverA.enqueueVerified()
         serverA.enqueue(
             MockResponse().setResponseCode(200).setBody(
                 """{"users":[{"user_id":123,"username":"abc","nickname":"萌新"}]}"""
@@ -97,6 +119,7 @@ class RoomIdentityClientTest {
             "tok-1",
         )
         assertEquals(listOf(RoomIdEntry(123L, "abc", "萌新")), users)
+        serverA.takeAnonymousProbe()
         val recorded = serverA.takeRequest(2, TimeUnit.SECONDS)!!
         assertTrue(recorded.path!!.contains("room_key=code%3AQ77182&room_key=addr%3A1.2.3.4%3A5123"))
     }
@@ -104,6 +127,7 @@ class RoomIdentityClientTest {
     @Test
     fun notFoundFallsOverToNextMirror() = runBlocking {
         serverA.enqueue(MockResponse().setResponseCode(404))
+        serverB.enqueueVerified()
         serverB.enqueue(
             MockResponse().setResponseCode(200).setBody(
                 """{"users":[{"user_id":1,"username":"abc","nickname":"n"}]}"""
@@ -113,16 +137,21 @@ class RoomIdentityClientTest {
         assertEquals(1, users.size)
         // 两台都收到过请求：A 404 后 failover 到 B
         assertEquals(1, serverA.requestCount)
-        assertEquals(1, serverB.requestCount)
+        serverA.takeAnonymousProbe()
+        serverB.takeAnonymousProbe()
+        assertEquals(2, serverB.requestCount)
     }
 
     @Test
     fun serverErrorFallsOverToNextMirror() = runBlocking {
         serverA.enqueue(MockResponse().setResponseCode(500))
+        serverB.enqueueVerified()
         serverB.enqueue(MockResponse().setResponseCode(200).setBody("""{"ok":true}"""))
         newClient(serverA, serverB).publish(listOf("code:Q77182"), "n", "ak_test", "tok-1")
         assertEquals(1, serverA.requestCount)
-        assertEquals(1, serverB.requestCount)
+        serverA.takeAnonymousProbe()
+        serverB.takeAnonymousProbe()
+        assertEquals(2, serverB.requestCount)
     }
 
     @Test
@@ -149,24 +178,86 @@ class RoomIdentityClientTest {
 
     @Test
     fun unauthorizedThrowsWithoutFailover() = runBlocking {
+        serverA.enqueueVerified()
         serverA.enqueue(MockResponse().setResponseCode(401).setBody("""{"error":"invalid token"}"""))
         serverB.enqueue(MockResponse().setResponseCode(200).setBody("""{"ok":true}"""))
         assertFailsWith<RoomIdUnauthorizedException> {
             newClient(serverA, serverB).publish(listOf("code:Q77182"), "n", "ak_test", "tok-1")
         }
         // 401 是确定性失败：B 不应收到请求
-        assertEquals(1, serverA.requestCount)
+        assertEquals(2, serverA.requestCount)
         assertEquals(0, serverB.requestCount)
         Unit
     }
 
     @Test
     fun deleteSendsDeleteMethod() = runBlocking {
+        serverA.enqueueVerified()
         serverA.enqueue(MockResponse().setResponseCode(200).setBody("""{"ok":true}"""))
         newClient(serverA).delete("ak_test", "tok-1")
+        serverA.takeAnonymousProbe()
         val recorded = serverA.takeRequest(2, TimeUnit.SECONDS)!!
         assertEquals("DELETE", recorded.method)
         assertEquals("/api/v1/roomid/publish", recorded.path)
         assertEquals("Bearer tok-1", recorded.getHeader("Authorization"))
+    }
+
+    @Test
+    fun missingOrFalseMembershipCapabilityNeverSendsCredentials() = runBlocking {
+        serverA.enqueue(MockResponse().setBody("""{"protocol_version":2,"upload_auth_required":true}"""))
+        serverB.enqueue(MockResponse().setBody("""{"room_id_membership_verified":false}"""))
+        assertFailsWith<RoomIdFeatureUnavailableException> {
+            newClient(serverA, serverB).publish(listOf("code:Q77182"), "n", "ak_test", "tok-1")
+        }
+        serverA.takeAnonymousProbe()
+        serverB.takeAnonymousProbe()
+        assertEquals(1, serverA.requestCount)
+        assertEquals(1, serverB.requestCount)
+    }
+
+    @Test
+    fun explicitMembershipDenialDoesNotFallBack() = runBlocking {
+        serverA.enqueueVerified()
+        serverA.enqueue(MockResponse().setResponseCode(403).setBody("""{"error":"room_id_membership_unavailable"}"""))
+        assertFailsWith<RoomIdFeatureUnavailableException> {
+            newClient(serverA, serverB).lookup(listOf("code:Q77182"), "n", "ak_test", "tok-1")
+        }
+        assertEquals(2, serverA.requestCount)
+        assertEquals(0, serverB.requestCount)
+    }
+
+    @Test
+    fun publicHttpIsSkippedEvenIfDnsResolvesToLoopback() = runBlocking {
+        val public = serverA.url("/").newBuilder().host("relay.example").build()
+        val http = OkHttpClient.Builder().dns(object : Dns {
+            override fun lookup(hostname: String): List<InetAddress> = listOf(InetAddress.getLoopbackAddress())
+        }).build()
+        assertFailsWith<RoomIdFeatureUnavailableException> {
+            RoomIdentityClient(listOf(public.toString()), http).publish(listOf("code:Q77182"), "n", "ak_test", "tok-1")
+        }
+        assertEquals(0, serverA.requestCount)
+    }
+
+    @Test
+    fun localhostHttpDoesNotSendRequestsThroughProxy() = runBlocking {
+        val address = InetSocketAddress(InetAddress.getLoopbackAddress(), serverB.port)
+        val http = OkHttpClient.Builder().proxy(Proxy(Proxy.Type.HTTP, address)).build()
+        assertFailsWith<java.io.IOException> {
+            RoomIdentityClient(listOf(url(serverA)), http).publish(listOf("code:Q77182"), "n", "ak_test", "tok-1")
+        }
+        assertEquals(0, serverA.requestCount)
+        assertEquals(0, serverB.requestCount)
+    }
+
+    @Test
+    fun authenticatedRequestDoesNotFollowRedirect() = runBlocking {
+        serverA.enqueueVerified()
+        serverA.enqueue(MockResponse().setResponseCode(307).addHeader("Location", serverB.url("/target")))
+        val error = assertFailsWith<RoomIdException> {
+            newClient(serverA).publish(listOf("code:Q77182"), "n", "ak_test", "tok-1")
+        }
+        assertEquals(307, error.statusCode)
+        assertEquals(2, serverA.requestCount)
+        assertEquals(0, serverB.requestCount)
     }
 }

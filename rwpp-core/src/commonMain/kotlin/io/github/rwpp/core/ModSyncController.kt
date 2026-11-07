@@ -12,6 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.rwpp.app.LauncherVisibility
 import io.github.rwpp.app.pollWhileVisible
+import io.github.rwpp.app.whileVisible
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.config.AccountPreferences
 import io.github.rwpp.config.resolveAccountAppKey
@@ -35,6 +36,7 @@ import io.github.rwpp.game.mod.preparePayload
 import io.github.rwpp.game.GameStartSafety
 import io.github.rwpp.AppContext
 import java.io.File
+import java.io.IOException
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.game.mod.NetworkModCache
 import io.github.rwpp.game.mod.NetworkModDescriptor
@@ -217,6 +219,8 @@ object ModSyncController {
     @Volatile
     private var hostClient: ModSyncClient? = null
     @Volatile
+    private var preparedHostClient: ModSyncClient? = null
+    @Volatile
     private var retryHostRoom: Triple<String, String, String>? = null
     private val hostGeneration = AtomicLong()
     private var heartbeatJob: Job? = null
@@ -285,13 +289,43 @@ object ModSyncController {
 
     // ---------------- 房主侧 ----------------
 
+    /** 在游戏连接之前检查上传节点，保留同一个客户端供进房后的上传使用。 */
+    suspend fun prepareHostSession() {
+        stopHostSession(clearRequest = false).join()
+        val session = AccountSession.sessionSnapshotOrNull()
+            ?: throw ModSyncException("account_login_required", 401)
+        val credentials = ModSyncCredentials(
+            resolveAccountAppKey(appKoin.get<AccountPreferences>().appKey), session.token,
+        )
+        lateinit var client: ModSyncClient
+        client = newClient(credentials) {
+            AccountSession.isCurrentSession(session) && (preparedHostClient === client || hostClient === client)
+        }
+        preparedHostClient = client
+        try {
+            client.prepareHostUpload()
+            currentCoroutineContext().ensureActive()
+        } catch (error: Throwable) {
+            if (preparedHostClient === client) preparedHostClient = null
+            throw error
+        }
+    }
+
+    /** 连接取消/失败时丢弃尚未绑定房间的预检，不保留账号凭据。 */
+    fun discardPreparedHostSession() {
+        preparedHostClient = null
+    }
+
     /**
      * 进房提取到房间短码后调用（可能随 UI 刷新反复触发，必须幂等）。
      */
-    fun startHostSession(roomCode: String) {
+    fun startHostSession(roomCode: String) = launchHostSession(roomCode, retry = false)
+
+    private fun launchHostSession(roomCode: String, retry: Boolean) {
         if (!hostSyncRequested) return
         val key = forAddress(roomCode).firstOrNull() ?: return
-        if (hostKey == key && (hostJob?.isActive == true || hostSyncState is HostSyncState.Ready)) return
+        // 失败保留给玩家显式重试，不能随房间刷新反复重启上传/弹窗。
+        if (hostKey == key && !retry) return
         val session = AccountSession.sessionSnapshotOrNull()
         if (session == null) {
             hostSyncRequested = false
@@ -302,7 +336,8 @@ object ModSyncController {
             resolveAccountAppKey(appKoin.get<AccountPreferences>().appKey), session.token,
         )
         lateinit var client: ModSyncClient
-        client = newClient(credentials) { AccountSession.isCurrentSession(session) && hostClient === client }
+        client = preparedHostClient
+            ?: newClient(credentials) { AccountSession.isCurrentSession(session) && hostClient === client }
         val cleanup = stopHostSession(clearRequest = false)
         hostClient = client
         val lifetime = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
@@ -362,14 +397,14 @@ object ModSyncController {
             // 注册成功后即轮询加入者进度（preparing 阶段也会有 waiting_host 上报）
             startPeerPolling(key, secret, client)
 
-            val missing = client.checkFiles(key, secret, descriptors.map { it.normalizedSha256 }).toSet()
+            val missing = client.checkFiles(key, secret, descriptors.map { it.normalizedSha256 }).toMutableSet()
             logger.info("[MODSYNC-HOST] registered; server missing ${missing.size}/${descriptors.size} blob(s)")
 
             var uploadedBytes = 0L
             var doneCount = 0
             prepared.forEach { payload ->
                 val descriptor = payload.descriptor
-                if (descriptor.normalizedSha256 in missing) {
+                if (missing.remove(descriptor.normalizedSha256)) {
                     client.uploadFile(key, descriptor.normalizedSha256, secret, payload.file) { progress ->
                         publishHostState(
                             HostSyncState.Preparing(
@@ -393,7 +428,7 @@ object ModSyncController {
             stopAfterTransferMemoryFailure("host-transfer")
         } catch (e: Exception) {
             logger.error("[MODSYNC-HOST] host session failed: ${e.stackTraceToString()}")
-            if (!handleHostAuthFailure(e, client)) publishHostState(HostSyncState.Error(hostErrorText(e)))
+            if (!handleHostAuthFailure(e, client)) reportHostFailure(e, client)
         } finally {
             prepared.forEach { it.close() }
         }
@@ -469,6 +504,7 @@ object ModSyncController {
         val lifetime = hostScope?.coroutineContext?.get(Job)
         hostGeneration.incrementAndGet()
         hostClient = null
+        preparedHostClient = null
         hostScope = null
         val previousCleanup = hostCleanupJob
         val stoppedJobs = listOfNotNull(lifetime, hostJob, heartbeatJob, peerPollJob)
@@ -494,7 +530,7 @@ object ModSyncController {
     }
 
     /** 只停止房主分享；加入者下载不依赖账号。 */
-    fun onAccountInvalidated(): Job? = if (hostClient != null) stopHostSession() else null
+    fun onAccountInvalidated(): Job? = if (hostClient != null || preparedHostClient != null) stopHostSession() else null
 
     fun retryHostSession() {
         if (AccountSession.sessionSnapshotOrNull() == null) {
@@ -503,14 +539,26 @@ object ModSyncController {
         }
         val room = retryHostRoom ?: return
         hostSyncRequested = true
-        startHostSession(room.second)
+        launchHostSession(room.second, retry = true)
     }
 
-    private fun hostErrorText(error: Throwable): String = when {
+    internal fun hostErrorText(error: Throwable): String = when {
         error is ModSyncException && error.statusCode == 401 -> readI18n("modSync.loginRequired")
         error is ModSyncException && error.statusCode == 403 -> readI18n("modSync.accountForbidden")
         error is ModSyncException && error.message == "authenticated_upload_unavailable" -> readI18n("modSync.authServiceUnavailable")
+        error is ModSyncException && error.message == "authenticated_upload_requires_https" -> readI18n("modSync.uploadRequiresSecureService")
+        error is IOException && error !is ModSyncException -> readI18n("modSync.uploadServiceUnreachable")
         else -> error.message ?: error.javaClass.simpleName
+    }
+
+    private fun reportHostFailure(error: Throwable, client: ModSyncClient) {
+        val generation = hostGeneration.get()
+        scope.launch(Dispatchers.Main.immediate) {
+            if (hostGeneration.get() != generation || hostClient !== client) return@launch
+            val message = hostErrorText(error)
+            hostSyncState = HostSyncState.Error(message)
+            UI.showWarning(readI18n("modSync.hostSharingFailed", I18nType.RWPP, message), false)
+        }
     }
 
     private fun handleHostAuthFailure(error: Throwable, client: ModSyncClient): Boolean {
@@ -521,7 +569,11 @@ object ModSyncController {
         scope.launch {
             cleanup.join()
             withContext(Dispatchers.Main.immediate) {
-                if (hostGeneration.get() == generation) hostSyncState = HostSyncState.Error(hostErrorText(error))
+                if (hostGeneration.get() == generation) {
+                    val message = hostErrorText(error)
+                    hostSyncState = HostSyncState.Error(message)
+                    UI.showWarning(readI18n("modSync.hostSharingFailed", I18nType.RWPP, message), false)
+                }
             }
         }
         return true
@@ -543,10 +595,9 @@ object ModSyncController {
         if (keys.isEmpty()) return true
         preJoinJob = currentCoroutineContext().job
         try {
-            val client = newClient()
-            val found = fetchFirstAvailable(client, keys) ?: return true
-            val usedKey = found.second
-            val response = found.first
+            val (found, usedKey) = fetchFirstAvailable(newClient(), keys) ?: return true
+            val response = found.manifest
+            val client = found.client
             if (!response.isReady && !response.isPreparing) return true
             val descriptors = response.mods.map { it.toNetwork() }
             if (descriptors.isEmpty()) return true
@@ -570,7 +621,7 @@ object ModSyncController {
             currentCoroutineContext().ensureActive()
             val accepted = synchronized(this) {
                 if (!syncEntryJobs.isCurrent(entryEpoch)) false else {
-                    pendingPostJoin = PostJoinContext(reporter, usedKey, response, entryEpoch)
+                    pendingPostJoin = PostJoinContext(reporter, client, usedKey, response, entryEpoch)
                     syncEntryActive = true
                     syncEntryRetriesLeft = SYNC_ENTRY_MAX_RETRY
                     syncEntryAddress = address
@@ -610,6 +661,7 @@ object ModSyncController {
     /** 进房后同步上下文：[preJoinSync] 轻量段暂存，[onJoinedRoom] 启动 [runPostJoinSync] 时消费。 */
     private class PostJoinContext(
         val reporter: PeerProgressReporter,
+        val client: ModSyncClient,
         val roomKey: String,
         val manifest: RoomManifestResponse,
         val entryEpoch: Int,
@@ -673,7 +725,7 @@ object ModSyncController {
         }
         postJoinJob = scope.launch(Dispatchers.IO) {
             roomPresenceMutex.withLock { roomPresenceReporter = ctx.reporter }
-            startPeerViewPolling(ctx.reporter)
+            startPeerViewPolling(ctx.reporter, ctx.client)
             runPostJoinSync(ctx)
         }
         // 被踢静默重试窗口：进房成功后再留一段宽限期（校验和踢人在注册后 ~1s 内异步到达）
@@ -720,44 +772,48 @@ object ModSyncController {
     }
 
     /** 房客视角：进房后用自己的 peer secret 轮询本房 peers 的脱敏进度，驱动行内徽章。 */
-    private fun startPeerViewPolling(reporter: PeerProgressReporter) {
+    private fun startPeerViewPolling(reporter: PeerProgressReporter, client: ModSyncClient) {
         peerViewPollJob?.cancel()
         peerViewPollJob = scope.launch(Dispatchers.IO) {
             var delayMs = PEER_POLL_MS
             var lastError: String? = null
             var secretMismatchStreak = 0
             var stopPolling = false
-            while (isActive && !stopPolling) {
-                val secret = reporter.currentPeerSecret()
-                if (secret != null) {
-                    val result = runCatching {
-                        newClient().listPeersAsPeer(reporter.roomKey, secret)
-                    }
-                    result.onSuccess { peers ->
-                        delayMs = PEER_POLL_MS
-                        secretMismatchStreak = 0
-                        lastError = null
-                        withContext(Dispatchers.Main.immediate) {
-                            peerViewSnapshots = peers.map { it.toSnapshot() }.associateBy { it.displayName }
-                        }
-                    }.onFailure {
-                        val msg = it.message.orEmpty()
-                        if (msg != lastError) {
-                            logger.warn("[MODSYNC] listPeersAsPeer failed: $msg")
-                            lastError = msg
-                        }
-                        if (msg.contains("secret does not match")) {
-                            secretMismatchStreak++
-                            delayMs = (delayMs * 2).coerceAtMost(8_000L)
+            LauncherVisibility.visible.whileVisible {
+                while (!stopPolling) {
+                    val secret = reporter.currentPeerSecret()
+                    if (secret != null) {
+                        try {
+                            val peers = client.listPeersAsPeer(reporter.roomKey, secret)
+                            delayMs = PEER_POLL_MS
+                            secretMismatchStreak = 0
+                            lastError = null
+                            withContext(Dispatchers.Main.immediate) {
+                                peerViewSnapshots = peers.map { it.toSnapshot() }.associateBy { it.displayName }
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            val message = e.message.orEmpty()
+                            if (message != lastError) {
+                                logger.warn("[MODSYNC] listPeersAsPeer failed: $message")
+                                lastError = message
+                            }
+                            delayMs = if (e is ModSyncException && e.statusCode == 429) {
+                                (e.retryAfterSeconds ?: 2).coerceAtMost(300) * 1_000L
+                            } else {
+                                (delayMs * 2).coerceAtMost(8_000L)
+                            }
+                            secretMismatchStreak = if (message.contains("secret does not match")) secretMismatchStreak + 1 else 0
                             if (secretMismatchStreak >= 3) {
                                 logger.warn("[MODSYNC] peer secret expired, stopping peer view polling")
                                 stopPolling = true
+                                break
                             }
                         }
                     }
+                    delay(delayMs)
                 }
-                if (stopPolling) break
-                delay(delayMs)
             }
         }
     }
@@ -771,7 +827,7 @@ object ModSyncController {
         val reporter = ctx.reporter
         var stage = ConnectionFailureStage.SYNC_MANIFEST
         try {
-            val client = newClient()
+            val client = ctx.client
             var response = ctx.manifest
 
             // 房主仍在准备：房间内等待（可正常聊天），上报 waiting_host；
@@ -1198,11 +1254,11 @@ object ModSyncController {
     private suspend fun fetchFirstAvailable(
         client: ModSyncClient,
         keys: List<String>,
-    ): Pair<RoomManifestResponse, String>? {
+    ): Pair<ModSyncClient.LocatedManifest, String>? {
         var lastError: Exception? = null
         for (key in keys) {
             try {
-                val manifest = client.fetchManifest(key)
+                val manifest = client.locateManifest(key)
                 if (manifest != null) return manifest to key
             } catch (e: CancellationException) {
                 throw e

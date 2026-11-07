@@ -21,6 +21,15 @@ https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
     -PonlineChannel 注入 BuildConfig，随在线上报传给统计服务器。
     省略时默认为 official；交互式菜单中每次构建前会询问。
 
+.PARAMETER GameArchive
+    指定原版资源；默认优先查找 build/build.ps1 同级的 Rusted-Warfare-win.zip。
+
+.PARAMETER Check
+    仅检查当前环境和资源，不安装工具、不执行 Gradle。未指定目标时检查 installer。
+
+.PARAMETER NoInstall
+    禁止自动安装缺少的 JDK 21 / Inno Setup（包括官方发布下载）。
+
 .PARAMETER KernelReleaseTag
     兼容旧命令的已停用参数。浏览器组件始终从最新 Release 查找。
 
@@ -45,6 +54,12 @@ param(
 
     [string]$Channel,
 
+    [string]$GameArchive,
+
+    [switch]$Check,
+
+    [switch]$NoInstall,
+
     [ValidatePattern('^[A-Za-z0-9._+-]+$')]
     [string]$KernelReleaseTag,
 
@@ -57,8 +72,28 @@ param(
     [switch]$Help
 )
 
+# PowerShell 7 on Linux uses the same native entry as build/build.sh.
+if ($env:OS -ne 'Windows_NT') {
+    $linuxArgs = @((Join-Path $PSScriptRoot 'build.sh'))
+    if ($Target) { $linuxArgs += $Target }
+    if ($Channel) { $linuxArgs += @('--channel', $Channel) }
+    if ($GameArchive) { $linuxArgs += @('--game-archive', $GameArchive) }
+    if ($Check) {
+        if (-not $Target) { $linuxArgs += 'linux' }
+        $linuxArgs += '--check'
+    }
+    if ($NoInstall) { $linuxArgs += '--no-install' }
+    if ($GeckoComponentVersion) { $linuxArgs += @('--gecko-component-version', $GeckoComponentVersion) }
+    if ($JcefComponentVersion) { $linuxArgs += @('--jcef-component-version', $JcefComponentVersion) }
+    if ($Help) { $linuxArgs += '--help' }
+    & bash @linuxArgs
+    exit $LASTEXITCODE
+}
+
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'update-packages.ps1')
+. (Join-Path $PSScriptRoot 'inno/payload.ps1')
+. (Join-Path $PSScriptRoot 'windows-environment.ps1')
 
 # 统一控制台输出为 UTF-8，保证中文正常显示
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
@@ -235,7 +270,8 @@ function Show-Menu {
     Write-Host ''
     Write-Host '  [2] RWJS Inno Setup installer (需要 Inno Setup 6.5+ 和原版游戏资源)'
     Write-Host '      Task:   :rwpp-desktop:packageInnoDistribution'
-    Write-Host '      Game:   RW_GAME_ROOT 或 packaging\game-root.local.txt'
+    Write-Host '      Game:   build\Rusted-Warfare-win.zip（自动识别同级 ZIP）'
+    Write-Host '      Tools:  自动配置 JDK 21 / Inno Setup，缺失时使用 WinGet 或官方发布配置'
     Write-Host '      Output: build\artifacts\installer\'
     Write-Host ''
     Write-Host '  [3] Tests (rwpp-core / rwpp-core-api)'
@@ -250,7 +286,7 @@ function Show-Menu {
     Write-Host '      Task:   :rwpp-android:assembleRelease'
     Write-Host '      Output: build\artifacts\android-release\'
     Write-Host ''
-    Write-Host '  [6] Safe clean (保留 build\build.* / build\key / build\artifacts)'
+    Write-Host '  [6] Safe clean (保留 build 下脚本 / ZIP / key / artifacts)'
     Write-Host '      Task:   clean'
     Write-Host ''
     Write-Host '  [7] Browser kernels (Gitee Release 附件)'
@@ -292,6 +328,11 @@ function Show-Usage {
     Write-Host '  clean, safe-clean'
     Write-Host ''
     Write-Host 'Notes:'
+    Write-Host '  - 默认优先使用 build\Rusted-Warfare-win.zip；-GameArchive 可覆盖。'
+    Write-Host '  - 自动检测 JDK 21 和 Inno Setup 6.5+，配置当前打包进程的环境变量。'
+    Write-Host '  - 缺少工具时通过 WinGet 或官方发布自动配置；-NoInstall 禁止安装。'
+    Write-Host '  - -Check 仅检查，不安装、不构建（默认检查 installer）。'
+    Write-Host '  - -GameArchive <原版.zip> 指定 PC 原版资源；也可设置 RW_GAME_ARCHIVE。'
     Write-Host '  - 构建目标不会自动执行 clean。'
     Write-Host '  - 需要清理时单独运行 clean 目标。'
     Write-Host '  - clean 前会校验 build.gradle.kts 中的根目录保护规则。'
@@ -304,14 +345,17 @@ function Test-Preflight ([string]$Key) {
     $def = $Targets[$Key]
 
     if ($Key -eq 'installer') {
-        $gameRoot = Resolve-RwGameRoot
-        $gameLib = Join-Path $gameRoot 'game-lib.jar'
-        if (-not (Test-Path -LiteralPath $gameLib -PathType Leaf)) {
-            Write-Err "一体包需要原版游戏目录（缺少 game-lib.jar）: $gameRoot"
-            Write-Info '请设置环境变量 RW_GAME_ROOT，或在 packaging\game-root.local.txt 写入路径。'
+        try {
+            $gameRoot = Resolve-RwGameRoot -RepoRoot $RootDir -GameRoot $GameArchive
+            Assert-RwGameSource -Source $gameRoot -Windows
+        } catch {
+            Write-Err $_.Exception.Message
+            Write-Info '请把 Rusted-Warfare-win.zip 放到 build/build.ps1 同级目录，或用 -GameArchive 指定。'
             return $false
         }
-        Write-Info "一体包游戏根目录: $gameRoot"
+        Write-Info "一体包原版资源: $gameRoot"
+        # 显式参数优先于旧环境变量和本机配置。
+        $env:RW_GAME_ARCHIVE = $gameRoot
         $env:RW_GAME_ROOT = $gameRoot
     }
 
@@ -340,6 +384,13 @@ function Test-Preflight ([string]$Key) {
     if ($Key -eq 'clean') {
         if (-not (Test-CleanProtection)) { return $false }
     }
+    try {
+        $allowInstall = -not $Check -and -not $NoInstall -and $Key -ne 'clean'
+        $null = Initialize-RwWindowsBuildEnvironment -Target $Key -AllowInstall:$allowInstall
+    } catch {
+        Write-Err $_.Exception.Message
+        return $false
+    }
     return $true
 }
 
@@ -349,7 +400,7 @@ function Test-CleanProtection {
         Write-Err "未找到 build.gradle.kts: $gradleFile"; return $false
     }
     $content = Get-Content -LiteralPath $gradleFile -Raw
-    $required = @('key/**', 'artifacts/**', '*.bat', '*.cmd', '*.ps1')
+    $required = @('key/**', 'artifacts/**', '*.bat', '*.cmd', '*.ps1', '*.sh', '*.zip', '*.ZIP')
     $missing = $required | Where-Object { $content -notlike "*$_*" }
     if ($missing.Count -gt 0) {
         Write-Err 'build.gradle.kts 缺少根目录保护规则。'
@@ -357,24 +408,6 @@ function Test-CleanProtection {
         return $false
     }
     return $true
-}
-
-function Resolve-RwGameRoot {
-    $fromEnv = [Environment]::GetEnvironmentVariable('RW_GAME_ROOT')
-    if (-not [string]::IsNullOrWhiteSpace($fromEnv)) {
-        return [System.IO.Path]::GetFullPath($fromEnv.Trim().Trim('"'))
-    }
-    $localFile = Join-Path $RootDir 'packaging\game-root.local.txt'
-    if (Test-Path -LiteralPath $localFile -PathType Leaf) {
-        $line = Get-Content -LiteralPath $localFile |
-            ForEach-Object { $_.Trim() } |
-            Where-Object { $_ -and -not $_.StartsWith('#') } |
-            Select-Object -First 1
-        if (-not [string]::IsNullOrWhiteSpace($line)) {
-            return [System.IO.Path]::GetFullPath($line.Trim().Trim('"'))
-        }
-    }
-    return [System.IO.Path]::GetFullPath('D:\APP\Steam\steamapps\common\Rusted Warfare')
 }
 
 # ---------------------------------------------------------------------------
@@ -619,6 +652,7 @@ function Test-ProtectedFiles {
     }
     if (Test-Path -LiteralPath (Join-Path $BuildDir 'key'))       { Write-Host '[PROTECT] build\key\ 仍然存在。' -ForegroundColor Green }
     if (Test-Path -LiteralPath $ArtifactsDir)                     { Write-Host '[PROTECT] build\artifacts\ 仍然存在。' -ForegroundColor Green }
+    if (Test-Path -LiteralPath (Join-Path $BuildDir 'Rusted-Warfare-win.zip')) { Write-Host '[PROTECT] 原版 Windows ZIP 仍然存在。' -ForegroundColor Green }
 }
 
 # ---------------------------------------------------------------------------
@@ -638,6 +672,14 @@ function Invoke-Main {
 
     if ($Help -or $Target -in @('help', '--help', '/?')) {
         Show-Usage
+        return 0
+    }
+
+    if ($Check) {
+        $checkTarget = if ($Target) { Resolve-Target $Target } else { 'installer' }
+        if (-not $checkTarget) { Write-Err "未知目标: $Target"; return 1 }
+        if (-not (Test-Preflight $checkTarget)) { return 1 }
+        Write-Ok '环境与资源检查通过；未安装工具，未执行构建。'
         return 0
     }
 

@@ -11,7 +11,6 @@ import io.github.rwpp.logger
 import io.github.rwpp.net.useCancellable
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.withLock
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -33,6 +32,7 @@ import java.util.concurrent.TimeUnit
 private const val API_PREFIX = "/api/v1"
 private const val SECRET_HEADER = "X-Secret"
 private const val PEER_SECRET_HEADER = "X-Peer-Secret"
+private const val CURRENT_MOD_NAME_MAX_BYTES = 256
 private const val BUFFER_SIZE = 64 * 1024
 
 private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
@@ -53,7 +53,7 @@ private class InvalidBlob(message: String) : IOException(message)
  *
  * - 全部方法为 suspend，并在 [Dispatchers.IO] 上执行，支持协程取消（取消即中断底层 OkHttp 调用）；
  * - 加入者多 [baseUrls] failover：网络错误与 5xx 换地址，4xx 立即失败；
- * - 房主携带登录凭据，仅连接声明强制认证的 HTTPS 节点；一次会话固定节点，写入失败不换镜像；
+ * - 房主携带登录凭据，支持声明强制认证并开放上传的 HTTP/HTTPS 节点；一次会话固定节点，写入失败不换镜像；
  * - 服务端错误体会按 [ErrorResponse] 解析，提取其中的 `error` 作为异常信息。
  */
 class ModSyncClient(
@@ -91,9 +91,19 @@ class ModSyncClient(
     }
 
     // 房主固定在验证过能力的节点；不把凭据发往旧节点，也不把状态散落到多个镜像。
-    private val hostHttp = client.newBuilder().followRedirects(false).followSslRedirects(false).build()
+    private val hostHttp by lazy { client.newBuilder().followRedirects(false).followSslRedirects(false).build() }
     private val hostMutex = kotlinx.coroutines.sync.Mutex()
     private var hostBaseUrl: String? = null
+
+    /** 开房前只探测公开能力，不发送账号凭据；成功后本次分享固定使用该节点。 */
+    suspend fun prepareHostUpload() = withContext(Dispatchers.IO) {
+        if (hostCredentials == null) throw ModSyncException("account_login_required", 401)
+        if (!isHostSessionCurrent()) throw ModSyncException("account_session_changed", 401)
+        hostMutex.withLock {
+            if (hostBaseUrl == null) hostBaseUrl = selectHostServer()
+        }
+        if (!isHostSessionCurrent()) throw ModSyncException("account_session_changed", 401)
+    }
 
     private suspend fun <T> hostRequest(
         path: String,
@@ -118,10 +128,9 @@ class ModSyncClient(
     }
 
     private suspend fun selectHostServer(): String {
+        var lastNetworkFailure: IOException? = null
         for (base in baseUrls) {
             currentCoroutineContext().ensureActive()
-            val url = base.toHttpUrl()
-            if (url.scheme != "https" && url.host !in setOf("localhost", "127.0.0.1", "::1")) continue
             try {
                 val available = hostHttp.useCancellable(Request.Builder().url("$base$API_PREFIX/capabilities").build()) { response ->
                     if (!response.isSuccessful) false else {
@@ -131,9 +140,10 @@ class ModSyncClient(
                 }
                 if (available) return base
             } catch (e: CancellationException) { throw e }
-              catch (e: IOException) { currentCoroutineContext().ensureActive() }
+              catch (e: IOException) { currentCoroutineContext().ensureActive(); lastNetworkFailure = e }
               catch (e: kotlinx.serialization.SerializationException) { /* 旧节点不接收凭据。 */ }
         }
+        lastNetworkFailure?.let { throw it }
         throw ModSyncException("authenticated_upload_unavailable", 503)
     }
 
@@ -188,7 +198,7 @@ class ModSyncClient(
         val encodedKey = enc(key)
         return hostRequest("$API_PREFIX/files/check?key=$encodedKey", {
             header(SECRET_HEADER, secret)
-            post(json.encodeToString(FilesCheckRequest(hashes)).toRequestBody(JSON_MEDIA_TYPE))
+            post(json.encodeToString(FilesCheckRequest(hashes.distinct())).toRequestBody(JSON_MEDIA_TYPE))
         }) { response ->
             json.decodeFromString<FilesCheckResponse>(response.body?.string().orEmpty()).missing
         }
@@ -250,8 +260,20 @@ class ModSyncClient(
      * @return 清单响应；404（无同步记录）时返回 null 而非抛异常。
      */
     suspend fun fetchManifest(key: String): RoomManifestResponse? = try {
-        withFailover("$API_PREFIX/rooms/${enc(key)}", { get() }) { response ->
+        withFailover("$API_PREFIX/rooms/${enc(key)}", { get() }) { response, _ ->
             json.decodeFromString<RoomManifestResponse>(response.body?.string().orEmpty())
+        }
+    } catch (e: ModSyncException) {
+        if (e.statusCode == 404) null else throw e
+    }
+
+    data class LocatedManifest(val manifest: RoomManifestResponse, val client: ModSyncClient)
+
+    /** 发现房主选定的节点，后续清单、Presence 和文件都从该节点读取。 */
+    suspend fun locateManifest(key: String): LocatedManifest? = try {
+        withFailover("$API_PREFIX/rooms/${enc(key)}", { get() }, searchMirrors = true) { response, base ->
+            val manifest = json.decodeFromString<RoomManifestResponse>(response.body?.string().orEmpty())
+            LocatedManifest(manifest, ModSyncClient(listOf(base), client))
         }
     } catch (e: ModSyncException) {
         if (e.statusCode == 404) null else throw e
@@ -270,8 +292,10 @@ class ModSyncClient(
         peerSecret: String? = null,
     ): String? = withFailover("$API_PREFIX/rooms/${enc(key)}/peers/${enc(peerId)}", {
         if (!peerSecret.isNullOrEmpty()) header(PEER_SECRET_HEADER, peerSecret)
-        put(json.encodeToString(progress).toRequestBody(JSON_MEDIA_TYPE))
-    }) { response ->
+        val name = progress.currentModName.takeUtf8(CURRENT_MOD_NAME_MAX_BYTES)
+        val body = if (name == progress.currentModName) progress else progress.copy(currentModName = name)
+        put(json.encodeToString(body).toRequestBody(JSON_MEDIA_TYPE))
+    }) { response, _ ->
         val body = response.body?.string().orEmpty()
         val decoded = json.decodeFromString<SyncPeerProgress>(body)
         decoded.peerSecret.takeIf { it.isNotBlank() }
@@ -294,7 +318,7 @@ class ModSyncClient(
         }
         val path = "$API_PREFIX/rooms/${enc(key)}/peers/${enc(peerId)}"
         if (!roomSecret.isNullOrEmpty()) hostRequest(path, customize = customize) { }
-        else withFailover(path, customize) { }
+        else withFailover(path, customize) { _, _ -> }
     }
 
     /**
@@ -331,7 +355,7 @@ class ModSyncClient(
         withFailover("$API_PREFIX/rooms/${enc(key)}/peers", {
             header(PEER_SECRET_HEADER, peerSecret)
             get()
-        }) { response ->
+        }) { response, _ ->
             json.decodeFromString<SyncPeerListResponse>(response.body?.string().orEmpty()).peers
         }
 
@@ -540,15 +564,16 @@ class ModSyncClient(
 
     /**
      * 多 baseUrl 按序 failover：任一地址 2xx 即返回；5xx/网络错误记录后尝试下一个；
-     * 4xx（含 404/409）立即抛 [ModSyncException]；全部失败则抛出最后记录的错误。
+     * 发现房间时也会探测返回 404 的节点之后的镜像；其他请求收到 4xx 立即失败。
      */
     private suspend fun <T> withFailover(
         path: String,
         customize: Request.Builder.() -> Unit,
-        http: OkHttpClient = client,
-        onSuccess: (Response) -> T,
+        searchMirrors: Boolean = false,
+        onSuccess: (Response, String) -> T,
     ): T = withContext(Dispatchers.IO) {
         var lastError: IOException? = null
+        var notFound: ModSyncException? = null
         for (base in baseUrls) {
             coroutineContext.ensureActive()
             val request = Request.Builder()
@@ -556,9 +581,10 @@ class ModSyncClient(
                 .apply(customize)
                 .build()
             try {
-                http.useCancellable(request) { response ->
+                client.useCancellable(request) { response ->
                     when {
-                        response.isSuccessful -> return@withContext onSuccess(response)
+                        response.isSuccessful -> return@withContext onSuccess(response, base)
+                        searchMirrors && response.code == 404 -> notFound = response.toModSyncException()
                         response.code in 500..599 -> {
                             logger.warn("同步服务器 $base 返回 HTTP ${response.code}，尝试下一个地址")
                             lastError = response.toModSyncException()
@@ -574,7 +600,25 @@ class ModSyncClient(
                 lastError = e
             }
         }
-        throw lastError ?: ModSyncException("没有可用的同步服务器地址", null)
+        throw lastError ?: notFound ?: ModSyncException("没有可用的同步服务器地址", null)
+    }
+
+    private fun String.takeUtf8(maxBytes: Int): String {
+        if (length <= maxBytes / 3) return this
+        var bytes = 0
+        var end = 0
+        while (end < length) {
+            val codePoint = codePointAt(end)
+            bytes += when {
+                codePoint <= 0x7F -> 1
+                codePoint <= 0x7FF -> 2
+                codePoint <= 0xFFFF -> 3
+                else -> 4
+            }
+            if (bytes > maxBytes) return substring(0, end)
+            end += Character.charCount(codePoint)
+        }
+        return this
     }
 
     private fun Response.toModSyncException(): ModSyncException {
