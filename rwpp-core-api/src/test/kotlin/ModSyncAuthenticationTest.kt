@@ -16,6 +16,8 @@ import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import java.io.File
+import java.net.InetAddress
+import java.net.Proxy
 import java.util.concurrent.TimeUnit
 import kotlin.test.*
 
@@ -55,9 +57,38 @@ class ModSyncAuthenticationTest {
         } }
     }
 
-    @Test fun preflightRejectsInsecureDisabledAndUnavailableServicesWithoutRegistering() = runBlocking {
-        val insecure = ModSyncClient(listOf("http://example.invalid"), OkHttpClient(), credentials)
-        assertEquals("authenticated_upload_requires_https", assertFailsWith<ModSyncException> { insecure.prepareHostUpload() }.message)
+    @Test fun publicHttpServiceChecksCapabilitiesBeforeSendingUploadCredentials() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(ok(caps))
+            server.enqueue(ok())
+            val base = server.url("/").newBuilder().host("relay.example.test").build()
+            val http = OkHttpClient.Builder()
+                .dns(object : okhttp3.Dns {
+                    override fun lookup(hostname: String): List<InetAddress> =
+                        listOf(InetAddress.getByName("127.0.0.1"))
+                })
+                .proxy(Proxy.NO_PROXY)
+                .build()
+            val c = ModSyncClient(listOf(base.toString()), http, credentials)
+
+            c.prepareHostUpload()
+            val capability = assertNotNull(server.takeRequest(2, TimeUnit.SECONDS))
+            assertEquals("${base.host}:${base.port}", capability.getHeader("Host"))
+            assertEquals("GET", capability.method)
+            assertEquals("/api/v1/capabilities", capability.path)
+            assertNull(capability.getHeader("Authorization"))
+            assertNull(capability.getHeader("X-App-Key"))
+
+            c.register(RoomRegisterRequest("room", "secret", "1.15", mods = emptyList()))
+            val upload = assertNotNull(server.takeRequest(2, TimeUnit.SECONDS))
+            assertEquals("/api/v1/rooms", upload.path)
+            assertEquals("Bearer login-token", upload.getHeader("Authorization"))
+            assertEquals("app-key", upload.getHeader("X-App-Key"))
+            assertEquals(2, server.requestCount)
+        }
+    }
+
+    @Test fun preflightRejectsDisabledAndUnavailableServicesWithoutRegistering() = runBlocking {
         MockWebServer().use { server ->
             server.enqueue(ok("""{"protocol_version":2,"upload_auth_required":true,"upload_enabled":false}"""))
             assertEquals("authenticated_upload_unavailable", assertFailsWith<ModSyncException> { client(server).prepareHostUpload() }.message)
@@ -204,9 +235,7 @@ class ModSyncAuthenticationTest {
             assertEquals(0,b.requestCount)
         } }
     }
-    @Test fun insecurePublicUploadAndDisabledCapabilitiesFailClosed() = runBlocking {
-        val insecure = ModSyncClient(listOf("http://example.invalid"),OkHttpClient(),credentials)
-        assertEquals(503,assertFailsWith<ModSyncException> { insecure.register(RoomRegisterRequest("room","s","1.15",mods=emptyList())) }.statusCode)
+    @Test fun disabledCapabilitiesPreventAuthenticatedUpload() = runBlocking {
         MockWebServer().use { server ->
             server.enqueue(ok("""{"protocol_version":2,"upload_auth_required":true,"upload_enabled":false}"""))
             assertEquals(503,assertFailsWith<ModSyncException> { client(server).register(RoomRegisterRequest("room","s","1.15",mods=emptyList())) }.statusCode)

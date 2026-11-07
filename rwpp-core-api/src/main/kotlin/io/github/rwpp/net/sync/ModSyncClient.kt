@@ -11,7 +11,6 @@ import io.github.rwpp.logger
 import io.github.rwpp.net.useCancellable
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.withLock
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -54,7 +53,7 @@ private class InvalidBlob(message: String) : IOException(message)
  *
  * - 全部方法为 suspend，并在 [Dispatchers.IO] 上执行，支持协程取消（取消即中断底层 OkHttp 调用）；
  * - 加入者多 [baseUrls] failover：网络错误与 5xx 换地址，4xx 立即失败；
- * - 房主携带登录凭据，仅连接声明强制认证的 HTTPS 节点；一次会话固定节点，写入失败不换镜像；
+ * - 房主携带登录凭据，支持声明强制认证并开放上传的 HTTP/HTTPS 节点；一次会话固定节点，写入失败不换镜像；
  * - 服务端错误体会按 [ErrorResponse] 解析，提取其中的 `error` 作为异常信息。
  */
 class ModSyncClient(
@@ -129,13 +128,9 @@ class ModSyncClient(
     }
 
     private suspend fun selectHostServer(): String {
-        var hasSecureUrl = false
         var lastNetworkFailure: IOException? = null
         for (base in baseUrls) {
             currentCoroutineContext().ensureActive()
-            val url = base.toHttpUrl()
-            if (url.scheme != "https" && url.host !in setOf("localhost", "127.0.0.1", "::1")) continue
-            hasSecureUrl = true
             try {
                 val available = hostHttp.useCancellable(Request.Builder().url("$base$API_PREFIX/capabilities").build()) { response ->
                     if (!response.isSuccessful) false else {
@@ -148,7 +143,6 @@ class ModSyncClient(
               catch (e: IOException) { currentCoroutineContext().ensureActive(); lastNetworkFailure = e }
               catch (e: kotlinx.serialization.SerializationException) { /* 旧节点不接收凭据。 */ }
         }
-        if (!hasSecureUrl) throw ModSyncException("authenticated_upload_requires_https", 503)
         lastNetworkFailure?.let { throw it }
         throw ModSyncException("authenticated_upload_unavailable", 503)
     }
