@@ -58,7 +58,7 @@ sealed interface RoomIdentityResult {
     /** 目标是 AI 玩家（无账号概念，只展示游戏区）。 */
     data object AiPlayer : RoomIdentityResult
 
-    /** relaymod 未提供身份公示功能（全部镜像 404/503，会话内降级）。 */
+    /** relaymod 未提供经过房间成员核验的身份公示功能。 */
     data object FeatureUnavailable : RoomIdentityResult
 
     /** 命中唯一账号（[online] 查询失败时按离线）。 */
@@ -82,7 +82,7 @@ sealed interface RoomIdentityResult {
  * - 点击成员时按 `room_key + player_name` 调 `lookup`，命中得账号三元组，
  *   再调 UAS 公开接口（lookup / presence）补齐名片数据；加好友走 [FriendsSession.sendRequest]。
  * - 与模组同步共用 `MultiplayerPreferences.modSyncApiUrls` 多镜像配置；
- *   404/503（旧版 relay / 未配置该功能）会话内降级为 [featureUnavailable]，不影响其它功能。
+ *   没有支持成员核验的节点时，本次运行停用公示。
  * - 游戏联机协议零改动；账号隐私沿用 [AccountSession] 的设置。
  */
 object RoomIdentityController {
@@ -99,7 +99,7 @@ object RoomIdentityController {
     @Volatile
     private var playerName: String = ""
 
-    /** 会话内降级标记：全部镜像 404/503 后置位，本次运行不再尝试公示。 */
+    /** 会话内降级标记：无可用的成员核验节点时置位，本次运行不再尝试公示。 */
     @Volatile
     var featureUnavailable: Boolean = false
         private set
@@ -378,7 +378,7 @@ object RoomIdentityController {
             false
         } catch (e: RoomIdFeatureUnavailableException) {
             featureUnavailable = true
-            logger.warn("[ROOMID] 服务端未提供身份公示功能（全部镜像 404/503），会话内降级")
+            logger.warn("[ROOMID] 服务端未提供经过房间成员核验的身份公示功能")
             false
         } catch (e: CancellationException) {
             throw e

@@ -8,6 +8,7 @@
 package io.github.rwpp.net.sync
 
 import kotlinx.coroutines.*
+import kotlinx.serialization.json.Json
 import java.security.MessageDigest
 import okio.Buffer
 import okhttp3.mockwebserver.SocketPolicy
@@ -31,7 +32,8 @@ class ModSyncAuthenticationTest {
             repeat(11) { server.enqueue(ok(if (it == 1) """{"missing":[]}""" else if (it == 8) """{"peers":[]}""" else "{}")) }
             val c = client(server)
             c.register(RoomRegisterRequest("code:Q1", "room-secret", "1.15", mods = emptyList()))
-            c.checkFiles("code:Q1", "room-secret", emptyList())
+            val hash = "a".repeat(64)
+            c.checkFiles("code:Q1", "room-secret", listOf(hash, hash))
             c.uploadFile("code:Q1", "a".repeat(64), "room-secret", byteArrayOf(1,2))
             val file = File.createTempFile("mod-auth", ".tmp")
             try { file.writeBytes(byteArrayOf(3,4)); c.uploadFile("code:Q1", "b".repeat(64), "room-secret", file) }
@@ -51,6 +53,7 @@ class ModSyncAuthenticationTest {
                 assertEquals("Bearer login-token", request.getHeader("Authorization"))
                 assertEquals("app-key", request.getHeader("X-App-Key"))
                 if (index in 1..3) assertEquals("code:Q1", request.requestUrl!!.queryParameter("key"))
+                if (index == 1) assertEquals(FilesCheckRequest(listOf(hash)), Json.decodeFromString<FilesCheckRequest>(request.body.readUtf8()))
             }
         }
     }
@@ -145,6 +148,69 @@ class ModSyncAuthenticationTest {
             assertTrue(task.isCancelled)
             assertEquals(0,other.requestCount)
         } }
+    }
+
+    @Test fun guestDiscoversTheHostsMirrorAndKeepsAllRoomTrafficThere() = runBlocking {
+        MockWebServer().use { old ->
+            MockWebServer().use { selected ->
+                val manifest = """{"status":"ready","mods":[]}"""
+                old.enqueue(MockResponse().setResponseCode(404))
+                selected.enqueue(ok(manifest))
+                selected.enqueue(ok("""{"peer_secret":"issued"}""").setResponseCode(201))
+                selected.enqueue(ok("""{"peers":[]}"""))
+                selected.enqueue(ok(manifest))
+                val data = byteArrayOf(8)
+                val sha = MessageDigest.getInstance("SHA-256").digest(data).joinToString("") { "%02x".format(it) }
+                selected.enqueue(MockResponse().setBody(Buffer().write(data)))
+
+                val room = assertNotNull(client(old, selected).locateManifest("room"))
+                assertTrue(room.manifest.isReady)
+                val name = "模".repeat(84) + "ab"
+                val progress = SyncPeerUpsertRequest("guest", SyncPeerPhase.DOWNLOADING, name + "🚀extra")
+                assertEquals("issued", room.client.upsertPeer("room", "p1", progress))
+                assertTrue(room.client.listPeersAsPeer("room", "issued").isEmpty())
+                assertEquals(room.manifest, room.client.fetchManifest("room"))
+                val file = File.createTempFile("mod-pinned", ".tmp")
+                try {
+                    room.client.downloadFileTo(sha, data.size.toLong(), file)
+                    assertContentEquals(data, file.readBytes())
+                } finally {
+                    file.delete()
+                }
+
+                assertEquals(1, old.requestCount)
+                assertEquals("/api/v1/rooms/room", old.takeRequest().path)
+                assertEquals(5, selected.requestCount)
+                val requests = List(5) { assertNotNull(selected.takeRequest(2, TimeUnit.SECONDS)) }
+                assertEquals(listOf(
+                    "/api/v1/rooms/room",
+                    "/api/v1/rooms/room/peers/p1",
+                    "/api/v1/rooms/room/peers",
+                    "/api/v1/rooms/room",
+                    "/api/v1/files/$sha",
+                ), requests.map { it.path })
+                assertEquals("issued", requests[2].getHeader("X-Peer-Secret"))
+                val sent = Json.decodeFromString<SyncPeerUpsertRequest>(requests[1].body.readUtf8())
+                assertEquals(name, sent.currentModName)
+                requests.forEach {
+                    assertNull(it.getHeader("Authorization"))
+                    assertNull(it.getHeader("X-App-Key"))
+                }
+            }
+        }
+    }
+
+    @Test fun guestDiscoveryPreservesAnUnavailableMirrorError() = runBlocking {
+        MockWebServer().use { old ->
+            MockWebServer().use { unavailable ->
+                old.enqueue(MockResponse().setResponseCode(404))
+                unavailable.enqueue(MockResponse().setResponseCode(503))
+                val error = assertFailsWith<ModSyncException> { client(old, unavailable).locateManifest("room") }
+                assertEquals(503, error.statusCode)
+                assertEquals(1, old.requestCount)
+                assertEquals(1, unavailable.requestCount)
+            }
+        }
     }
 
 }
