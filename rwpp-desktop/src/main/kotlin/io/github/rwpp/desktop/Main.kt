@@ -138,6 +138,19 @@ var requireReloadingLib = false
 /** 主窗口是否已创建（供 FullscreenController 等跨文件判断 lateinit 状态） */
 val isMainWindowInitialized: Boolean get() = ::mainJFrame.isInitialized
 
+private var launcherOverlayRef: DesktopLauncherOverlay? = null
+
+/**
+ * 原生窗口状态变化（全屏/窗口切换、启动完成）后重新断言透明菜单层的位置与可见性。
+ *
+ * 菜单层只被动跟随 AWT 组件事件，而 Win32 样式修改、窗口 bounds 赋值与 AWT 布局的
+ * 到达顺序不受控。缺少这次主动同步时，切换全屏后可能只剩底层 Canvas 画面。
+ */
+fun refreshLauncherOverlay() {
+    if (SwingUtilities.isEventDispatchThread()) launcherOverlayRef?.refresh()
+    else SwingUtilities.invokeLater { launcherOverlayRef?.refresh() }
+}
+
 //val cacheModSize = AtomicInteger(0)
 
 private fun resolveLauncherExePath(): String {
@@ -441,6 +454,7 @@ fun swingApplication() = SwingUtilities.invokeLater {
         launcherOverlay = DesktopLauncherOverlay(panel, displayHost, window) { visible ->
             DesktopMenuBackgroundEngine.request(menuBackgroundEnabled && visible)
         }
+        launcherOverlayRef = launcherOverlay
     } else if (!requireReloadingLib) {
         logger.warn("[UI] Per-pixel translucent windows unavailable; using the static launcher background")
     }
@@ -461,6 +475,8 @@ fun swingApplication() = SwingUtilities.invokeLater {
     }
     window.isVisible = true
     if (launcherOverlay != null) launcherOverlay.showMenu() else panel.requestFocus()
+    // 全屏启动时 Win32 样式在窗口可见前应用，可见后再补一次菜单层同步。
+    SwingUtilities.invokeLater { refreshLauncherOverlay() }
 
     focusRequester = FocusRequester()
     val panel2 = ComposePanel()

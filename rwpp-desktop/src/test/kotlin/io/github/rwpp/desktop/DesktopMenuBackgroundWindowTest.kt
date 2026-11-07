@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposePanel
 import androidx.compose.ui.layout.boundsInWindow
@@ -27,6 +28,7 @@ import org.junit.Assume.assumeTrue
 import org.slf4j.LoggerFactory
 import java.awt.Canvas
 import java.awt.Color
+import java.awt.Dimension
 import java.awt.Frame
 import java.awt.Graphics
 import java.awt.GraphicsDevice
@@ -151,6 +153,119 @@ class DesktopMenuBackgroundWindowTest {
         }
     }
 
+    @Test
+    fun resizeUpdatesComposeViewportAndPaintsNewEdgesWithoutInput() {
+        requireNativeTransparency()
+        val fixture = createFixture()
+        val robot = Robot()
+        try {
+            onEdt { fixture.frame.setLocation(40, 40) }
+            await("initial Compose viewport") { fixture.viewport.get() == fixture.host.size }
+            val screen = onEdtValue { fixture.frame.graphicsConfiguration.bounds }
+            val maximum = Dimension(screen.width - 100, screen.height - 140)
+            val sizes = listOf(Dimension(900, 650), Dimension(620, 430), Dimension(820, 560))
+                .map { Dimension(it.width.coerceAtMost(maximum.width), it.height.coerceAtMost(maximum.height)) }
+            for (size in sizes) {
+                onEdt { fixture.frame.size = size }
+                await("Compose viewport after resize to $size") {
+                    fixture.menu.size == fixture.host.size && fixture.viewport.get() == fixture.host.size
+                }
+                val edge = onEdtValue {
+                    fixture.host.locationOnScreen.apply { translate(fixture.host.width - 8, fixture.host.height - 8) }
+                }
+                // Observe pixels before any mouse/focus interaction can accidentally wake rendering.
+                awaitPixel(robot, edge, EDGE_COLOR)
+                onEdt {
+                    assertSame(fixture.host, fixture.canvas.parent)
+                    assertTrue(fixture.canvas.isDisplayable)
+                }
+            }
+        } finally {
+            fixture.dispose()
+        }
+    }
+
+    @Test
+    fun explicitRefreshValidatesContentEvenWhenNativeBoundsAreUnchanged() {
+        requireNativeTransparency()
+        val fixture = createFixture()
+        try {
+            await("initial viewport") { fixture.viewport.get() == fixture.host.size }
+            onEdt {
+                val windowBounds = (SwingUtilities.getWindowAncestor(fixture.menu) as JDialog).bounds
+                // Model an invalid child layout while the native window has already reached its final bounds.
+                fixture.menu.size = Dimension(80, 60)
+                fixture.overlay.refresh()
+                assertEquals(windowBounds, (SwingUtilities.getWindowAncestor(fixture.menu) as JDialog).bounds)
+                assertEquals(fixture.host.size, fixture.menu.size)
+            }
+            await("revalidated Compose viewport") { fixture.viewport.get() == fixture.host.size }
+        } finally {
+            fixture.dispose()
+        }
+    }
+
+    @Test
+    fun transientInvalidLayoutRecoversWithoutAnotherComponentEvent() {
+        requireNativeTransparency()
+        val fixture = createFixture()
+        try {
+            await("initial menu") { fixture.overlay.isMenuVisible }
+            for (notShowing in listOf(false, true)) {
+                onEdt {
+                    fixture.host.blockSize = !notShowing
+                    fixture.host.blockShowing = notShowing
+                    fixture.overlay.refresh()
+                    assertTrue(fixture.overlay.isMenuVisible, "Transient layout must not hide an existing menu")
+                    fixture.overlay.showGame()
+                    fixture.overlay.showMenu()
+                    assertFalse(fixture.overlay.isMenuVisible, "A new menu must wait for a valid viewport")
+                }
+                Thread.sleep(200)
+                // Only our reported readiness changes: no resize/show/hierarchy event is dispatched.
+                onEdt {
+                    fixture.host.blockSize = false
+                    fixture.host.blockShowing = false
+                }
+                await("automatic recovery after transient layout") {
+                    fixture.overlay.isMenuVisible && fixture.viewport.get() == fixture.host.size
+                }
+            }
+            onEdt {
+                fixture.host.blockSize = true
+                fixture.overlay.showGame()
+                fixture.overlay.showMenu()
+                fixture.overlay.showGame()
+                fixture.host.blockSize = false
+            }
+            Thread.sleep(400)
+            onEdt { assertFalse(fixture.overlay.isMenuVisible, "A late retry must not reopen the menu in game mode") }
+        } finally {
+            fixture.dispose()
+        }
+    }
+
+    @Test
+    fun refreshRestartsAnExhaustedLayoutRetryCycle() {
+        requireNativeTransparency()
+        val fixture = createFixture()
+        try {
+            await("initial menu") { fixture.overlay.isMenuVisible }
+            onEdt {
+                fixture.overlay.showGame()
+                fixture.host.blockSize = true
+                fixture.overlay.showMenu()
+            }
+            Thread.sleep(2100)
+            onEdt { fixture.overlay.refresh() }
+            Thread.sleep(200)
+            onEdt { fixture.host.blockSize = false }
+            await("new retry cycle after explicit refresh") { fixture.overlay.isMenuVisible }
+        } finally {
+            fixture.dispose()
+        }
+    }
+
     private fun createFixture(): Fixture {
         val previousLayerType = System.getProperty("compose.layers.type")
         System.setProperty("compose.layers.type", "WINDOW")
@@ -167,8 +282,9 @@ class DesktopMenuBackgroundWindowTest {
         logger = LoggerFactory.getLogger(DesktopMenuBackgroundWindowTest::class.java)
         val canvas = ColorCanvas()
         val layout = NativeCanvasCardLayout(canvas) { 1.0 }
-        val host = JPanel(layout).apply { add(canvas, DisplayMode.Game.cardName) }
+        val host = LayoutProbeHost(layout).apply { add(canvas, DisplayMode.Game.cardName) }
         val clicks = AtomicInteger()
+        val viewport = AtomicReference<Dimension?>()
         val buttonCenter = AtomicReference<Point?>()
         val menu = DesktopLauncherOverlay.createMenuPanel(liveBackground = true).apply {
             isOpaque = false
@@ -176,7 +292,14 @@ class DesktopMenuBackgroundWindowTest {
                 val density = LocalDensity.current.density
                 MaterialTheme {
                     // Keep a minimally nonzero alpha so Windows routes blank-area input to the menu.
-                    Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 1f / 255f))) {
+                    Box(Modifier.fillMaxSize()
+                        .onGloballyPositioned { coordinates ->
+                            viewport.set(Dimension((coordinates.size.width / density).roundToInt(),
+                                (coordinates.size.height / density).roundToInt()))
+                        }
+                        .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 1f / 255f))) {
+                        Box(Modifier.align(Alignment.BottomEnd).size(18.dp)
+                            .background(androidx.compose.ui.graphics.Color(EDGE_COLOR.rgb)))
                         Button(
                             onClick = { clicks.incrementAndGet() },
                             modifier = Modifier.offset(30.dp, 30.dp).size(160.dp, 45.dp)
@@ -199,7 +322,16 @@ class DesktopMenuBackgroundWindowTest {
         val overlay = DesktopLauncherOverlay(menu, host, frame)
         val switcher = DisplaySwitcher(menu, canvas, host, layout, frame, launcherOverlay = overlay)
         overlay.showMenu()
-        Fixture(frame, host, canvas, menu, buttonCenter, clicks, overlay, switcher, previousLayerType)
+        Fixture(frame, host, canvas, menu, buttonCenter, clicks, viewport, overlay, switcher, previousLayerType)
+    }
+
+    /** Simulates native/layout transition observations without generating recovery events. */
+    private class LayoutProbeHost(layout: java.awt.LayoutManager) : JPanel(layout) {
+        var blockSize = false
+        var blockShowing = false
+        override fun getWidth(): Int = if (blockSize) 0 else super.getWidth()
+        override fun getHeight(): Int = if (blockSize) 0 else super.getHeight()
+        override fun isShowing(): Boolean = !blockShowing && super.isShowing()
     }
 
     private class ColorCanvas : Canvas() {
@@ -213,11 +345,12 @@ class DesktopMenuBackgroundWindowTest {
 
     private data class Fixture(
         val frame: JFrame,
-        val host: JPanel,
+        val host: LayoutProbeHost,
         val canvas: ColorCanvas,
         val menu: ComposePanel,
         val buttonCenter: AtomicReference<Point?>,
         val clicks: AtomicInteger,
+        val viewport: AtomicReference<Dimension?>,
         val overlay: DesktopLauncherOverlay,
         val switcher: DisplaySwitcher,
         val previousLayerType: String?,
@@ -251,7 +384,7 @@ class DesktopMenuBackgroundWindowTest {
             Thread.sleep(20)
         } while (System.nanoTime() < deadline)
         assertTrue(colorsMatch(expected, actual),
-            "Transparent Compose menu must reveal the current native Canvas frame at $point: expected $expected, got $actual")
+            "Native menu pixel at $point: expected $expected, got $actual")
     }
 
     private fun colorsMatch(expected: Color, actual: Color): Boolean =
@@ -276,6 +409,7 @@ class DesktopMenuBackgroundWindowTest {
     }
 
     private companion object {
+        val EDGE_COLOR = Color(224, 32, 192)
         val FIRST_COLOR = Color(32, 96, 144)
         val SECOND_COLOR = Color(64, 128, 48)
 

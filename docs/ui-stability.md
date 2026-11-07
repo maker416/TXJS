@@ -65,11 +65,13 @@
 
 `DesktopLauncherOverlay` 将菜单放在主窗口拥有的透明 `JDialog` 中，游戏 `Canvas` 始终留在原父容器和原生句柄上。普通透明 Swing 面板会让 AWT 裁掉下层 Canvas，不能用于此处。菜单专用 `ComposePanel` 使用 `RenderSettings.SwingGraphics()`：默认 SkiaSurface 在透明窗口中会填白底。战场直接由 LWJGL 渲染，不回读游戏帧、不把整屏 Compose 上传为游戏纹理；静止菜单也不随每个游戏帧重绘。
 
+菜单层只在菜单未请求或主窗不可见、最小化、已销毁时隐藏；内容宿主短暂零尺寸或未 showing 属于布局过渡，保留原菜单并进行 80ms、有界 20 次重试。显式 `refresh()` 重启重试预算，立即同步并在 120ms/320ms 补同步；全屏切换完成和启动窗口可见后都调用。缩放/移动/DPI 事件合并同步后验证透明窗口的完整布局层级，并在后续 EDT 回合补重绘，即使 native bounds 已相等也不依赖鼠标点击唤醒。退出菜单和销毁时停止所有补同步定时器；不定时常驻重画，不改变 Canvas 父容器、句柄或物理像素补偿。显示/隐藏和 bounds 变化记录 `[UI] launcher overlay` 日志，重试耗尽记录警告，DEBUG 补绘日志包含宿主/菜单尺寸、布局有效性和 DPI。
+
 菜单层不使用系统级置顶，跟随宿主内容区移动、缩放、DPI、最小化和显示状态。进入对局隐藏菜单层，返回时恢复键盘焦点；原有 WINDOW 弹窗仍由菜单层拥有。根内容保留极薄的非零 alpha，防止 Windows 把完全透明的页边缘点击穿透给游戏窗口。不支持像素透明窗口的平台回落既有卡片切换和静态背景。
 
 `DesktopMenuBackgroundEngine` 在原游戏线程复用原版 AI 演示地图，仅在无真实地图、无连接、会话空闲且无开局/重载时重建。已有真实地图保留给“继续游戏”，此时主页使用渐变兜底。有效的自选/主题背景图片、隐藏窗口及原版 `renderBackground=false` 会停止独立演示的模拟和绘制；纯菜单限 30 FPS，真实对局沿用原帧率，房间网络泵继续。原版 `u.render` 同时消费菜单任务，停绘时仍须处理 Main / ScriptEngine 队列和延后设置保存，不能让业务回调依赖背景可见性。加载、保连接重载及资源失败期间继续服从既有闸门。
 
-回归：`DesktopMenuBackgroundEngineTest` 覆盖场景保留、演示重建与连接门控；`DesktopMenuBackgroundWindowTest` 使用真实透明窗口和 Compose 菜单，验证底层画面更新、按钮点击、画布存活和宿主跟随。另运行 `NativeCanvasCardLayoutTest`、`MatchStartLoadingWindowTest`、`DesktopWindowLayersTest`。人工检查首次启动背景持续变化、自选图片/主题覆盖、沙盒进出与继续游戏、论坛原生浏览器、菜单输入、F11、最小化及跨屏 DPI。
+回归：`DesktopMenuBackgroundEngineTest` 覆盖场景保留、演示重建与连接门控；`DesktopMenuBackgroundWindowTest` 使用真实透明窗口和 Compose 菜单，验证底层画面更新、按钮点击、画布存活和宿主跟随；新增缩放后 Compose 根视口与边缘像素（不输入）、bounds 相等但子布局失效、零尺寸/未 showing 且无后续组件事件的自动恢复、重试耗尽后显式重启，以及迟到重试不得在游戏模式重开菜单。另运行 `NativeCanvasCardLayoutTest`、`MatchStartLoadingWindowTest`、`DesktopWindowLayersTest`。人工检查首次启动背景持续变化、自选图片/主题覆盖、沙盒进出与继续游戏、论坛原生浏览器、菜单输入、F11、最小化及跨屏 DPI。
 
 验证范围：真实地图组件连续 12 次切换地图类型时，未检测到弹窗内容位置变化，也未发生 Skiko 崩溃。仍可测到原生下拉窗口开关时的短暂停顿，采样主要落在 AWT 透明窗口刷新及 Skiko Direct3D 设备创建/释放路径；固定视口不能消除这些开销，不能据此宣称完整客户端已无卡顿。原始录像的问题在更新后的完整客户端中暂未复现，仍需在完整房间、真实存档及浏览器页面中人工验收。
 
