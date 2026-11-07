@@ -96,6 +96,16 @@ class ModSyncClient(
     private val hostMutex = kotlinx.coroutines.sync.Mutex()
     private var hostBaseUrl: String? = null
 
+    /** 开房前只探测公开能力，不发送账号凭据；成功后本次分享固定使用该节点。 */
+    suspend fun prepareHostUpload() = withContext(Dispatchers.IO) {
+        if (hostCredentials == null) throw ModSyncException("account_login_required", 401)
+        if (!isHostSessionCurrent()) throw ModSyncException("account_session_changed", 401)
+        hostMutex.withLock {
+            if (hostBaseUrl == null) hostBaseUrl = selectHostServer()
+        }
+        if (!isHostSessionCurrent()) throw ModSyncException("account_session_changed", 401)
+    }
+
     private suspend fun <T> hostRequest(
         path: String,
         customize: Request.Builder.() -> Unit,
@@ -119,10 +129,13 @@ class ModSyncClient(
     }
 
     private suspend fun selectHostServer(): String {
+        var hasSecureUrl = false
+        var lastNetworkFailure: IOException? = null
         for (base in baseUrls) {
             currentCoroutineContext().ensureActive()
             val url = base.toHttpUrl()
             if (url.scheme != "https" && url.host !in setOf("localhost", "127.0.0.1", "::1")) continue
+            hasSecureUrl = true
             try {
                 val available = hostHttp.useCancellable(Request.Builder().url("$base$API_PREFIX/capabilities").build()) { response ->
                     if (!response.isSuccessful) false else {
@@ -132,9 +145,11 @@ class ModSyncClient(
                 }
                 if (available) return base
             } catch (e: CancellationException) { throw e }
-              catch (e: IOException) { currentCoroutineContext().ensureActive() }
+              catch (e: IOException) { currentCoroutineContext().ensureActive(); lastNetworkFailure = e }
               catch (e: kotlinx.serialization.SerializationException) { /* 旧节点不接收凭据。 */ }
         }
+        if (!hasSecureUrl) throw ModSyncException("authenticated_upload_requires_https", 503)
+        lastNetworkFailure?.let { throw it }
         throw ModSyncException("authenticated_upload_unavailable", 503)
     }
 

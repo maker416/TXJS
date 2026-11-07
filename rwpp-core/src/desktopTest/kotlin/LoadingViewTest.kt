@@ -23,6 +23,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
 import org.koin.compose.KoinContext
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
@@ -50,6 +51,42 @@ class LoadingViewTest {
         loadingMessage = ""
         Dispatchers.resetMain()
         stopKoin()
+    }
+
+    @Test
+    fun waitingForAChoiceUsesTheExistingLoaderAndClosingCancelsContinuation() = runDesktopComposeUiTest {
+        var visible by mutableStateOf(true)
+        var waiting by mutableStateOf(false)
+        val release = CompletableDeferred<Unit>()
+        val cancelled = AtomicBoolean()
+        val connected = AtomicBoolean()
+        setContent {
+            KoinContext(appKoin) {
+                MaterialTheme {
+                    LoadingView(
+                        visible, onLoaded = { visible = false }, cancellable = true, inlineDesktop = false,
+                        waitingContent = if (waiting) ({ dismiss -> RWTextButton("Cancel sharing", onClick = dismiss) }) else null,
+                    ) {
+                        try {
+                            withContext(Dispatchers.Main.immediate) { waiting = true }
+                            release.await()
+                            connected.set(true)
+                            true
+                        } finally {
+                            cancelled.set(true)
+                        }
+                    }
+                }
+            }
+        }
+        waitUntil(timeoutMillis = 3_000) { onAllNodesWithText("Cancel sharing").fetchSemanticsNodes().isNotEmpty() }
+        assertFalse(connected.get())
+        onNodeWithText("Cancel sharing").performClick()
+        waitUntil(timeoutMillis = 3_000) { cancelled.get() }
+        release.complete(Unit)
+        waitForIdle()
+        assertFalse(connected.get())
+        assertFalse(visible)
     }
 
     @Test

@@ -36,6 +36,7 @@ import io.github.rwpp.game.mod.preparePayload
 import io.github.rwpp.game.GameStartSafety
 import io.github.rwpp.AppContext
 import java.io.File
+import java.io.IOException
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.game.mod.NetworkModCache
 import io.github.rwpp.game.mod.NetworkModDescriptor
@@ -218,6 +219,8 @@ object ModSyncController {
     @Volatile
     private var hostClient: ModSyncClient? = null
     @Volatile
+    private var preparedHostClient: ModSyncClient? = null
+    @Volatile
     private var retryHostRoom: Triple<String, String, String>? = null
     private val hostGeneration = AtomicLong()
     private var heartbeatJob: Job? = null
@@ -286,13 +289,43 @@ object ModSyncController {
 
     // ---------------- 房主侧 ----------------
 
+    /** 在游戏连接之前检查上传节点，保留同一个客户端供进房后的上传使用。 */
+    suspend fun prepareHostSession() {
+        stopHostSession(clearRequest = false).join()
+        val session = AccountSession.sessionSnapshotOrNull()
+            ?: throw ModSyncException("account_login_required", 401)
+        val credentials = ModSyncCredentials(
+            resolveAccountAppKey(appKoin.get<AccountPreferences>().appKey), session.token,
+        )
+        lateinit var client: ModSyncClient
+        client = newClient(credentials) {
+            AccountSession.isCurrentSession(session) && (preparedHostClient === client || hostClient === client)
+        }
+        preparedHostClient = client
+        try {
+            client.prepareHostUpload()
+            currentCoroutineContext().ensureActive()
+        } catch (error: Throwable) {
+            if (preparedHostClient === client) preparedHostClient = null
+            throw error
+        }
+    }
+
+    /** 连接取消/失败时丢弃尚未绑定房间的预检，不保留账号凭据。 */
+    fun discardPreparedHostSession() {
+        preparedHostClient = null
+    }
+
     /**
      * 进房提取到房间短码后调用（可能随 UI 刷新反复触发，必须幂等）。
      */
-    fun startHostSession(roomCode: String) {
+    fun startHostSession(roomCode: String) = launchHostSession(roomCode, retry = false)
+
+    private fun launchHostSession(roomCode: String, retry: Boolean) {
         if (!hostSyncRequested) return
         val key = forAddress(roomCode).firstOrNull() ?: return
-        if (hostKey == key && (hostJob?.isActive == true || hostSyncState is HostSyncState.Ready)) return
+        // 失败保留给玩家显式重试，不能随房间刷新反复重启上传/弹窗。
+        if (hostKey == key && !retry) return
         val session = AccountSession.sessionSnapshotOrNull()
         if (session == null) {
             hostSyncRequested = false
@@ -303,7 +336,8 @@ object ModSyncController {
             resolveAccountAppKey(appKoin.get<AccountPreferences>().appKey), session.token,
         )
         lateinit var client: ModSyncClient
-        client = newClient(credentials) { AccountSession.isCurrentSession(session) && hostClient === client }
+        client = preparedHostClient
+            ?: newClient(credentials) { AccountSession.isCurrentSession(session) && hostClient === client }
         val cleanup = stopHostSession(clearRequest = false)
         hostClient = client
         val lifetime = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
@@ -394,7 +428,7 @@ object ModSyncController {
             stopAfterTransferMemoryFailure("host-transfer")
         } catch (e: Exception) {
             logger.error("[MODSYNC-HOST] host session failed: ${e.stackTraceToString()}")
-            if (!handleHostAuthFailure(e, client)) publishHostState(HostSyncState.Error(hostErrorText(e)))
+            if (!handleHostAuthFailure(e, client)) reportHostFailure(e, client)
         } finally {
             prepared.forEach { it.close() }
         }
@@ -470,6 +504,7 @@ object ModSyncController {
         val lifetime = hostScope?.coroutineContext?.get(Job)
         hostGeneration.incrementAndGet()
         hostClient = null
+        preparedHostClient = null
         hostScope = null
         val previousCleanup = hostCleanupJob
         val stoppedJobs = listOfNotNull(lifetime, hostJob, heartbeatJob, peerPollJob)
@@ -495,7 +530,7 @@ object ModSyncController {
     }
 
     /** 只停止房主分享；加入者下载不依赖账号。 */
-    fun onAccountInvalidated(): Job? = if (hostClient != null) stopHostSession() else null
+    fun onAccountInvalidated(): Job? = if (hostClient != null || preparedHostClient != null) stopHostSession() else null
 
     fun retryHostSession() {
         if (AccountSession.sessionSnapshotOrNull() == null) {
@@ -504,14 +539,26 @@ object ModSyncController {
         }
         val room = retryHostRoom ?: return
         hostSyncRequested = true
-        startHostSession(room.second)
+        launchHostSession(room.second, retry = true)
     }
 
-    private fun hostErrorText(error: Throwable): String = when {
+    internal fun hostErrorText(error: Throwable): String = when {
         error is ModSyncException && error.statusCode == 401 -> readI18n("modSync.loginRequired")
         error is ModSyncException && error.statusCode == 403 -> readI18n("modSync.accountForbidden")
         error is ModSyncException && error.message == "authenticated_upload_unavailable" -> readI18n("modSync.authServiceUnavailable")
+        error is ModSyncException && error.message == "authenticated_upload_requires_https" -> readI18n("modSync.uploadRequiresSecureService")
+        error is IOException && error !is ModSyncException -> readI18n("modSync.uploadServiceUnreachable")
         else -> error.message ?: error.javaClass.simpleName
+    }
+
+    private fun reportHostFailure(error: Throwable, client: ModSyncClient) {
+        val generation = hostGeneration.get()
+        scope.launch(Dispatchers.Main.immediate) {
+            if (hostGeneration.get() != generation || hostClient !== client) return@launch
+            val message = hostErrorText(error)
+            hostSyncState = HostSyncState.Error(message)
+            UI.showWarning(readI18n("modSync.hostSharingFailed", I18nType.RWPP, message), false)
+        }
     }
 
     private fun handleHostAuthFailure(error: Throwable, client: ModSyncClient): Boolean {
@@ -522,7 +569,11 @@ object ModSyncController {
         scope.launch {
             cleanup.join()
             withContext(Dispatchers.Main.immediate) {
-                if (hostGeneration.get() == generation) hostSyncState = HostSyncState.Error(hostErrorText(error))
+                if (hostGeneration.get() == generation) {
+                    val message = hostErrorText(error)
+                    hostSyncState = HostSyncState.Error(message)
+                    UI.showWarning(readI18n("modSync.hostSharingFailed", I18nType.RWPP, message), false)
+                }
             }
         }
         return true
