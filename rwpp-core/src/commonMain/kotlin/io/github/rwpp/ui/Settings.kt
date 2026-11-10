@@ -73,6 +73,7 @@ fun SettingsView(
 
     var backgroundImagePath by remember { mutableStateOf(settings.backgroundImagePath ?: "") }
     var backgroundImageEnabled by remember { mutableStateOf(settings.backgroundImageEnabled) }
+    var adminApiUnlocked by remember { mutableStateOf(false) }
     var showRestartHint by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -429,6 +430,7 @@ fun SettingsView(
 
                                             ResourceBrowserOrientationSetting(settings, configIO)
                                             BrowserUploadSourceSetting(settings, configIO)
+                                            AdminApiSettings(adminApiUnlocked) { adminApiUnlocked = true }
                                         }
                                     }
 
