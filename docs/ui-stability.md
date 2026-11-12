@@ -73,11 +73,33 @@
 
 菜单层不使用系统级置顶，跟随宿主内容区移动、缩放、DPI、最小化和显示状态。进入对局隐藏菜单层，返回时恢复键盘焦点；原有 WINDOW 弹窗仍由菜单层拥有。根内容保留极薄的非零 alpha，防止 Windows 把完全透明的页边缘点击穿透给游戏窗口。不支持像素透明窗口的平台回落既有卡片切换和静态背景。
 
+窗口缩放、全屏或 DPI 切换期间，主窗可见性与内容区布局就绪分别判断。宿主仍可见，但 `displayHost` 短暂为零尺寸或尚未 showing 时，保留已显示的菜单，尚未显示的菜单等待有效视口；每 80ms 重试一次，最多 20 次，不能依赖下一次鼠标输入或组件事件恢复。预算耗尽记录 `[UI]` 警告，后续显式 `refresh()` 或组件事件可重新开始重试，不建立常驻重绘循环。
+
+`refresh()` 立即同步边界，并在 120ms、320ms 各补同步一次；全屏切换完成和启动主窗显示后均调用此入口。即使窗口 bounds 未变化，也验证并补绘实际 `contentComponent`：原生菜单使用已挂载的 SkiaLayer，兼容菜单使用 ComposePanel，不能触碰未挂载的兼容面板而创建第二个场景。完整窗口层级验证后，在后续 EDT 回合补绘，使静止界面的视口与边缘也能更新。
+
+布局刷新本身不产生焦点请求。`showMenu()` 或宿主重新获焦时登记焦点恢复意图，布局恢复后仅在焦点仍属于宿主或菜单时交回菜单内容，不能抢走自有子弹窗或其他前台应用的键盘输入。菜单已经持焦时不再向 Dialog 重复申请焦点，避免内部 Canvas 暂时失焦清空 Compose 节点焦点。启动页和正式菜单分别保留显示门控：启动页使用不透明窗口，正式菜单初始关闭，核心就绪后才启用。共享刷新入口分别刷新两个实例，不改变其模式；`showGame()`、宿主隐藏或 `dispose()` 撤销重试与延后补同步，迟到任务不得重开菜单。
+
 原版脚本从游戏线程退回菜单时，`GameSessionManager.returnToMenu()` 将返回回调和显示菜单一起排到 EDT，不同步等待窗口显示。真实 LWJGL 对局验证曾发现 EDT 的 `WComponentPeer.pShow` 等游戏窗口线程处理原生消息，而该线程又在 `invokeAndWait` 等 EDT，造成互等。引擎清理仍在原调用线程，`DisplaySwitcher.switchTo()` 的其他同步调用契约保持原状；返回任务用代次检查，不能迟到隐藏新开局。`GameSessionManagerReturnTest` 验证消息泵、EDT 同步调用和过期返回三条路径。
 
 `DesktopMenuBackgroundEngine` 在原游戏线程复用原版 AI 演示地图，仅在无真实地图、无连接、会话空闲且无开局/重载时重建。已有真实地图保留给“继续游戏”，此时主页使用渐变兜底。有效的自选/主题背景图片、隐藏窗口及原版 `renderBackground=false` 会停止独立演示的模拟和绘制；纯菜单限 30 FPS，真实对局沿用原帧率，房间网络泵继续。原版 `u.render` 同时消费菜单任务，停绘时仍须处理 Main / ScriptEngine 队列和延后设置保存，不能让业务回调依赖背景可见性。加载、保连接重载及资源失败期间继续服从既有闸门。
 
 回归：`DesktopMenuBackgroundEngineTest` 覆盖场景保留、演示重建与连接门控；`DesktopMenuBackgroundWindowTest` 分别验证原生和兼容菜单的底层画面更新、按钮点击、画布存活、宿主跟随，以及软件选择、创建失败和设备后端变化的回退。正常路径只允许一个菜单组合，未使用的兼容面板不得初始化第二个渲染器。另运行 `NativeCanvasCardLayoutTest`、`DesktopStartupWindowTest`、`MatchStartLoadingWindowTest`、`DesktopWindowLayersTest`。人工检查首次启动背景持续变化、自选图片/主题覆盖、沙盒进出与继续游戏、论坛原生浏览器、菜单输入、F11、最小化及跨屏 DPI。
+
+新增的 `DesktopMenuBackgroundWindowTest` 回归在原生 Direct3D 与 Swing 兼容菜单两条路径检查：无输入缩放后的 Compose 视口和边缘像素、bounds 相等时无效子布局的验证重绘、零尺寸或未 showing 且无后续事件时的恢复与键盘焦点、重试耗尽后显式刷新恢复、切游戏或销毁后迟到任务失效，以及刷新和待恢复焦点期间保留其他窗口的输入。`DesktopNativeMenuInputWindowTest` 同时验证重复焦点请求保留 Compose 键盘目标，`DesktopStartupWindowTest` 覆盖加载期刷新不提前组合正式菜单及首帧后的焦点交接。
+
+原生键盘测试的像素探针使用真正透明的空白区域，并在 Dialog、Popup 保持打开时改变底层 Canvas 颜色，继续按原有每通道 ±2 容差校验。不要给探针先涂非零 alpha 的黑底再期待未经合成的原色：默认 Dialog 遮罩会参与已有 alpha 的合成；主线代码也可复现原先蓝色通道 144→141 的失败。产品为边缘鼠标命中保留的极薄背景不受测试探针调整影响。
+
+Compose 1.10.1 的 WINDOW 子层没有更新自身 `LocalWindowInfo.isWindowFocused`；测试层内的 `FocusRequester` 在内容附着后通过一次性 effect 申请焦点，不能等待该值为 true。主菜单继续使用窗口焦点门控，实际通过条件仍同时要求 AWT/Win32 前台、Compose 节点焦点及 Robot 按键回调。测试只在初次激活时短暂露出自有标题栏，并在 Win32 命中核验后点击；所有置顶状态随后恢复，后续弹窗焦点交接不自动纠正。另一个测试窗口误持前台判为失败，外部应用遮挡时跳过且不向其发送输入。
+
+200% 缩放可运行：
+
+```powershell
+.\gradlew.bat :rwpp-desktop:test --tests io.github.rwpp.desktop.DesktopMenuBackgroundWindowTest '-Prwjs.test.uiScale=2'
+```
+
+这些回归使用真实 Swing/Compose 窗口与测试 Canvas，验证范围限于组件窗口行为；不能替代完整客户端、真实 LWJGL 对局、不同显示器和驱动的人工验收。
+
+2026-11-12 同机验证：9 类桌面回归 40 项通过；菜单、原生键盘和启动页在 200% 缩放下 17 项通过，均无失败或跳过。另在隔离的完整客户端中加载原版资源和真实 LWJGL，完成菜单/任务对局各两次全屏切换、进入任务及经原版返回路径回到菜单；主窗、Canvas、LWJGL 子窗句柄及主 GL 上下文保持不变，返回后的原生 Direct3D 菜单与内容区匹配。该客户端验证通过 AWT 键盘分派器触发 F11，经生产会话入口启动任务，不等同于物理 F11、跨显示器或驱动故障验收。
 
 验证范围：真实地图组件连续 12 次切换地图类型时，未检测到弹窗内容位置变化，也未发生 Skiko 崩溃。仍可测到原生下拉窗口开关时的短暂停顿，采样主要落在 AWT 透明窗口刷新及 Skiko Direct3D 设备创建/释放路径；固定视口不能消除这些开销，不能据此宣称完整客户端已无卡顿。原始录像的问题在更新后的完整客户端中暂未复现，仍需在完整房间、真实存档及浏览器页面中人工验收。
 

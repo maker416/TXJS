@@ -36,6 +36,7 @@ import java.beans.PropertyChangeListener
 import javax.swing.JComponent
 import javax.swing.JDialog
 import javax.swing.SwingUtilities
+import javax.swing.Timer
 
 /**
  * 菜单位于游戏窗口拥有的透明窗口中，战场继续直接绘制到原生 OpenGL Canvas。
@@ -75,6 +76,19 @@ class DesktopLauncherOverlay(
     private var updatePending = false
     private var disposed = false
     private var publishedVisible = false
+    private var layoutRetries = 0
+    private var paintPending = false
+    private var focusRequested = false
+    private var focusUpdatePending = false
+    private val layoutRetryTimer = Timer(LAYOUT_RETRY_MS) { event ->
+        (event.source as Timer).stop()
+        update(forcePaint = true)
+    }.apply {
+        isRepeats = false
+    }
+    private val reassertTimers = REASSERT_DELAYS_MS.map { delay ->
+        Timer(delay) { update(forcePaint = true) }.apply { isRepeats = false }
+    }
 
     val isMenuVisible: Boolean
         get() = !disposed && menuRequested && hostVisible() && overlay.isVisible
@@ -101,12 +115,10 @@ class DesktopLauncherOverlay(
         override fun windowDeiconified(e: WindowEvent) = scheduleUpdate()
         override fun windowClosed(e: WindowEvent) = dispose()
         override fun windowGainedFocus(e: WindowEvent) {
-            // F11、标题栏或任务栏激活的是宿主；菜单仍显示时把键盘还给菜单。
-            // 延后检查实际焦点，避免从菜单原生弹窗手里抢走输入。
-            SwingUtilities.invokeLater {
-                if (isMenuVisible && KeyboardFocusManager.getCurrentKeyboardFocusManager().focusedWindow === window) {
-                    focusMenu()
-                }
+            // 宿主激活时布局也可能尚未就绪；保留请求，待菜单真正显示后再交还键盘。
+            if (menuRequested && hostVisible()) {
+                focusRequested = true
+                update()
             }
         }
     }
@@ -130,51 +142,140 @@ class DesktopLauncherOverlay(
 
     fun showMenu() {
         check(SwingUtilities.isEventDispatchThread())
+        if (disposed) return
         menuRequested = true
-        update()
-        SwingUtilities.invokeLater {
-            if (isMenuVisible) focusMenu()
-        }
+        focusRequested = true
+        layoutRetries = 0
+        update(forcePaint = true)
     }
 
     fun focusMenu() {
         check(SwingUtilities.isEventDispatchThread())
         if (!isMenuVisible) return
-        overlay.requestFocus()
-        contentComponent.requestFocusInWindow()
+        // 已聚焦的窗口再次 requestFocus 会把焦点从内部 Canvas 临时移到 Dialog，
+        // Compose 随之清空节点焦点，而窗口焦点未变时不会重新触发节点恢复。
+        if (!overlay.isFocused) overlay.requestFocus()
+        if (!contentComponent.isFocusOwner) contentComponent.requestFocusInWindow()
     }
 
     fun showGame() {
         check(SwingUtilities.isEventDispatchThread())
+        if (disposed) return
         menuRequested = false
         update()
     }
 
-    private fun hostVisible(): Boolean = displayHost.isShowing && window.isVisible &&
+    private fun hostVisible(): Boolean = window.isDisplayable && window.isVisible &&
         (window !is Frame || window.extendedState and Frame.ICONIFIED == 0)
 
+    private fun hostLayoutReady(): Boolean =
+        displayHost.isShowing && displayHost.width > 0 && displayHost.height > 0
+
     private fun scheduleUpdate() {
-        if (disposed || updatePending) return
+        if (disposed) return
+        layoutRetries = 0
+        if (updatePending) return
         updatePending = true
         SwingUtilities.invokeLater {
             updatePending = false
-            if (!disposed) update()
+            if (!disposed) update(forcePaint = true)
         }
     }
 
-    private fun update() {
+    private fun update(forcePaint: Boolean = false) {
         if (disposed) return
-        val visible = menuRequested && hostVisible() && displayHost.width > 0 && displayHost.height > 0
-        if (visible) {
-            val bounds = Rectangle(displayHost.locationOnScreen, displayHost.size)
-            prepareNativeMenu(bounds)
-            if (overlay.bounds != bounds) overlay.bounds = bounds
+        if (!menuRequested || !hostVisible()) {
+            cancelRecovery()
+            publishVisible(false)
+            return
         }
+        // Win32 样式修改与 AWT 布局事件不保证同时完成。瞬时无效时保留已有窗口，
+        // 尚未显示的菜单则等待有效视口；不能依赖过渡结束后必定还有下一次组件事件。
+        if (!hostLayoutReady()) {
+            scheduleLayoutRetry()
+            return
+        }
+        layoutRetryTimer.stop()
+        val bounds = Rectangle(displayHost.locationOnScreen, displayHost.size)
+        prepareNativeMenu(bounds)
+        val boundsChanged = overlay.bounds != bounds
+        if (boundsChanged) overlay.bounds = bounds
+        val wasVisible = overlay.isVisible
+        publishVisible(true)
+        if (boundsChanged || !wasVisible || forcePaint) {
+            // 原生路径验证实际 SkiaLayer；未挂载的兼容 ComposePanel 不应初始化第二个场景。
+            contentComponent.invalidate()
+            overlay.invalidate()
+            overlay.validate()
+            schedulePaint()
+        }
+        scheduleFocus()
+    }
+
+    private fun publishVisible(visible: Boolean) {
         if (overlay.isVisible != visible) overlay.isVisible = visible
         if (publishedVisible != visible) {
             publishedVisible = visible
             onVisibilityChanged(visible)
         }
+    }
+
+    private fun scheduleLayoutRetry() {
+        if (layoutRetryTimer.isRunning || layoutRetries > MAX_LAYOUT_RETRIES) return
+        if (layoutRetries == MAX_LAYOUT_RETRIES) {
+            log.warn("[UI] Launcher menu layout retry exhausted (host={}x{}, showing={})",
+                displayHost.width, displayHost.height, displayHost.isShowing)
+            layoutRetries++
+            return
+        }
+        layoutRetries++
+        layoutRetryTimer.restart()
+    }
+
+    private fun schedulePaint() {
+        if (paintPending) return
+        paintPending = true
+        SwingUtilities.invokeLater {
+            paintPending = false
+            if (disposed || !isMenuVisible || !hostLayoutReady()) return@invokeLater
+            // 当前布局修改完成后补绘一帧，静止界面也不必等到鼠标输入才恢复。
+            overlay.validate()
+            contentComponent.repaint()
+            overlay.repaint()
+        }
+    }
+
+    private fun scheduleFocus() {
+        if (!focusRequested || focusUpdatePending) return
+        focusUpdatePending = true
+        SwingUtilities.invokeLater {
+            focusUpdatePending = false
+            if (disposed || !focusRequested || !isMenuVisible || !hostLayoutReady()) return@invokeLater
+            val focusedWindow = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusedWindow
+            if (focusedWindow === window || focusedWindow === overlay) {
+                focusRequested = false
+                focusMenu()
+            } else if (focusedWindow != null) {
+                // 不抢子弹窗、启动页或其他前台窗口。宿主下次获焦时可重新请求。
+                focusRequested = false
+            }
+        }
+    }
+
+    /** 全屏、DPI 或启动窗口建立后补同步；不改变菜单模式，也不产生新的焦点请求。 */
+    fun refresh() {
+        check(SwingUtilities.isEventDispatchThread())
+        if (disposed) return
+        layoutRetries = 0
+        update(forcePaint = true)
+        if (menuRequested && hostVisible()) reassertTimers.forEach(Timer::restart)
+    }
+
+    private fun cancelRecovery() {
+        layoutRetryTimer.stop()
+        reassertTimers.forEach(Timer::stop)
+        layoutRetries = 0
+        focusRequested = false
     }
 
     @OptIn(ExperimentalSkikoApi::class)
@@ -249,13 +350,14 @@ class DesktopLauncherOverlay(
     private fun useSwingFallback(reason: String) {
         check(SwingUtilities.isEventDispatchThread())
         log.warn("[UI] {}; using Swing rendering", reason)
+        val focusedWindow = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusedWindow
+        if (focusedWindow === overlay) focusRequested = true
         overlay.removeWindowListener(overlayListener)
         overlay.dispose()
         nativeLayer = null
         overlay = createSwingOverlay()
         overlay.addWindowListener(overlayListener)
-        update()
-        focusMenu()
+        update(forcePaint = true)
     }
 
     private fun findSkiaLayer(component: Component): SkiaLayer? {
@@ -270,6 +372,7 @@ class DesktopLauncherOverlay(
         check(SwingUtilities.isEventDispatchThread())
         if (disposed) return
         disposed = true
+        cancelRecovery()
         displayHost.removeComponentListener(componentListener)
         displayHost.removeHierarchyListener(hierarchyListener)
         window.removeComponentListener(componentListener)
@@ -283,6 +386,10 @@ class DesktopLauncherOverlay(
     }
 
     companion object {
+        private const val MAX_LAYOUT_RETRIES = 20
+        private const val LAYOUT_RETRY_MS = 80
+        private val REASSERT_DELAYS_MS = intArrayOf(120, 320)
+
         @OptIn(ExperimentalComposeUiApi::class)
         fun createMenuPanel(liveBackground: Boolean): ComposePanel =
             if (liveBackground) ComposePanel(renderSettings = RenderSettings.SwingGraphics()) else ComposePanel()

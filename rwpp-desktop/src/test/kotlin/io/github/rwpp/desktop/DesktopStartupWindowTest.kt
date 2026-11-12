@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -61,7 +62,9 @@ class DesktopStartupWindowTest {
         assumeTrue(GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice
             .isWindowTranslucencySupported(PERPIXEL_TRANSLUCENT))
         val previousLayers = System.getProperty("compose.layers.type")
+        val previousApi = System.getProperty("skiko.renderApi")
         System.setProperty("compose.layers.type", "WINDOW")
+        System.setProperty("skiko.renderApi", "OPENGL")
         assertTrue(DesktopWindowLayers.install())
         runCatching { stopKoin() }
         appKoin = startKoin { modules(module { single { Settings(enableAnimations = animations) } }) }.koin
@@ -74,6 +77,7 @@ class DesktopStartupWindowTest {
         val decoderOnEdt = AtomicBoolean()
         val startupFrames = AtomicInteger()
         val menuFrames = AtomicInteger()
+        val menuCompositions = AtomicInteger()
         val drawnMessage = AtomicReference<String>()
         var message by mutableStateOf("Preparing launcher")
         val diagnostics = DesktopStartupDiagnostics.start()
@@ -98,6 +102,10 @@ class DesktopStartupWindowTest {
                 }
                 owner = frame
                 val menuContent: @Composable () -> Unit = {
+                        DisposableEffect(Unit) {
+                            menuCompositions.incrementAndGet()
+                            onDispose { menuCompositions.decrementAndGet() }
+                        }
                         Box(Modifier.fillMaxSize().background(Color(0xFF173A21)).drawWithContent {
                             drawContent()
                             menuFrames.incrementAndGet()
@@ -108,6 +116,9 @@ class DesktopStartupWindowTest {
                     setContent(menuContent)
                 }
                 menuOverlay = DesktopLauncherOverlay(menuPanel, host, frame, initiallyVisible = false, nativeContent = menuContent)
+                // Native/fullscreen refresh may arrive before the owner is shown; it must retain the startup gate.
+                menuOverlay!!.refresh()
+                assertFalse(menuOverlay!!.isNativeRendering)
                 menuWindow = SwingUtilities.getWindowAncestor(menuPanel) as JDialog
                 startupPanel = ComposePanel().apply {
                     isOpaque = true
@@ -142,6 +153,8 @@ class DesktopStartupWindowTest {
                 startupWindow = SwingUtilities.getWindowAncestor(startupPanel) as JDialog
                 frame.isVisible = true
                 startupOverlay!!.showMenu()
+                startupOverlay!!.refresh()
+                menuOverlay!!.refresh()
             }
 
             assertTrue(decoderEntered.await(8, TimeUnit.SECONDS), "Title decoding did not start")
@@ -154,10 +167,24 @@ class DesktopStartupWindowTest {
                 assertTrue(startupWindow.contentPane.isOpaque)
                 assertTrue(startupOverlay!!.isMenuVisible)
                 assertFalse(menuOverlay!!.isMenuVisible, "The transparent menu was shown before startup finished")
+                assertFalse(menuOverlay!!.isNativeRendering, "Refreshing a hidden menu initialized its native content")
                 assertFalse(menuWindow.isVisible)
                 assertEquals(0, menuFrames.get(), "A hidden transparent menu rendered before handoff")
+                assertEquals(0, menuCompositions.get(), "A hidden transparent menu composed before handoff")
                 assertTrue(canvas.isDisplayable)
                 assertFalse(canvas.startupInputEnabled)
+            }
+            // Include refresh's 120ms/320ms follow-ups while the title decoder is still deliberately blocked.
+            repeat(8) {
+                Thread.sleep(50)
+                onEdt {
+                    assertTrue(startupOverlay!!.isMenuVisible)
+                    assertFalse(menuOverlay!!.isMenuVisible)
+                    assertFalse(menuOverlay!!.isNativeRendering)
+                    assertFalse(menuWindow.isVisible)
+                    assertEquals(0, menuCompositions.get(), "A delayed refresh bypassed the hidden menu gate")
+                    assertEquals(0, menuFrames.get())
+                }
             }
 
             // 复现 WindowsDisplay$2/$3：LWJGL 先重置 focusable，之后才在 EDT 请求焦点。
@@ -195,17 +222,46 @@ class DesktopStartupWindowTest {
             assertTrue(decoderExited.await(3, TimeUnit.SECONDS), "The title decoder did not finish after release")
             assertTrue(titlePainted.await(5, TimeUnit.SECONDS), "The asynchronously decoded title was not rendered")
             onEdt {
+                startupWindow.toFront()
+                startupOverlay!!.focusMenu()
+            }
+            await("startup keyboard focus before handoff") {
+                onEdtValue { KeyboardFocusManager.getCurrentKeyboardFocusManager().focusedWindow === startupWindow }
+            }
+            onEdt {
                 menuOverlay!!.showMenu()
                 menuWindow = SwingUtilities.getWindowAncestor(menuOverlay!!.contentComponent) as JDialog
             }
             await("first transparent menu frame") { menuFrames.get() > 0 }
             onEdt {
+                val startupHadFocus = startupWindow.isFocused
+                assertTrue(startupHadFocus, "Preparing the menu stole keyboard focus from the startup window")
                 startupOverlay!!.dispose()
+                // Match Main's first-menu-frame handoff: only transfer input if the startup layer held it.
+                if (startupHadFocus) menuOverlay!!.focusMenu()
                 assertFalse(startupWindow.isDisplayable)
                 assertTrue(menuOverlay!!.isMenuVisible)
+                assertTrue(menuOverlay!!.isNativeRendering, "The handoff must exercise the native Direct3D menu")
                 assertTrue(menuWindow.isShowing)
+                assertEquals(1, menuCompositions.get(), "Only one menu scene may compose during the handoff")
                 assertTrue(canvas.isDisplayable, "Startup handoff destroyed the game Canvas peer")
                 assertSame(host, canvas.parent, "Startup handoff moved the game Canvas")
+            }
+            await("menu keyboard focus after disposing the focused startup window") {
+                onEdtValue {
+                    val manager = KeyboardFocusManager.getCurrentKeyboardFocusManager()
+                    val focusOwner = manager.focusOwner
+                    val content = menuOverlay!!.contentComponent
+                    manager.focusedWindow === menuWindow && focusOwner != null &&
+                        (focusOwner === content || SwingUtilities.isDescendingFrom(focusOwner, content))
+                }
+            }
+            onEdt {
+                assertFalse(canvas.isFocusOwner, "The loading-to-menu handoff focused the game Canvas")
+                assertFalse(canvas.startupInputEnabled)
+                assertSame(host, canvas.parent)
+                assertTrue(canvas.isDisplayable)
+                assertEquals("OPENGL", System.getProperty("skiko.renderApi"), "The menu changed the global renderer preference")
             }
 
             val nativeFocusReturned = CountDownLatch(1)
@@ -258,6 +314,8 @@ class DesktopStartupWindowTest {
                 stopKoin()
                 if (previousLayers == null) System.clearProperty("compose.layers.type")
                 else System.setProperty("compose.layers.type", previousLayers)
+                if (previousApi == null) System.clearProperty("skiko.renderApi")
+                else System.setProperty("skiko.renderApi", previousApi)
             }
         }
     }
@@ -267,6 +325,12 @@ class DesktopStartupWindowTest {
 
     private fun onEdt(action: () -> Unit) {
         if (SwingUtilities.isEventDispatchThread()) action() else SwingUtilities.invokeAndWait(action)
+    }
+
+    private fun <T> onEdtValue(action: () -> T): T {
+        val result = AtomicReference<T>()
+        onEdt { result.set(action()) }
+        return result.get()
     }
 
     private fun await(stage: String, condition: () -> Boolean) {

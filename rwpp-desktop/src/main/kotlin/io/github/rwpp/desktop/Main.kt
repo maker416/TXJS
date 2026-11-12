@@ -144,6 +144,19 @@ var requireReloadingLib = false
 /** 主窗口是否已创建（供 FullscreenController 等跨文件判断 lateinit 状态） */
 val isMainWindowInitialized: Boolean get() = ::mainJFrame.isInitialized
 
+private var launcherOverlayRef: DesktopLauncherOverlay? = null
+private var startupOverlayRef: DesktopLauncherOverlay? = null
+
+/** 原生全屏切换后同步当前启动层和菜单层；各层自行保留原有显示门控。 */
+fun refreshLauncherOverlay() {
+    if (!SwingUtilities.isEventDispatchThread()) {
+        SwingUtilities.invokeLater { refreshLauncherOverlay() }
+        return
+    }
+    startupOverlayRef?.refresh()
+    launcherOverlayRef?.refresh()
+}
+
 //val cacheModSize = AtomicInteger(0)
 
 private fun resolveLauncherExePath(): String {
@@ -405,7 +418,12 @@ fun swingApplication() = SwingUtilities.invokeLater {
                     drawContent()
                     if (menuFrameQueued.compareAndSet(false, true)) SwingUtilities.invokeLater {
                         StartupTiming.mark("desktop.menuFirstFrame")
+                        val startupHadFocus = startupOverlay?.contentComponent?.let {
+                            SwingUtilities.getWindowAncestor(it)?.isFocused
+                        } == true
                         startupOverlay?.dispose()
+                        startupOverlayRef = null
+                        if (startupHadFocus) launcherOverlay?.focusMenu()
                         diagnostics.close()
                     }
                 }
@@ -522,6 +540,7 @@ fun swingApplication() = SwingUtilities.invokeLater {
         ) { visible ->
             DesktopMenuBackgroundEngine.request(menuBackgroundEnabled && visible)
         }
+        launcherOverlayRef = launcherOverlay
     } else if (!requireReloadingLib) {
         logger.warn("[UI] Per-pixel translucent windows unavailable; using the static launcher background")
     }
@@ -537,10 +556,13 @@ fun swingApplication() = SwingUtilities.invokeLater {
 
     // 启动页使用普通不透明 Compose 窗口；核心就绪后才启用透明菜单及游戏背景。
     startupOverlay = DesktopLauncherOverlay(startupPanel, displayHost, window, opaque = true)
+    startupOverlayRef = startupOverlay
     window.addWindowListener(object : WindowAdapter() {
         override fun windowClosed(e: WindowEvent?) {
             diagnostics.close()
             startupOverlay?.dispose()
+            startupOverlayRef = null
+            launcherOverlayRef = null
         }
     })
 
@@ -552,6 +574,7 @@ fun swingApplication() = SwingUtilities.invokeLater {
     window.isVisible = true
     StartupTiming.mark("desktop.windowVisible")
     startupOverlay.showMenu()
+    SwingUtilities.invokeLater { refreshLauncherOverlay() }
 
     focusRequester = FocusRequester()
     val panel2 = ComposePanel()

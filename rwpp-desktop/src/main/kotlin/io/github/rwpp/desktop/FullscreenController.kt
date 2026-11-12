@@ -150,6 +150,8 @@ object FullscreenController {
         window.toFront()
         window.requestFocus()
         syncGameCanvasSizeToNative()
+        // 样式与 bounds 已变，但 AWT 组件事件可能先于最终布局到达；主动补同步菜单层。
+        refreshLauncherOverlay()
         return true
     }
 
@@ -161,6 +163,7 @@ object FullscreenController {
         device.fullScreenWindow = if (fullscreen) window else null
         window.toFront()
         window.requestFocus()
+        refreshLauncherOverlay()
         return true
     }
 
