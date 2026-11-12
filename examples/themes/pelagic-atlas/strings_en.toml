@@ -1,0 +1,46 @@
+# Copyright 2023-2025 RWPP contributors
+# GNU AGPLv3: https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
+[menu]
+singlePlayerGame = "Solo"
+multiplayer = "Online"
+modsAndMaps = "Mod atlas"
+settings = "Navigation"
+openSourceInfo = "About & credits"
+extension = "Theme workshop"
+
+[menu.home]
+tagline = "AN ATLAS OF NEW HORIZONS"
+singleDescription = "Campaign · Sandbox"
+multiDescription = "Co-op · Versus"
+resources = "Explore resources"
+resourcesDescription = "Community · Events · Themes"
+modsDescription = "Install · Import · Manage"
+settingsDescription = "Display · Controls · Sound"
+infoDescription = "Feedback · Updates · Source"
+commander = "Navigator"
+greeting = "Welcome aboard,"
+edition = "Pelagic Atlas"
+exit = "Leave the harbour"
+footer = "Every battle, a new horizon"
+
+[browser]
+resourceBrowser = "Players' harbour"
+esportsSite = "Race dispatch"
+
+[resources]
+title = "The resource atlas"
+heading = "Choose your next horizon."
+subtitle = "Trade stories in the harbour, follow competitions and prepare your next voyage."
+forumDescription = "Exchange tactics, share creations and discover new community routes."
+esportsDescription = "Competition news and memorable matches from across the fleet."
+extensionsDescription = "Import, switch and manage themes. Make this harbour your own."
+back = "Back to harbour"
+community = "PLAYER COMMUNITY"
+openForum = "Enter the harbour"
+more = "More destinations"
+
+[multiplayer.room]
+colName = "Crew"
+colTeam = "T"
+colSpawn = "#"
+colPing = "ms"

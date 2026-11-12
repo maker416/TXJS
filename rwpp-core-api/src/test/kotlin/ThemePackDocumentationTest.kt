@@ -15,9 +15,21 @@ import kotlin.test.assertTrue
 
 class ThemePackDocumentationTest {
     @Test
+    fun publishedRoomExampleUsesTheProductionSchema() {
+        listOf("room-theme.example.toml", "theme.toml").forEach { name ->
+            val example = File("../examples/themes/pelagic-atlas", name)
+            assertTrue(example.isFile, "找不到战斗室美术包示例配置 $name")
+            val (spec, validation) = validateThemeToml(example.readText())
+            assertNotNull(spec, validation.errors.joinToString())
+            assertTrue(validation.warnings.isEmpty(), "$name: ${validation.warnings}")
+            assertTrue(spec.room.panels.isNotEmpty(), "示例必须实际配置战斗室")
+        }
+    }
+
+    @Test
     fun publishedTomlExamplesParseAndThemeExamplesAreValid() {
-        // 文档中文改名及 v2 指南均需校验；兼容尚未改名的检出。
-        val documents = listOf("theme-pack-format.md", "主题包开发文档.md", "主题包开发文档v2.md")
+        // 旧文档入口及当前 v3 完整规范均须通过生产解析器校验。
+        val documents = listOf("theme-pack-format.md", "主题包开发文档.md", "主题包开发文档v2.md", "主题包开发文档v3.md", "战斗室美术包开发.md")
             .map { File("../docs", it) }
             .filter { it.isFile }
         assertTrue(documents.isNotEmpty(), "找不到主题包开发文档")
@@ -32,7 +44,7 @@ class ThemePackDocumentationTest {
         snippets.forEachIndexed { index, snippet ->
             Toml.parseToTomlTable(snippet)
             // 文案文件与主题配置使用不同模型；配置片段补元数据后走真实导入校验。
-            val isThemeConfig = listOf("[theme]", "[menu.layout]", "[menu.buttons.", "[fonts]", "[colors]")
+            val isThemeConfig = listOf("[theme]", "[menu.layout]", "[menu.buttons.", "[fonts]", "[colors]", "[room.")
                 .any { it in snippet }
             if (isThemeConfig) {
                 val fullConfig = if ("[theme]" in snippet) snippet else

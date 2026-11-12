@@ -1,0 +1,235 @@
+# Copyright 2023-2025 RWPP contributors
+# GNU AGPLv3: https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
+[theme]
+id = "pelagic-atlas"
+name = "远洋图志 · Pelagic Atlas"
+author = "RWJS × Astra"
+version = "2.1.0"
+description = "远洋图志与出航作战桌：原创海图主页、船员票据、名片印章和航令配色。战斗室仅修改外观，遵循 PC 与 Android 各自的内置布局。"
+
+[colors]
+primary = "#B84732"
+onPrimary = "#FFF9ED"
+primaryContainer = "#F1D7C0"
+onPrimaryContainer = "#183A49"
+secondary = "#315D70"
+onSecondary = "#FFF9ED"
+secondaryContainer = "#CDDFE1"
+onSecondaryContainer = "#183A49"
+tertiary = "#86632D"
+onTertiary = "#FFF9ED"
+tertiaryContainer = "#F5E9C5"
+onTertiaryContainer = "#183A49"
+background = "#F4EDDF"
+onBackground = "#183A49"
+surface = "#FCF8EE"
+onSurface = "#183A49"
+surfaceContainer = "#9AAEAC"
+error = "#AE3228"
+onError = "#FFFFFF"
+inversePrimary = "#EAB59C"
+
+[menu]
+showTitleBadge = true
+
+[menu.layout]
+orientation = "grid"
+columns = 3
+align = "center"
+widthPercent = 92
+buttonHeight = 86
+buttonCorner = 2
+spacing = 12
+showBorder = false
+
+[menu.buttons.singlePlayer]
+order = 0
+span = 1
+[menu.buttons.multiplayer]
+order = 1
+span = 1
+[menu.buttons.resources]
+order = 2
+span = 1
+[menu.buttons.mods]
+order = 3
+span = 1
+[menu.buttons.resourceBrowser]
+order = 4
+span = 1
+[menu.buttons.esports]
+order = 5
+span = 1
+[menu.buttons.settings]
+order = 6
+span = 1
+[menu.buttons.openSourceInfo]
+order = 7
+span = 1
+[menu.buttons.extensions]
+order = 8
+span = 1
+
+# Appearance only: PC and Android each retain their built-in room layout.
+# Do not add room.layout/compact/wide, ordering, sizing or visibility fields.
+[room.background]
+image = "room/background.png"
+scale = "crop"
+alpha = 100
+overlayColor = "#F4EDDF"
+overlayAlpha = 8
+
+[room.panels.players]
+backgroundImage = "room/panels/players.png"
+backgroundColor = "#F8F2E5"
+contentColor = "#183A49"
+borderColor = "#91A9A4"
+borderWidth = 1
+corner = 3
+opacity = 100
+
+[room.panels.map]
+backgroundImage = "room/panels/map.png"
+backgroundColor = "#E8EFF0"
+contentColor = "#183A49"
+borderColor = "#91A9A4"
+borderWidth = 1
+corner = 3
+opacity = 100
+
+[room.panels.details]
+backgroundImage = "room/panels/details.png"
+backgroundColor = "#F6EAD4"
+contentColor = "#183A49"
+borderColor = "#B49B6D"
+borderWidth = 1
+corner = 3
+opacity = 100
+
+[room.panels.actions]
+backgroundImage = "room/panels/actions.png"
+backgroundColor = "#DDE6E1"
+contentColor = "#183A49"
+borderColor = "#91A9A4"
+borderWidth = 1
+corner = 3
+opacity = 100
+
+[room.panels.chat]
+backgroundImage = "room/panels/chat.png"
+backgroundColor = "#F4F6EF"
+contentColor = "#183A49"
+borderColor = "#91A9A4"
+borderWidth = 1
+corner = 3
+opacity = 100
+
+[room.player]
+backgroundImage = "room/players/player.png"
+localImage = "room/players/local.png"
+hostImage = "room/players/host.png"
+aiImage = "room/players/ai.png"
+readyImage = "room/players/ready.png"
+notReadyImage = "room/players/waiting.png"
+emptyImage = "room/players/empty.png"
+backgroundColor = "#FCFAF3"
+borderColor = "#C2CEC4"
+borderWidth = 1
+corner = 2
+opacity = 100
+nameWeight = 600
+nameColor = "#183A49"
+nameUseTeamColor = false
+
+# No slotImages: birth-position overrides would obscure role/status artwork.
+[room.player.profile]
+backgroundImage = "room/profile/normal.png"
+litImage = "room/profile/lit.png"
+unavailableImage = "room/profile/unavailable.png"
+iconImage = "room/profile/icon.png"
+corner = 3
+borderWidth = 0
+borderColor = "#91A9A4"
+backgroundColor = "#D6E7DF"
+tint = "#183A49"
+
+[room.buttons.start]
+backgroundImage = "room/buttons/start.png"
+backgroundColor = "#B84732"
+contentColor = "#FFF9ED"
+borderColor = "#B84732"
+borderWidth = 0
+corner = 3
+opacity = 100
+
+[room.buttons.options]
+backgroundImage = "room/buttons/options.png"
+backgroundColor = "#FCF8EE"
+contentColor = "#183A49"
+borderWidth = 0
+corner = 3
+opacity = 100
+
+[room.buttons.selectMap]
+backgroundImage = "room/buttons/selectMap.png"
+backgroundColor = "#E4EEF0"
+contentColor = "#183A49"
+borderWidth = 0
+corner = 3
+opacity = 100
+
+[room.buttons.invite]
+backgroundImage = "room/buttons/invite.png"
+backgroundColor = "#D3E6E4"
+contentColor = "#183A49"
+borderWidth = 0
+corner = 3
+opacity = 100
+
+[room.buttons.addAI]
+backgroundImage = "room/buttons/addAI.png"
+backgroundColor = "#E6EBE4"
+contentColor = "#183A49"
+borderWidth = 0
+corner = 3
+opacity = 100
+
+[room.buttons.changeSite]
+backgroundImage = "room/buttons/changeSite.png"
+backgroundColor = "#F2EAD8"
+contentColor = "#183A49"
+borderWidth = 0
+corner = 3
+opacity = 100
+
+[room.buttons.publish]
+backgroundImage = "room/buttons/publish.png"
+backgroundColor = "#E8ECDC"
+contentColor = "#183A49"
+borderWidth = 0
+corner = 3
+opacity = 100
+
+[room.buttons.lockRoom]
+backgroundImage = "room/buttons/lockRoom.png"
+backgroundColor = "#F2E3D4"
+contentColor = "#183A49"
+borderWidth = 0
+corner = 3
+opacity = 100
+
+[room.buttons.memberInvites]
+backgroundImage = "room/buttons/memberInvites.png"
+backgroundColor = "#E8EAD9"
+contentColor = "#183A49"
+borderWidth = 0
+corner = 3
+opacity = 100
+
+[room.buttons.sendChat]
+backgroundImage = "room/buttons/sendChat.png"
+backgroundColor = "#315D70"
+contentColor = "#FFF9ED"
+borderWidth = 0
+corner = 3
+opacity = 100
