@@ -40,6 +40,7 @@ import io.github.rwpp.logger
 import io.github.rwpp.net.LatestVersionProfile
 import io.github.rwpp.net.Net
 import io.github.rwpp.theme.ArtThemeController
+import io.github.rwpp.theme.MENU_BUTTON_IDS
 import io.github.rwpp.ui.UI
 import io.github.rwpp.ui.UIProvider
 import io.github.rwpp.ui.LauncherPage
@@ -66,6 +67,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** 在真实主菜单上测量按钮、检查描边像素与点击行为，不启动游戏或发网络请求。 */
@@ -108,7 +110,7 @@ class MainMenuThemeTest {
     }
 
     @Test
-    fun gridWidthAndBorderOverridesPreserveSlotsAndClicks() = runDesktopComposeUiTest(width = 1000, height = 700) {
+    fun buttonImagesAndStylesKeepModernDashboardSlotsAndClicks() = runDesktopComposeUiTest(width = 1280, height = 720) {
         activate("""
             [menu.layout]
             buttonCorner = 0
@@ -120,22 +122,33 @@ class MainMenuThemeTest {
             [menu.buttons.mods]
             widthPercent = 80
         """.trimIndent(), withImages = true)
+        File(themesRoot, "test/buttons/multiplayer.png").copyTo(File(themesRoot, "test/buttons/singlePlayer.png"))
+        ArtThemeController.scan()
+        ArtThemeController.apply("test")
         var clicks = 0
         menu(onMods = { clicks++ })
-        val single = button("menu.singlePlayerGame")
-        val multi = button("menu.multiplayer")
-        val mods = button("menu.modsAndMaps")
-        val fullCell = button("menu.settings")
+        onNodeWithTag("launcher-main-menu").assertIsDisplayed()
+        val single = card("singlePlayer")
+        val multi = card("multiplayer")
+        val mods = card("mods")
+        val fullCell = card("settings")
         val modsBounds = mods.fetchSemanticsNode().boundsInRoot
-        val sameColumnBounds = button("menu.openSourceInfo").fetchSemanticsNode().boundsInRoot
         assertEquals(single.fetchSemanticsNode().boundsInRoot.width, multi.fetchSemanticsNode().boundsInRoot.width,
-            "只设置描边时，单人按钮必须继续占满整行")
+            "仅按钮外观定制必须保留新版并排主卡")
+        closeTo(single.fetchSemanticsNode().boundsInRoot.top, multi.fetchSemanticsNode().boundsInRoot.top)
+        assertTrue(single.fetchSemanticsNode().boundsInRoot.right < multi.fetchSemanticsNode().boundsInRoot.left)
         closeTo(fullCell.fetchSemanticsNode().boundsInRoot.width * 0.8f, modsBounds.width)
-        closeTo(sameColumnBounds.center.x, modsBounds.center.x)
-        assertTrue(redAtLeftEdge(single.captureToImage().toAwtImage()) > 100, "单按钮 true 应覆盖全局 false")
+        val resources = card("resources").fetchSemanticsNode().boundsInRoot
+        closeTo((resources.right + fullCell.fetchSemanticsNode().boundsInRoot.left) / 2, modsBounds.center.x)
         waitUntil(timeoutMillis = 10_000) { multi.captureToImage().toAwtImage().getRGB(0, 0) == 0xFF204080.toInt() }
         assertEquals(0xFF204080.toInt(), multi.captureToImage().toAwtImage().getRGB(0, 0),
             "有背景图且关闭描边时，直角边缘应保留原图颜色")
+        waitUntil(timeoutMillis = 10_000) {
+            val image = single.captureToImage().toAwtImage()
+            image.getRGB(image.width / 2, 3) == 0xFF204080.toInt()
+        }
+        val bordered = single.captureToImage().toAwtImage()
+        assertTrue(bordered.getRGB(0, bordered.height / 2) != 0xFF204080.toInt(), "单按钮 true 应覆盖全局 false")
         mods.performClick()
         runOnIdle { assertEquals(1, clicks) }
         save("grid-border-overrides.png")
@@ -153,14 +166,13 @@ class MainMenuThemeTest {
             showBorder = false
         """.trimIndent())
         menu()
-        val mods = button("menu.modsAndMaps")
-        val multi = button("menu.multiplayer")
-        val modsBounds = mods.fetchSemanticsNode().boundsInRoot
-        val multiBounds = multi.fetchSemanticsNode().boundsInRoot
+        onNodeWithTag("launcher-main-menu").assertIsDisplayed()
+        val multiBounds = card("multiplayer").performScrollTo().fetchSemanticsNode().boundsInRoot
+        val modsBounds = card("mods").performScrollTo().fetchSemanticsNode().boundsInRoot
         closeTo(multiBounds.width * 0.8f, modsBounds.width)
         closeTo(multiBounds.center.x, modsBounds.center.x)
-        assertTrue(redAtLeftEdge(multi.captureToImage().toAwtImage()) > 100, "旧主题默认保留描边")
-        assertTrue(redAtLeftEdge(mods.captureToImage().toAwtImage()) < 100, "单按钮 false 应覆盖全局 true")
+        assertTrue(modsBounds.height >= 48f, "竖排卡片仍须保留最小点击高度")
+        onNodeWithTag("launcher-theme-manager").assertIsDisplayed()
         save("vertical-width.png")
     }
 
@@ -176,59 +188,80 @@ class MainMenuThemeTest {
             widthPercent = 200
         """.trimIndent())
         menu()
-        val multi = button("menu.multiplayer").fetchSemanticsNode().boundsInRoot
-        val mods = button("menu.modsAndMaps").fetchSemanticsNode().boundsInRoot
-        val settings = button("menu.settings").fetchSemanticsNode().boundsInRoot
+        onNodeWithTag("launcher-main-menu").assertIsDisplayed()
+        val multi = card("multiplayer").performScrollTo().fetchSemanticsNode().boundsInRoot
+        val mods = card("mods").performScrollTo().fetchSemanticsNode().boundsInRoot
+        val settings = card("settings").performScrollTo().fetchSemanticsNode().boundsInRoot
         closeTo(multi.width * 0.8f, mods.width)
         closeTo(multi.width, settings.width)
         closeTo(multi.center.x, mods.center.x)
     }
 
     @Test
-    fun forumAndEsportsShareOneGridCell() = runDesktopComposeUiTest(width = 1000, height = 700) {
-        activate("[menu.layout]\nbuttonHeight = 45")
+    fun legacyDirectCardsKeepBothCallbacksOnModernDashboard() = runDesktopComposeUiTest(width = 1000, height = 700) {
+        activate("""
+            [menu.buttons.resourceBrowser]
+            order = -2
+            [menu.buttons.esports]
+            order = -1
+        """.trimIndent())
         var forumClicks = 0
         var esportsClicks = 0
         menu(onResourceBrowser = { forumClicks++ }, onEsports = { esportsClicks++ })
-        val forum = button("browser.resourceBrowser").fetchSemanticsNode().boundsInRoot
-        val esports = button("browser.esportsSite").fetchSemanticsNode().boundsInRoot
-        val settings = button("menu.settings").fetchSemanticsNode().boundsInRoot
+        onNodeWithTag("launcher-main-menu").assertIsDisplayed()
+        val forum = card("resourceBrowser").fetchSemanticsNode().boundsInRoot
+        val esports = card("esports").fetchSemanticsNode().boundsInRoot
         closeTo(forum.width, esports.width)
         closeTo(forum.top, esports.top)
-        // 两个半宽按钮合起来与下一行同列的整格按钮外缘对齐，且没有折行变高。
-        closeTo(settings.left, forum.left)
-        closeTo(settings.right, esports.right)
-        closeTo(settings.height, forum.height)
-        closeTo(settings.height, esports.height)
-        button("browser.esportsSite").performClick()
+        assertTrue(forum.right <= esports.left, "旧槽位在新版网格中应为两个独立卡片")
+        card("esports").performClick()
         runOnIdle { assertEquals(0, forumClicks); assertEquals(1, esportsClicks) }
-        button("browser.resourceBrowser").performClick()
+        card("resourceBrowser").performClick()
         runOnIdle { assertEquals(1, forumClicks); assertEquals(1, esportsClicks) }
-        save("forum-esports-cell.png")
+        save("legacy-direct-cards.png")
     }
 
     @Test
-    fun hiddenEsportsGivesForumTheWholeCell() = runDesktopComposeUiTest(width = 1000, height = 700) {
+    fun hiddenLegacyCardKeepsForumAndManagerReachable() = runDesktopComposeUiTest(width = 1000, height = 700) {
         activate("""
+            [menu.buttons.resourceBrowser]
+            order = -2
             [menu.buttons.esports]
             hidden = true
         """.trimIndent())
-        menu()
-        val forum = button("browser.resourceBrowser").fetchSemanticsNode().boundsInRoot
-        val settings = button("menu.settings").fetchSemanticsNode().boundsInRoot
-        closeTo(settings.width, forum.width)
-        closeTo(settings.left, forum.left)
+        var managerClicks = 0
+        menu(onExtension = { managerClicks++ })
+        onNodeWithTag("launcher-main-menu").assertIsDisplayed()
+        card("resourceBrowser").assertIsDisplayed()
+        card("esports").assertDoesNotExist()
+        onNodeWithTag("launcher-theme-manager").assertIsDisplayed().performClick()
+        runOnIdle { assertEquals(1, managerClicks) }
     }
 
     @Test
-    fun pairedButtonsStayOnOneLineInEnglish() = runDesktopComposeUiTest(width = 1000, height = 700) {
+    fun extremeEnglishLayoutKeepsCardsAndManagerUsable() = runDesktopComposeUiTest(width = 640, height = 320) {
         i18nTable = Toml.parseToTomlTable(File("src/commonMain/composeResources/files/bundle_en.toml").readText())
-        activate("[menu.layout]\nbuttonHeight = 45")
+        activate("""
+            [menu.layout]
+            columns = 4
+            widthPercent = 100
+            spacing = 0
+            offsetY = 400
+            [menu.buttons.resourceBrowser]
+            order = -2147483648
+            widthPercent = 1
+            [menu.buttons.esports]
+            order = 2147483647
+        """.trimIndent())
         menu()
-        val settings = button("menu.settings").fetchSemanticsNode().boundsInRoot
-        listOf("browser.resourceBrowser", "browser.esportsSite").forEach {
-            closeTo(settings.height, button(it).fetchSemanticsNode().boundsInRoot.height)
+        onNodeWithTag("launcher-main-menu").assertIsDisplayed()
+        listOf("resourceBrowser", "esports").forEach { id ->
+            val bounds = card(id).performScrollTo().assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            assertTrue(bounds.width >= 48f, "极小宽度配置仍须保留可点击卡片：$id")
+            assertTrue(bounds.left >= 0f && bounds.right <= 640f)
         }
+        onNodeWithTag("launcher-theme-manager").assertIsDisplayed()
+        button("menu.home.exit").assertIsDisplayed()
     }
 
     @Test
@@ -338,6 +371,149 @@ class MainMenuThemeTest {
     }
 
     @Test
+    fun everyHiddenCardKeepsThemeManagerAndRestoreReachable() = runDesktopComposeUiTest(width = 640, height = 320) {
+        activate(MENU_BUTTON_IDS.joinToString("\n") { "[menu.buttons.$it]\nhidden = true\n" })
+        var managerClicks = 0
+        menu(onExtension = { managerClicks++ })
+        onNodeWithTag("launcher-main-menu").assertIsDisplayed()
+        MENU_BUTTON_IDS.forEach { card(it).assertDoesNotExist() }
+        onNodeWithTag("launcher-theme-manager").assertIsDisplayed().performClick()
+        runOnIdle {
+            assertEquals(1, managerClicks)
+            assertTrue(ArtThemeController.apply(null))
+        }
+        waitForIdle()
+        listOf("singlePlayer", "multiplayer", "resources", "settings").forEach { card(it).assertIsDisplayed() }
+        onNodeWithTag("launcher-theme-manager").assertIsDisplayed()
+        save("hidden-cards-restored.png")
+    }
+
+    @Test
+    fun legacyExitOverrideWorksAndModernOverrideTakesPrecedence() = runDesktopComposeUiTest(width = 1000, height = 700) {
+        activate("", strings = "[menu]\nexit = \"Legacy exit\"")
+        menu()
+        onNode(hasClickAction() and hasText("Legacy exit")).assertIsDisplayed()
+        runOnIdle {
+            activate("", strings = "[menu]\nexit = \"Legacy exit\"\n[menu.home]\nexit = \"Modern exit\"")
+        }
+        waitForIdle()
+        onNode(hasClickAction() and hasText("Modern exit")).assertIsDisplayed()
+        onNode(hasClickAction() and hasText("Legacy exit")).assertDoesNotExist()
+    }
+
+    @Test
+    fun invalidImagesFallBackWithoutLosingModernCards() = runDesktopComposeUiTest(width = 1000, height = 700) {
+        activate("[menu.layout]\nbuttonCorner = 0\nshowBorder = false")
+        var clicks = 0
+        menu(onMultiplayer = { clicks++ })
+        val baselineCard = card("multiplayer").captureToImage().toAwtImage()
+        val baselineTitle = onNodeWithContentDescription("RWJS").captureToImage().toAwtImage()
+        runOnIdle {
+            val buttons = File(themesRoot, "test/buttons").apply { mkdirs() }
+            File(buttons, "multiplayer.png").writeText("broken image bytes")
+            File(themesRoot, "test/title.png").writeText("broken title bytes")
+            ArtThemeController.scan()
+            assertTrue(ArtThemeController.apply("test"))
+        }
+        waitUntil(timeoutMillis = 10_000) {
+            samePixels(baselineCard, card("multiplayer").captureToImage().toAwtImage()) &&
+                samePixels(baselineTitle, onNodeWithContentDescription("RWJS").captureToImage().toAwtImage())
+        }
+        onNodeWithTag("launcher-main-menu").assertIsDisplayed()
+        card("multiplayer").performClick()
+        onNodeWithTag("launcher-theme-manager").assertIsDisplayed()
+        runOnIdle { assertEquals(1, clicks) }
+        save("broken-images-fallback.png")
+    }
+
+    @Test
+    fun themeImageSwitchAndDisableRestoreBuiltInDashboard() = runDesktopComposeUiTest(width = 1000, height = 700) {
+        menu()
+        val baselineCard = card("multiplayer").captureToImage().toAwtImage()
+        val baselineTitle = onNodeWithContentDescription("RWJS").captureToImage().toAwtImage()
+        runOnIdle {
+            activate("[menu.layout]\nbuttonCorner = 0\nshowBorder = false", withImages = true, withTitle = true)
+        }
+        waitUntil(timeoutMillis = 10_000) { card("multiplayer").captureToImage().toAwtImage().getRGB(0, 0) == 0xFF204080.toInt() }
+        onNodeWithTag("launcher-main-menu").assertIsDisplayed()
+        val single = card("singlePlayer").fetchSemanticsNode().boundsInRoot
+        val multi = card("multiplayer").fetchSemanticsNode().boundsInRoot
+        closeTo(single.top, multi.top)
+        runOnIdle { assertTrue(ArtThemeController.apply(null)) }
+        waitUntil(timeoutMillis = 10_000) {
+            samePixels(baselineCard, card("multiplayer").captureToImage().toAwtImage()) &&
+                samePixels(baselineTitle, onNodeWithContentDescription("RWJS").captureToImage().toAwtImage())
+        }
+        runOnIdle { assertNull(ArtThemeController.activeTheme) }
+        card("resources").assertIsDisplayed()
+        onNodeWithTag("launcher-theme-manager").assertIsDisplayed()
+        save("theme-disabled-dashboard.png")
+    }
+
+    @Test
+    fun invalidColorKeepsBuiltInTextAndValidColorReachesModernCards() = runDesktopComposeUiTest(width = 1000, height = 700) {
+        menu()
+        val baselineCard = card("multiplayer").captureToImage().toAwtImage()
+        runOnIdle { activate("[colors]\nonSurface = \"invalid\"") }
+        waitForIdle()
+        assertTrue(samePixels(baselineCard, card("multiplayer").captureToImage().toAwtImage()),
+            "非法颜色必须保留新版主页的原有回退外观")
+        runOnIdle { activate("[colors]\nonSurface = \"#FFFF00FF\"") }
+        waitUntil(timeoutMillis = 10_000) {
+            containsColor(card("multiplayer").captureToImage().toAwtImage(), 0xFFFF00FF.toInt())
+        }
+        onNodeWithTag("launcher-main-menu").assertIsDisplayed()
+    }
+
+    @Test
+    fun unknownButtonLayoutFieldsDoNotChangeDefaultDashboard() = runDesktopComposeUiTest(width = 1000, height = 700) {
+        menu()
+        val originalSingle = card("singlePlayer").fetchSemanticsNode().boundsInRoot
+        val originalMulti = card("multiplayer").fetchSemanticsNode().boundsInRoot
+        runOnIdle {
+            activate("""
+                [menu.buttons.typo]
+                hidden = true
+                span = -1
+            """.trimIndent())
+        }
+        waitForIdle()
+        onNodeWithTag("launcher-main-menu").assertIsDisplayed()
+        val single = card("singlePlayer").fetchSemanticsNode().boundsInRoot
+        val multi = card("multiplayer").fetchSemanticsNode().boundsInRoot
+        closeTo(originalSingle.width, single.width)
+        closeTo(originalMulti.width, multi.width)
+        closeTo(single.top, multi.top)
+        assertTrue(single.right < multi.left, "未知槽位的布局字段应被忽略，不能切换为定制网格")
+        card("resources").assertIsDisplayed()
+        card("typo").assertDoesNotExist()
+    }
+
+    @Test
+    fun explicitlyDeclaredDefaultWidthAndCornerAreApplied() = runDesktopComposeUiTest(width = 1000, height = 800) {
+        activate("""
+            [menu.layout]
+            widthPercent = 65
+            columns = 1
+            buttonCorner = 20
+            showBorder = false
+        """.trimIndent(), withImages = true)
+        menu()
+        onNodeWithTag("launcher-main-menu").assertIsDisplayed()
+        val multi = card("multiplayer").performScrollTo()
+        closeTo(650f, multi.fetchSemanticsNode().boundsInRoot.width)
+        waitUntil(timeoutMillis = 10_000) {
+            val image = multi.captureToImage().toAwtImage()
+            image.getRGB(image.width / 2, 0) == 0xFF204080.toInt()
+        }
+        val image = multi.captureToImage().toAwtImage()
+        assertTrue(image.getRGB(0, 0) != 0xFF204080.toInt(), "显式20dp圆角应裁切图片四角")
+        assertTrue(image.getRGB(17, 0) != 0xFF204080.toInt(), "显式20dp不能被新版主卡默认15dp圆角替代")
+        onNodeWithTag("launcher-theme-manager").assertIsDisplayed()
+        save("explicit-default-layout-values.png")
+    }
+
+    @Test
     fun resourceCenterUsesPageCardsAndKeepsEveryAction() = runDesktopComposeUiTest(width = 1280, height = 720) {
         val clicks = mutableListOf<String>()
         resources(clicks, includeExtra = true)
@@ -386,7 +562,7 @@ class MainMenuThemeTest {
         waitForIdle()
     }
 
-    private fun activate(config: String, withImages: Boolean = false, withTitle: Boolean = false) {
+    private fun activate(config: String, withImages: Boolean = false, withTitle: Boolean = false, strings: String? = null) {
         val dir = File(themesRoot, "test").apply { mkdirs() }
         File(dir, "theme.toml").writeText("[theme]\nid = \"test\"\nname = \"测试主题\"\n\n$config")
         if (withImages) {
@@ -400,6 +576,7 @@ class MainMenuThemeTest {
             for (y in 0 until image.height) for (x in 0 until image.width) image.setRGB(x, y, 0xFF204080.toInt())
             ImageIO.write(image, "png", File(dir, "title.png"))
         }
+        if (strings != null) File(dir, "strings_zh.toml").writeText(strings)
         ArtThemeController.scan()
         ArtThemeController.apply("test")
     }
@@ -435,7 +612,15 @@ class MainMenuThemeTest {
 
     private fun ComposeUiTest.button(key: String) = onNode(hasClickAction() and hasText(readI18n(key)))
 
-    private fun redAtLeftEdge(image: BufferedImage) = image.getRGB(0, image.height / 2).ushr(16) and 0xFF
+    private fun ComposeUiTest.card(id: String) = onNodeWithTag("launcher-card-$id")
+
+    private fun samePixels(expected: BufferedImage, actual: BufferedImage): Boolean =
+        expected.width == actual.width && expected.height == actual.height &&
+            expected.getRGB(0, 0, expected.width, expected.height, null, 0, expected.width)
+                .contentEquals(actual.getRGB(0, 0, actual.width, actual.height, null, 0, actual.width))
+
+    private fun containsColor(image: BufferedImage, color: Int): Boolean =
+        image.getRGB(0, 0, image.width, image.height, null, 0, image.width).any { it == color }
 
     private fun closeTo(expected: Float, actual: Float) {
         assertTrue(abs(expected - actual) < 1.5f, "expected $expected, actual $actual")
