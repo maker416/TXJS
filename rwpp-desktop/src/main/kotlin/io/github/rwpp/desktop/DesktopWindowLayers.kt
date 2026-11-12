@@ -7,12 +7,16 @@
 
 package io.github.rwpp.desktop
 
+import androidx.compose.ui.awt.ComposeDialog
 import javassist.ClassPool
 import javassist.CtNewMethod
 import javassist.LoaderClassPath
 import javassist.bytecode.Opcode
 import javassist.expr.ExprEditor
 import javassist.expr.MethodCall
+import org.jetbrains.skiko.ExperimentalSkikoApi
+import org.jetbrains.skiko.GraphicsApi
+import org.jetbrains.skiko.SkiaLayer
 import org.slf4j.LoggerFactory
 import java.awt.Rectangle
 import java.lang.invoke.MethodHandles
@@ -35,6 +39,7 @@ internal object DesktopWindowLayers {
     private const val WINDOW_LAYER = "androidx.compose.ui.scene.WindowComposeSceneLayer"
     private const val COMPOSE_CONTAINER = "androidx.compose.ui.scene.ComposeContainer"
     private const val UPDATE_PENDING = "io.github.rwpp.desktop.viewportUpdatePending"
+    private const val INITIAL_RENDERER_SELECTED = "io.github.rwpp.desktop.initialPopupRendererSelected"
     private val log = LoggerFactory.getLogger(DesktopWindowLayers::class.java)
     private var installed = false
 
@@ -160,6 +165,7 @@ internal object DesktopWindowLayers {
             }
             return
         }
+        inheritNativeMenuRenderer(window, content)
         val request = ViewportUpdate(host, content, Rectangle(viewport))
         if (!window.isVisible) {
             applyViewport(window, request)
@@ -175,6 +181,28 @@ internal object DesktopWindowLayers {
             root.putClientProperty(UPDATE_PENDING, null)
             // 退出/切页可能已销毁弹层，排队的 resize 不得重新创建它的 native peer。
             if (latest != null && window.isDisplayable && latest.host.isShowing) applyViewport(window, latest)
+        }
+    }
+
+    @OptIn(ExperimentalSkikoApi::class)
+    private fun inheritNativeMenuRenderer(window: JDialog, content: JComponent?) {
+        val layer = content as? SkiaLayer ?: return
+        if (layer.isDisplayable || layer.getClientProperty(INITIAL_RENDERER_SELECTED) != null) return
+        val owner = window.owner as? ComposeDialog ?: return
+        if (!owner.isTransparent || owner.renderApi != GraphicsApi.DIRECT3D) return
+
+        // 原生透明菜单局部选择 D3D，Compose 的 WINDOW 子层却重新读取全局后端偏好。
+        // 在子层首次创建 peer 前沿用宿主已经验证可用的后端，避免透明弹窗内容丢失。
+        layer.putClientProperty(INITIAL_RENDERER_SELECTED, true)
+        layer.renderApi = GraphicsApi.DIRECT3D
+        var selectingInitialRenderer = true
+        layer.onStateChanged(SkiaLayer.PropertyKind.Renderer) {
+            // init() 会先重放构造时的后端队列，再创建首个设备；仅拦截这一次选择。
+            // 之后的设备故障继续走 Skiko 回退，不能把失败设备重新强制选回 D3D。
+            if (selectingInitialRenderer) {
+                selectingInitialRenderer = false
+                if (it.renderApi != GraphicsApi.DIRECT3D) it.renderApi = GraphicsApi.DIRECT3D
+            }
         }
     }
 

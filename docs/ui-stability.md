@@ -43,6 +43,8 @@
 
 所有 WINDOW 弹层在首次显示前取消上游默认的 `alwaysOnTop=true`。原生 `JDialog` 保持游戏窗口的 owner 关系，借此覆盖游戏和 Chromium 子窗口，随游戏进入后台、最小化与恢复；不能使用系统置顶来覆盖其他应用。此规则同样适用于非聚焦浏览器悬浮控件。
 
+透明原生菜单局部使用 Direct3D 时，WINDOW 子层也必须在首次创建 peer 前沿用菜单实际使用的 Direct3D；否则全局 OpenGL 偏好会让详情窗口重新选择 OpenGL，出现遮罩变暗但卡片没有显示的情况。`DesktopWindowLayers` 仅为透明 `ComposeDialog` 的子层选择初始后端，不修改全局设置，后续设备故障仍允许 Skiko 正常回退。Swing / 软件菜单保持原路径，Android 不涉及此兼容处理。
+
 兼容处理在类首次定义前使用现有 Javassist 依赖修改 `WindowComposeSceneLayer`，启动后无需反射或 javaagent。可聚焦弹层不再逐帧录制绘制范围，非聚焦悬浮控件仍按实际内容裁剪。内部字段类型、置顶初始化与绘制范围录制调用的签名与数量均在定义类前校验；不兼容或类已提前加载时记录 `[UI]` 警告并使用原库。升级 Compose 时必须重新验证此入口，不能仅凭编译成功认定仍生效。可见窗口的尺寸更新通过 EDT 合并执行；已销毁窗口不执行迟到更新。
 
 `DesktopWindowLayersTest` 使用真实 Swing、Skiko 和 WINDOW 弹层，覆盖入场动画、下拉菜单、空列表切换、宿主 resize/move、关闭后迟到更新，以及非聚焦悬浮控件保留小窗口。同时检查可聚焦/非聚焦弹层均不系统置顶，使用 Win32 窗口顺序验证无 owner 的普通窗口可以遮住游戏弹窗、游戏弹窗仍位于宿主上方，并验证宿主最小化/恢复时原生弹层的可见性。缩放回归可执行：
@@ -54,6 +56,10 @@
 ```
 
 该测试在非 Windows 或无图形环境时跳过；共享 Compose 离屏测试不覆盖这条 native 窗口路径。
+
+`DesktopModDetailsWindowTest` 使用生产透明菜单和真实模组页，在全局 OpenGL 偏好下检查详情子层实际使用 Direct3D，覆盖动画开关、关闭重开、标题/删除/关闭按钮与卡片绘制。默认向测试自身 Canvas 派发输入并读取 SkiaLayer 位图，不依赖前台权限；这能验证布局、绘制和后端选择，不能替代屏幕实际呈现验收。运行同一测试并传入 `-Prwjs.test.uiScale=2` 可复核 HiDPI。
+
+设置 `RWJS_TEST_VISIBLE_CAPTURE=true` 可追加真实屏幕颜色断言：仅在截图期间短暂提升测试自己的窗口树，随后恢复，不向其他应用发送输入。2026-11-12 的同机对照中，旧实现的 Skia 位图已有详情卡片，但屏幕仅有变暗的列表，动画开关两项均在屏幕断言失败；修复后两项通过，200% 缩放同样通过。截图和后端记录位于 `rwpp-desktop/build/reports/desktop-mod-details/`。真实前台 Robot 输入另以 `RWJS_TEST_ROBOT_INPUT=true` 显式启用，未启用时不将定向事件等同于物理鼠标验收。
 
 ## PC 开局提示与画面切换
 
