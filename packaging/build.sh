@@ -27,7 +27,7 @@ rw_find_python() {
 }
 if ! rw_find_python; then
     if (( rw_help )); then
-        echo '用法: build.sh [linux|desktop|android-debug|android-release|test|clean] [--check] [--no-install]'
+        echo '用法: build.sh [linux|desktop|release-all|android-debug|android-release|test|clean] [--check] [--no-install]'
         echo '正常构建自动配置 Python 3.9+ 和 JDK 21；--check / --no-install 禁止安装。'
         exit 0
     fi

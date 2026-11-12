@@ -5,6 +5,7 @@
 # https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
 """打包集成验证使用假 Gradle/JDK，不代替实际客户端编译或运行测试。"""
 
+import argparse
 import hashlib
 import importlib.util
 import io
@@ -43,6 +44,168 @@ def make_zip(path, prefix="Rusted Warfare/"):
         for name in included + excluded:
             archive.writestr(prefix + name, name)
     return included, excluded
+
+
+class BuildVersionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="build version tests ")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.version_file = self.root / "build.gradle.kts"
+
+    def test_numeric_increment_preserves_bom_newlines_and_other_content(self):
+        for bom in (b"", b"\xef\xbb\xbf"):
+            for newline in (b"\n", b"\r\n"):
+                with self.subTest(bom=bom, newline=newline):
+                    original = bom + "// 中文注释".encode("utf-8") + newline + b'version = "1.20.99" // release' + newline
+                    self.version_file.write_bytes(original)
+                    self.assertEqual(build.bump_project_version(self.root), "1.20.100")
+                    self.assertEqual(self.version_file.read_bytes(), original.replace(b"1.20.99", b"1.20.100"))
+                    self.assertEqual(build.bump_project_version(self.root), "1.20.101")
+
+    def test_invalid_versions_never_modify_source(self):
+        for content in ('// no version', 'version = "1.2"', 'version = "1.2.3-beta"',
+                        'version = "1.2.03"', 'version = "1.2.3"\nversion = "2.3.4"'):
+            with self.subTest(content=content):
+                self.version_file.write_bytes(content.encode("utf-8"))
+                with self.assertRaises(ValueError):
+                    build.bump_project_version(self.root)
+                self.assertEqual(self.version_file.read_bytes(), content.encode("utf-8"))
+
+    def test_replace_failure_leaves_source_and_removes_temporary_file(self):
+        original = b'version = "1.2.3"\r\n'
+        self.version_file.write_bytes(original)
+        with patch.object(Path, "replace", side_effect=OSError("fixture write failure")):
+            with self.assertRaises(OSError):
+                build.bump_project_version(self.root)
+        self.assertEqual(self.version_file.read_bytes(), original)
+        self.assertEqual(list(self.root.glob("*.tmp")), [])
+
+    def invoke_main(self, arguments, run_failure=False, preflight_failure=False):
+        def capture_run(command, root, env):
+            self.observed_version = self.version_file.read_text()
+            if run_failure:
+                raise subprocess.CalledProcessError(7, command)
+        with patch.object(build, "ROOT", self.root), \
+                patch.object(build, "preflight", side_effect=ValueError("fixture preflight failure") if preflight_failure else None,
+                             return_value=(self.root / "jdk", None)), \
+                patch.object(build, "configure_java_environment"), \
+                patch.object(build, "run", side_effect=capture_run) as run_mock, \
+                patch.object(build, "collect"):
+            result = build.main(arguments)
+        return result, run_mock.call_count
+
+    def test_client_builds_persist_version_before_gradle_and_increment_each_run(self):
+        self.version_file.write_text('version = "1.20.62"\n')
+        for index, target in enumerate(("desktop", "installer", "linux", "android-debug", "android-release"), start=63):
+            result, calls = self.invoke_main([target])
+            self.assertEqual((result, calls), (0, 1))
+            self.assertIn(f'"1.20.{index}"', self.observed_version)
+            self.assertEqual(self.version_file.read_text(), self.observed_version)
+
+    def test_checks_non_client_targets_and_preflight_failure_bump_on_startup(self):
+        self.version_file.write_text('version = "1.2.3"\n')
+        for index, arguments in enumerate((["desktop", "--check"], ["test"], ["clean"], ["browser-kernels"]), start=4):
+            result, _ = self.invoke_main(arguments)
+            self.assertEqual(result, 0)
+            self.assertIn(f'"1.2.{index}"', self.version_file.read_text())
+        result, calls = self.invoke_main(["desktop"], preflight_failure=True)
+        self.assertEqual((result, calls), (1, 0))
+        self.assertIn('"1.2.8"', self.version_file.read_text())
+
+    def test_help_and_menu_exit_bump_once_without_gradle(self):
+        self.version_file.write_text('version = "1.2.3"\n')
+        with patch.object(build, "ROOT", self.root), patch.object(build, "run") as run_mock:
+            with self.assertRaises(SystemExit) as exit_result:
+                build.main(["--help"])
+            self.assertEqual(exit_result.exception.code, 0)
+            self.assertIn('"1.2.4"', self.version_file.read_text())
+            with patch.object(build.sys.stdin, "isatty", return_value=True), patch("builtins.input", return_value="0"):
+                self.assertEqual(build.main([]), 0)
+            self.assertIn('"1.2.5"', self.version_file.read_text())
+            run_mock.assert_not_called()
+
+    def test_build_failure_retains_increment_but_invalid_version_stops_gradle(self):
+        self.version_file.write_text('version = "1.2.3"\n')
+        result, calls = self.invoke_main(["desktop"], run_failure=True)
+        self.assertEqual((result, calls), (1, 1))
+        self.assertIn('"1.2.4"', self.version_file.read_text())
+        self.version_file.write_text('version = "invalid"\n')
+        result, calls = self.invoke_main(["desktop"])
+        self.assertEqual((result, calls), (1, 0))
+
+
+class ReleaseAllTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="release all tests ")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.version = self.root / "build.gradle.kts"
+        self.version.write_text('version = "1.2.3"\n', encoding="utf-8")
+        self.jdk = self.root / "jdk"
+        self.source = self.root / "game.zip"
+
+    def test_aliases_build_once_and_collect_both_with_one_version_and_channel(self):
+        for index, alias in enumerate(("release-all", "all-release", "8"), start=4):
+            with self.subTest(alias=alias), patch.object(build, "ROOT", self.root), \
+                    patch.object(build, "preflight", return_value=(self.jdk, self.source)) as preflight, \
+                    patch.object(build, "configure_java_environment"), \
+                    patch.object(build, "run") as run, patch.object(build, "collect") as collect:
+                self.assertEqual(build.main([alias, "--channel", "test_cn"]), 0)
+                self.assertIn(f'"1.2.{index}"', self.version.read_text())
+                self.assertEqual(preflight.call_args.args[1], "release-all")
+                run.assert_called_once()
+                command = run.call_args.args[0]
+                self.assertEqual(command[-2:], [":rwpp-desktop:packageReleaseUberJarForCurrentOS", ":rwpp-android:assembleRelease"])
+                self.assertIn("-PonlineChannel=test_cn", command)
+                self.assertEqual([call.args[1] for call in collect.call_args_list], ["linux", "android-release"])
+                for call in collect.call_args_list:
+                    self.assertEqual(call.args[2].channel, "test_cn")
+                    self.assertEqual(call.args[3:], (self.jdk, self.source))
+        self.assertEqual(build.ALIASES["release"], "android-release")
+
+    def test_check_and_failures_do_not_report_partial_success(self):
+        for scenario in ("check", "preflight", "build", "collect"):
+            with self.subTest(scenario=scenario), patch.object(build, "ROOT", self.root), \
+                    patch.object(build, "preflight", return_value=(self.jdk, self.source),
+                                 side_effect=ValueError("missing signing fixture") if scenario == "preflight" else None), \
+                    patch.object(build, "configure_java_environment"), \
+                    patch.object(build, "run", side_effect=subprocess.CalledProcessError(7, "gradlew") if scenario == "build" else None) as run, \
+                    patch.object(build, "collect", side_effect=[None, ValueError("APK fixture missing")] if scenario == "collect" else None) as collect:
+                args = ["release-all", "--check"] if scenario == "check" else ["release-all"]
+                self.assertEqual(build.main(args), 0 if scenario == "check" else 1)
+                if scenario in {"check", "preflight"}:
+                    run.assert_not_called()
+                if scenario != "collect":
+                    collect.assert_not_called()
+
+    def test_preflight_requires_linux_resources_android_sdk_and_original_signing(self):
+        make_zip(self.source)
+        sdk = self.root / "sdk"
+        (sdk / "platforms").mkdir(parents=True)
+        (sdk / "build-tools").mkdir()
+        write(self.root / "local.properties", f"sdk.dir={sdk.as_posix()}\n")
+        key = self.root / "build/key/release.keystore"
+        write(key, "fixture only")
+        write(self.root / "build/key/keystore.properties", "storeFile=build/key/release.keystore\n")
+        args = argparse.Namespace(game_archive=str(self.source), check=True, no_install=True)
+        with patch.object(build, "find_jdk", return_value=self.jdk), \
+                patch.object(build.platform, "system", return_value="Linux"), \
+                patch.object(build.platform, "machine", return_value="x86_64"):
+            self.assertEqual(build.preflight(self.root, "release-all", args), (self.jdk, self.source))
+            key.unlink()
+            with self.assertRaisesRegex(ValueError, "Release"):
+                build.preflight(self.root, "release-all", args)
+            write(key, "fixture only")
+            (sdk / "platforms").rmdir()
+            with self.assertRaisesRegex(ValueError, "Android SDK"):
+                build.preflight(self.root, "release-all", args)
+            (sdk / "platforms").mkdir()
+            with zipfile.ZipFile(self.source, "w") as archive:
+                archive.writestr("game-lib.jar", "fixture")
+                archive.writestr("assets/tank.ini", "fixture")
+            with self.assertRaisesRegex(ValueError, "Linux x64"):
+                build.preflight(self.root, "release-all", args)
 
 
 class ArchiveTests(unittest.TestCase):
@@ -163,7 +326,8 @@ cp "$JAVA_HOME/bin/java" "$2/bin/java"
 printf '%s\\n' "$@" > gradle-args.txt
 if [ "${RWJS_TEST_FAIL:-}" = '1' ]; then exit 7; fi
 mkdir -p rwpp-desktop/build/compose/jars
-printf 'fat jar fixture' > rwpp-desktop/build/compose/jars/RWJS-linux-x64-1.2.3-release.jar
+version=$(sed -n 's/^version = "\\([^"]*\\)".*/\\1/p' build.gradle.kts)
+printf 'fat jar fixture' > "rwpp-desktop/build/compose/jars/RWJS-linux-x64-$version-release.jar"
 ''', True)
         self.zip = self.root / "原版 game.zip"
         self.included, self.excluded = make_zip(self.zip)
@@ -179,7 +343,7 @@ printf 'fat jar fixture' > rwpp-desktop/build/compose/jars/RWJS-linux-x64-1.2.3-
         result = self.invoke("installer", "--channel", "test_cn")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         dest = self.root / "build/artifacts/linux-test_cn"
-        package = dest / "RWJS-Linux-x64-1.2.3.tar.gz"
+        package = dest / "RWJS-Linux-x64-1.2.4.tar.gz"
         self.assertEqual(build.file_hash(package), (dest / (package.name + ".sha256")).read_text().split()[0])
         with tarfile.open(package) as archive:
             names = set(archive.getnames())
