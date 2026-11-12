@@ -38,7 +38,6 @@ import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.logger
 import io.github.rwpp.net.sanitizeJoinRelayUuid
 import io.github.rwpp.ui.UI
-import io.github.rwpp.utils.Reflect
 import kotlinx.coroutines.*
 import org.koin.core.annotation.Single
 import org.koin.core.component.get
@@ -397,21 +396,11 @@ class GameImpl : Game, CoroutineScope {
         return com.corrodinggames.rts.game.units.cj.ae as ArrayList<UnitType>
     }
 
-    /**
-     * 实时重算的全部启用单位校验和（`ce.bt()`）。
-     * 不用 `k.r()`：那是引擎 init 时缓存的字段，模组重载后不会刷新，同步校验需要真实状态。
-     */
-    override fun getUnitsChecksum(): Int = com.corrodinggames.rts.game.units.ce.bt()
+    /** 原版初始化时保存的核心单位校验和；实时 ce.bt() 会受菜单地图水面影响。 */
+    override fun getUnitsChecksum(): Int = GameEngine.t().r()
 
     override fun refreshHandshakeChecksumCache() {
-        val checksum = com.corrodinggames.rts.game.units.ce.bt()
-        try {
-            // i.r() 读的 init 缓存字段 `c`；重载后必须写回，否则包 110 仍发旧值。
-            Reflect.set(GameEngine.t(), "c", checksum)
-            logger.info("[MODSYNC] handshake checksum cache refreshed to $checksum")
-        } catch (e: Throwable) {
-            logger.warn("[MODSYNC] failed to write handshake checksum cache: ${e.message}")
-        }
+        // 保留共享同步流程的兼容入口。包 110 必须沿用 init 缓存，重载模组不能覆写它。
     }
 
     override suspend fun refreshMenuAfterDisconnect() {
