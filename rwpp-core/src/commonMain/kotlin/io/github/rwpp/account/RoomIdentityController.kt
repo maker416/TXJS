@@ -19,6 +19,7 @@ import io.github.rwpp.event.EventPriority
 import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.events.DisconnectEvent
 import io.github.rwpp.game.GameRoom
+import io.github.rwpp.game.ConnectingPlayer
 import io.github.rwpp.game.Player
 import io.github.rwpp.logger
 import io.github.rwpp.net.Net
@@ -46,6 +47,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicInteger
 
 /** 房间内成员名片解析结果（点击成员 → 个人名片的数据源）。 */
 sealed interface RoomIdentityResult {
@@ -88,6 +90,7 @@ sealed interface RoomIdentityResult {
 object RoomIdentityController {
     /** 公示周期（服务端 TTL 90s，25s 心跳留有充足余量）。 */
     private const val PUBLISH_INTERVAL_MS = 25_000L
+    private const val PLAYER_PROFILE_TTL_MS = 30_000L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -120,6 +123,29 @@ object RoomIdentityController {
     private var stopJob: Job? = null
     private var eventsBound = false
     private val cardEpoch = AtomicLong()
+    private val prefetchMutex = Mutex()
+    private val playerAccountsLock = Any()
+
+    private data class PlayerAccountBinding(
+        val player: Player,
+        val connectionId: String,
+        val room: GameRoom,
+        val roomEpoch: Long,
+        val session: AccountSessionSnapshot,
+        val accountId: Long,
+        val username: String,
+        val refreshedAt: Long,
+    )
+
+    private val playerAccountBindings = mutableMapOf<String, PlayerAccountBinding>()
+    private val playerAvatarVersions = mutableStateMapOf<String, Int>()
+    private val avatarVersion = AtomicInteger()
+
+    /** 经唯一成员公示及账号 id 双重核验的公开资料，key 为 trim 后的玩家名。 */
+    val playerAccounts = mutableStateMapOf<String, PublicUser>()
+
+    /** 单调时钟；公开资料（含 hasAvatar）最多复用 30s，成员核验仍每轮执行。 */
+    internal var playerAccountClock: () -> Long = { System.nanoTime() / 1_000_000 }
 
     /**
      * 房内真人玩家的名片可用性（行尾「查看名片」按钮状态数据源），key 为 trim 后的玩家名：
@@ -127,6 +153,50 @@ object RoomIdentityController {
      * 无记录=未知（尚未查询或查询失败）。按钮只在 true 时点亮，其余状态点击仅提示原因。
      */
     val cardAvailability = mutableStateMapOf<String, Boolean>()
+
+    /**
+     * 组合侧只读缓存及玩家引用/连接标识，不重新扫描引擎列表。
+     * 调用方还须用其房间快照排除同名成员；本机头像直接使用 [AccountSession.user]。
+     */
+    fun playerAccountFor(player: Player, room: GameRoom): PublicUser? {
+        val session = AccountSession.sessionSnapshotOrNull() ?: return null
+        val name = player.name.trim()
+        val connectionId = player.connectHexId
+        return synchronized(playerAccountsLock) {
+            val binding = playerAccountBindings[name] ?: return@synchronized null
+            val user = playerAccounts[name] ?: return@synchronized null
+            user.takeIf {
+                !featureUnavailable && binding.roomEpoch == cardEpoch.get() && binding.session == session &&
+                    binding.room === room && binding.player === player && binding.connectionId == connectionId &&
+                    user.id == binding.accountId && user.username == binding.username
+            }
+        }
+    }
+
+    /** 仅公开资料实际刷新成功时抬高版本，避免远端覆盖上传的头像被 Coil 的同 id 缓存永久复用。 */
+    fun playerAvatarVersionFor(player: Player, room: GameRoom): Int {
+        if (playerAccountFor(player, room) == null) return 0
+        return synchronized(playerAccountsLock) { playerAvatarVersions[player.name.trim()] ?: 0 }
+    }
+
+    /** 登出/切号即作废迟到的公示查询，清除旧账号能读取到的房内资料。 */
+    internal fun onAccountInvalidated() {
+        cardEpoch.incrementAndGet()
+        clearPlayerAccounts()
+        cardAvailability.clear()
+    }
+
+    private fun clearPlayerAccounts() = synchronized(playerAccountsLock) {
+        playerAccounts.clear()
+        playerAccountBindings.clear()
+        playerAvatarVersions.clear()
+    }
+
+    private fun removePlayerAccount(name: String) = synchronized(playerAccountsLock) {
+        playerAccounts.remove(name)
+        playerAccountBindings.remove(name)
+        playerAvatarVersions.remove(name)
+    }
 
     /** 订阅断线事件：离房即停止公示并撤销记录（与 [io.github.rwpp.core.ModSyncController.init] 同款 MONITOR 订阅）。 */
     fun init() {
@@ -153,6 +223,7 @@ object RoomIdentityController {
         roomKeys = prioritizeIdentityKeys(keys)
         // 新房清空上一房间的可用性标记，避免旧房同名玩家的缓存误导按钮状态
         cardAvailability.clear()
+        clearPlayerAccounts()
         logger.info("[ROOMID] 进房候选 key：$roomKeys（玩家名 $playerName）")
     }
 
@@ -207,6 +278,7 @@ object RoomIdentityController {
         publishJob = null
         playerName = ""
         cardAvailability.clear()
+        clearPlayerAccounts()
         val keys = roomKeys
         roomKeys = emptyList()
         if (keys.isEmpty() && stoppedPublish == null) return stopJob
@@ -247,6 +319,7 @@ object RoomIdentityController {
             }
         } catch (e: RoomIdFeatureUnavailableException) {
             featureUnavailable = true
+            clearPlayerAccounts()
             RoomIdentityResult.FeatureUnavailable
         } catch (e: RoomIdUnauthorizedException) {
             RoomIdentityResult.Error(e.message ?: "unauthorized")
@@ -262,49 +335,143 @@ object RoomIdentityController {
      * 由房间视图的周期循环调用；单个玩家查询失败保持未知（下轮再试），不做整批失败处理。
      * 自己永远可打开名片（[resolvePlayer] 返回 Self），不参与预取。
      */
-    suspend fun prefetchPlayerCards(room: GameRoom) {
+    suspend fun prefetchPlayerCards(room: GameRoom) = prefetchMutex.withLock {
         val epoch = cardEpoch.get()
         val self = room.localPlayer
-        val names = room.getPlayers()
-            .filter { !it.isAI && it != self && !ListDetectorPlayers.isDetector(it.name) }
-            .map { it.name.trim() }
-            .filter { it.isNotEmpty() }
-            .toSet()
+        val members = room.getPlayers().groupBy { it.name.trim() }
+        fun isCardPlayer(player: Player): Boolean =
+            !player.isAI && player != self && !ListDetectorPlayers.isDetector(player.name)
+        // 名片沿用按名字查询的既有行为；多候选仍可打开歧义说明，头像另行要求唯一归属。
+        val names = members.filter { (name, candidates) -> name.isNotEmpty() && candidates.any(::isCardPlayer) }.keys
+        // 公示按玩家名查询，任何本地同名冲突（含自己/AI）都不能唯一归属一个连接。
+        val players = members.filter { (name, candidates) -> name.isNotEmpty() && candidates.size == 1 }
+            .mapValues { it.value.single() }
+            .filterValues { !it.isAI && it !== self && it !== ConnectingPlayer && !ListDetectorPlayers.isDetector(it.name) }
         // 清理已离房玩家的标记
         cardAvailability.keys.filter { it !in names }.forEach { cardAvailability.remove(it) }
+        val session = AccountSession.sessionSnapshotOrNull()
+        synchronized(playerAccountsLock) {
+            playerAccountBindings.keys.toList().forEach { name ->
+                val binding = playerAccountBindings.getValue(name)
+                val player = players[name]
+                if (player == null || binding.roomEpoch != epoch || binding.room !== room || binding.session != session ||
+                    binding.player !== player || binding.connectionId != player.connectHexId
+                ) {
+                    playerAccountBindings.remove(name)
+                    playerAccounts.remove(name)
+                    playerAvatarVersions.remove(name)
+                }
+            }
+        }
         // 未登录 / 功能降级时不做判定：按钮保持可点，由名片弹窗解释全局状态（去登录 / 服务端未升级）
-        if (!AccountSession.loggedIn || !AccountSession.networkEnabled || featureUnavailable) return
+        if (session == null || featureUnavailable) {
+            clearPlayerAccounts()
+            cardAvailability.clear()
+            return@withLock
+        }
         val keys = roomKeys
         if (keys.isEmpty()) {
             // 同 resolvePlayer 口径：本端无 key 即双方都不可能查到，全部按获取不到处理
             names.forEach { cardAvailability[it] = false }
-            return
+            clearPlayerAccounts()
+            return@withLock
         }
         val client = newClient()
         val appKey = resolveAppKey()
-        val session = AccountSession.sessionSnapshotOrNull() ?: return
         val token = session.token
+        fun sessionCurrent(): Boolean = epoch == cardEpoch.get() && AccountSession.networkEnabled &&
+            AccountSession.isCurrentSession(session) && !featureUnavailable
+        fun stillCurrent(name: String, player: Player, connectionId: String): Boolean {
+            if (!sessionCurrent()) return false
+            // 请求发起后成员可能离开、同名重进或改名；此检查在预取任务执行，不在组合中扫引擎。
+            val current = room.getPlayers().filter { it.name.trim() == name }
+            return current.size == 1 && current.single() === player && player.connectHexId == connectionId
+        }
         for (name in names) {
+            if (!sessionCurrent()) return@withLock
+            val player = players[name]
+            val connectionId = player?.connectHexId
             val entries = try {
                 client.lookup(keys, name, appKey, token)
             } catch (e: RoomIdFeatureUnavailableException) {
-                featureUnavailable = true
-                return
+                if (epoch == cardEpoch.get() && AccountSession.isCurrentSession(session)) {
+                    featureUnavailable = true
+                    clearPlayerAccounts()
+                    cardAvailability.clear()
+                }
+                return@withLock
             } catch (e: CancellationException) {
+                if (epoch == cardEpoch.get()) removePlayerAccount(name)
                 throw e
             } catch (e: Exception) {
                 // 网络错误等：该玩家保持未知（按钮可点），下一轮再试
+                if (!sessionCurrent()) return@withLock
+                if (epoch == cardEpoch.get()) {
+                    removePlayerAccount(name)
+                    cardAvailability.remove(name)
+                }
                 continue
             }
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
-            if (epoch != cardEpoch.get() || !AccountSession.isCurrentSession(session)) return
+            if (!sessionCurrent()) return@withLock
+            val currentMembers = room.getPlayers().filter { it.name.trim() == name }
+            if (currentMembers.none(::isCardPlayer)) {
+                if (epoch == cardEpoch.get()) {
+                    removePlayerAccount(name)
+                    cardAvailability.remove(name)
+                }
+                continue
+            }
             cardAvailability[name] = entries.isNotEmpty()
+            if (player == null || connectionId == null || currentMembers.size != 1 ||
+                currentMembers.single() !== player || player.connectHexId != connectionId
+            ) {
+                removePlayerAccount(name)
+                continue
+            }
+            val entry = entries.singleOrNull()
+            if (entry == null || entry.userId <= 0 || entry.username.isBlank()) {
+                removePlayerAccount(name)
+                continue
+            }
+            val now = playerAccountClock()
+            val cached = synchronized(playerAccountsLock) {
+                playerAccountBindings[name]?.takeIf {
+                    it.player === player && it.connectionId == connectionId && it.room === room &&
+                        it.roomEpoch == epoch && it.session == session && it.accountId == entry.userId &&
+                        it.username == entry.username && now - it.refreshedAt in 0L until PLAYER_PROFILE_TTL_MS
+                }?.let { playerAccounts[name] }
+            }
+            if (cached != null) continue
+            // 过期/身份变化后不能在新请求失败时继续显示旧头像。
+            removePlayerAccount(name)
+            val user = try {
+                AccountSession.client().lookup(token, entry.username)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (!sessionCurrent()) return@withLock
+                continue
+            }
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if (!sessionCurrent()) return@withLock
+            if (!stillCurrent(name, player, connectionId)) continue
+            // 必须以服务端公示的稳定账号 id 校验公开资料，禁止按昵称猜测账号。
+            if (user.id != entry.userId || user.username != entry.username) continue
+            synchronized(playerAccountsLock) {
+                if (epoch == cardEpoch.get()) {
+                    playerAccountBindings[name] = PlayerAccountBinding(player, connectionId, room, epoch,
+                        session, user.id, user.username, playerAccountClock())
+                    playerAccounts[name] = user
+                    playerAvatarVersions[name] = avatarVersion.incrementAndGet()
+                }
+            }
         }
     }
 
     /** 单条命中：UAS lookup 拿 [PublicUser]，presence 拿在线状态（失败按离线）。 */
     private suspend fun enrich(entry: RoomIdEntry): Pair<PublicUser, Boolean>? {
-        val user = lookupUser(entry.username) ?: return null
+        val user = lookupUser(entry.username)?.takeIf { it.id == entry.userId } ?: return null
         val online = runCatching {
             AccountSession.client().getPresence(AccountSession.requireToken(), user.id).online
         }.getOrDefault(false)
@@ -378,6 +545,7 @@ object RoomIdentityController {
             false
         } catch (e: RoomIdFeatureUnavailableException) {
             featureUnavailable = true
+            clearPlayerAccounts()
             logger.warn("[ROOMID] 服务端未提供经过房间成员核验的身份公示功能")
             false
         } catch (e: CancellationException) {
@@ -394,6 +562,7 @@ object RoomIdentityController {
             publishedIdentity = null
             clientOverride = null
             featureUnavailable = false
+            playerAccountClock = { System.nanoTime() / 1_000_000 }
         }
     }
 

@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.ripple.RippleAlpha
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
@@ -404,6 +405,7 @@ fun RowScope.TableCell(
     modifier: Modifier = Modifier,
     strokeColor: Color = MaterialTheme.colorScheme.primaryContainer,
     fontWeight: FontWeight? = null,
+    verticalAlignment: Alignment.Vertical = Alignment.Top,
     iconLeader: (@Composable () -> Unit)? = null,
 ) {
     val border = if(drawStroke) Modifier.border(0.5f.dp, strokeColor) else Modifier
@@ -412,6 +414,7 @@ fun RowScope.TableCell(
     val textStyle = fontWeight?.let { baseStyle.copy(fontWeight = it) } ?: baseStyle
     Row(
         horizontalArrangement = Arrangement.Center,
+        verticalAlignment = verticalAlignment,
         modifier = Modifier
             .weight(weight)
             .then(border)

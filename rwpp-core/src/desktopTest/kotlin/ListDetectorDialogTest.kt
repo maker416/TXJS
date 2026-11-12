@@ -94,13 +94,15 @@ class ListDetectorDialogTest {
                 "getColor", "getStartingUnit" -> -1
                 "getSpawnPoint", "getTeam" -> 1
                 "getPing" -> "-"
-                "isAI", "isSpectator" -> false
+                "isAI", "isSpectator", "isRoomHost" -> false
                 else -> error("Unexpected probe call: $it")
             }
         }
+        val local = stub(Player::class.java) { error("Unexpected local player call: $it") }
         val room = stub(GameRoom::class.java) {
             when (it) {
                 "isHost" -> true
+                "getLocalPlayer" -> local
                 else -> error("Unexpected room call: $it")
             }
         }
