@@ -35,6 +35,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -60,6 +61,7 @@ import io.github.rwpp.game.map.browseReplays
 import io.github.rwpp.game.map.formatReplayFileTime
 import io.github.rwpp.game.map.replayBrowseFacets
 import io.github.rwpp.game.map.replayImportDestination
+import io.github.rwpp.game.map.scanReplayFiles
 import io.github.rwpp.game.map.toReplayBrowseItem
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
@@ -80,6 +82,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
+
+private data class ReplayPageFiles(
+    val items: List<ReplayBrowseItem>,
+    val facets: ReplayBrowseFacets,
+)
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
@@ -107,12 +114,13 @@ fun ReplaysViewDialog(
     var version by rememberSaveable { mutableStateOf<String?>(null) }
     var unknownVersion by rememberSaveable { mutableStateOf(false) }
     var collapsedGroups by remember { mutableStateOf(setOf<String>()) }
-    var allReplays by remember { mutableStateOf(game.getAllReplays()) }
+    val fileLoad = rememberPageFileLoadState<ReplayPageFiles>()
     var importProgress by remember { mutableStateOf<ReplayImportProgress?>(null) }
     var pendingOverwrite by remember { mutableStateOf<File?>(null) }
     var suppressPrepareProgress by remember { mutableStateOf(false) }
-    val browseItems = remember(allReplays) { allReplays.map(::toReplayBrowseItem) }
-    val facets = remember(browseItems) { replayBrowseFacets(browseItems) }
+    val browseItems = fileLoad.value?.items.orEmpty()
+    val emptyFacets = remember { replayBrowseFacets(emptyList()) }
+    val facets = fileLoad.value?.facets ?: emptyFacets
     val query = ReplayBrowseQuery(
         text = filter,
         sort = sort,
@@ -130,9 +138,18 @@ fun ReplaysViewDialog(
         runCatching { configIO.getGameConfig<Boolean>("saveMultiplayerReplays") }.getOrDefault(true)
     }
 
-    fun refresh() {
-        allReplays = game.getAllReplays()
+    suspend fun refresh() {
+        fileLoad.load {
+            // Both platform Game implementations use this same file-only listing. Keep engine
+            // entry points (especially Android watchReplay) on the original caller thread.
+            val items = scanReplayFiles().mapIndexed { index, file ->
+                toReplayBrowseItem(file.toReplay(index))
+            }
+            ReplayPageFiles(items, replayBrowseFacets(items))
+        }
     }
+
+    LaunchedEffect(Unit) { refresh() }
 
     fun updateFileChooseProgress(progress: FileChooseProgress) {
         if (suppressPrepareProgress || pendingOverwrite != null) return
@@ -146,7 +163,7 @@ fun ReplaysViewDialog(
     }
 
     fun importReplayFile(file: File, overwrite: Boolean = false) {
-        if (importProgress?.stage == ReplayImportStage.Importing) return
+        if (!fileLoad.isReady || importProgress?.stage == ReplayImportStage.Importing) return
         // 先不清 importProgress：让 Preparing 进度保持显示，直到协程内切换为 Importing，避免弹窗闪烁；
         // suppress 仅用于挡住文件选择器 onProgress 的迟到回调。
         suppressPrepareProgress = true
@@ -362,6 +379,7 @@ fun ReplaysViewDialog(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     FilterChip(
+                        enabled = fileLoad.isReady,
                         selected = query.hasNarrowingFilters() || groupBy != ReplayGroupBy.None,
                         onClick = { showFilters = true },
                         leadingIcon = {
@@ -380,10 +398,10 @@ fun ReplaysViewDialog(
 
                     RWIconButton(
                         painterResource(Res.drawable.file_open),
-                        modifier = Modifier.padding(top = 4.dp),
+                        modifier = Modifier.padding(top = 4.dp).alpha(if (fileLoad.isReady) 1f else 0.5f),
                         size = 44.dp,
                     ) {
-                        if (importProgress != null || pendingOverwrite != null) return@RWIconButton
+                        if (!fileLoad.isReady || importProgress != null || pendingOverwrite != null) return@RWIconButton
                         suppressPrepareProgress = false
                         appKoin.get<ExternalHandler>().openFileChooser(
                             onProgress = { updateFileChooseProgress(it) },
@@ -392,10 +410,11 @@ fun ReplaysViewDialog(
 
                     RWIconButton(
                         Icons.Default.Refresh,
-                        modifier = Modifier.padding(top = 4.dp),
+                        modifier = Modifier.padding(top = 4.dp).alpha(if (fileLoad.isReady) 1f else 0.5f),
                         size = 44.dp,
                     ) {
-                        refresh()
+                        if (!fileLoad.isReady || importProgress != null || pendingOverwrite != null) return@RWIconButton
+                        scope.launch { refresh() }
                     }
                 }
 
@@ -413,7 +432,14 @@ fun ReplaysViewDialog(
 
                 LargeDividingLine { 0.dp }
 
-                if (sections.isEmpty()) {
+                if (!fileLoad.isReady) {
+                    PageFileLoading(
+                        state = fileLoad,
+                        pageTitle = readI18n("replays.title"),
+                        onRetry = { scope.launch { refresh() } },
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                    )
+                } else if (sections.isEmpty()) {
                     Box(
                         modifier = Modifier
                             .weight(1f)
@@ -422,7 +448,7 @@ fun ReplaysViewDialog(
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            if (query.hasNarrowingFilters() || allReplays.isNotEmpty()) {
+                            if (query.hasNarrowingFilters() || browseItems.isNotEmpty()) {
                                 readI18n("replays.emptyFiltered")
                             } else {
                                 readI18n("replays.empty")

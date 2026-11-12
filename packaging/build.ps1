@@ -11,9 +11,10 @@ https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
 .DESCRIPTION
     在项目根目录调用 gradlew 执行构建，并在成功后把产物收集到 build\artifacts\<子目录> 下。
     支持交互式菜单与命令行参数两种方式。
+    每次启动脚本立即将根版本号 +0.0.1，重试及菜单内后续操作共用新版本。
 
 .PARAMETER Target
-    构建目标。可选：desktop / installer / test / android-debug / android-release / browser-kernels / clean
+    构建目标。可选：desktop / installer / release-all / test / android-debug / android-release / browser-kernels / clean
     省略时进入交互式菜单。
 
 .PARAMETER Channel
@@ -43,6 +44,7 @@ https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
     .\build.ps1                 # 打开交互式菜单
     .\build.ps1 desktop         # 构建桌面端 fat jar
     .\build.ps1 installer             # 构建 Windows Inno Setup 安装包
+    .\build.ps1 release-all -Channel official   # 一键打包 PC 安装包和 Android Release APK
     .\build.ps1 clean           # 受保护的 Gradle clean
     .\build.ps1 android-release -Channel tt_ad   # 构建 tt_ad 渠道的 Release APK
 #>
@@ -94,6 +96,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'update-packages.ps1')
 . (Join-Path $PSScriptRoot 'inno/payload.ps1')
 . (Join-Path $PSScriptRoot 'windows-environment.ps1')
+. (Join-Path $PSScriptRoot 'project-version.ps1')
 
 # 统一控制台输出为 UTF-8，保证中文正常显示
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
@@ -158,6 +161,13 @@ $Script:Targets = [ordered]@{
         Subdir        = 'android-release'
         Collect       = 'android-release'
         Aliases       = @('5', 'release', 'apk-release')
+    }
+    'release-all' = @{
+        Name          = 'PC installer + Android Release APK'
+        Tasks         = @(':rwpp-desktop:packageInnoDistribution', ':rwpp-android:assembleRelease')
+        Subdir        = $null
+        Members       = @('installer', 'android-release')
+        Aliases       = @('8', 'all-release')
     }
     'clean' = @{
         Name          = 'Safe clean'
@@ -293,6 +303,10 @@ function Show-Menu {
     Write-Host '      Task:   browserKernels'
     Write-Host '      Output: build\artifacts\browser-kernels\'
     Write-Host ''
+    Write-Host '  [8] 一键打包 PC + Android 发行版（同一版本、同一渠道）'
+    Write-Host '      Tasks:  :rwpp-desktop:packageInnoDistribution :rwpp-android:assembleRelease'
+    Write-Host '      Output: build\artifacts\installer-<渠道>\ + android-release-<渠道>\'
+    Write-Host ''
     Write-Host '  [H] Help    [0] Exit'
     Write-Host ''
     Write-Host '------------------------------------------------------------'
@@ -304,6 +318,7 @@ function Show-Usage {
     Write-Host '  build.ps1                 打开交互式菜单'
     Write-Host '  build.ps1 desktop         构建桌面端 fat jar'
     Write-Host '  build.ps1 installer       构建 Windows Inno Setup 安装包'
+    Write-Host '  build.ps1 release-all     一键打包 PC 安装包和 Android Release APK'
     Write-Host '  build.ps1 test            运行核心测试'
     Write-Host '  build.ps1 android-debug   构建 Android Debug APK'
     Write-Host '  build.ps1 android-release 构建 Android Release APK'
@@ -322,6 +337,7 @@ function Show-Usage {
     Write-Host '  -GeckoComponentVersion / -JcefComponentVersion 覆盖浏览器组件独立版本（如 1.0.0）'
     Write-Host '  desktop, jar, fatjar'
     Write-Host '  installer, inno, setup'
+    Write-Host '  release-all, all-release (菜单 8)'
     Write-Host '  test, tests'
     Write-Host '  android-debug, debug, apk-debug'
     Write-Host '  android-release, release, apk-release'
@@ -335,6 +351,8 @@ function Show-Usage {
     Write-Host '  - -GameArchive <原版.zip> 指定 PC 原版资源；也可设置 RW_GAME_ARCHIVE。'
     Write-Host '  - 构建目标不会自动执行 clean。'
     Write-Host '  - 需要清理时单独运行 clean 目标。'
+    Write-Host '  - 每次启动脚本立即将根版本号 +0.0.1；转调、重试及菜单内后续操作不重复递增。'
+    Write-Host '  - 打开菜单、查看帮助、环境检查、测试、清理也会递增；失败或退出不回退版本。'
     Write-Host '  - clean 前会校验 build.gradle.kts 中的根目录保护规则。'
 }
 
@@ -343,6 +361,13 @@ function Show-Usage {
 # ---------------------------------------------------------------------------
 function Test-Preflight ([string]$Key) {
     $def = $Targets[$Key]
+
+    if ($def.Members) {
+        foreach ($member in $def.Members) {
+            if (-not (Test-Preflight $member)) { return $false }
+        }
+        return $true
+    }
 
     if ($Key -eq 'installer') {
         try {
@@ -431,14 +456,17 @@ function Invoke-Target ([string]$Key) {
     if (-not (Read-Channel $Key)) { return 1 }
     if (-not (Test-Preflight $Key)) { return 1 }
 
-    $outputSubdir = Get-OutputSubdir $Key
     Write-Host ''
     Write-Host '------------------------------------------------------------'
     Write-Host "  Target:  $($def.Name)"
     Write-Host "  Version: $Version"
     if ($NoChannelTargets -notcontains $Key) { Write-Host "  Channel: $($Script:Channel)" }
     Write-Host "  Tasks:   $($def.Tasks -join ' ')"
-    if ($outputSubdir) { Write-Host "  Output:  build\artifacts\$outputSubdir\" }
+    $outputTargets = if ($def.Members) { $def.Members } else { @($Key) }
+    foreach ($outputTarget in $outputTargets) {
+        $outputSubdir = Get-OutputSubdir $outputTarget
+        if ($outputSubdir) { Write-Host "  Output:  build\artifacts\$outputSubdir\" }
+    }
     Write-Host '------------------------------------------------------------'
     Write-Host ''
     if ($Key -eq 'clean') {
@@ -518,6 +546,10 @@ function Write-BuildInfo ([string]$Dest, [string]$Key) {
 
 function Invoke-CollectArtifacts ([string]$Key) {
     $def = $Targets[$Key]
+    if ($def.Members) {
+        foreach ($member in $def.Members) { Invoke-CollectArtifacts $member }
+        return
+    }
     Write-Host ''
     Write-Step '正在收集产物到 build\artifacts\ ...'
 
@@ -621,17 +653,19 @@ function Copy-TestReports ([string]$Key) {
 }
 
 function Copy-Apk ([string]$Key, [string]$RelDir, [string]$BaseName) {
-    $dest = Reset-Destination (Get-OutputSubdir $Key)
     $full = Join-Path $RootDir $RelDir
     $apks = @()
     if (Test-Path -LiteralPath $full) {
         $apks = Get-ChildItem -LiteralPath $full -Filter '*.apk' -File -ErrorAction SilentlyContinue
     }
     if ($apks.Count -eq 0) {
-        Write-Warn "未找到 APK，请检查 $RelDir\。"
-        return
+        throw "未找到 APK，请检查 $RelDir\。"
     }
     if ($apks.Count -ne 1) { throw "Expected one universal APK; found $($apks.Count) in $RelDir" }
+    if ($Key -eq 'android-release' -and $apks[0].Name -match 'unsigned') {
+        throw 'Release APK 未签名，不能作为发行版收集。'
+    }
+    $dest = Reset-Destination (Get-OutputSubdir $Key)
     foreach ($apk in $apks) {
         Copy-Item -LiteralPath $apk.FullName -Destination (Join-Path $dest "$BaseName-$Version.apk") -Force
         Copy-Item -LiteralPath $apk.FullName -Destination (Join-Path $dest $apk.Name) -Force
@@ -659,8 +693,15 @@ function Test-ProtectedFiles {
 # 主流程
 # ---------------------------------------------------------------------------
 function Invoke-Main {
+    try {
+        $change = Update-RwProjectVersion $RootDir
+        $Script:Version = $change.Current
+        Write-Info "客户端版本: $($change.Previous) -> $Version（已写入 build.gradle.kts）"
+    } catch {
+        Write-Err "版本号递增失败: $($_.Exception.Message)"
+        return 1
+    }
     if (-not (Initialize-Environment)) { return 1 }
-    Read-ProjectVersion
 
     if (-not [string]::IsNullOrWhiteSpace($Channel)) {
         $Script:Channel = $Channel.Trim()
@@ -693,7 +734,7 @@ function Invoke-Main {
     # 交互式菜单模式
     while ($true) {
         Show-Menu
-        $choice = Read-Host 'Select [0-7/H]'
+        $choice = Read-Host 'Select [0-8/H]'
         if ([string]::IsNullOrWhiteSpace($choice)) { continue }
 
         switch -Regex ($choice.Trim().ToLowerInvariant()) {

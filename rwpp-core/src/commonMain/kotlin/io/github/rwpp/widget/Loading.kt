@@ -397,7 +397,7 @@ internal fun String.toStructuredLoadingMessage(): StructuredLoadingMessage? {
 }
 
 @Composable
-internal fun ProtectedModLoadNotice(
+fun ProtectedModLoadNotice(
     loadingText: String,
     darkSplash: Boolean = false,
 ) {

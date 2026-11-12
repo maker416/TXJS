@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -89,10 +90,7 @@ class MatchStartLoadingWindowTest {
                     setLocationRelativeTo(null)
                 }
                 owner = frame
-                if (useOverlay) launcherOverlay = DesktopLauncherOverlay(launcher, host, frame)
-                launcherWindow = SwingUtilities.getWindowAncestor(launcher)
-                switcher = DisplaySwitcher(launcher, canvas, host, cards, frame, launcherOverlay = launcherOverlay)
-                launcher.setContent {
+                val content: @Composable () -> Unit = {
                     // 在当前重组作用域读取，SideEffect 才能确认这一轮可见状态已提交。
                     val currentLoading = loading
                     MaterialTheme {
@@ -102,13 +100,17 @@ class MatchStartLoadingWindowTest {
                     }
                     SideEffect { composed.set(currentLoading) }
                 }
+                launcher.setContent(content)
+                if (useOverlay) launcherOverlay = DesktopLauncherOverlay(launcher, host, frame, nativeContent = content)
+                switcher = DisplaySwitcher(launcher, canvas, host, cards, frame, launcherOverlay = launcherOverlay)
                 frame.isVisible = true
                 launcherOverlay?.showMenu()
+                launcherWindow = SwingUtilities.getWindowAncestor(launcherOverlay?.contentComponent ?: launcher)
                 attempt = gate.beginLoading()!!
                 loading = true
             }
             await("loading overlay") {
-                launcher.isShowing && composed.get()
+                (launcherOverlay?.contentComponent ?: launcher).isShowing && composed.get()
             }
             // 让原生弹层有机会实际显示，再复现 production 的「先切画面、再 commit」顺序。
             onEdt {
@@ -118,7 +120,7 @@ class MatchStartLoadingWindowTest {
                 loading = gate.busy
                 assertEquals(MatchStartGate.Phase.RUNNING, gate.state.value.phase)
                 assertTrue(canvas.isShowing)
-                assertFalse(launcher.isShowing)
+                assertFalse((launcherOverlay?.contentComponent ?: launcher).isShowing)
             }
             onEdt {
                 assertEquals(mode, started)
@@ -127,7 +129,7 @@ class MatchStartLoadingWindowTest {
                 switcher.switchTo(DisplayMode.Menu)
             }
             await("return to launcher") {
-                launcher.isShowing && !composed.get() &&
+                (launcherOverlay?.contentComponent ?: launcher).isShowing && !composed.get() &&
                     descendantWindows(frame).filter { it !== launcherWindow }.none { it.isVisible }
             }
         } finally {

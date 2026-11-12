@@ -56,6 +56,8 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
@@ -117,6 +119,9 @@ import io.github.rwpp.projectVersion
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.group_30
 import io.github.rwpp.scripts.Render
+import io.github.rwpp.theme.ArtThemeController
+import io.github.rwpp.theme.RoomPlayerSpec
+import io.github.rwpp.theme.RoomProfileSpec
 import io.github.rwpp.ui.UI.chatMessages
 import io.github.rwpp.ui.color.getTeamColor
 import io.github.rwpp.widget.*
@@ -802,7 +807,8 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                 )
             }
 
-            Box(modifier = roomSurfaceModifier) {
+            Box(modifier = roomSurfaceModifier.testTag("room-view-root")) {
+                RoomThemeBackground(Modifier.matchParentSize())
                 ExitButton(onExit)
                 Column(
                     modifier = Modifier
@@ -959,6 +965,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 
                         if (!isSandboxGame) {
                             CompactRoomPanel(
+                                id = "chat",
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .heightIn(min = CompactChatPanelMinHeight),
@@ -989,8 +996,9 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
             return
         }
 
-        BorderCard(modifier = roomSurfaceModifier) {
+        BorderCard(modifier = roomSurfaceModifier.testTag("room-view-root")) {
             Box {
+                RoomThemeBackground(Modifier.matchParentSize())
                 ExitButton(onExit)
                 Column {
                     ModSyncHostStatusBar(
@@ -1005,7 +1013,8 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                     Column(modifier = Modifier.fillMaxWidth().weight(1f)) {
                         Row(modifier = Modifier.fillMaxWidth()) {
                             val mapType = snapshot.mapType
-                            BorderCard(
+                            RoomThemeCard(
+                                id = "map",
                                 modifier = Modifier
                                     .weight(.48f)
                                     .padding(10.dp),
@@ -1045,7 +1054,8 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                 else*/ Modifier
                                 ),
                             ) {
-                                BorderCard(
+                                RoomThemeCard(
+                                    id = "players",
                                     modifier = Modifier.fillMaxWidth()
                                         .defaultMinSize(minHeight = 200.dp).padding(5.dp),
                                     backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(
@@ -1095,7 +1105,8 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                         }
                     }
 
-                    BorderCard(
+                    RoomThemeCard(
+                        id = "actions",
                         modifier = Modifier
                             .weight(1f)
                             .padding(10.dp),
@@ -1109,7 +1120,8 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
-                                RWTextButton(
+                                RoomThemeTextButton(
+                                    id = "changeSite",
                                     readI18n("multiplayer.room.changeSite") + if (isDesktop) "(C)" else "",
                                     modifier = Modifier.padding(
                                         horizontal = 5.dp,
@@ -1122,7 +1134,8 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                     }
                                 }
                                 if (isHost) {
-                                    RWTextButton(
+                                    RoomThemeTextButton(
+                                        id = "addAI",
                                         readI18n("multiplayer.room.addAI") + if (isDesktop) "(A)" else "",
                                         modifier = Modifier.padding(
                                             horizontal = 5.dp,
@@ -1136,6 +1149,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                 if (!isSandboxGame) {
                                     // 锁房开关：成员视角为只读状态展示（enabled = isHost，无阴影降透明度）
                                     RoomToggleChip(
+                                        id = "lockRoom",
                                         label = readI18n("multiplayer.room.lockRoom", I18nType.RWPP),
                                         checked = isLocked,
                                         checkedColor = Color(237, 112, 20),
@@ -1155,6 +1169,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                 if (!isSandboxGame && isHost) {
                                     // 房主邀请策略开关：禁止后广播控制消息，成员端隐藏邀请入口
                                     RoomToggleChip(
+                                        id = "memberInvites",
                                         label = readI18n("multiplayer.room.memberInvites", I18nType.RWPP),
                                         checked = RoomInvitePolicy.membersCanInvite,
                                         onClick = {
@@ -1173,7 +1188,8 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                 }
 
                                 if (!isSandboxGame && canInvite) {
-                                    RWTextButton(
+                                    RoomThemeTextButton(
+                                        id = "invite",
                                         readI18n("multiplayer.room.invite", I18nType.RWPP),
                                         modifier = Modifier.padding(
                                             horizontal = 5.dp,
@@ -1194,7 +1210,8 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                             }
 
                             if (!isSandboxGame) {
-                                BorderCard(
+                                RoomThemeCard(
+                                    id = "chat",
                                     modifier = Modifier.padding(5.dp),
                                     backgroundColor = MaterialTheme.colorScheme.surface.copy(.7f),
                                 ) {
@@ -2518,6 +2535,7 @@ internal fun CompactPlayerPanel(
 ) {
     val playerListKeys = remember { RoomPlayerKeyStore() }.keysFor(players)
     CompactRoomPanel(
+        id = "players",
         modifier = modifier
             .then(
                 if (expandVertically) {
@@ -2619,6 +2637,7 @@ private fun CompactMapSettingsPanel(
     modifier: Modifier = Modifier,
 ) {
     CompactRoomPanel(
+        id = "map",
         modifier = if (expandVertically) {
             modifier.fillMaxHeight()
         } else {
@@ -2654,90 +2673,102 @@ private fun CompactMapSettingsPanel(
                     .height(CompactMapPreviewHeight)
             },
         )
-        if (!isSandboxGame && isHost) {
-            // 房间管理开关条：锁房 + 成员邀请。设置项式布局（图标 + 功能名 + 尾部开关指示），
-            // 与下方操作按钮同款的按钮外观明确可点击；开关位置/颜色即当前状态
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                RoomToggleChip(
-                    label = readI18n("multiplayer.room.lockRoom", I18nType.RWPP),
-                    checked = isLocked,
-                    checkedColor = Color(237, 112, 20),
-                    onClick = onLockToggle,
-                    compact = true,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(Icons.Default.Lock, null, modifier = Modifier.size(14.dp))
-                }
-                RoomToggleChip(
-                    label = readI18n("multiplayer.room.memberInvites", I18nType.RWPP),
-                    checked = membersCanInvite,
-                    onClick = onInvitePolicyToggle,
-                    compact = true,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(painterResource(Res.drawable.group_30), null, modifier = Modifier.size(14.dp))
-                }
-            }
-        }
-        if (isHost) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .wrapContentHeight(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
+        RoomThemeContentColor(roomThemeSpec().panels["actions"]?.contentColor.orEmpty()) {
+            if (!isSandboxGame && isHost) {
+                // 房间管理开关条：锁房 + 成员邀请。设置项式布局（图标 + 功能名 + 尾部开关指示），
+                // 与下方操作按钮同款的按钮外观明确可点击；开关位置/颜色即当前状态
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .roomThemePanelDecoration("actions", "room-actions-toggles")
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    CompactRoomTextButton(
-                        readI18n("multiplayer.room.option") + if (isDesktop) "(O)" else "",
-                        modifier = Modifier
-                            .weight(1f)
-                            .defaultMinSize(minHeight = CompactHostButtonMinHeight),
-                        onClick = onOption,
-                    )
-                    CompactRoomTextButton(
-                        readI18n("multiplayer.room.start"),
-                        modifier = Modifier
-                            .weight(1f)
-                            .defaultMinSize(minHeight = CompactHostButtonMinHeight),
-                        onClick = onStart,
-                    )
-                    CompactRoomTextButton(
-                        readI18n("multiplayer.room.addAI") + if (isDesktop) "(A)" else "",
-                        modifier = Modifier
-                            .weight(1f)
-                            .defaultMinSize(minHeight = CompactHostButtonMinHeight),
-                        onLongClick = onAddAIMany,
-                        onClick = onAddAI,
-                    )
-                }
-                if (showPublishButton) {
-                    CompactRoomTextButton(
-                        readI18n("multiplayer.room.publishToList"),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .defaultMinSize(minHeight = CompactHostButtonMinHeight),
-                        onClick = onPublish,
-                    )
+                    RoomToggleChip(
+                        id = "lockRoom",
+                        label = readI18n("multiplayer.room.lockRoom", I18nType.RWPP),
+                        checked = isLocked,
+                        checkedColor = Color(237, 112, 20),
+                        onClick = onLockToggle,
+                        compact = true,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(Icons.Default.Lock, null, modifier = Modifier.size(14.dp))
+                    }
+                    RoomToggleChip(
+                        id = "memberInvites",
+                        label = readI18n("multiplayer.room.memberInvites", I18nType.RWPP),
+                        checked = membersCanInvite,
+                        onClick = onInvitePolicyToggle,
+                        compact = true,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(painterResource(Res.drawable.group_30), null, modifier = Modifier.size(14.dp))
+                    }
                 }
             }
-        } else {
-            // 加入者入口：只读查看房间设置
-            CompactRoomTextButton(
-                readI18n("multiplayer.room.viewOption") + if (isDesktop) "(O)" else "",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .defaultMinSize(minHeight = CompactHostButtonMinHeight),
-                onClick = onOption,
-            )
+            if (isHost) {
+                Column(
+                    modifier = Modifier
+                        .roomThemePanelDecoration("actions")
+                        .fillMaxWidth()
+                        .wrapContentHeight(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        CompactRoomTextButton(
+                            id = "options",
+                            readI18n("multiplayer.room.option") + if (isDesktop) "(O)" else "",
+                            modifier = Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = CompactHostButtonMinHeight),
+                            onClick = onOption,
+                        )
+                        CompactRoomTextButton(
+                            id = "start",
+                            readI18n("multiplayer.room.start"),
+                            modifier = Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = CompactHostButtonMinHeight),
+                            onClick = onStart,
+                        )
+                        CompactRoomTextButton(
+                            id = "addAI",
+                            readI18n("multiplayer.room.addAI") + if (isDesktop) "(A)" else "",
+                            modifier = Modifier
+                                .weight(1f)
+                                .defaultMinSize(minHeight = CompactHostButtonMinHeight),
+                            onLongClick = onAddAIMany,
+                            onClick = onAddAI,
+                        )
+                    }
+                    if (showPublishButton) {
+                        CompactRoomTextButton(
+                            id = "publish",
+                            readI18n("multiplayer.room.publishToList"),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .defaultMinSize(minHeight = CompactHostButtonMinHeight),
+                            onClick = onPublish,
+                        )
+                    }
+                }
+            } else {
+                // 加入者入口：只读查看房间设置
+                CompactRoomTextButton(
+                    id = "options",
+                    readI18n("multiplayer.room.viewOption") + if (isDesktop) "(O)" else "",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .roomThemePanelDecoration("actions", "room-action-options")
+                        .defaultMinSize(minHeight = CompactHostButtonMinHeight),
+                    onClick = onOption,
+                )
+            }
         }
     }
 }
@@ -2763,59 +2794,62 @@ private fun RoomDetailsPanel(
     compact: Boolean = false,
 ) {
     val entries = remember(details) { parseRoomDetailEntries(details) }
-    if (entries.isEmpty()) {
-        if (details.isNotBlank()) {
-            SelectionContainer {
-                Text(
-                    details,
-                    style = if (compact) {
-                        MaterialTheme.typography.bodySmall
-                    } else {
-                        MaterialTheme.typography.bodyMedium
-                    },
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = modifier.fillMaxWidth(),
-                )
-            }
-        }
-        return
-    }
-
-    val labelStyle = if (compact) {
-        MaterialTheme.typography.labelSmall
-    } else {
-        MaterialTheme.typography.bodySmall
-    }
-    val valueStyle = if (compact) {
-        MaterialTheme.typography.bodySmall
-    } else {
-        MaterialTheme.typography.bodyMedium
-    }
-
-    SelectionContainer {
-        FlowRow(
-            modifier = modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp),
-        ) {
-            entries.forEach { (label, value) ->
-                Column(
-                    modifier = Modifier.widthIn(min = 96.dp, max = 180.dp),
-                ) {
+    val decoratedModifier = modifier.roomThemePanelDecoration("details")
+    RoomThemeContentColor(roomThemeSpec().panels["details"]?.contentColor.orEmpty()) {
+        if (entries.isEmpty()) {
+            if (details.isNotBlank()) {
+                SelectionContainer {
                     Text(
-                        label,
-                        style = labelStyle,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        value,
-                        style = valueStyle,
+                        details,
+                        style = if (compact) {
+                            MaterialTheme.typography.bodySmall
+                        } else {
+                            MaterialTheme.typography.bodyMedium
+                        },
                         color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
+                        modifier = decoratedModifier.fillMaxWidth(),
                     )
+                }
+            }
+            return@RoomThemeContentColor
+        }
+
+        val labelStyle = if (compact) {
+            MaterialTheme.typography.labelSmall
+        } else {
+            MaterialTheme.typography.bodySmall
+        }
+        val valueStyle = if (compact) {
+            MaterialTheme.typography.bodySmall
+        } else {
+            MaterialTheme.typography.bodyMedium
+        }
+
+        SelectionContainer {
+            FlowRow(
+                modifier = decoratedModifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp),
+            ) {
+                entries.forEach { (label, value) ->
+                    Column(
+                        modifier = Modifier.widthIn(min = 96.dp, max = 180.dp),
+                    ) {
+                        Text(
+                            label,
+                            style = labelStyle,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            value,
+                            style = valueStyle,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
             }
         }
@@ -2898,50 +2932,59 @@ private fun DesktopMapSettingsCard(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
         )
 
-        if (isHost) {
-            FlowRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                RWTextButton(
-                    readI18n("multiplayer.room.selectMap") + if (isDesktop) "(M)" else "",
-                    modifier = Modifier.padding(5.dp),
-                    onClick = onMapClick,
-                )
-                RWTextButton(
-                    readI18n("multiplayer.room.option") + if (isDesktop) "(O)" else "",
-                    modifier = Modifier.padding(5.dp),
-                    onClick = onOption,
-                )
-                RWTextButton(
-                    readI18n("multiplayer.room.start"),
-                    modifier = Modifier.padding(5.dp),
-                    onClick = onStart,
-                )
-                if (showPublishButton) {
-                    RWTextButton(
-                        readI18n("multiplayer.room.publishToList"),
+        RoomThemeContentColor(roomThemeSpec().panels["actions"]?.contentColor.orEmpty()) {
+            if (isHost) {
+                FlowRow(
+                    modifier = Modifier
+                        .roomThemePanelDecoration("actions", "room-map-actions")
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    RoomThemeTextButton(
+                        id = "selectMap",
+                        readI18n("multiplayer.room.selectMap") + if (isDesktop) "(M)" else "",
                         modifier = Modifier.padding(5.dp),
-                        onClick = onPublish,
+                        onClick = onMapClick,
+                    )
+                    RoomThemeTextButton(
+                        id = "options",
+                        readI18n("multiplayer.room.option") + if (isDesktop) "(O)" else "",
+                        modifier = Modifier.padding(5.dp),
+                        onClick = onOption,
+                    )
+                    RoomThemeTextButton(
+                        id = "start",
+                        readI18n("multiplayer.room.start"),
+                        modifier = Modifier.padding(5.dp),
+                        onClick = onStart,
+                    )
+                    if (showPublishButton) {
+                        RoomThemeTextButton(
+                            id = "publish",
+                            readI18n("multiplayer.room.publishToList"),
+                            modifier = Modifier.padding(5.dp),
+                            onClick = onPublish,
+                        )
+                    }
+                }
+            } else {
+                // 加入者入口：只读查看房间设置
+                Row(
+                    modifier = Modifier
+                        .roomThemePanelDecoration("actions", "room-map-actions")
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    RoomThemeTextButton(
+                        id = "options",
+                        readI18n("multiplayer.room.viewOption") + if (isDesktop) "(O)" else "",
+                        modifier = Modifier.padding(5.dp),
+                        onClick = onOption,
                     )
                 }
-            }
-        } else {
-            // 加入者入口：只读查看房间设置
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.Center,
-            ) {
-                RWTextButton(
-                    readI18n("multiplayer.room.viewOption") + if (isDesktop) "(O)" else "",
-                    modifier = Modifier.padding(5.dp),
-                    onClick = onOption,
-                )
             }
         }
     }
@@ -2957,9 +3000,10 @@ private fun CompactRoomDetailsBar(
     SelectionContainer {
         Text(
             roomDetails,
-            color = MaterialTheme.colorScheme.primary,
+            color = roomThemeColor(roomThemeSpec().panels["details"]?.contentColor.orEmpty(), MaterialTheme.colorScheme.primary),
             style = MaterialTheme.typography.bodySmall,
             modifier = modifier
+                .roomThemePanelDecoration("details")
                 .fillMaxWidth()
                 .padding(horizontal = 4.dp, vertical = 2.dp)
                 .clickable(onClick = onShowDetails),
@@ -3024,24 +3068,34 @@ private fun RoomDetailsDialog(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CompactRoomTextButton(
+    id: String,
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
 ) {
+    val style = roomThemeSpec().buttons[id]
+    val shape = RoundedCornerShape(style?.corner?.dp ?: 8.dp)
+    val background = roomThemeColor(style?.backgroundColor.orEmpty(), MaterialTheme.colorScheme.surface)
+    val foreground = roomThemeColor(style?.contentColor.orEmpty(), MaterialTheme.colorScheme.onSurface)
+    val border = if (style == null) BorderStroke(2.dp, MaterialTheme.colorScheme.surfaceContainer)
+        else if (style.borderWidth == 0) null
+        else BorderStroke(style.borderWidth.dp, roomThemeColor(style.borderColor, MaterialTheme.colorScheme.surfaceContainer))
     CompositionLocalProvider(
         LocalRippleConfiguration provides RippleConfiguration(Color.Transparent, RippleAlpha(0f, 0f, 0f, 0f)),
     ) {
         Card(
-            border = BorderStroke(2.dp, MaterialTheme.colorScheme.surfaceContainer),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            shape = RoundedCornerShape(8.dp),
+            border = border,
+            colors = CardDefaults.cardColors(containerColor = if (style == null && roomThemeSpec().panels["actions"] == null) background else Color.Transparent),
+            shape = shape,
             elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-            modifier = modifier.bounceClick(onLongClick = onLongClick, onClick = onClick),
+            modifier = modifier.testTag("room-action-$id")
+                .then(if (style == null) Modifier else Modifier.roomThemePaint(style.backgroundImage, background, shape, style.opacity))
+                .bounceClick(onLongClick = onLongClick, onClick = onClick),
         ) {
             Text(
                 label,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = foreground,
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
@@ -3056,22 +3110,29 @@ private fun CompactRoomTextButton(
 
 @Composable
 private fun CompactRoomPanel(
+    id: String,
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Column(
-        modifier = modifier
-            .border(
-                BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)),
-                RoundedCornerShape(8.dp),
-            )
-            .background(
-                MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.4f),
-                RoundedCornerShape(8.dp),
-            )
-            .padding(4.dp),
-        content = content,
-    )
+    val style = roomThemeSpec().panels[id]
+    val shape = RoundedCornerShape(style?.corner?.dp ?: 8.dp)
+    val decoration = if (style == null) {
+        Modifier.border(BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)), shape)
+            .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.4f), shape)
+    } else {
+        Modifier.roomThemePaint(style.backgroundImage,
+            roomThemeColor(style.backgroundColor, MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.4f)), shape, style.opacity)
+            .roomThemeBorder(style.borderWidth, roomThemeColor(style.borderColor, MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)), shape)
+    }
+    RoomThemeContentColor(style?.contentColor.orEmpty()) {
+        Column(
+            modifier = modifier
+                .testTag("room-panel-$id")
+                .then(decoration)
+                .padding(4.dp),
+            content = content,
+        )
+    }
 }
 
 /**
@@ -3127,6 +3188,7 @@ private fun MiniToggleSwitch(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RoomToggleChip(
+    id: String,
     label: String,
     checked: Boolean,
     onClick: () -> Unit,
@@ -3136,21 +3198,25 @@ private fun RoomToggleChip(
     compact: Boolean = false,
     icon: @Composable () -> Unit,
 ) {
+    val style = roomThemeSpec().buttons[id]
+    val shape = RoundedCornerShape(style?.corner?.dp ?: 8.dp)
+    val background = roomThemeColor(style?.backgroundColor.orEmpty(), MaterialTheme.colorScheme.surface)
+    val foreground = roomThemeColor(style?.contentColor.orEmpty(), MaterialTheme.colorScheme.onSurface)
+    val border = if (style == null) BorderStroke(2.dp, MaterialTheme.colorScheme.surfaceContainer)
+        else if (style.borderWidth == 0) null
+        else BorderStroke(style.borderWidth.dp, roomThemeColor(style.borderColor, MaterialTheme.colorScheme.surfaceContainer))
     CompositionLocalProvider(
         LocalRippleConfiguration provides RippleConfiguration(Color.Transparent, RippleAlpha(0f, 0f, 0f, 0f)),
     ) {
         Card(
-            border = BorderStroke(2.dp, MaterialTheme.colorScheme.surfaceContainer),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            shape = RoundedCornerShape(8.dp),
+            border = border,
+            colors = CardDefaults.cardColors(containerColor = if (style == null) background else Color.Transparent),
+            shape = shape,
             elevation = CardDefaults.cardElevation(defaultElevation = if (enabled) 4.dp else 0.dp),
-            modifier = modifier.then(
-                if (enabled) {
-                    Modifier.bounceClick(onClick = onClick)
-                } else {
-                    Modifier.alpha(0.65f)
-                }
-            ),
+            modifier = modifier.testTag("room-action-$id")
+                .then(if (enabled) Modifier else Modifier.alpha(0.65f))
+                .then(if (style == null) Modifier else Modifier.roomThemePaint(style.backgroundImage, background, shape, style.opacity))
+                .then(if (enabled) Modifier.bounceClick(onClick = onClick) else Modifier),
         ) {
             Row(
                 // compact 用于紧凑面板的有界槽位（父级 weight 定宽）：撑满整卡，开关推到尾部；
@@ -3163,13 +3229,13 @@ private fun RoomToggleChip(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 CompositionLocalProvider(
-                    LocalContentColor provides MaterialTheme.colorScheme.onSurface,
+                    LocalContentColor provides foreground,
                 ) {
                     icon()
                 }
                 Text(
                     label,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = foreground,
                     style = if (compact) {
                         MaterialTheme.typography.labelSmall
                     } else {
@@ -3192,15 +3258,21 @@ private fun RoomInviteSlotRow(
     compact: Boolean = false,
     rowShape: Shape = CircleShape,
 ) {
+    val style = roomThemeSpec().player
+    val themed = style != RoomPlayerSpec()
+    val shape = if (themed) RoundedCornerShape(style.corner.dp) else rowShape
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(if (compact) 2.dp else 5.dp)
-            .border(
-                BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
-                rowShape,
-            )
-            .clip(rowShape)
+            .then(if (themed) {
+                Modifier.roomThemePaint(style.emptyImage, roomThemeColor(style.backgroundColor, Color.Transparent), shape, style.opacity)
+                    .roomThemeBorder(style.borderWidth,
+                        roomThemeColor(style.borderColor, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), shape)
+            } else {
+                Modifier.border(BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), rowShape)
+                    .clip(rowShape)
+            })
             .bounceClick(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -3230,14 +3302,17 @@ private fun RoomPlayerTableHeader(
     compact: Boolean = false,
     rowShape: Shape = CircleShape,
 ) {
+    val style = roomThemeSpec().player
+    val themed = style != RoomPlayerSpec()
+    val shape = if (themed) RoundedCornerShape(style.corner.dp) else rowShape
     val strokeColor = MaterialTheme.colorScheme.secondaryContainer
     Row(
         modifier = modifier
             .padding(if (compact) 2.dp else 5.dp)
-            .border(
-                BorderStroke(2.dp, MaterialTheme.colorScheme.secondary),
-                rowShape,
-            )
+            .then(if (themed) {
+                Modifier.roomThemeBorder(style.borderWidth,
+                    roomThemeColor(style.borderColor, MaterialTheme.colorScheme.secondary), shape)
+            } else Modifier.border(BorderStroke(2.dp, MaterialTheme.colorScheme.secondary), rowShape))
             .fillMaxWidth(),
     ) {
         TableCell(readI18n("multiplayer.room.colName"), RoomPlayerNameWeight, drawStroke = false, strokeColor = strokeColor)
@@ -3277,17 +3352,24 @@ internal fun RoomPlayerTableRow(
     val isDetector = ListDetectorPlayers.isDetector(player.name)
     val options = remember(update, isDetector) { if (isDetector) emptyList() else game.getStartingUnitOptions() }
     val rowPadding = if (compact) 2.dp else 5.dp
-    Box(modifier) {
+    val style = roomThemeSpec().player
+    val themed = style != RoomPlayerSpec()
+    val shape = if (themed) RoundedCornerShape(style.corner.dp) else rowShape
+    val slot = player.spawnPoint + 1
+    Box(modifier.testTag("room-player-background-$slot")) {
         KickPlayerContextMenuAreaMultiplatform(player, onViewProfile = onViewProfile) {
             Row(
                 modifier = Modifier
                     .height(IntrinsicSize.Max)
                     .padding(rowPadding)
-                    .border(
-                        BorderStroke(2.dp, MaterialTheme.colorScheme.primary),
-                        rowShape,
-                    )
+                    .then(if (themed) {
+                        Modifier.roomThemePaint(roomPlayerBackground(style, player, room),
+                            roomThemeColor(style.backgroundColor, Color.Transparent), shape, style.opacity)
+                            .roomThemeBorder(style.borderWidth,
+                                roomThemeColor(style.borderColor, MaterialTheme.colorScheme.primary), shape)
+                    } else Modifier.border(BorderStroke(2.dp, MaterialTheme.colorScheme.primary), rowShape))
                     .fillMaxWidth()
+                    .testTag("room-player-$slot")
                     // 任意真人玩家可点（个人名片）；房主/主机/点自己沿用玩家配置弹窗；AI 仅房主可点
                     .clickable(
                         room.isHost || room.isHostServer || room.localPlayer == player ||
@@ -3301,14 +3383,15 @@ internal fun RoomPlayerTableRow(
                 } else ""
                 RoomPlayerNameCell(
                     name = baseName,
-                    nameColor = if (player.color != -1) {
+                    nameColor = if (style.nameUseTeamColor && player.color != -1) {
                         Player.getTeamColor(player.color)
                     } else {
-                        MaterialTheme.colorScheme.onSurface
+                        roomThemeColor(style.nameColor, MaterialTheme.colorScheme.onSurface)
                     },
                     syncPeer = if (isDetector) null else ModSyncController.roomPeerBadges[player.name],
                     showReadySpinner = !isDetector && !player.data.ready,
                     compact = compact,
+                    slot = slot,
                 )
                 TableCell(
                     if (player.isSpectator) "S" else (player.spawnPoint + 1).toString(),
@@ -3364,36 +3447,53 @@ private fun RowScope.RoomPlayerCardActionCell(
         if (onViewProfile != null && !player.isAI && player != ConnectingPlayer) {
             val isDetector = ListDetectorPlayers.isDetector(player.name)
             val lit = isDetector || isPlayerCardLit(player, room)
+            val style = roomThemeSpec().player.profile
+            val themed = style != RoomProfileSpec()
+            val shape = if (themed) RoundedCornerShape(style.corner.dp) else CircleShape
+            val fallbackBackground = if (lit) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+            } else {
+                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+            }
+            val tint = roomThemeColor(style.tint, if (lit) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))
+            val backgroundImage = sequenceOf(if (lit) style.litImage else style.unavailableImage, style.backgroundImage)
+                .firstOrNull { roomThemeAsset(it) != null }.orEmpty()
+            val description = readI18n(
+                if (isDetector) "multiplayer.room.listDetectorTitle" else "playerCard.viewProfile", I18nType.RWPP)
+            val theme = ArtThemeController.activeTheme
+            val icon = remember(theme, style.iconImage) { roomThemeAsset(style.iconImage) }
+            var iconLoaded by remember(theme, icon) { mutableStateOf(false) }
             Box(
                 modifier = Modifier
                     .size(if (compact) 26.dp else 30.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (lit) {
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
-                        } else {
-                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
-                        },
-                    )
+                    .testTag("room-profile-${player.spawnPoint + 1}")
+                    .then(if (themed) {
+                        Modifier.roomThemePaint(backgroundImage, roomThemeColor(style.backgroundColor, fallbackBackground), shape)
+                            .roomThemeBorder(style.borderWidth,
+                                roomThemeColor(style.borderColor, tint.copy(alpha = .4f)), shape)
+                    } else Modifier.clip(CircleShape).background(fallbackBackground))
+                    .semantics { contentDescription = description }
                     .clickable {
                         if (isDetector) onViewProfile(player)
                         else onPlayerCardButtonClick(player, room, onViewProfile)
                     },
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    if (isDetector) Icons.Default.Info else Icons.Default.AccountBox,
-                    contentDescription = readI18n(
-                        if (isDetector) "multiplayer.room.listDetectorTitle" else "playerCard.viewProfile",
-                        I18nType.RWPP,
-                    ),
-                    tint = if (lit) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-                    },
-                    modifier = Modifier.size(if (compact) 15.dp else 17.dp),
-                )
+                if (!iconLoaded) {
+                    Icon(
+                        if (isDetector) Icons.Default.Info else Icons.Default.AccountBox,
+                        contentDescription = null,
+                        tint = tint,
+                        modifier = Modifier.size(if (compact) 15.dp else 17.dp),
+                    )
+                }
+                if (icon != null) {
+                    key(theme, icon) {
+                        AsyncImage(icon, null, Modifier.size(if (compact) 15.dp else 17.dp),
+                            onSuccess = { iconLoaded = true }, onError = { iconLoaded = false })
+                    }
+                }
             }
         }
     }
@@ -3448,11 +3548,17 @@ internal fun RoomChatMessageTextField(
         }
     }
     val trailingIcon: @Composable () -> Unit = {
+        val style = roomThemeSpec().buttons["sendChat"]
+        val shape = RoundedCornerShape((style?.corner ?: 0).dp)
         Icon(
             Icons.AutoMirrored.Filled.ArrowForward,
-            null,
-            modifier = Modifier.clickable(onClick = sendAction),
-            tint = MaterialTheme.colorScheme.surfaceTint,
+            readI18n("multiplayer.room.sendMessage"),
+            modifier = Modifier.testTag("room-action-sendChat")
+                .then(if (style == null) Modifier else Modifier
+                    .roomThemePaint(style.backgroundImage, roomThemeColor(style.backgroundColor, Color.Transparent), shape, style.opacity)
+                    .roomThemeBorder(style.borderWidth, roomThemeColor(style.borderColor, MaterialTheme.colorScheme.surfaceContainer), shape))
+                .clickable(onClick = sendAction),
+            tint = roomThemeColor(style?.contentColor.orEmpty(), MaterialTheme.colorScheme.surfaceTint),
         )
     }
 
@@ -3469,7 +3575,7 @@ internal fun RoomChatMessageTextField(
         singleLine = true,
         trailingIcon = trailingIcon,
         colors = RWOutlinedTextColors,
-        modifier = modifier
+        modifier = modifier.testTag("room-chat-input")
             .fillMaxWidth()
             .padding(horizontal = if (compact) 4.dp else 10.dp, vertical = 2.dp)
             .defaultMinSize(minHeight = 52.dp)
@@ -3494,8 +3600,13 @@ private fun RoomChatMessageView(modifier: Modifier = Modifier) {
         onValueChange = { value = it },
         readOnly = true,
         textStyle = MaterialTheme.typography.bodyMedium,
-        modifier = modifier,
-        colors = RWTextFieldColors,
+        modifier = modifier.testTag("room-chat-history"),
+        colors = if (roomThemeSpec().panels["chat"] == null) RWTextFieldColors else RWTextFieldColors.copy(
+            focusedContainerColor = Color.Transparent,
+            unfocusedContainerColor = Color.Transparent,
+            disabledContainerColor = Color.Transparent,
+            errorContainerColor = Color.Transparent,
+        ),
         maxLines = Int.MAX_VALUE,
     )
 }
@@ -3787,18 +3898,25 @@ private fun RowScope.RoomPlayerNameCell(
     syncPeer: SyncPeerSnapshot?,
     showReadySpinner: Boolean,
     compact: Boolean,
+    slot: Int,
 ) {
     val settings = koinInject<Settings>()
-    val nameStyle = if (settings.boldText) {
+    val baseNameStyle = if (settings.boldText) {
         MaterialTheme.typography.bodyLarge
     } else {
         MaterialTheme.typography.bodyMedium
     }
+    val style = roomThemeSpec().player
+    val nameStyle = if (style == RoomPlayerSpec()) baseNameStyle else baseNameStyle.copy(
+        fontFamily = roomPlayerNameFont() ?: baseNameStyle.fontFamily,
+        fontWeight = FontWeight(if (settings.boldText) maxOf(700, style.nameWeight) else style.nameWeight),
+    )
     val syncing = syncPeer != null && syncPeer.phase != SyncPeerPhase.SYNCED
     Column(
         modifier = Modifier
             .weight(RoomPlayerNameWeight)
             .fillMaxHeight()
+            .testTag("room-cell-name-$slot")
             .padding(horizontal = if (compact) 4.dp else 6.dp, vertical = 2.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = if (syncing) Alignment.Start else Alignment.CenterHorizontally,

@@ -106,7 +106,7 @@ class FriendsUiScreenshotTest {
             }
         }
         onNodeWithText("登录").performClick()
-        val username = onNode(hasSetTextAction() and hasText("账号或邮箱"))
+        val username = onNode(hasSetTextAction() and hasContentDescription("账号或邮箱"))
         username.performClick()
         username.performTextInput("player")
         username.performKeyInput { pressKey(Key.Escape) }

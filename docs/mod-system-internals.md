@@ -304,8 +304,8 @@ ModName1|/path/to/mod1.rwmod|enabled,ModName2|/path/to/mod2.rwmod|disabled
 - **缺单位自断（客户端，注册后立刻）**：主机把要求的单位表塞进注册/房间信息；客户端 `l.a(j)` 读完整段后对缺失项调用 `l.a(ab, HashMap)` 抛 `custom.bw`，`ae.a(bi)`/`ad.c(au)` 捕获后 `b("Missing unit:"+msg)` 自断并 `closeBattleroom`。握手放行只绕过校验和，**不**过这一关——下载未完成时聊天必然 `not networked`。RWPP 在 `shouldDeferMissingUnitsCheck()` 为真时跳过该抛出并兜底拦截 `Missing unit:` 自断，连接保持到带外同步完成。
 - **开局推送**：SERVER_INFO(106) 时服务器把全量单位表推给客户端覆盖本地；客户端缺单位定义直接抛异常断连（"Server sync mismatch"）。同步完成前开局门控应挡住；完成后单位表已齐，这一关按原版走。
 - 校验和踢人之后仍有兜底价值：RWPP 放行只是跳过踢人，客户端必须在开局前完成下载+重载，否则开局推送阶段照样崩。
-- **桌面保留稳定 init 缓存（本次修复）**：`Game.getUnitsChecksum()` 读取原版 `l.z()`（字段 `d`），`refreshHandshakeChecksumCache()` 不再写缓存。实时 `am.bM()` 只折叠 52 种内置单位；建造者、运输艇的模板参数读取当前菜单地图水陆状态，实时结果会漂移，不能用于覆盖包 110 的缓存。模组文件 SHA-256、实际启用集合与原版自定义单位定义校验须分开处理，不能用核心 checksum 代替。
-- **Android 尚未调整**：仍使用实时 `ce.bt()` 并在握手准备时写字段 `c`；须独立核对 Android 的单位范围、地形依赖和调用线程，再逐点验证，不能将桌面修复结论直接套用到 Android。
+- **两端保留稳定 init 缓存**：`Game.getUnitsChecksum()` 读取原版桌面 `l.z()`（字段 `d`）或 Android `k.r()`（`game.i.c`），`refreshHandshakeChecksumCache()` 保留兼容入口，不再写缓存。桌面实时 `am.bM()` / Android `ce.bt()` 只折叠 52 种内置单位；建造者、运输艇的模板参数读取当前菜单地图水陆状态，实时结果会漂移，不能用于覆盖包 110 的缓存。模组文件 SHA-256、实际启用集合与原版自定义单位定义校验须分开处理，不能用核心 checksum 代替。
+- **Android Direct 误报回归**：`AndroidCoreChecksumTest` 用真实内置模板和一格水地图复现实时校验值从 `678359601` 漂移到截图中的 `1130203129`，检查同步读取值与包 110 使用的 `r()` 均保留初始化值。修改只读取既有缓存，不迁移引擎入口线程。运行 `:rwpp-android:testDebugUnitTest --tests '*AndroidCoreChecksumTest'` 及 `:rwpp-core:desktopTest --tests '*DirectModSyncControllerTest'`；后者继续验证真实 checksum 不匹配仍拒绝加入。
 
 ### 10.2 RWPP 握手放行（`shouldAllowMismatch`）
 

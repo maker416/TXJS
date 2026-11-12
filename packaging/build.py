@@ -29,6 +29,7 @@ TASKS = {
     "test": [":rwpp-core:desktopTest", ":rwpp-core-api:test"],
     "android-debug": [":rwpp-android:assembleDebug"],
     "android-release": [":rwpp-android:assembleRelease"],
+    "release-all": [":rwpp-desktop:packageReleaseUberJarForCurrentOS", ":rwpp-android:assembleRelease"],
     "browser-kernels": ["browserKernels"],
     "clean": ["clean"],
 }
@@ -38,7 +39,36 @@ ALIASES = {
     "3": "test", "tests": "test", "4": "android-debug", "debug": "android-debug",
     "5": "android-release", "release": "android-release", "6": "clean",
     "7": "browser-kernels", "kernels": "browser-kernels",
+    "8": "release-all", "all-release": "release-all",
 }
+
+
+def bump_project_version(root):
+    """只更新根客户端补丁版本；原子替换并保留 UTF-8 BOM 和换行。"""
+    path = root / "build.gradle.kts"
+    content = path.read_bytes().decode("utf-8")
+    assignments = list(re.finditer(r'^(?:\ufeff)?[ \t]*version[ \t]*=[ \t]*"([^"\r\n]*)"', content, re.M))
+    if len(assignments) != 1:
+        raise ValueError('build.gradle.kts 必须包含唯一的 version = "x.y.z"。')
+    match = assignments[0]
+    previous = match[1]
+    parts = re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", previous)
+    if not parts:
+        raise ValueError(f"客户端版本号必须为 x.y.z: {previous}")
+    version = f"{parts[1]}.{parts[2]}.{int(parts[3]) + 1}"
+    updated = content[:match.start(1)] + version + content[match.end(1):]
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name + ".", suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(updated.encode("utf-8"))
+        temporary.chmod(stat.S_IMODE(path.stat().st_mode))
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    print(f"[INFO] 客户端版本: {previous} -> {version}（已写入 build.gradle.kts）", flush=True)
+    return version
 
 
 def read_setting(path):
@@ -217,7 +247,7 @@ def preflight(root, target, args):
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         jdk_error = str(error)
     source = None
-    if target == "linux":
+    if target in {"linux", "release-all"}:
         if platform.system() != "Linux" or platform.machine().lower() not in {"x86_64", "amd64"}:
             problems.append("当前原版资源包仅支持 Linux x64，请在 Linux x64 主机上打包。")
         try:
@@ -228,12 +258,12 @@ def preflight(root, target, args):
         except (ValueError, OSError, zipfile.BadZipFile) as error:
             problems.append(str(error))
     # Desktop 编译不会执行 Android 任务；只有 APK 和含 Gecko 的内核包需要 SDK。
-    if target in {"android-debug", "android-release", "browser-kernels"}:
+    if target in {"android-debug", "android-release", "browser-kernels", "release-all"}:
         sdk_value = read_properties(root / "local.properties").get("sdk.dir")
         sdk_value = sdk_value or os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
         if not sdk_value or not (Path(sdk_value) / "platforms").is_dir() or not (Path(sdk_value) / "build-tools").is_dir():
             problems.append("Android SDK 无效；请在 local.properties 设置 Linux 的 sdk.dir（需 platforms/ 和 build-tools/）。")
-    if target == "android-release":
+    if target in {"android-release", "release-all"}:
         signing = read_properties(root / "build/key/keystore.properties")
         if not signing.get("storeFile") or not (root / signing["storeFile"]).is_file():
             problems.append("Release 签名不存在或 storeFile 无效；请保留原 build/key/ 密钥及配置，不要生成新密钥。")
@@ -347,8 +377,13 @@ def file_hash(path):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="RWJS Linux 打包工具（Python 3.9+、JDK 21）")
-    parser.add_argument("target", nargs="?", help="linux / desktop / android-debug / android-release / test / browser-kernels / clean")
+    try:
+        bump_project_version(ROOT)
+    except (ValueError, OSError) as error:
+        print(f"[ERROR] {error}", file=sys.stderr)
+        return 1
+    parser = argparse.ArgumentParser(description="RWJS Linux 打包工具（Python 3.9+、JDK 21）；每次启动脚本版本号立即 +0.0.1")
+    parser.add_argument("target", nargs="?", help="linux / desktop / release-all / android-debug / android-release / test / browser-kernels / clean")
     parser.add_argument("--channel", "-Channel", default="official", help="渠道，默认 official")
     parser.add_argument("--game-archive", "-GameArchive", help="原版 ZIP，默认读取 build/Rusted-Warfare-linux.zip")
     parser.add_argument("--check", "-Check", action="store_true", help="只检查依赖和资源，不安装、不构建；默认检查 linux")
@@ -362,7 +397,7 @@ def main(argv=None):
         if not sys.stdin.isatty():
             parser.print_help()
             return 0
-        print("1 PC JAR\n2 Linux 完整包\n3 测试\n4 Android Debug\n5 Android Release\n6 安全清理\n7 浏览器内核\n0 退出")
+        print("1 PC JAR\n2 Linux 完整包\n3 测试\n4 Android Debug\n5 Android Release\n6 安全清理\n7 浏览器内核\n8 一键打包 PC + Android 发行版\n0 退出")
         args.target = input("请选择: ").strip()
         if args.target == "0":
             return 0
@@ -387,7 +422,9 @@ def main(argv=None):
                 command.append(f"-P{key}ComponentVersion={value}")
         run(command + TASKS[target], ROOT, env)
         if target != "clean":
-            collect(ROOT, target, args, jdk, source)
+            outputs = ("linux", "android-release") if target == "release-all" else (target,)
+            for output in outputs:
+                collect(ROOT, output, args, jdk, source)
         return 0
     except (ValueError, OSError, zipfile.BadZipFile, subprocess.CalledProcessError) as error:
         print(f"[ERROR] {error}", file=sys.stderr)

@@ -153,7 +153,7 @@ class ModsLayoutUiTest {
     private fun checkLandscape(width: Int, height: Int, wholeRows: Int) =
         runDesktopComposeUiTest(width = width, height = height) {
             setContent { TestPage() }
-            waitForIdle()
+            awaitInitialFiles()
             val enabled = bounds("mods-list-enabled")
             val disabled = bounds("mods-list-disabled")
             assertTrue(enabled.right <= disabled.left, "enabled and disabled columns overlap")
@@ -174,7 +174,7 @@ class ModsLayoutUiTest {
     fun narrowWindowSearchAndEnabledFiltersKeepWorkingAfterToggling() =
         runDesktopComposeUiTest(width = 360, height = 720) {
             setContent { TestPage() }
-            waitForIdle()
+            awaitInitialFiles()
             onNodeWithTag("mods-list-all").assertIsDisplayed()
             onNodeWithTag("mods-list-enabled").assertDoesNotExist()
             assertTrue(bounds("mod-row-1").width >= 300f, "narrow windows need a full width list")
@@ -210,7 +210,7 @@ class ModsLayoutUiTest {
     fun shortLandscapeDetailsShowFullDescriptionAndKeepDeleteReachable() =
         runDesktopComposeUiTest(width = 720, height = 360) {
             setContent { TestPage() }
-            waitForIdle()
+            awaitInitialFiles()
             onNodeWithTag("mod-row-7").performClick()
             waitForIdle()
             onNodeWithTag("mod-details").assertIsDisplayed()
@@ -239,6 +239,7 @@ class ModsLayoutUiTest {
             importedTargets += target
             val importedId = -(target.absolutePath.hashCode() and 0x7FFFFFFF) - 1
             setContent { TestPage() }
+            awaitInitialFiles()
             onNodeWithTag("mods-search-button").performClick()
 
             listOf("mod.importSuccess", "mod.importAlreadyExists").forEach { noticeKey ->
@@ -268,6 +269,7 @@ class ModsLayoutUiTest {
         runDesktopComposeUiTest(width = 360, height = 720) {
             var exits = 0
             setContent { TestPage(onExit = { exits++ }) }
+            awaitInitialFiles()
             onNodeWithTag("mods-more").performClick()
             onNodeWithText(readI18n("mod.disableAll")).performClick()
             onNodeWithTag("mods-filter-Enabled").performClick()
@@ -282,6 +284,13 @@ class ModsLayoutUiTest {
                 assertEquals(0, exits, "apply must not leave the page before disabled units are reloaded")
             }
         }
+
+    private fun ComposeUiTest.awaitInitialFiles() {
+        waitUntil(timeoutMillis = 5_000) {
+            onAllNodesWithTag("mod-row-1").fetchSemanticsNodes().isNotEmpty()
+        }
+        waitForIdle()
+    }
 
     private fun ComposeUiTest.assertWholeRowVisible(id: Int, list: Rect) {
         val row = onNodeWithTag("mod-row-$id")

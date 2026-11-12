@@ -1,0 +1,46 @@
+# Copyright 2023-2025 RWPP contributors
+# GNU AGPLv3: https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
+[menu]
+singlePlayerGame = "单人"
+multiplayer = "多人"
+modsAndMaps = "模组图册"
+settings = "航行设置"
+openSourceInfo = "版本与鸣谢"
+extension = "外观工坊"
+
+[menu.home]
+tagline = "远 洋 图 志  /  即 时 战 略"
+singleDescription = "战役 · 沙盒"
+multiDescription = "联机 · 合作"
+resources = "探索资源"
+resourcesDescription = "社区 · 赛事 · 外观"
+modsDescription = "安装 · 导入 · 管理"
+settingsDescription = "画面 · 操作 · 声音"
+infoDescription = "反馈 · 更新 · 开源"
+commander = "领航员"
+greeting = "欢迎登船，"
+edition = "远洋图志"
+exit = "暂别港口"
+footer = "每一场战役，都是新的航程"
+
+[browser]
+resourceBrowser = "玩家港湾"
+esportsSite = "赛事航报"
+
+[resources]
+title = "远洋资源图志"
+heading = "下一站，由你发现。"
+subtitle = "在玩家港湾交换见闻，追踪赛事，装点你的下一次出航。"
+forumDescription = "交流战术，分享作品，发现社区里的新航线。"
+esportsDescription = "赛事资讯与精彩对局，记录每一次交锋。"
+extensionsDescription = "导入、切换与管理主题，定制你的港口。"
+back = "返回港口"
+community = "玩家社区"
+openForum = "进入玩家港湾"
+more = "更多航线"
+
+[multiplayer.room]
+colName = "船员"
+colTeam = "队"
+colSpawn = "位"
+colPing = "延迟"

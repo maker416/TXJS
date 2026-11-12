@@ -168,6 +168,8 @@ class ThemeSettingsUiTest {
         themeTab()
         val choose = onNodeWithText(readI18n("settings.chooseBackgroundImage"))
         val clear = onNodeWithText(readI18n("settings.clearBackgroundImage"))
+        onNodeWithTag("settings-tabs", useUnmergedTree = true).assertIsDisplayed()
+        onNodeWithTag("settings-sidebar", useUnmergedTree = true).assertDoesNotExist()
         clear.performScrollTo()
         saveScreenshot("settings-theme-narrow.png")
         choose.assertIsDisplayed()
@@ -217,6 +219,32 @@ class ThemeSettingsUiTest {
         onNodeWithText(readI18n("settings.theme")).performScrollTo().performClick()
         waitForIdle()
         onNodeWithText(readI18n("themes.manageEntry")).assertDoesNotExist()
+    }
+
+    @Test
+    fun landscapeSidebarKeepsNavigationAndActionsVisibleWhileContentScrolls() = runDesktopComposeUiTest(width = 1000, height = 500) {
+        setContent {
+            KoinContext(appKoin) {
+                RWPPTheme(default = true) {
+                    CompositionLocalProvider(LocalWindowManager provides WindowManager.Middle) {
+                        SettingsView({}, "RWPP", {}, {}, {})
+                    }
+                }
+            }
+        }
+        val sidebar = onNodeWithTag("settings-sidebar", useUnmergedTree = true).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val content = onNodeWithTag("settings-content", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        assertTrue(sidebar.right <= content.left)
+        assertTrue(sidebar.width < 250)
+        onNodeWithTag("settings-tabs", useUnmergedTree = true).assertDoesNotExist()
+        themeTab()
+        onNodeWithTag("settings-content", useUnmergedTree = true).performTouchInput { swipeUp() }
+        onNodeWithContentDescription(readI18n("settings.saveChanges")).assertIsDisplayed()
+        onNodeWithContentDescription(readI18n("common.close")).assertIsDisplayed()
+        saveScreenshot("settings-sidebar-landscape.png")
+        onNodeWithText("开发者").performScrollTo().performClick()
+        onNodeWithText(readI18n("settings.adminApi")).assertIsDisplayed().performClick()
+        onNodeWithText(readI18n("settings.adminPassword")).assertIsDisplayed()
     }
 
     private fun ComposeUiTest.saveScreenshot(name: String) {

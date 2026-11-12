@@ -15,6 +15,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposePanel
@@ -22,17 +26,23 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import io.github.rwpp.logger
 import org.junit.Assume.assumeFalse
 import org.junit.Assume.assumeTrue
 import org.slf4j.LoggerFactory
+import org.jetbrains.skiko.ExperimentalSkikoApi
+import org.jetbrains.skiko.GraphicsApi
+import org.jetbrains.skiko.SkiaLayer
 import java.awt.Canvas
 import java.awt.Color
+import java.awt.Component
 import java.awt.Dimension
 import java.awt.Frame
 import java.awt.Graphics
 import java.awt.GraphicsDevice
 import java.awt.GraphicsEnvironment
+import java.awt.KeyboardFocusManager
 import java.awt.Point
 import java.awt.Rectangle
 import java.awt.Robot
@@ -43,6 +53,7 @@ import java.util.concurrent.atomic.AtomicReference
 import javax.swing.JDialog
 import javax.swing.JFrame
 import javax.swing.JPanel
+import javax.swing.JTextField
 import javax.swing.SwingUtilities
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -56,14 +67,62 @@ import kotlin.math.roundToInt
 /** Uses native windows: an offscreen Compose test cannot detect an opaque menu over the engine Canvas. */
 class DesktopMenuBackgroundWindowTest {
     @Test
-    fun transparentMenuShowsCanvasUpdatesReceivesClicksAndPreservesCanvasPeer() {
+    fun transparentMenuShowsCanvasUpdatesReceivesClicksAndPreservesCanvasPeer() = verifyCanvasAndInput(native = false)
+
+    @Test
+    fun nativeTransparentMenuShowsCanvasUpdatesReceivesClicksAndPreservesCanvasPeer() =
+        withRenderApi("OPENGL") { verifyCanvasAndInput(native = true) }
+
+    @Test
+    fun softwareRenderingChoiceRetainsTheCompatibilityMenu() =
+        withRenderApi("SOFTWARE_FAST") { verifyCanvasAndInput(native = true, expectedNative = false) }
+
+    @Test
+    fun nativeCreationFailureFallsBackWithoutMovingCanvasOrComposingTwice() =
+        verifyCanvasAndInput(native = true, failNative = true)
+
+    @OptIn(ExperimentalSkikoApi::class)
+    @Test
+    fun rendererChangeReleasesNativeWindowAndRestoresCompatibilityMenu() = withRenderApi("OPENGL") {
         requireNativeTransparency()
-        val fixture = createFixture()
+        val fixture = createFixture(native = true)
+        try {
+            await("native menu composition") { fixture.overlay.isNativeRendering && fixture.activeContent.get() == 1 }
+            val nativeWindow = onEdtValue { SwingUtilities.getWindowAncestor(fixture.menu) }
+            onEdt {
+                assertEquals(GraphicsApi.DIRECT3D, (fixture.menu as SkiaLayer).renderApi)
+                // Simulate the API notification Skiko sends when the native device falls back.
+                (fixture.menu as SkiaLayer).renderApi = GraphicsApi.SOFTWARE_FAST
+            }
+            await("compatibility recovery after native renderer change") {
+                !fixture.overlay.isNativeRendering && fixture.menu.isShowing && fixture.activeContent.get() == 1
+            }
+            onEdt {
+                assertFalse(nativeWindow.isDisplayable, "The unusable native window must be disposed")
+                assertSame(fixture.fallbackMenu, fixture.menu)
+                assertSame(fixture.host, fixture.canvas.parent)
+                assertTrue(fixture.canvas.isDisplayable)
+                fixture.switcher.switchTo(DisplayMode.Game)
+                fixture.switcher.switchTo(DisplayMode.Menu)
+            }
+            await("recovered menu can return from game") { fixture.menu.isShowing && fixture.overlay.isMenuVisible }
+        } finally {
+            fixture.dispose()
+        }
+    }
+
+    private fun verifyCanvasAndInput(native: Boolean, failNative: Boolean = false, expectedNative: Boolean = native && !failNative) {
+        requireNativeTransparency()
+        val fixture = createFixture(native = native, failNative = failNative)
         val robot = Robot().apply { autoDelay = 30 }
         try {
             await("menu above canvas") { fixture.overlay.isMenuVisible && fixture.menu.isShowing && fixture.canvas.isShowing }
             val menuWindow = onEdtValue { SwingUtilities.getWindowAncestor(fixture.menu) as JDialog }
             onEdt {
+                assertEquals(expectedNative, fixture.overlay.isNativeRendering)
+                assertEquals(1, fixture.activeContent.get(), "Only one menu surface may own the App composition")
+                if (expectedNative) assertFalse(fixture.fallbackMenu.isDisplayable,
+                    "The unused Swing menu must not initialize a second renderer")
                 assertSame(fixture.frame, menuWindow.owner)
                 assertTrue(menuWindow.isUndecorated)
                 assertFalse(menuWindow.isAlwaysOnTop)
@@ -119,9 +178,14 @@ class DesktopMenuBackgroundWindowTest {
     }
 
     @Test
-    fun menuTracksViewportAndOwnerVisibilityWithoutFloatingAboveOtherApplications() {
+    fun menuTracksViewportAndOwnerVisibilityWithoutFloatingAboveOtherApplications() = verifyViewport(native = false)
+
+    @Test
+    fun nativeMenuTracksViewportAndOwnerVisibilityWithoutFloatingAboveOtherApplications() = verifyViewport(native = true)
+
+    private fun verifyViewport(native: Boolean) {
         requireNativeTransparency()
-        val fixture = createFixture()
+        val fixture = createFixture(native = native)
         try {
             await("initial menu") { fixture.menu.isShowing }
             val menuWindow = onEdtValue { SwingUtilities.getWindowAncestor(fixture.menu) as JDialog }
@@ -154,141 +218,261 @@ class DesktopMenuBackgroundWindowTest {
     }
 
     @Test
-    fun resizeUpdatesComposeViewportAndPaintsNewEdgesWithoutInput() {
-        requireNativeTransparency()
-        val fixture = createFixture()
+    fun resizeUpdatesComposeViewportAndPaintsNewEdgesWithoutInput() = withRecoveryFixtures { fixture ->
         val robot = Robot()
-        try {
-            onEdt { fixture.frame.setLocation(40, 40) }
-            await("initial Compose viewport") { fixture.viewport.get() == fixture.host.size }
-            val screen = onEdtValue { fixture.frame.graphicsConfiguration.bounds }
-            val maximum = Dimension(screen.width - 100, screen.height - 140)
-            val sizes = listOf(Dimension(900, 650), Dimension(620, 430), Dimension(820, 560))
-                .map { Dimension(it.width.coerceAtMost(maximum.width), it.height.coerceAtMost(maximum.height)) }
-            for (size in sizes) {
-                onEdt { fixture.frame.size = size }
-                await("Compose viewport after resize to $size") {
-                    fixture.menu.size == fixture.host.size && fixture.viewport.get() == fixture.host.size
-                }
-                val edge = onEdtValue {
-                    fixture.host.locationOnScreen.apply { translate(fixture.host.width - 8, fixture.host.height - 8) }
-                }
-                // Observe pixels before any mouse/focus interaction can accidentally wake rendering.
-                awaitPixel(robot, edge, EDGE_COLOR)
-                onEdt {
-                    assertSame(fixture.host, fixture.canvas.parent)
-                    assertTrue(fixture.canvas.isDisplayable)
-                }
+        onEdt { fixture.frame.setLocation(40, 40) }
+        val screen = onEdtValue { fixture.frame.graphicsConfiguration.bounds }
+        val maximum = Dimension(screen.width - 100, screen.height - 140)
+        val sizes = listOf(Dimension(900, 650), Dimension(620, 430), Dimension(820, 560))
+            .map { Dimension(it.width.coerceAtMost(maximum.width), it.height.coerceAtMost(maximum.height)) }
+        for (size in sizes) {
+            onEdt { fixture.frame.size = size }
+            await("Compose viewport after resize to $size") {
+                fixture.menu.size == fixture.host.size && fixture.viewport.get() == fixture.host.size
             }
-        } finally {
-            fixture.dispose()
-        }
-    }
-
-    @Test
-    fun explicitRefreshValidatesContentEvenWhenNativeBoundsAreUnchanged() {
-        requireNativeTransparency()
-        val fixture = createFixture()
-        try {
-            await("initial viewport") { fixture.viewport.get() == fixture.host.size }
+            // Sample before any input can accidentally wake rendering.
+            val edge = onEdtValue {
+                fixture.host.locationOnScreen.apply { translate(fixture.host.width - 8, fixture.host.height - 8) }
+            }
+            awaitPixel(robot, edge, EDGE_COLOR)
             onEdt {
-                val windowBounds = (SwingUtilities.getWindowAncestor(fixture.menu) as JDialog).bounds
-                // Model an invalid child layout while the native window has already reached its final bounds.
-                fixture.menu.size = Dimension(80, 60)
-                fixture.overlay.refresh()
-                assertEquals(windowBounds, (SwingUtilities.getWindowAncestor(fixture.menu) as JDialog).bounds)
-                assertEquals(fixture.host.size, fixture.menu.size)
+                assertSame(fixture.host, fixture.canvas.parent)
+                assertTrue(fixture.canvas.isDisplayable)
             }
-            await("revalidated Compose viewport") { fixture.viewport.get() == fixture.host.size }
-        } finally {
-            fixture.dispose()
         }
     }
 
     @Test
-    fun transientInvalidLayoutRecoversWithoutAnotherComponentEvent() {
-        requireNativeTransparency()
-        val fixture = createFixture()
-        try {
-            await("initial menu") { fixture.overlay.isMenuVisible }
+    fun explicitRefreshValidatesContentEvenWhenNativeBoundsAreUnchanged() = withRecoveryFixtures { fixture ->
+        val window = onEdtValue { SwingUtilities.getWindowAncestor(fixture.menu) as JDialog }
+        val originalBounds = onEdtValue { window.bounds }
+        onEdt {
+            // In native mode this is the displayed SkiaLayer, not the unmounted compatibility panel.
+            fixture.menu.size = Dimension(80, 60)
+            fixture.overlay.refresh()
+            assertEquals(originalBounds, window.bounds)
+            assertEquals(fixture.host.size, fixture.menu.size)
+        }
+        await("Compose viewport after invalid child layout") { fixture.viewport.get() == fixture.host.size }
+        val edge = onEdtValue {
+            fixture.host.locationOnScreen.apply { translate(fixture.host.width - 8, fixture.host.height - 8) }
+        }
+        awaitPixel(Robot(), edge, EDGE_COLOR)
+    }
+
+    @Test
+    fun transientInvalidLayoutRecoversAndRestoresKeyboardWithoutAnotherComponentEvent() =
+        withRecoveryFixtures { fixture ->
             for (notShowing in listOf(false, true)) {
                 onEdt {
                     fixture.host.blockSize = !notShowing
                     fixture.host.blockShowing = notShowing
                     fixture.overlay.refresh()
-                    assertTrue(fixture.overlay.isMenuVisible, "Transient layout must not hide an existing menu")
+                    assertTrue(fixture.overlay.isMenuVisible, "Transient layout must retain an existing menu")
+                    fixture.host.blockSize = false
+                    fixture.host.blockShowing = false
                     fixture.overlay.showGame()
-                    fixture.overlay.showMenu()
-                    assertFalse(fixture.overlay.isMenuVisible, "A new menu must wait for a valid viewport")
+                    fixture.frame.toFront()
+                    fixture.frame.requestFocus()
+                    fixture.canvas.requestFocusInWindow()
                 }
-                Thread.sleep(200)
-                // Only our reported readiness changes: no resize/show/hierarchy event is dispatched.
+                await("Canvas keyboard focus before returning to the menu") { fixture.canvas.isFocusOwner }
+                onEdt {
+                    fixture.host.blockSize = !notShowing
+                    fixture.host.blockShowing = notShowing
+                    fixture.overlay.showMenu()
+                    assertFalse(fixture.overlay.isMenuVisible, "A hidden menu must wait for a valid viewport")
+                }
+                // Allow the original showMenu focus request to run while the menu is still hidden.
+                Thread.sleep(240)
                 onEdt {
                     fixture.host.blockSize = false
                     fixture.host.blockShowing = false
                 }
-                await("automatic recovery after transient layout") {
+                // These probe flags emit no component, hierarchy or focus events.
+                await("automatic menu recovery without a component event") {
                     fixture.overlay.isMenuVisible && fixture.viewport.get() == fixture.host.size
                 }
+                await("keyboard focus after delayed menu recovery") { fixture.menuOwnsKeyboardFocus() }
             }
-            onEdt {
-                fixture.host.blockSize = true
-                fixture.overlay.showGame()
-                fixture.overlay.showMenu()
-                fixture.overlay.showGame()
-                fixture.host.blockSize = false
-            }
-            Thread.sleep(400)
-            onEdt { assertFalse(fixture.overlay.isMenuVisible, "A late retry must not reopen the menu in game mode") }
-        } finally {
-            fixture.dispose()
+        }
+
+    @Test
+    fun refreshRestartsAnExhaustedLayoutRetryCycle() = withRecoveryFixtures { fixture ->
+        onEdt {
+            fixture.overlay.showGame()
+            fixture.host.blockSize = true
+            fixture.overlay.showMenu()
+        }
+        Thread.sleep(2100)
+        onEdt { fixture.host.blockSize = false }
+        Thread.sleep(240)
+        onEdt { assertFalse(fixture.overlay.isMenuVisible, "An exhausted retry cycle must stop scheduling work") }
+        onEdt {
+            fixture.host.blockSize = true
+            fixture.overlay.refresh()
+        }
+        Thread.sleep(200)
+        onEdt { fixture.host.blockSize = false }
+        await("new retry cycle after explicit refresh") { fixture.overlay.isMenuVisible }
+    }
+
+    @Test
+    fun lateRecoveryTasksCannotReopenGameModeOrDisposedMenus() = withRecoveryFixtures { fixture ->
+        onEdt {
+            fixture.host.blockSize = true
+            fixture.overlay.refresh()
+            fixture.overlay.showGame()
+            fixture.host.blockSize = false
+        }
+        Thread.sleep(500)
+        onEdt {
+            assertFalse(fixture.overlay.isMenuVisible, "A late refresh must not reopen the menu in game mode")
+            assertTrue(fixture.frame.ownedWindows.none { it.isVisible })
+            fixture.host.blockSize = true
+            fixture.overlay.showMenu()
+            fixture.overlay.refresh()
+            fixture.overlay.dispose()
+            fixture.host.blockSize = false
+        }
+        Thread.sleep(500)
+        onEdt {
+            assertFalse(fixture.overlay.isMenuVisible, "A late retry must not reopen a disposed menu")
+            assertTrue(fixture.frame.ownedWindows.none { it.isVisible })
+            assertEquals(0, fixture.activeContent.get(), "A disposed menu must not recreate its composition")
+            assertSame(fixture.host, fixture.canvas.parent)
+            assertTrue(fixture.canvas.isDisplayable)
         }
     }
 
     @Test
-    fun refreshRestartsAnExhaustedLayoutRetryCycle() {
-        requireNativeTransparency()
-        val fixture = createFixture()
-        try {
-            await("initial menu") { fixture.overlay.isMenuVisible }
+    fun refreshPreservesKeyboardFocusInAnOwnedComposeDialog() = withRecoveryFixtures { fixture ->
+        val menuWindow = onEdtValue { SwingUtilities.getWindowAncestor(fixture.menu) as JDialog }
+        onEdt { fixture.dialogShown.value = true }
+        await("owned Compose dialog") { menuWindow.ownedWindows.count { it.isShowing } == 1 }
+        val dialogWindow = onEdtValue { menuWindow.ownedWindows.single { it.isShowing } }
+        onEdt {
+            dialogWindow.toFront()
+            dialogWindow.requestFocus()
+        }
+        await("owned dialog keyboard focus") {
+            KeyboardFocusManager.getCurrentKeyboardFocusManager().focusedWindow === dialogWindow
+        }
+        onEdt { fixture.overlay.refresh() }
+        // Observe the immediate update and both delayed refreshes without reasserting dialog focus.
+        repeat(12) {
+            Thread.sleep(50)
             onEdt {
-                fixture.overlay.showGame()
-                fixture.host.blockSize = true
-                fixture.overlay.showMenu()
+                assertSame(dialogWindow, KeyboardFocusManager.getCurrentKeyboardFocusManager().focusedWindow,
+                    "Refreshing a visible menu must not steal keyboard input from its dialog")
+                assertTrue(dialogWindow.isShowing)
             }
-            Thread.sleep(2100)
-            onEdt { fixture.overlay.refresh() }
-            Thread.sleep(200)
-            onEdt { fixture.host.blockSize = false }
-            await("new retry cycle after explicit refresh") { fixture.overlay.isMenuVisible }
-        } finally {
-            fixture.dispose()
+        }
+        onEdt { fixture.dialogShown.value = false }
+        await("closed owned dialog") { menuWindow.ownedWindows.none { it.isShowing } }
+    }
+
+    @Test
+    fun delayedRecoveryDoesNotStealPendingKeyboardFocusFromOtherWindows() = withRecoveryFixtures { fixture ->
+        for (siblingDialog in listOf(false, true)) {
+            var focusWindow: Window? = null
+            try {
+                onEdt { fixture.switcher.switchTo(DisplayMode.Game) }
+                await("Canvas keyboard focus before delayed switch") { fixture.canvas.isFocusOwner }
+                onEdt {
+                    fixture.host.blockSize = true
+                    fixture.switcher.switchTo(DisplayMode.Menu)
+                    fixture.overlay.refresh()
+                    assertFalse(fixture.overlay.isMenuVisible)
+                }
+                // The menu still has its pending focus request when another test-owned window takes input.
+                Thread.sleep(240)
+                onEdt {
+                    val target = JTextField("Other window keyboard target")
+                    focusWindow = if (siblingDialog) JDialog(fixture.frame).apply {
+                        title = "RWJS sibling dialog focus regression"
+                        defaultCloseOperation = JDialog.DISPOSE_ON_CLOSE
+                    } else JFrame("RWJS independent window focus regression").apply {
+                        defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
+                    }
+                    focusWindow!!.apply {
+                        add(target)
+                        setSize(360, 180)
+                        setLocationRelativeTo(fixture.frame)
+                        isVisible = true
+                        toFront()
+                        requestFocus()
+                    }
+                    target.requestFocusInWindow()
+                }
+                await("other window keyboard focus (sibling=$siblingDialog)") {
+                    KeyboardFocusManager.getCurrentKeyboardFocusManager().focusedWindow === focusWindow
+                }
+                onEdt { fixture.host.blockSize = false }
+                await("menu recovery while another window has focus") { fixture.overlay.isMenuVisible }
+                // Cover the delayed focus callback and both 120ms/320ms refresh follow-ups.
+                repeat(12) {
+                    Thread.sleep(50)
+                    onEdt {
+                        assertSame(focusWindow, KeyboardFocusManager.getCurrentKeyboardFocusManager().focusedWindow,
+                            "A pending menu recovery must not take input from another window (sibling=$siblingDialog)")
+                        assertTrue(fixture.overlay.isMenuVisible)
+                    }
+                }
+            } finally {
+                onEdt {
+                    fixture.host.blockSize = false
+                    focusWindow?.dispose()
+                }
+            }
         }
     }
 
-    private fun createFixture(): Fixture {
+    private fun withRecoveryFixtures(action: (Fixture) -> Unit) {
+        requireNativeTransparency()
+        withRenderApi("OPENGL") {
+            for (native in listOf(false, true)) {
+                val fixture = createFixture(native = native)
+                try {
+                    await("initial menu viewport (native=$native)") {
+                        fixture.overlay.isMenuVisible && fixture.viewport.get() == fixture.host.size
+                    }
+                    onEdt { assertEquals(native, fixture.overlay.isNativeRendering, "Exercise the requested renderer") }
+                    action(fixture)
+                } finally {
+                    fixture.dispose()
+                }
+            }
+        }
+    }
+
+    private fun createFixture(native: Boolean = false, failNative: Boolean = false): Fixture {
         val previousLayerType = System.getProperty("compose.layers.type")
         System.setProperty("compose.layers.type", "WINDOW")
         return try {
             assertTrue(DesktopWindowLayers.install())
-            createFixtureOnEdt(previousLayerType)
+            createFixtureOnEdt(previousLayerType, native, failNative)
         } catch (failure: Throwable) {
             restoreLayerType(previousLayerType)
             throw failure
         }
     }
 
-    private fun createFixtureOnEdt(previousLayerType: String?): Fixture = onEdtValue {
+    private fun createFixtureOnEdt(previousLayerType: String?, native: Boolean, failNative: Boolean): Fixture = onEdtValue {
         logger = LoggerFactory.getLogger(DesktopMenuBackgroundWindowTest::class.java)
         val canvas = ColorCanvas()
         val layout = NativeCanvasCardLayout(canvas) { 1.0 }
         val host = LayoutProbeHost(layout).apply { add(canvas, DisplayMode.Game.cardName) }
         val clicks = AtomicInteger()
+        val activeContent = AtomicInteger()
         val viewport = AtomicReference<Dimension?>()
+        val dialogShown = mutableStateOf(false)
         val buttonCenter = AtomicReference<Point?>()
-        val menu = DesktopLauncherOverlay.createMenuPanel(liveBackground = true).apply {
-            isOpaque = false
-            setContent {
+        val content: @Composable () -> Unit = {
+                DisposableEffect(Unit) {
+                    activeContent.incrementAndGet()
+                    onDispose { activeContent.decrementAndGet() }
+                }
                 val density = LocalDensity.current.density
                 MaterialTheme {
                     // Keep a minimally nonzero alpha so Windows routes blank-area input to the menu.
@@ -309,8 +493,14 @@ class DesktopMenuBackgroundWindowTest {
                                 },
                         ) { Text("Start match") }
                     }
+                    if (dialogShown.value) Dialog(onDismissRequest = { dialogShown.value = false }) {
+                        Box(Modifier.fillMaxSize()) { Text("Owned dialog keyboard target") }
+                    }
                 }
-            }
+        }
+        val menu = DesktopLauncherOverlay.createMenuPanel(liveBackground = true).apply {
+            isOpaque = false
+            setContent(content)
         }
         val frame = JFrame("RWJS live menu background regression").apply {
             defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
@@ -319,18 +509,23 @@ class DesktopMenuBackgroundWindowTest {
             setLocationRelativeTo(null)
             isVisible = true
         }
-        val overlay = DesktopLauncherOverlay(menu, host, frame)
+        val overlay = if (failNative) {
+            DesktopLauncherOverlay(menu, host, frame, nativeContent = content,
+                nativeWindowFactory = { throw IllegalStateException("Simulated native renderer initialization failure") })
+        } else DesktopLauncherOverlay(menu, host, frame, nativeContent = if (native) content else null)
         val switcher = DisplaySwitcher(menu, canvas, host, layout, frame, launcherOverlay = overlay)
         overlay.showMenu()
-        Fixture(frame, host, canvas, menu, buttonCenter, clicks, viewport, overlay, switcher, previousLayerType)
+        Fixture(frame, host, canvas, menu, buttonCenter, clicks, activeContent, viewport, dialogShown,
+            overlay, switcher, previousLayerType)
     }
 
-    /** Simulates native/layout transition observations without generating recovery events. */
+    /** Changes reported readiness without generating the events that normally wake the overlay. */
     private class LayoutProbeHost(layout: java.awt.LayoutManager) : JPanel(layout) {
         var blockSize = false
         var blockShowing = false
         override fun getWidth(): Int = if (blockSize) 0 else super.getWidth()
         override fun getHeight(): Int = if (blockSize) 0 else super.getHeight()
+        override fun getSize(): Dimension = if (blockSize) Dimension() else super.getSize()
         override fun isShowing(): Boolean = !blockShowing && super.isShowing()
     }
 
@@ -347,20 +542,32 @@ class DesktopMenuBackgroundWindowTest {
         val frame: JFrame,
         val host: LayoutProbeHost,
         val canvas: ColorCanvas,
-        val menu: ComposePanel,
+        val fallbackMenu: ComposePanel,
         val buttonCenter: AtomicReference<Point?>,
         val clicks: AtomicInteger,
+        val activeContent: AtomicInteger,
         val viewport: AtomicReference<Dimension?>,
+        val dialogShown: MutableState<Boolean>,
         val overlay: DesktopLauncherOverlay,
         val switcher: DisplaySwitcher,
         val previousLayerType: String?,
     ) {
+        val menu: Component get() = overlay.contentComponent
+
+        fun menuOwnsKeyboardFocus(): Boolean {
+            val manager = KeyboardFocusManager.getCurrentKeyboardFocusManager()
+            val owner = manager.focusOwner ?: return false
+            return manager.focusedWindow === SwingUtilities.getWindowAncestor(menu) &&
+                (owner === menu || SwingUtilities.isDescendingFrom(owner, menu))
+        }
+
         fun dispose() {
             try {
                 SwingUtilities.invokeAndWait {
                     overlay.dispose()
                     frame.ownedWindows.forEach(Window::dispose)
                     frame.dispose()
+                    assertEquals(0, activeContent.get(), "Disposing the owner must dispose its menu composition")
                 }
             } finally {
                 restoreLayerType(previousLayerType)
@@ -373,6 +580,17 @@ class DesktopMenuBackgroundWindowTest {
         assumeFalse(GraphicsEnvironment.isHeadless())
         assumeTrue(GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice
             .isWindowTranslucencySupported(GraphicsDevice.WindowTranslucency.PERPIXEL_TRANSLUCENT))
+    }
+
+    private fun withRenderApi(api: String, action: () -> Unit) {
+        val previous = System.getProperty("skiko.renderApi")
+        try {
+            System.setProperty("skiko.renderApi", api)
+            action()
+            assertEquals(api, System.getProperty("skiko.renderApi"), "Selecting a native menu must not change the global backend")
+        } finally {
+            if (previous == null) System.clearProperty("skiko.renderApi") else System.setProperty("skiko.renderApi", previous)
+        }
     }
 
     private fun awaitPixel(robot: Robot, point: Point, expected: Color) {

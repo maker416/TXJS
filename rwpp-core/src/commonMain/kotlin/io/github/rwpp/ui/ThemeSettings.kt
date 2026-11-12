@@ -43,7 +43,7 @@ internal fun ThemeSettingsContent(
 ) {
     val activeTheme = ArtThemeController.activeTheme
     Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 16.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Column(
@@ -52,7 +52,7 @@ internal fun ThemeSettingsContent(
         ) {
             Text(
                 readI18n("settings.theme"),
-                style = MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.primary,
             )
             ThemeSettingsCard("settings.themeAppearance") {

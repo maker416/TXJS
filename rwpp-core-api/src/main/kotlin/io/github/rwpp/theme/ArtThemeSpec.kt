@@ -9,6 +9,7 @@ package io.github.rwpp.theme
 
 import kotlinx.serialization.Serializable
 import net.peanuuutz.tomlkt.Toml
+import net.peanuuutz.tomlkt.TomlTable
 
 /**
  * 主题美术包（`.rwtheme`）中 `theme.toml` 的解析模型。
@@ -22,6 +23,11 @@ data class ArtThemeSpec(
     val colors: Map<String, String> = emptyMap(),
     val menu: MenuSpec = MenuSpec(),
     val fonts: FontsSpec = FontsSpec(),
+    /** 等待战斗室的图片、配色等外观；PC / Android 布局由客户端固定管理。 */
+    val room: RoomThemeSpec = RoomThemeSpec(),
+    /** 导入时记录作者显式填写的布局字段；不属于包格式，也不参与序列化。 */
+    @kotlinx.serialization.Transient
+    val explicitMenuLayoutFields: Set<String> = emptySet(),
 )
 
 @Serializable
@@ -35,11 +41,11 @@ data class ThemeMeta(
 
 @Serializable
 data class MenuSpec(
-    /** 是否显示主菜单标题图右下角的「极速版」角标。 */
+    /** 是否显示新版主菜单页头的「极速版」角标。 */
     val showTitleBadge: Boolean = true,
     /** 主菜单按钮区布局参数（v2）。主题缺省值见 [MenuLayoutSpec]。 */
     val layout: MenuLayoutSpec = MenuLayoutSpec(),
-    /** 按语义 id 的按钮槽位覆盖（v2），键必须是 [MENU_BUTTON_IDS] 之一。 */
+    /** 按语义 id 的主菜单及资源中心卡片覆盖，键必须是 [MENU_BUTTON_IDS] 之一。 */
     val buttons: Map<String, MenuButtonSpec> = emptyMap(),
 )
 
@@ -59,7 +65,7 @@ data class MenuLayoutSpec(
     val offsetY: Int = 0,
     /** 按钮区占屏宽百分比（30-100），仍受内置最大宽度上限约束。 */
     val widthPercent: Int = 65,
-    /** 按钮最小高度 dp（28-96）。 */
+    /** 卡片内容最小高度 dp（28-96）；界面保留至少 48dp 的点击区域。 */
     val buttonHeight: Int = 44,
     /** 按钮圆角 dp（0-32）。 */
     val buttonCorner: Int = 20,
@@ -86,7 +92,7 @@ data class MenuLayoutSpec(
 }
 
 /**
- * 单个主菜单按钮槽位的覆盖。order 相同的保持默认相对顺序。
+ * 单个入口卡片槽位的覆盖。order 相同的保持默认相对顺序。
  */
 @Serializable
 data class MenuButtonSpec(
@@ -107,9 +113,13 @@ data class MenuButtonSpec(
     )
 }
 
-/** 主菜单按钮的稳定语义 id，美术包据此覆盖排布与背景图（文档承诺不变）。 */
+/**
+ * 主菜单及资源中心卡片的稳定语义 id，美术包据此覆盖排布与背景图。
+ * 原有 id 保持有效；resources 对应新版资源中心，extensions 对应美术包管理。
+ */
 val MENU_BUTTON_IDS: Set<String> = setOf(
     "singlePlayer", "multiplayer", "resourceBrowser", "esports", "mods", "settings", "openSourceInfo",
+    "resources", "extensions",
 )
 
 /**
@@ -145,6 +155,7 @@ fun parseColorHex(s: String): Long? {
     val trimmed = s.trim()
     if (!trimmed.startsWith("#")) return null
     val hex = trimmed.removePrefix("#")
+    if (hex.any { it !in '0'..'9' && it !in 'a'..'f' && it !in 'A'..'F' }) return null
     return when (hex.length) {
         6 -> hex.toLongOrNull(16)?.let { 0xFF000000L or it }
         8 -> hex.toLongOrNull(16)
@@ -166,7 +177,7 @@ data class ThemeValidation(
  * 解析并校验 `theme.toml` 文本。
  *
  * 返回 `(spec, validation)`：解析失败或存在硬性错误时 spec 为 null。
- * 校验只在导入时执行，运行时路径不做可能失败的解析。
+ * 导入和扫描已安装包时均执行校验；等待室结构字段在此丢弃，渲染层再次归一化。
  */
 fun validateThemeToml(text: String): Pair<ArtThemeSpec?, ThemeValidation> {
     val errors = mutableListOf<String>()
@@ -215,7 +226,36 @@ fun validateThemeToml(text: String): Pair<ArtThemeSpec?, ThemeValidation> {
         }
     }
 
-    return (if (errors.isEmpty()) spec else null) to ThemeValidation(errors, warnings)
+    val roomValidation = validateRoomTheme(spec.room)
+    errors += roomValidation.errors
+    warnings += roomValidation.warnings
+
+    val validatedSpec = if (errors.isEmpty()) {
+        // 仅比较数值无法区分“未填写”与“显式使用模型默认值”，例如圆角 20dp。
+        val document = Toml.parseToTomlTable(text)
+        val menuTable = document["menu"] as? TomlTable
+        val layoutTable = menuTable?.get("layout") as? TomlTable
+        val roomTable = document["room"] as? TomlTable
+        val roomFields = buildSet {
+            fun collectLeaves(table: TomlTable, prefix: String) {
+                table.forEach { (key, value) ->
+                    val path = if (prefix.isEmpty()) key else "$prefix.$key"
+                    if (value is TomlTable) collectLeaves(value, path) else add(path)
+                }
+            }
+            if (roomTable != null) collectLeaves(roomTable, "")
+        }
+        val ignoredRoomFields = roomFields.filter(::isRoomStructureField)
+        if (ignoredRoomFields.isNotEmpty()) {
+            warnings += "战斗室仅支持外观美化，已忽略旧版结构字段（PC / Android 使用各自内置布局）: " +
+                ignoredRoomFields.joinToString { "room.$it" }
+        }
+        spec.copy(
+            room = spec.room.sanitized(),
+            explicitMenuLayoutFields = layoutTable?.keys?.toSet().orEmpty(),
+        )
+    } else null
+    return validatedSpec to ThemeValidation(errors, warnings)
 }
 
 /**

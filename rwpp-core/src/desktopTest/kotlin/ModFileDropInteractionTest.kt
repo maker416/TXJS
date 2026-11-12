@@ -132,27 +132,42 @@ class ModFileDropInteractionTest {
     }
 
     @Test
-    fun inactiveModsPageRejectsFileDrop() = onEdt {
-        setContent {
-            LauncherOverlayHost(true, { false }, EnterTransition.None, fadeOut(tween(1000))) {
-                ModsView({}, embedded = true)
+    fun inactiveModsPageRejectsFileDrop() {
+        var interactive by mutableStateOf(true)
+        onEdt {
+            setContent {
+                LauncherOverlayHost(true, { interactive }, EnterTransition.None, fadeOut(tween(1000))) {
+                    ModsView({}, embedded = true)
+                }
             }
         }
-        assertFalse(beginDrag(listOf(File("inactive.rwmod"))))
+        val files = listOf(File("inactive.rwmod"))
+        awaitDragReady(files)
+        onEdt {
+            interactive = false
+            render()
+            assertFalse(beginDrag(files))
+        }
     }
 
     @Test
-    fun exitingModsPageRejectsFileDropBeforeItsAnimationCompletes() = onEdt {
+    fun exitingModsPageRejectsFileDropBeforeItsAnimationCompletes() {
         var visible by mutableStateOf(true)
-        setContent {
-            LauncherOverlayHost(visible, { visible }, EnterTransition.None, fadeOut(tween(1000))) {
-                ModsView({}, embedded = true)
+        onEdt {
+            setContent {
+                LauncherOverlayHost(visible, { visible }, EnterTransition.None, fadeOut(tween(1000))) {
+                    ModsView({}, embedded = true)
+                }
             }
         }
-        visible = false
-        render()
-        render()
-        assertFalse(beginDrag(listOf(File("exiting.rwmod"))))
+        val files = listOf(File("exiting.rwmod"))
+        awaitDragReady(files)
+        onEdt {
+            visible = false
+            render()
+            render()
+            assertFalse(beginDrag(files))
+        }
     }
 
     @Test
@@ -244,10 +259,27 @@ class ModFileDropInteractionTest {
         assertEquals(expected, awaitNotice(expected))
     }
 
-    private fun importFiles(files: List<File>) = onEdt {
-        setContent { ModsView({}, embedded = true) }
-        assertTrue(beginDrag(files))
-        assertTrue(drop())
+    private fun importFiles(files: List<File>) {
+        onEdt { setContent { ModsView({}, embedded = true) } }
+        awaitDragReady(files)
+        onEdt {
+            assertTrue(beginDrag(files))
+            assertTrue(drop())
+        }
+    }
+
+    private fun awaitDragReady(files: List<File>) {
+        val deadline = System.nanoTime() + 5_000_000_000L
+        while (System.nanoTime() < deadline) {
+            if (onEdt {
+                render()
+                beginDrag(files).also { accepted ->
+                    if (accepted) scene.rootDragAndDropNode.onEnded(dragEvent)
+                }
+            }) return
+            Thread.sleep(10)
+        }
+        error("Mods page did not finish its initial file scan")
     }
 
     private fun createMod(): File = File(fixtureRoot, "source-${System.nanoTime()}.rwmod").apply {
@@ -327,5 +359,12 @@ class ModFileDropInteractionTest {
     }
 
     private fun <T> stub(type: Class<T>, handler: (String, Array<out Any?>?) -> Any?): T =
-        type.cast(Proxy.newProxyInstance(type.classLoader, arrayOf(type)) { _, method, args -> handler(method.name, args) })
+        type.cast(Proxy.newProxyInstance(type.classLoader, arrayOf(type)) { proxy, method, args ->
+            when (method.name) {
+                "equals" -> proxy === args?.firstOrNull()
+                "hashCode" -> System.identityHashCode(proxy)
+                "toString" -> "ModFileDropFixture(${type.simpleName})"
+                else -> handler(method.name, args)
+            }
+        })
 }

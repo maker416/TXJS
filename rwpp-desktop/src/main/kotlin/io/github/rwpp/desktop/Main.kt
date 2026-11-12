@@ -27,18 +27,22 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposePanel
 import androidx.compose.ui.composed
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -72,6 +76,7 @@ import io.github.rwpp.game.mod.NetworkModCache
 import io.github.rwpp.game.sendChatMessageOrCommand
 import io.github.rwpp.generatedLibDir
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.i18n.LanguageHelper
 import io.github.rwpp.inject.GameLibraries
 import io.github.rwpp.inject.runtime.Builder
 import io.github.rwpp.koinInit
@@ -84,12 +89,12 @@ import io.github.rwpp.ui.Widget
 import io.github.rwpp.ui.defaultBuildLogger
 import io.github.rwpp.widget.BorderCard
 import io.github.rwpp.widget.ExitButton
-import io.github.rwpp.widget.MenuLoadingView
 import io.github.rwpp.widget.RWPPTheme
 import io.github.rwpp.widget.RWSingleOutlinedTextField
 import io.github.rwpp.widget.RWTextButton
 import io.github.rwpp.widget.RWTextFieldColors
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -109,6 +114,7 @@ import java.awt.event.KeyEvent
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.logging.Level
 import java.util.logging.Logger
 import javax.imageio.ImageIO
@@ -139,16 +145,16 @@ var requireReloadingLib = false
 val isMainWindowInitialized: Boolean get() = ::mainJFrame.isInitialized
 
 private var launcherOverlayRef: DesktopLauncherOverlay? = null
+private var startupOverlayRef: DesktopLauncherOverlay? = null
 
-/**
- * 原生窗口状态变化（全屏/窗口切换、启动完成）后重新断言透明菜单层的位置与可见性。
- *
- * 菜单层只被动跟随 AWT 组件事件，而 Win32 样式修改、窗口 bounds 赋值与 AWT 布局的
- * 到达顺序不受控。缺少这次主动同步时，切换全屏后可能只剩底层 Canvas 画面。
- */
+/** 原生全屏切换后同步当前启动层和菜单层；各层自行保留原有显示门控。 */
 fun refreshLauncherOverlay() {
-    if (SwingUtilities.isEventDispatchThread()) launcherOverlayRef?.refresh()
-    else SwingUtilities.invokeLater { launcherOverlayRef?.refresh() }
+    if (!SwingUtilities.isEventDispatchThread()) {
+        SwingUtilities.invokeLater { refreshLauncherOverlay() }
+        return
+    }
+    startupOverlayRef?.refresh()
+    launcherOverlayRef?.refresh()
 }
 
 //val cacheModSize = AtomicInteger(0)
@@ -195,28 +201,9 @@ fun main(array: Array<String>) {
     requireReloadingLib = StartupTiming.measure("desktop.injectCheck") { Builder.prepareReloadingLib() }
 
     io.github.rwpp.game.mod.ModLoadSafety.configure(File("resource-load.properties"))
-    if (!requireReloadingLib) {
-        chooseDesktopRecovery()
-        val app = appKoin.get<AppContext>()
-        StartupTiming.measure("desktop.app") { app.init() }
-        val networkModCache = appKoin.get<NetworkModCache>()
-        try { io.github.rwpp.game.mod.ModLoadSafety.run("cache-preparation") {
-            StartupTiming.measure("desktop.networkModCache") { networkModCache.prepareStartup() }
-        } }
-        catch (failure: io.github.rwpp.game.mod.ModLoadFailure) {
-            showDesktopResourceFailure(failure.message.orEmpty())
-            return
-        }
-        app.onExit { networkModCache.cleanupWorkingCopiesOnExit() }
-    }
+    if (!requireReloadingLib) chooseDesktopRecovery()
 
     Logger.getLogger(OkHttpClient::class.java.name).level = Level.FINE
-    File("mods/maps/")
-        .walk()
-        .filter { it.name.startsWith("generated_") }
-        .forEach {
-            it.delete()
-        }
 
     val settings = appKoin.get<Settings>()
     if (settings.renderingBackend != "Default") {
@@ -234,24 +221,75 @@ fun main(array: Array<String>) {
     swingApplication()
 }
 
+/** 普通启动准备放在加载首帧之后，仍先于引擎读取资源、模组和脚本。 */
+private fun prepareDesktopLauncher(onMessage: (String) -> Unit) {
+    val app = appKoin.get<AppContext>()
+    StartupTiming.measure("desktop.app") { app.init() }
+    onMessage(readI18n("startup.cache"))
+    val networkModCache = appKoin.get<NetworkModCache>()
+    try {
+        io.github.rwpp.game.mod.ModLoadSafety.run("cache-preparation") {
+            StartupTiming.measure("desktop.networkModCache") { networkModCache.prepareStartup() }
+        }
+    } catch (failure: io.github.rwpp.game.mod.ModLoadFailure) {
+        showDesktopResourceFailure(failure.message.orEmpty())
+        throw failure
+    }
+    app.onExit { networkModCache.cleanupWorkingCopiesOnExit() }
+    StartupTiming.measure("desktop.temporaryMaps") {
+        File("mods/maps/").walk().filter { it.name.startsWith("generated_") }.forEach { it.delete() }
+    }
+}
+
+/** GL setup 返回时其全局锁已释放；只排 EDT 任务，游戏线程不反过来等待界面。 */
+internal fun releaseDesktopStartupCanvasResize() {
+    SwingUtilities.invokeLater {
+        if (!::gameCanvas.isInitialized) return@invokeLater
+        val host = gameCanvas.parent ?: return@invokeLater
+        val layout = host.layout as? NativeCanvasCardLayout ?: return@invokeLater
+        if (layout.deferCanvasResize) {
+            layout.deferCanvasResize = false
+            host.doLayout()
+        }
+    }
+}
+
 fun swingApplication() = SwingUtilities.invokeLater {
     val window = JFrame()
     mainJFrame = window
     val useMenuOverlay = !requireReloadingLib && DesktopLauncherOverlay.isSupported(window)
-    // 只有菜单使用 Swing 绘制到透明窗口；战场仍直接走原生 OpenGL，不逐帧回读游戏画面。
-    // 默认 SkiaSurface 在透明 AWT 窗口中会填白色底，不能透出下面的游戏窗口。
+    // 菜单优先使用独立原生透明窗口；此面板保留给软件渲染和兼容回退。
+    // 战场始终保留原生 OpenGL Canvas，不复制游戏帧或搬动上下文。
     val panel = DesktopLauncherOverlay.createMenuPanel(useMenuOverlay)
     var launcherOverlay: DesktopLauncherOverlay? = null
+    var startupOverlay: DesktopLauncherOverlay? = null
     var menuBackgroundEnabled = false
+    val diagnostics = DesktopStartupDiagnostics.start()
+    val firstStartupFrame = CompletableDeferred<Unit>()
+    val firstFrameQueued = AtomicBoolean()
+    val menuFrameQueued = AtomicBoolean()
+    val startupPanel = ComposePanel().apply { isOpaque = true }
+    val startupSettings = appKoin.get<Settings>()
+    val initialMessage = if (LanguageHelper.resolveEffectiveLanguage(startupSettings) == "zh")
+        "正在准备启动器…" else "Preparing launcher…"
+    var isLoading by mutableStateOf(true)
+    var launcherInitialized by mutableStateOf(false)
+    var message by mutableStateOf(initialMessage)
+    var startupError by mutableStateOf<Throwable?>(null)
     panel.isVisible = true
     panel.size = displaySize.size
     panel.isOpaque = false
     panel.isFocusable = true
-    panel.setContent {
-        var isLoading by remember { mutableStateOf(true) }
-        var message by remember { mutableStateOf("loading...") }
-        var startupError by remember { mutableStateOf<Throwable?>(null) }
+    startupPanel.setContent {
+        DisposableEffect(Unit) {
+            onDispose {
+                diagnostics.close()
+                releaseDesktopStartupCanvasResize()
+            }
+        }
         LaunchedEffect(Unit) {
+            // 首帧完成后再排到 EDT 队尾，让初始布局/最大化产生的 resize 先处理完。
+            firstStartupFrame.await()
             withContext(Dispatchers.IO) {
                 if (requireReloadingLib) {
                     runCatching {
@@ -268,48 +306,92 @@ fun swingApplication() = SwingUtilities.invokeLater {
                     }.onFailure {
                         Builder.logger?.error(it.stackTraceToString())
                     }
+                    diagnostics.close()
                 } else {
                     try {
+                        prepareDesktopLauncher { message = it }
+                        withContext(Dispatchers.Main.immediate) { launcherInitialized = true }
                         val game = appKoin.get<Game>()
                         StartupTiming.measure("desktop.engine") { game.load { message = it } }
                         withContext(Dispatchers.Main.immediate) {
+                            (gameCanvas as? DesktopGameCanvas)?.startupInputEnabled = true
+                            gameCanvas.isFocusable = true
                             GameLoadedEvent().broadcastIn()
                             isLoading = false
                             StartupTiming.mark("desktop.menuReady")
+                            launcherOverlay?.showMenu()
                             logger.info("[START] game initialization completed")
                         }
                     } catch (error: CancellationException) {
+                        diagnostics.close()
+                        releaseDesktopStartupCanvasResize()
                         throw error
                     } catch (error: Throwable) {
                         logger.error("[START] game initialization failed", error)
+                        diagnostics.close()
+                        releaseDesktopStartupCanvasResize()
                         withContext(Dispatchers.Main.immediate) { startupError = error }
                     }
                 }
             }
         }
 
-        if (requireReloadingLib) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        brush = Brush.verticalGradient(
-                            listOf(
-                                ColorCompose.Black,
-                                androidx.compose.ui.graphics.Color(52, 52, 52),
-                                androidx.compose.ui.graphics.Color(2, 48, 32),
-                                androidx.compose.ui.graphics.Color(52, 52, 52),
-                                ColorCompose.Black
-                            )
-                        )
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                RWPPTheme(true) {
-                    InjectConsole()
+        Box(Modifier.fillMaxSize().drawWithContent {
+            drawContent()
+            if (requireReloadingLib) diagnostics.onFrameRendered(startupSettings.enableAnimations)
+            if (firstFrameQueued.compareAndSet(false, true)) SwingUtilities.invokeLater {
+                if (window.isShowing && startupPanel.isShowing) {
+                    (gameCanvas.parent?.layout as? NativeCanvasCardLayout)?.let { layout ->
+                        gameCanvas.parent.doLayout()
+                        layout.deferCanvasResize = true
+                    }
+                    // 冻结前 setBounds 可能刚产生 resize，下一轮再发动引擎。
+                    SwingUtilities.invokeLater { firstStartupFrame.complete(Unit) }
+                } else {
+                    firstFrameQueued.set(false)
                 }
             }
-        } else {
+        }) {
+            val error = startupError
+            if (error != null) {
+                DesktopStartupView(
+                    if (launcherInitialized) readI18n("mod.startupFailed") else initialMessage,
+                    prepared = launcherInitialized, error = error,
+                    onFrameRendered = { diagnostics.onFrameRendered(false) },
+                ) {
+                    if (launcherInitialized) appKoin.get<AppContext>().exit()
+                    else exitProcess(1)
+                }
+            } else if (requireReloadingLib) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            brush = Brush.verticalGradient(
+                                listOf(
+                                    ColorCompose.Black,
+                                    androidx.compose.ui.graphics.Color(52, 52, 52),
+                                    androidx.compose.ui.graphics.Color(2, 48, 32),
+                                    androidx.compose.ui.graphics.Color(52, 52, 52),
+                                    ColorCompose.Black
+                                )
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    RWPPTheme(true) {
+                        InjectConsole()
+                    }
+                }
+            } else {
+                DesktopStartupView(message, prepared = launcherInitialized,
+                    onFrameRendered = { diagnostics.onFrameRendered(startupSettings.enableAnimations) })
+            }
+        }
+    }
+
+    val menuContent: @Composable () -> Unit = {
+        if (!isLoading) {
             val settings = koinInject<Settings>()
             val isPremium = true
             var backgroundImagePath by remember { mutableStateOf(settings.backgroundImagePath ?: "") }
@@ -317,11 +399,12 @@ fun swingApplication() = SwingUtilities.invokeLater {
             // 主题美术包的背景图优先于用户在设置中手选的背景
             val themeBackground = ArtThemeController.activeTheme?.backgroundFile?.absolutePath
             val effectiveBackgroundPath = if (backgroundImageEnabled) themeBackground ?: backgroundImagePath else ""
-            val painter = remember(effectiveBackgroundPath) {
+            val painter by produceState<androidx.compose.ui.graphics.painter.Painter?>(null, effectiveBackgroundPath) {
+                value = null
                 if (effectiveBackgroundPath.isNotBlank() && isPremium) {
-                    runCatching { ImageIO.read(File(effectiveBackgroundPath)).toPainter() }.getOrNull()
-                } else {
-                    null
+                    value = withContext(Dispatchers.IO) {
+                        runCatching { ImageIO.read(File(effectiveBackgroundPath))?.toPainter() }.getOrNull()
+                    }
                 }
             }
             val backgroundAvailable by DesktopMenuBackgroundEngine.available.collectAsState()
@@ -331,7 +414,19 @@ fun swingApplication() = SwingUtilities.invokeLater {
             }
 
             Box(
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize().drawWithContent {
+                    drawContent()
+                    if (menuFrameQueued.compareAndSet(false, true)) SwingUtilities.invokeLater {
+                        StartupTiming.mark("desktop.menuFirstFrame")
+                        val startupHadFocus = startupOverlay?.contentComponent?.let {
+                            SwingUtilities.getWindowAncestor(it)?.isFocused
+                        } == true
+                        startupOverlay?.dispose()
+                        startupOverlayRef = null
+                        if (startupHadFocus) launcherOverlay?.focusMenu()
+                        diagnostics.close()
+                    }
+                }
                     // Windows 将 alpha=0 的原生窗口区域视为鼠标穿透；透明页边缘也应由菜单接收。
                     .background(Color.Black.copy(alpha = 1f / 255f)).composed {
                     if (painter == null && !backgroundAvailable) {
@@ -355,38 +450,22 @@ fun swingApplication() = SwingUtilities.invokeLater {
 
                 if (effectiveBackgroundPath.isNotBlank() && isPremium && painter != null) {
                     Image(
-                        painter = painter,
+                        painter = requireNotNull(painter),
                         null,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
                     )
                 }
 
-                val error = startupError
-                if (error != null) {
-                    RWPPTheme(true) {
-                        Column(
-                            modifier = Modifier.widthIn(max = 600.dp).padding(24.dp),
-                            verticalArrangement = Arrangement.spacedBy(16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(readI18n("mod.startupFailed"), color = ColorCompose.White, style = MaterialTheme.typography.headlineSmall)
-                            Text(readI18n("mod.startupFailedDetail", arg = arrayOf(error.toString())), color = ColorCompose.White)
-                            RWTextButton(readI18n("menu.exit")) { appKoin.get<AppContext>().exit() }
-                        }
-                    }
-                } else if (isLoading) {
-                    MenuLoadingView(message)
-                } else {
-                    App(isPremium = isPremium) { path ->
-                        backgroundImagePath = path
-                        backgroundImageEnabled = settings.backgroundImageEnabled
-                    }
+                App(isPremium = isPremium) { path ->
+                    backgroundImagePath = path
+                    backgroundImageEnabled = settings.backgroundImageEnabled
                 }
 
             }
         }
     }
+    panel.setContent(menuContent)
 
     if (requireReloadingLib) {
         window.defaultCloseOperation = JFrame.EXIT_ON_CLOSE
@@ -435,12 +514,13 @@ fun swingApplication() = SwingUtilities.invokeLater {
         })
     }
 
-    val canvas = Canvas()
+    val canvas = DesktopGameCanvas()
     gameCanvas = canvas
     canvas.size = displaySize.size
     canvas.isVisible = useMenuOverlay
     canvas.background = java.awt.Color.BLACK
-    canvas.isFocusable = true
+    // 加载期间由启动页接收输入；DesktopGameCanvas 也拦截 LWJGL 重置 focusable 后的请求。
+    canvas.isFocusable = false
 
     val displayLayout = NativeCanvasCardLayout(canvas, ::getDPIScale)
     val displayHost = JPanel(displayLayout).apply {
@@ -454,7 +534,10 @@ fun swingApplication() = SwingUtilities.invokeLater {
     window.add(displayHost, BorderLayout.CENTER)
 
     if (useMenuOverlay) {
-        launcherOverlay = DesktopLauncherOverlay(panel, displayHost, window) { visible ->
+        launcherOverlay = DesktopLauncherOverlay(
+            panel, displayHost, window, initiallyVisible = false,
+            nativeContent = menuContent.takeUnless { startupSettings.renderingBackend.equals("Software", ignoreCase = true) },
+        ) { visible ->
             DesktopMenuBackgroundEngine.request(menuBackgroundEnabled && visible)
         }
         launcherOverlayRef = launcherOverlay
@@ -471,14 +554,26 @@ fun swingApplication() = SwingUtilities.invokeLater {
         launcherOverlay = launcherOverlay,
     )
 
+    // 启动页使用普通不透明 Compose 窗口；核心就绪后才启用透明菜单及游戏背景。
+    startupOverlay = DesktopLauncherOverlay(startupPanel, displayHost, window, opaque = true)
+    startupOverlayRef = startupOverlay
+    window.addWindowListener(object : WindowAdapter() {
+        override fun windowClosed(e: WindowEvent?) {
+            diagnostics.close()
+            startupOverlay?.dispose()
+            startupOverlayRef = null
+            launcherOverlayRef = null
+        }
+    })
+
     // Windows 下需要全屏启动时，先创建原生句柄再在窗口可见前应用无边框样式，避免闪现标题栏
     if (startFullscreen && FullscreenController.isWindowsPlatform) {
         window.pack()
         FullscreenController.enterFullscreenAtStartup(window)
     }
     window.isVisible = true
-    if (launcherOverlay != null) launcherOverlay.showMenu() else panel.requestFocus()
-    // 全屏启动时 Win32 样式在窗口可见前应用，可见后再补一次菜单层同步。
+    StartupTiming.mark("desktop.windowVisible")
+    startupOverlay.showMenu()
     SwingUtilities.invokeLater { refreshLauncherOverlay() }
 
     focusRequester = FocusRequester()

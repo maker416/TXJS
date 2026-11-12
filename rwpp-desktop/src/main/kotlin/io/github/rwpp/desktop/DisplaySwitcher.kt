@@ -92,7 +92,7 @@ class DisplaySwitcher(
         if (launcherOverlay != null) launcherOverlay.showMenu()
         else displayLayout.show(displayHost, DisplayMode.Menu.cardName)
         refreshWindow()
-        SwingUtilities.invokeLater {
+        if (launcherOverlay == null) SwingUtilities.invokeLater {
             menuPanel.requestFocusInWindow()
         }
     }

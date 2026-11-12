@@ -55,9 +55,21 @@ object ArtThemeController {
     ) {
         val id: String get() = spec.theme.id
 
-        /** 材质、配色或标题主题继续使用新版首页；只有定制菜单的主题才使用自有排布。 */
+        /** 结构定制使用新版卡片网格；仅图片、圆角、描边或按钮宽度不改变新版首页的排布。 */
         val hasCustomMenuLayout: Boolean
-            get() = spec.menu.layout != MenuLayoutSpec() || spec.menu.buttons.isNotEmpty() || buttonImages.isNotEmpty()
+            get() {
+                val defaults = MenuLayoutSpec()
+                val layout = spec.menu.layout.sanitized().copy(
+                    buttonHeight = defaults.buttonHeight,
+                    buttonCorner = defaults.buttonCorner,
+                    showBorder = defaults.showBorder,
+                )
+                val directIds = setOf("resourceBrowser", "esports", "extensions")
+                val structureFields = setOf("orientation", "columns", "align", "offsetY", "widthPercent", "spacing")
+                return layout != defaults || spec.explicitMenuLayoutFields.any { it in structureFields } || spec.menu.buttons.any { (id, button) ->
+                    id in MENU_BUTTON_IDS && (id in directIds || button.order != 0 || button.sanitized().span != 0 || button.hidden)
+                } || buttonImages.keys.any { it in directIds }
+            }
 
         /**
          * 游戏内贴图覆盖层（v4）：包内 `game/` 目录（镜像 assets 结构），

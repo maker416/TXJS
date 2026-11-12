@@ -1,0 +1,86 @@
+# Copyright 2023-2025 RWPP contributors
+# GNU AGPLv3: https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
+# 等待战斗室最小外观示例，只引用本目录已有图片，不修改 UI 结构。
+# 单独建目录，将本文件命名为 theme.toml，复制下方引用的图片后压缩为 .rwtheme。
+# 完整示例请使用现有 theme.toml 和 tools/build.py；不要用本文件覆盖它。
+[theme]
+id = "pelagic-atlas-room-example"
+name = "远洋图志 · 战斗室示例"
+author = "RWJS contributors"
+version = "2.1.0"
+
+[colors]
+primary = "#B84732"
+onPrimary = "#FFF9ED"
+surface = "#FCF8EE"
+onSurface = "#183A49"
+surfaceContainer = "#CDDFE1"
+background = "#F4EDDF"
+onBackground = "#183A49"
+
+[room.background]
+image = "background.png"
+scale = "crop"
+alpha = 100
+
+[room.panels.players]
+backgroundColor = "#FCF8EE"
+contentColor = "#183A49"
+borderColor = "#9AAEAC"
+corner = 2
+
+[room.panels.map]
+backgroundColor = "#FCF8EE"
+contentColor = "#183A49"
+borderColor = "#9AAEAC"
+corner = 2
+
+[room.panels.details]
+backgroundColor = "#F4EDDF"
+borderWidth = 0
+corner = 2
+
+[room.panels.actions]
+backgroundColor = "#FCF8EE"
+corner = 2
+
+[room.panels.chat]
+backgroundColor = "#FCF8EE"
+corner = 2
+
+[room.player]
+backgroundImage = "buttons/settings.png"
+localImage = "buttons/multiplayer.png"
+hostImage = "buttons/singlePlayer.png"
+aiImage = "buttons/mods.png"
+emptyImage = "buttons/extensions.png"
+backgroundColor = "#F4EDDF"
+borderColor = "#9AAEAC"
+borderWidth = 1
+corner = 2
+nameWeight = 600
+nameUseTeamColor = false
+nameColor = "#183A49"
+
+[room.player.profile]
+backgroundColor = "#CDDFE1"
+borderColor = "#315D70"
+tint = "#183A49"
+corner = 2
+
+[room.buttons.start]
+backgroundImage = "buttons/multiplayer.png"
+backgroundColor = "#B84732"
+contentColor = "#183A49"
+borderWidth = 0
+corner = 2
+
+[room.buttons.options]
+backgroundColor = "#CDDFE1"
+contentColor = "#183A49"
+corner = 2
+
+[room.buttons.invite]
+backgroundColor = "#F1D7C0"
+contentColor = "#183A49"
+corner = 2

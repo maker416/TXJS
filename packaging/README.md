@@ -2,6 +2,30 @@
 
 Linux 提供自带 Java 21 和原版运行资源的完整包；Windows 安装器继续使用 Inno Setup，产物为 `RWJS-Setup.exe`。PC 完整包优先从原版 ZIP 读取资源。
 
+## 一键打包 PC 和 Android 发行版
+
+打开 `build/build.ps1`，选择新增的 **菜单 8**；也可在项目根目录直接运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build\build.ps1 release-all -Channel official
+# 仅检查两端打包条件（沿用启动时递增版本的规则）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build\build.ps1 release-all -Check
+```
+
+`release-all`（别名 `all-release`、`8`）先检查 PC 原版资源、打包工具和 Android Release 签名，再在同一次 Gradle 调用中构建 PC 安装包与已签名的 Android Release APK。两端共用本次启动递增后的版本及渠道，交互模式只询问一次渠道；不自动执行 `clean`。请提前准备 Android SDK、原版 Android 资源和原有 Release 签名。
+
+Windows 产物分别收集到 `build/artifacts/installer-<渠道>/` 和 `build/artifacts/android-release-<渠道>/`，包含完整安装包、发布分卷、SHA-256 和各自的 `build-info.txt`。任一端预检、构建或收集失败，整体返回非零；预检失败不执行 Gradle，构建失败不收集产物。
+
+Linux 同样支持 `./packaging/build.sh release-all --channel official` 或菜单 8，生成 Linux x64 完整包和 Android Release APK，分别位于 `build/artifacts/linux-<渠道>/` 和 `build/artifacts/android-release-<渠道>/`。
+
+## 打包自动递增版本
+
+每次启动打包脚本，立即将根 `build.gradle.kts` 的 `version` 补丁号加一并保存，例如 `1.20.62` → `1.20.63`，`1.20.99` → `1.20.100`，不等待选择目标或通过环境预检。桌面端、Windows 安装器、Linux 完整包及 Android Debug/Release 都使用递增后的版本，产物名称及 `build-info.txt` 同步使用该版本。
+
+`build/build.ps1` 与仓库维护的 `packaging/build.ps1` 共用此逻辑，入口转调不会重复递增；Linux 的 Bash/Python 入口在启动 Python 后执行同一规则。同一次运行中的失败自动重试、菜单内后续操作共用这一个版本，适合依次打包 PC 和 APK。重新运行脚本会再加一；失败或退出也保留已递增版本。
+
+查看帮助、只打开菜单后退出、环境检查（`-Check` / `--check`）、`test`、`clean` 和独立的 `browser-kernels` 都会递增客户端版本；环境预检失败也不回退。检查模式仍不安装工具、不执行构建，但会更新版本文件。浏览器组件自身继续使用 `packaging/browser-kernels.properties` 中的独立版本。根版本号缺失、重复或不是 `x.y.z` 格式时，停止脚本并报错。直接运行 Gradle 不会触发脚本的版本递增。
+
 ## Linux 构建
 
 将 Linux x64 原版 ZIP 命名为 **`Rusted-Warfare-linux.zip`**，放在 **`build/build.sh` 同级目录**。同一项目可以同时保存两个平台的资源包：
@@ -100,6 +124,13 @@ Windows 资源优先级：`-GameArchive`（或底层 `-GameRoot`）→ **`build/
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File packaging/tests/WindowsEnvironment.Tests.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File packaging/tests/WindowsBootstrap.Tests.ps1
+```
+
+版本递增及打包流程回归（使用临时版本文件和 Gradle 模拟，不修改项目当前版本、不执行客户端构建）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File packaging/tests/BuildVersion.Tests.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File packaging/tests/ReleaseAll.Tests.ps1
 ```
 
 ## 本机 debug 覆盖安装（不提交 game-root.local.txt）

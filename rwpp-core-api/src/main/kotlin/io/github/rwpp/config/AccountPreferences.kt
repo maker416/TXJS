@@ -20,7 +20,7 @@ const val DEFAULT_ACCOUNT_API_URL = "http://210.16.170.71:11455"
  * 统一账号客户端配置与会话持久化。
  *
  * 不读写 [CoreData.loginCookie] / `userId`，与 BBS / rtsbox 隔离。
- * 服务地址与 AppKey 不在玩家设置页展示；仍可通过本地配置、环境变量或系统属性覆盖。
+ * 服务地址仅在设置页管理员验证后展示；AppKey 可通过本地配置、环境变量或系统属性覆盖。
  */
 @Single
 @Serializable

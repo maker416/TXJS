@@ -24,6 +24,7 @@ import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
 import io.github.rwpp.core.LoadingContext
 import io.github.rwpp.core.ModSyncController
+import io.github.rwpp.core.StartupTiming
 import io.github.rwpp.desktop.AbstractGame
 import io.github.rwpp.desktop.DesktopEngineStartup
 import io.github.rwpp.desktop.DesktopGameThreadDispatcher
@@ -174,6 +175,7 @@ class GameImpl : AbstractGame() {
 
     override suspend fun load(context: LoadingContext): Unit = with(context) {
         val startup = DesktopEngineStartup()
+        message(readI18n("startup.graphics"))
         gameThread = Thread({
             startup.runEngine {
                 Display.setParent(gameCanvas)
@@ -190,7 +192,9 @@ class GameImpl : AbstractGame() {
         container.post {
             val loadedSnapshotToken = io.github.rwpp.desktop.DesktopLoadedModSnapshot.beginLoad()
             io.github.rwpp.game.mod.ModLoadSafety.run("startup") {
-            DesktopReloadGlContext.initialize(Display.getDrawable())
+            StartupTiming.measure("desktop.engine.sharedGlContext") {
+                DesktopReloadGlContext.initialize(Display.getDrawable())
+            }
             val nHelper = object : n() {
                 val i = com.corrodinggames.rts.java.i(main)
 
@@ -265,16 +269,20 @@ class GameImpl : AbstractGame() {
             l.aX = true
             l.aW = true
             l.bg = EClass::class.java
-            val openALAudio = OpenALAudio(20, 9, 512)
+            message(readI18n("startup.audio"))
+            val openALAudio = StartupTiming.measure("desktop.engine.audio") {
+                OpenALAudio(20, 9, 512)
+            }
 
             com.corrodinggames.rts.gameFramework.a.e.c = com.corrodinggames.rts.java.o(openALAudio);
             AMClass.a = com.corrodinggames.rts.java.l(openALAudio)
             com.corrodinggames.rts.gameFramework.j.n.d = com.corrodinggames.rts.java.k()
             ac.b = VClass()
 
-            main.g()
+            StartupTiming.measure("desktop.engine.platform") { main.g() }
 
 
+            message(readI18n("startup.interface"))
             main.d = object : DClass() {
                 //返回是否全屏，以便能处理边缘移动
                 override fun f(): Boolean {
@@ -294,18 +302,22 @@ class GameImpl : AbstractGame() {
             i.a(p1, main.d)
             val p = Reflect.get<com.corrodinggames.rts.java.d.a>(main, "p")!!
             p.debug = false
-            p.setup()
-            p.loadFont("font/Delicious-Roman.otf");
-            p.loadFont("font/Delicious-Italic.otf");
-            p.loadFont("font/Delicious-Bold.otf");
-            p.loadFont("font/Delicious-BoldItalic.otf");
-            p.loadFont("font/Roboto-Regular.ttf");
-            p.loadFont("font/Roboto-Bold.ttf");
-            println("NotoSansCJKsc start");
-            p.loadFont("font/NotoSansCJKsc-Regular.otf", "notoSans");
-            p.loadFont("font/DroidSansFallback.ttf", "fallback");
-            println("NotoSansCJKsc end");
-            i.c();
+            StartupTiming.measure("desktop.engine.libRocketSetup") { p.setup() }
+            StartupTiming.measure("desktop.engine.fonts") {
+                p.loadFont("font/Delicious-Roman.otf");
+                p.loadFont("font/Delicious-Italic.otf");
+                p.loadFont("font/Delicious-Bold.otf");
+                p.loadFont("font/Delicious-BoldItalic.otf");
+                p.loadFont("font/Roboto-Regular.ttf");
+                p.loadFont("font/Roboto-Bold.ttf");
+                println("NotoSansCJKsc start");
+                StartupTiming.measure("desktop.engine.cjkFonts") {
+                    p.loadFont("font/NotoSansCJKsc-Regular.otf", "notoSans");
+                    p.loadFont("font/DroidSansFallback.ttf", "fallback");
+                }
+                println("NotoSansCJKsc end");
+            }
+            StartupTiming.measure("desktop.engine.libRocketScripts") { i.c() }
             println("end libRocket setup");
             main.b("GuiEngine");
             GameEngine.dz = main.e;
@@ -314,9 +326,10 @@ class GameImpl : AbstractGame() {
             println("GameEngine")
 
 
+            message(readI18n("startup.engine"))
             l.ck = Point(displaySize.width, displaySize.height)
             val serverContext = ServerContext()
-            val a3 = l.a(serverContext, nHelper)
+            val a3 = StartupTiming.measure("desktop.engine.resources") { l.a(serverContext, nHelper) }
 
             with(main) {
                 val i = Reflect.get<a>(this, "i")!!
@@ -620,6 +633,15 @@ class GameImpl : AbstractGame() {
         private val channel = Channel<() -> Unit>(Channel.UNLIMITED)
         private var frameNumber = 0L
         private var lastFrameLogTime = 0L
+
+        protected override fun setup() {
+            // 包含 Display.create、Slick 系统与输入设备初始化；不覆盖后续引擎资源加载。
+            try {
+                StartupTiming.measure("desktop.engine.containerSetup") { super.setup() }
+            } finally {
+                io.github.rwpp.desktop.releaseDesktopStartupCanvasResize()
+            }
+        }
 
         /**
          * try to post an action to the game thread (running in Opengl context)

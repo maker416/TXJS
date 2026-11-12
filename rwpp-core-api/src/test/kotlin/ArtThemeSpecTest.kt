@@ -33,6 +33,10 @@ class ArtThemeSpecTest {
         assertNull(parseColorHex("#12345"))
         assertNull(parseColorHex("#1234567"))
         assertNull(parseColorHex("#GGGGGG"))
+        assertNull(parseColorHex("#+00000"))
+        assertNull(parseColorHex("#-00001"))
+        assertNull(parseColorHex("#+0000000"))
+        assertNull(parseColorHex("#-0000001"))
         assertNull(parseColorHex("red"))
     }
 
@@ -166,6 +170,27 @@ class ArtThemeSpecTest {
     }
 
     @Test
+    fun explicitlyConfiguredLayoutDefaultsRemainDistinguishableFromOmittedFields() {
+        val metadata = "[theme]\nid = \"layout-presence\"\nname = \"Layout presence\"\n"
+        val (explicit, explicitValidation) = validateThemeToml(
+            metadata + "\n[menu.layout]\nbuttonCorner = 20\nwidthPercent = 65\n"
+        )
+        assertTrue(explicitValidation.isValid)
+        assertNotNull(explicit)
+        assertEquals(MenuLayoutSpec(), explicit.menu.layout)
+        assertEquals(setOf("buttonCorner", "widthPercent"), explicit.explicitMenuLayoutFields)
+
+        val (omitted, omittedValidation) = validateThemeToml(metadata)
+        assertTrue(omittedValidation.isValid)
+        assertNotNull(omitted)
+        assertEquals(MenuLayoutSpec(), omitted.menu.layout)
+        assertTrue(omitted.explicitMenuLayoutFields.isEmpty())
+
+        val encoded = net.peanuuutz.tomlkt.Toml.encodeToString(ArtThemeSpec.serializer(), explicit)
+        assertFalse(encoded.contains("explicitMenuLayoutFields"), "布局字段来源不能成为主题包格式字段")
+    }
+
+    @Test
     fun layoutSanitizeClampsUnsafeValues() {
         val layout = MenuLayoutSpec(
             orientation = "diagonal",
@@ -215,6 +240,20 @@ class ArtThemeSpecTest {
             [menu.buttons.openSourceInfo]
             hidden = true
 
+            [menu.buttons.resources]
+            order = -2
+            span = 2
+
+            [menu.buttons.extensions]
+            widthPercent = 90
+            showBorder = false
+
+            [menu.buttons.resourceBrowser]
+            order = 1
+
+            [menu.buttons.esports]
+            hidden = true
+
             [fonts]
             regular = "fonts/regular.ttf"
             bold = "fonts/bold.ttf"
@@ -235,6 +274,12 @@ class ArtThemeSpecTest {
         assertEquals(true, spec.menu.buttons.getValue("mods").showBorder)
         assertTrue(spec.menu.buttons.getValue("openSourceInfo").hidden)
         assertNull(spec.menu.buttons.getValue("openSourceInfo").showBorder)
+        assertEquals(-2, spec.menu.buttons.getValue("resources").order)
+        assertEquals(2, spec.menu.buttons.getValue("resources").span)
+        assertEquals(90, spec.menu.buttons.getValue("extensions").widthPercent)
+        assertEquals(false, spec.menu.buttons.getValue("extensions").showBorder)
+        assertEquals(1, spec.menu.buttons.getValue("resourceBrowser").order)
+        assertTrue(spec.menu.buttons.getValue("esports").hidden)
         assertEquals("fonts/regular.ttf", spec.fonts.regular)
         assertEquals("fonts/bold.ttf", spec.fonts.bold)
     }

@@ -1,0 +1,5 @@
+# Copyright 2023-2025 RWPP contributors
+# GNU AGPLv3: https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
+# Versions used for the delivered deterministic PNGs and ZIP.
+resvg-py==0.5.0
+Pillow==13.0.0

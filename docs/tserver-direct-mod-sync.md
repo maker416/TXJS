@@ -20,7 +20,7 @@ TServer 配置 `mods.sync.enabled=true` 即启用 Direct。只需 Direct 时可�
 4. 按内容匹配本地模组和已验证缓存，只下载缺失项。中途断流最多尝试三次，在本次任务的临时文件上用 offset 续传；取消本次任务会删除临时文件。
 5. 流式接收并校验完整 SHA-256，成功后才发布到网络模组缓存。清单中的名称只用于展示和模组匹配，文件通过哈希请求。
 6. 再取清单，确认仍是同一房间和同一内容；只有成功加载的内容快照与完整清单相同时才跳过解析，否则用普通 `modReload(forceImmediate=true)` 加载。空清单也会关闭多余模组。平台重载负责应用开关，不提前修改引擎状态。
-7. 检查本地启用集合与核心单位 checksum，并执行平台握手准备。桌面端读取原版 init 时保存的稳定核心缓存，不用菜单地图下的实时模板值覆盖握手缓存；Android 沿用原有实现。
+7. 检查本地启用集合与核心单位 checksum，并执行平台握手准备。两端均读取原版 init 时保存的稳定核心缓存（桌面 `l.z()`、Android `k.r()`），不以菜单地图下的实时模板值覆盖握手缓存。模组内容仍由文件 SHA-256、实际启用集合及原版自定义单位定义校验保证。
 8. 重载后第三次取清单，确认大厅、版本、scope 和内容仍有效，再建立原版游戏连接。游戏仍会检查满员、锁房、密码、版本和单位数据。
 
 Direct 不创建 relay Presence，不调用房内保连接重载。首次识别 Direct 之后，网络错误、非法帧、文件缺失、哈希不符、房间变化和重载失败均终止本次加入。取消会关闭活动同步 Socket，后续步骤和游戏连接不会继续。
@@ -82,6 +82,7 @@ v1 不预留游戏槽位，下载者不计入房间玩家人数，不提供下�
 ```powershell
 .\gradlew.bat :rwpp-core-api:test --tests '*DirectModSync*'
 .\gradlew.bat :rwpp-core:desktopTest --tests '*DirectModSyncControllerTest'
+.\gradlew.bat :rwpp-android:testDebugUnitTest --tests '*AndroidCoreChecksumTest'
 .\gradlew.bat :rwpp-desktop:compileKotlin :rwpp-android:compileDebugKotlin
 ```
 

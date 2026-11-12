@@ -27,6 +27,7 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
@@ -73,6 +74,21 @@ private data class MapImportProgress(
     val copiedBytes: Long = 0L,
     val totalBytes: Long? = null,
 )
+
+/** Filesystem metadata is captured once by the background scan, never during card composition. */
+private data class ManagedCustomMap(
+    val map: CustomMapFile,
+    val thumbnail: File?,
+    val sizeLabel: String,
+)
+
+private fun readManagedCustomMaps(): List<ManagedCustomMap> = scanCustomMapFiles().map { map ->
+    ManagedCustomMap(
+        map = map,
+        thumbnail = map.thumbnailFile().takeIf { it.isFile },
+        sizeLabel = formatMapBytes(map.file.length().coerceAtLeast(0L)),
+    )
+}
 
 private fun formatMapBytes(bytes: Long): String {
     val kb = bytes / 1024.0
@@ -185,9 +201,8 @@ fun CustomMapsManagementView(
     val windowManager = LocalWindowManager.current
     val compact = windowManager == WindowManager.Small
 
-    val maps = remember {
-        SnapshotStateList<CustomMapFile>().apply { addAll(scanCustomMapFiles()) }
-    }
+    val fileLoad = rememberPageFileLoadState<List<ManagedCustomMap>>()
+    val maps = remember { SnapshotStateList<ManagedCustomMap>() }
     var filter by remember { mutableStateOf("") }
     var importProgress by remember { mutableStateOf<MapImportProgress?>(null) }
     var pendingDelete by remember { mutableStateOf<CustomMapFile?>(null) }
@@ -195,17 +210,21 @@ fun CustomMapsManagementView(
     /** 文件选择已结束（进入导入/覆盖确认），忽略迟到的 Preparing 进度回调，避免叠层卡住。 */
     var suppressPrepareProgress by remember { mutableStateOf(false) }
 
-    val filtered = maps.filter { it.displayName().contains(filter, ignoreCase = true) }
+    val filtered = maps.filter { it.map.displayName().contains(filter, ignoreCase = true) }
 
-    fun refreshMaps() {
+    suspend fun refreshMaps(refreshEngine: Boolean = true) {
+        val files = fileLoad.load { readManagedCustomMaps() } ?: return
         maps.clear()
-        maps.addAll(scanCustomMapFiles())
-        game.getAllMaps(true)
+        maps.addAll(files)
+        // getAllMaps may enter the platform engine. Preserve its original UI-thread contract.
+        if (refreshEngine) game.getAllMaps(true)
     }
+
+    LaunchedEffect(game) { refreshMaps(refreshEngine = false) }
 
     fun updateFileChooseProgress(progress: FileChooseProgress) {
         if (suppressPrepareProgress || pendingOverwrite != null) return
-        if (importProgress?.stage == MapImportStage.Importing) return
+        if (!fileLoad.isReady || importProgress?.stage == MapImportStage.Importing) return
         importProgress = MapImportProgress(
             stage = MapImportStage.Preparing,
             fileName = progress.fileName,
@@ -215,7 +234,7 @@ fun CustomMapsManagementView(
     }
 
     fun importMapFile(file: File, overwrite: Boolean = false) {
-        if (importProgress?.stage == MapImportStage.Importing) return
+        if (!fileLoad.isReady || importProgress?.stage == MapImportStage.Importing) return
 
         // 立刻收起「准备导入」，并屏蔽迟到的选文件进度，防止与覆盖确认叠层。
         suppressPrepareProgress = true
@@ -285,8 +304,9 @@ fun CustomMapsManagementView(
     }
 
     fun deleteMap(map: CustomMapFile) {
+        if (!fileLoad.isReady) return
         if (deleteCustomMapFilesSafely(map.file)) {
-            maps.removeAll { it.file.absolutePath == map.file.absolutePath }
+            maps.removeAll { it.map.file.absolutePath == map.file.absolutePath }
             game.getAllMaps(true)
         } else {
             UI.showWarning(readI18n("maps.deleteFailed"))
@@ -507,7 +527,14 @@ fun CustomMapsManagementView(
         Column(modifier = modifier.fillMaxSize()) {
             MapsTopBar()
 
-            if (filtered.isEmpty()) {
+            if (!fileLoad.isReady) {
+                PageFileLoading(
+                    state = fileLoad,
+                    pageTitle = readI18n("common.map"),
+                    onRetry = { scope.launch { refreshMaps() } },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else if (filtered.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -552,11 +579,11 @@ fun CustomMapsManagementView(
                 ) {
                     items(
                         items = filtered,
-                        key = { it.file.absolutePath },
-                    ) { map ->
+                        key = { it.map.file.absolutePath },
+                    ) { entry ->
                         CustomMapCard(
-                            map = map,
-                            onDelete = { pendingDelete = map },
+                            entry = entry,
+                            onDelete = { pendingDelete = entry.map },
                         )
                     }
                 }
@@ -577,8 +604,11 @@ fun CustomMapsManagementView(
                     leadingIcon = {
                         Icon(Icons.Default.Refresh, null, modifier = Modifier.size(28.dp))
                     },
-                    modifier = Modifier.padding(horizontal = 4.dp),
-                ) { refreshMaps() }
+                    modifier = Modifier.padding(horizontal = 4.dp).alpha(if (fileLoad.isReady) 1f else 0.5f),
+                ) {
+                    if (!fileLoad.isReady || importProgress != null || pendingOverwrite != null || pendingDelete != null) return@RWTextButton
+                    scope.launch { refreshMaps() }
+                }
 
                 RWTextButton(
                     readI18n("maps.import"),
@@ -589,9 +619,9 @@ fun CustomMapsManagementView(
                             modifier = Modifier.size(28.dp),
                         )
                     },
-                    modifier = Modifier.padding(horizontal = 4.dp),
+                    modifier = Modifier.padding(horizontal = 4.dp).alpha(if (fileLoad.isReady) 1f else 0.5f),
                 ) {
-                    if (importProgress != null || pendingOverwrite != null) return@RWTextButton
+                    if (!fileLoad.isReady || importProgress != null || pendingOverwrite != null) return@RWTextButton
                     suppressPrepareProgress = false
                     appKoin.get<ExternalHandler>().openFileChooser(
                         onProgress = { updateFileChooseProgress(it) },
@@ -623,13 +653,11 @@ fun CustomMapsManagementView(
 
 @Composable
 private fun CustomMapCard(
-    map: CustomMapFile,
+    entry: ManagedCustomMap,
     onDelete: () -> Unit,
 ) {
-    val thumb = map.thumbnailFile()
-    val fileSize = remember(map.file.absolutePath, map.file.lastModified()) {
-        formatMapBytes(map.file.length().coerceAtLeast(0L))
-    }
+    val map = entry.map
+    val thumb = entry.thumbnail
     val thumbShape = RoundedCornerShape(8.dp)
 
     BorderCard(
@@ -646,7 +674,7 @@ private fun CustomMapCard(
                     .aspectRatio(16f / 10f)
                     .clip(thumbShape),
             ) {
-                if (thumb.exists()) {
+                if (thumb != null) {
                     AsyncImage(
                         model = thumb,
                         contentDescription = null,
@@ -695,7 +723,7 @@ private fun CustomMapCard(
                     color = MaterialTheme.colorScheme.secondary,
                 )
                 MapMetadataPill(
-                    text = fileSize,
+                    text = entry.sizeLabel,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

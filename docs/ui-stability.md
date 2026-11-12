@@ -43,6 +43,8 @@
 
 所有 WINDOW 弹层在首次显示前取消上游默认的 `alwaysOnTop=true`。原生 `JDialog` 保持游戏窗口的 owner 关系，借此覆盖游戏和 Chromium 子窗口，随游戏进入后台、最小化与恢复；不能使用系统置顶来覆盖其他应用。此规则同样适用于非聚焦浏览器悬浮控件。
 
+透明原生菜单局部使用 Direct3D 时，WINDOW 子层也必须在首次创建 peer 前沿用菜单实际使用的 Direct3D；否则全局 OpenGL 偏好会让详情窗口重新选择 OpenGL，出现遮罩变暗但卡片没有显示的情况。`DesktopWindowLayers` 仅为透明 `ComposeDialog` 的子层选择初始后端，不修改全局设置，后续设备故障仍允许 Skiko 正常回退。Swing / 软件菜单保持原路径，Android 不涉及此兼容处理。
+
 兼容处理在类首次定义前使用现有 Javassist 依赖修改 `WindowComposeSceneLayer`，启动后无需反射或 javaagent。可聚焦弹层不再逐帧录制绘制范围，非聚焦悬浮控件仍按实际内容裁剪。内部字段类型、置顶初始化与绘制范围录制调用的签名与数量均在定义类前校验；不兼容或类已提前加载时记录 `[UI]` 警告并使用原库。升级 Compose 时必须重新验证此入口，不能仅凭编译成功认定仍生效。可见窗口的尺寸更新通过 EDT 合并执行；已销毁窗口不执行迟到更新。
 
 `DesktopWindowLayersTest` 使用真实 Swing、Skiko 和 WINDOW 弹层，覆盖入场动画、下拉菜单、空列表切换、宿主 resize/move、关闭后迟到更新，以及非聚焦悬浮控件保留小窗口。同时检查可聚焦/非聚焦弹层均不系统置顶，使用 Win32 窗口顺序验证无 owner 的普通窗口可以遮住游戏弹窗、游戏弹窗仍位于宿主上方，并验证宿主最小化/恢复时原生弹层的可见性。缩放回归可执行：
@@ -55,6 +57,10 @@
 
 该测试在非 Windows 或无图形环境时跳过；共享 Compose 离屏测试不覆盖这条 native 窗口路径。
 
+`DesktopModDetailsWindowTest` 使用生产透明菜单和真实模组页，在全局 OpenGL 偏好下检查详情子层实际使用 Direct3D，覆盖动画开关、关闭重开、标题/删除/关闭按钮与卡片绘制。默认向测试自身 Canvas 派发输入并读取 SkiaLayer 位图，不依赖前台权限；这能验证布局、绘制和后端选择，不能替代屏幕实际呈现验收。运行同一测试并传入 `-Prwjs.test.uiScale=2` 可复核 HiDPI。
+
+设置 `RWJS_TEST_VISIBLE_CAPTURE=true` 可追加真实屏幕颜色断言：仅在截图期间短暂提升测试自己的窗口树，随后恢复，不向其他应用发送输入。2026-11-12 的同机对照中，旧实现的 Skia 位图已有详情卡片，但屏幕仅有变暗的列表，动画开关两项均在屏幕断言失败；修复后两项通过，200% 缩放同样通过。截图和后端记录位于 `rwpp-desktop/build/reports/desktop-mod-details/`。真实前台 Robot 输入另以 `RWJS_TEST_ROBOT_INPUT=true` 显式启用，未启用时不将定向事件等同于物理鼠标验收。
+
 ## PC 开局提示与画面切换
 
 `MatchStartLoadingOverlay` 只负责开局进度展示，仍由 `MatchStartController` 决定地图加载是否成功。PC 使用启动器整窗根容器内的模态遮罩，进入游戏的同一次 CardLayout 切换即隐藏遮罩；不会额外创建能盖在游戏 Canvas 上的原生 Dialog。Android 继续使用原有 Dialog。账号根层弹窗与此开局提示是显式允许的根容器内遮罩；地图选择、普通弹窗以及浏览器上方的弹层继续保留原生 WINDOW 模式。
@@ -63,15 +69,29 @@
 
 ## PC 主菜单实时战场
 
-`DesktopLauncherOverlay` 将菜单放在主窗口拥有的透明 `JDialog` 中，游戏 `Canvas` 始终留在原父容器和原生句柄上。普通透明 Swing 面板会让 AWT 裁掉下层 Canvas，不能用于此处。菜单专用 `ComposePanel` 使用 `RenderSettings.SwingGraphics()`：默认 SkiaSurface 在透明窗口中会填白底。战场直接由 LWJGL 渲染，不回读游戏帧、不把整屏 Compose 上传为游戏纹理；静止菜单也不随每个游戏帧重绘。
-
-菜单层只在菜单未请求或主窗不可见、最小化、已销毁时隐藏；内容宿主短暂零尺寸或未 showing 属于布局过渡，保留原菜单并进行 80ms、有界 20 次重试。显式 `refresh()` 重启重试预算，立即同步并在 120ms/320ms 补同步；全屏切换完成和启动窗口可见后都调用。缩放/移动/DPI 事件合并同步后验证透明窗口的完整布局层级，并在后续 EDT 回合补重绘，即使 native bounds 已相等也不依赖鼠标点击唤醒。退出菜单和销毁时停止所有补同步定时器；不定时常驻重画，不改变 Canvas 父容器、句柄或物理像素补偿。显示/隐藏和 bounds 变化记录 `[UI] launcher overlay` 日志，重试耗尽记录警告，DEBUG 补绘日志包含宿主/菜单尺寸、布局有效性和 DPI。
+`DesktopLauncherOverlay` 将菜单放在主窗口拥有的透明窗口中，游戏 `Canvas` 始终留在原父容器和原生句柄上。Windows 优先由 `ComposeDialog` 自身承载菜单，通过 `isTransparent=true` 通知原生 SkiaSurface；在首个 peer 初始化期间仅为菜单选择 Direct3D，初始化完成后检查实际后端。普通 `ComposePanel.isOpaque=false` 不会向 Skia 传播窗口透明状态，不能据此直接替代原生透明窗口配置。局部后端选择不改写全局属性或用户配置，显式软件模式、初始化失败及后续设备回退继续使用 `RenderSettings.SwingGraphics()` 兼容菜单。普通透明 Swing 面板会让 AWT 裁掉下层 Canvas，不能用于此处。战场直接由 LWJGL 渲染，不回读游戏帧、不把整屏 Compose 上传为游戏纹理；静止菜单也不随每个游戏帧重绘。
 
 菜单层不使用系统级置顶，跟随宿主内容区移动、缩放、DPI、最小化和显示状态。进入对局隐藏菜单层，返回时恢复键盘焦点；原有 WINDOW 弹窗仍由菜单层拥有。根内容保留极薄的非零 alpha，防止 Windows 把完全透明的页边缘点击穿透给游戏窗口。不支持像素透明窗口的平台回落既有卡片切换和静态背景。
 
+窗口缩放、全屏或 DPI 切换期间，主窗可见性与内容区布局就绪分别判断。宿主仍可见，但 `displayHost` 短暂为零尺寸或尚未 showing 时，保留已显示的菜单，尚未显示的菜单等待有效视口；每 80ms 重试一次，最多 20 次，不能依赖下一次鼠标输入或组件事件恢复。预算耗尽记录 `[UI]` 警告，后续显式 `refresh()` 或组件事件可重新开始重试，不建立常驻重绘循环。
+
+`refresh()` 立即同步边界，并在 120ms、320ms 各补同步一次；全屏切换完成和启动主窗显示后均调用此入口。即使窗口 bounds 未变化，也验证并补绘实际 `contentComponent`：原生菜单使用已挂载的 SkiaLayer，兼容菜单使用 ComposePanel，不能触碰未挂载的兼容面板而创建第二个场景。完整窗口层级验证后，在后续 EDT 回合补绘，使静止界面的视口与边缘也能更新。
+
+布局刷新本身不产生焦点请求。`showMenu()` 或宿主重新获焦时登记焦点恢复意图，布局恢复后仅在焦点仍属于宿主或菜单时交回菜单内容，不能抢走自有子弹窗或其他前台应用的键盘输入。菜单已经持焦时不再向 Dialog 重复申请焦点，避免内部 Canvas 暂时失焦清空 Compose 节点焦点。启动页和正式菜单分别保留显示门控：启动页使用不透明窗口，正式菜单初始关闭，核心就绪后才启用。共享刷新入口分别刷新两个实例，不改变其模式；`showGame()`、宿主隐藏或 `dispose()` 撤销重试与延后补同步，迟到任务不得重开菜单。
+
+原版脚本从游戏线程退回菜单时，`GameSessionManager.returnToMenu()` 将返回回调和显示菜单一起排到 EDT，不同步等待窗口显示。真实 LWJGL 对局验证曾发现 EDT 的 `WComponentPeer.pShow` 等游戏窗口线程处理原生消息，而该线程又在 `invokeAndWait` 等 EDT，造成互等。引擎清理仍在原调用线程，`DisplaySwitcher.switchTo()` 的其他同步调用契约保持原状；返回任务用代次检查，不能迟到隐藏新开局。`GameSessionManagerReturnTest` 验证消息泵、EDT 同步调用和过期返回三条路径。
+
 `DesktopMenuBackgroundEngine` 在原游戏线程复用原版 AI 演示地图，仅在无真实地图、无连接、会话空闲且无开局/重载时重建。已有真实地图保留给“继续游戏”，此时主页使用渐变兜底。有效的自选/主题背景图片、隐藏窗口及原版 `renderBackground=false` 会停止独立演示的模拟和绘制；纯菜单限 30 FPS，真实对局沿用原帧率，房间网络泵继续。原版 `u.render` 同时消费菜单任务，停绘时仍须处理 Main / ScriptEngine 队列和延后设置保存，不能让业务回调依赖背景可见性。加载、保连接重载及资源失败期间继续服从既有闸门。
 
-回归：`DesktopMenuBackgroundEngineTest` 覆盖场景保留、演示重建与连接门控；`DesktopMenuBackgroundWindowTest` 使用真实透明窗口和 Compose 菜单，验证底层画面更新、按钮点击、画布存活和宿主跟随；新增缩放后 Compose 根视口与边缘像素（不输入）、bounds 相等但子布局失效、零尺寸/未 showing 且无后续组件事件的自动恢复、重试耗尽后显式重启，以及迟到重试不得在游戏模式重开菜单。另运行 `NativeCanvasCardLayoutTest`、`MatchStartLoadingWindowTest`、`DesktopWindowLayersTest`。人工检查首次启动背景持续变化、自选图片/主题覆盖、沙盒进出与继续游戏、论坛原生浏览器、菜单输入、F11、最小化及跨屏 DPI。
+回归：`DesktopMenuBackgroundEngineTest` 覆盖场景保留、演示重建与连接门控；`DesktopMenuBackgroundWindowTest` 分别验证原生和兼容菜单的底层画面更新、按钮点击、画布存活、宿主跟随，以及软件选择、创建失败和设备后端变化的回退。正常路径只允许一个菜单组合，未使用的兼容面板不得初始化第二个渲染器。另运行 `NativeCanvasCardLayoutTest`、`DesktopStartupWindowTest`、`MatchStartLoadingWindowTest`、`DesktopWindowLayersTest`。人工检查首次启动背景持续变化、自选图片/主题覆盖、沙盒进出与继续游戏、论坛原生浏览器、菜单输入、F11、最小化及跨屏 DPI。
+
+新增的 `DesktopMenuBackgroundWindowTest` 回归在原生 Direct3D 与 Swing 兼容菜单两条路径检查：无输入缩放后的 Compose 视口和边缘像素、bounds 相等时无效子布局的验证重绘、零尺寸或未 showing 且无后续事件时的恢复与键盘焦点、重试耗尽后显式刷新恢复、切游戏或销毁后迟到任务失效，以及刷新和待恢复焦点期间保留其他窗口的输入。`DesktopNativeMenuInputWindowTest` 同时验证重复焦点请求保留 Compose 键盘目标，`DesktopStartupWindowTest` 覆盖加载期刷新不提前组合正式菜单及首帧后的焦点交接。200% 缩放可运行：
+
+```powershell
+.\gradlew.bat :rwpp-desktop:test --tests io.github.rwpp.desktop.DesktopMenuBackgroundWindowTest '-Prwjs.test.uiScale=2'
+```
+
+这些回归使用真实 Swing/Compose 窗口与测试 Canvas，验证范围限于组件窗口行为；不能替代完整客户端、真实 LWJGL 对局、不同显示器和驱动的人工验收。
 
 验证范围：真实地图组件连续 12 次切换地图类型时，未检测到弹窗内容位置变化，也未发生 Skiko 崩溃。仍可测到原生下拉窗口开关时的短暂停顿，采样主要落在 AWT 透明窗口刷新及 Skiko Direct3D 设备创建/释放路径；固定视口不能消除这些开销，不能据此宣称完整客户端已无卡顿。原始录像的问题在更新后的完整客户端中暂未复现，仍需在完整房间、真实存档及浏览器页面中人工验收。
 
