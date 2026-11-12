@@ -161,7 +161,7 @@ data class RoomPlayerSpec(
     val showSpawn: Boolean = true,
     val showTeam: Boolean = true,
     val profile: RoomProfileSpec = RoomProfileSpec(),
-    /** 可选的头像格和静态信息行；默认关闭，不影响既有美术包。 */
+    /** 默认头像格的外观和可选静态信息行；头像默认显示，信息行默认关闭。 */
     val card: RoomPlayerCardSpec = RoomPlayerCardSpec(),
 ) {
     fun sanitized(): RoomPlayerSpec = copy(
@@ -208,6 +208,7 @@ data class RoomPlayerSpec(
  */
 @Serializable
 data class RoomPlayerCardSpec(
+    /** 只启用静态信息行；头像使用独立的 avatar.enabled 开关。 */
     val enabled: Boolean = false,
     val avatar: RoomPlayerAvatarSpec = RoomPlayerAvatarSpec(),
     val content: RoomPlayerCardContentSpec = RoomPlayerCardContentSpec(),
@@ -251,6 +252,7 @@ data class RoomPlayerCardSpec(
 @Serializable
 data class RoomPlayerAvatarSpec(
     val enabled: Boolean = true,
+    /** 随稳定槽位高度适配的头像边长上限（dp），不是固定尺寸。 */
     val size: Int = 48,
     val corner: Int = 8,
     val borderWidth: Int = 1,

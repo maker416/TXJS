@@ -2508,7 +2508,7 @@ private val RoomPlayerPingWeight = 0.2f
 private data class RoomPlayerColumnWeights(val name: Float, val spawn: Float, val team: Float, val ping: Float)
 
 private fun roomPlayerColumnWeights(compact: Boolean, style: RoomPlayerSpec) =
-    if (compact && style.card.enabled && style.card.avatar.enabled) RoomPlayerColumnWeights(.4f, .18f, .18f, .24f)
+    if (compact && style.card.avatar.enabled) RoomPlayerColumnWeights(.4f, .18f, .18f, .24f)
     else RoomPlayerColumnWeights(RoomPlayerNameWeight, RoomPlayerSpawnWeight, RoomPlayerTeamWeight, RoomPlayerPingWeight)
 
 /** 行尾「查看名片」操作格的固定宽度：表头与数据行取同一值，保证列对齐 */
@@ -3323,7 +3323,7 @@ private fun RoomPlayerTableHeader(
             } else Modifier.border(BorderStroke(2.dp, MaterialTheme.colorScheme.secondary), rowShape))
             .fillMaxWidth(),
     ) {
-        if (style.card.enabled) Spacer(Modifier.width(style.card.avatarCellWidth(compact)))
+        Spacer(Modifier.width(style.card.avatarCellWidth(compact)))
         TableCell(readI18n("multiplayer.room.colName"), columns.name, drawStroke = false, strokeColor = strokeColor)
         TableCell(readI18n("multiplayer.room.colSpawn"), columns.spawn, strokeColor = strokeColor)
         TableCell(readI18n("multiplayer.room.colTeam"), columns.team, strokeColor = strokeColor)
@@ -3372,6 +3372,7 @@ internal fun RoomPlayerTableRow(
                 modifier = Modifier
                     .height(IntrinsicSize.Max)
                     .padding(rowPadding)
+                    .clip(shape)
                     .then(if (themed) {
                         Modifier.roomThemePaint(roomPlayerBackground(style, player, room),
                             roomThemeColor(style.backgroundColor, Color.Transparent), shape, style.opacity)
@@ -3388,7 +3389,10 @@ internal fun RoomPlayerTableRow(
                         onPlayerClick(player)
                     },
             ) {
-                RoomPlayerCardBody(style.card, player, room, compact) {
+                RoomPlayerCardBody(style.card, player, room, compact,
+                    // A capsule row needs a round avatar; rectangular rows retain the pack's corner.
+                    avatarShape = if (!themed && shape == CircleShape) CircleShape else null,
+                ) {
                     val baseName = player.name + if (!isDetector && player.startingUnit != -1) {
                         " - ${options.firstOrNull { it.first == player.startingUnit }?.second ?: "Unknown"}"
                     } else ""
@@ -3410,12 +3414,14 @@ internal fun RoomPlayerTableRow(
                         columns.spawn,
                         color = if (player.isSpectator) Color.Black else Player.getTeamColor(player.spawnPoint),
                         modifier = Modifier.fillMaxHeight(),
+                        verticalAlignment = Alignment.CenterVertically,
                     )
                     TableCell(
                         player.teamAlias(),
                         columns.team,
                         color = Player.getTeamColor(player.team),
                         modifier = Modifier.fillMaxHeight(),
+                        verticalAlignment = Alignment.CenterVertically,
                     )
                     val ping = remember(update) { player.ping }
                     TableCell(
@@ -3423,6 +3429,7 @@ internal fun RoomPlayerTableRow(
                         columns.ping,
                         drawStroke = false,
                         modifier = Modifier.fillMaxHeight(),
+                        verticalAlignment = Alignment.CenterVertically,
                     )
                     RoomPlayerCardActionCell(
                         player = player,

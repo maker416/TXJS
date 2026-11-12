@@ -21,29 +21,79 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.RoomIdentityController
 import io.github.rwpp.coil.AccountAvatar
+import io.github.rwpp.config.Settings
 import io.github.rwpp.core.ListDetectorPlayers
 import io.github.rwpp.core.RoomSnapshotStore
 import io.github.rwpp.game.ConnectingPlayer
 import io.github.rwpp.game.GameRoom
 import io.github.rwpp.game.Player
 import io.github.rwpp.theme.ArtThemeController
+import io.github.rwpp.theme.RoomPlayerCardContentSpec
 import io.github.rwpp.theme.RoomPlayerCardSpec
+import org.koin.compose.koinInject
 
-/** Header and player rows reserve exactly the same avatar width, independent of loaded assets. */
-internal fun RoomPlayerCardSpec.avatarCellWidth(compact: Boolean): Dp =
-    if (enabled && avatar.enabled) (minOf(avatar.size, if (compact) 48 else 64) + 12).dp else 0.dp
+/** Stable text geometry excludes temporary sync status and the dimensions of downloaded images. */
+private data class RoomPlayerCardMetrics(
+    val baseHeight: Dp,
+    val mainRowHeight: Dp,
+    val infoRowHeight: Dp,
+    val avatarPadding: Dp,
+    val avatarLimit: Dp,
+    val avatarWidth: Dp,
+) {
+    fun avatarSize(rowCount: Int): Dp {
+        val contentHeight = if (rowCount == 0) baseHeight
+            else maxOf(baseHeight, mainRowHeight + infoRowHeight * rowCount)
+        return minOf(avatarLimit, contentHeight - avatarPadding * 2)
+    }
+}
+
+@Composable
+private fun RoomPlayerCardSpec.metrics(compact: Boolean): RoomPlayerCardMetrics {
+    val settings = koinInject<Settings>()
+    val density = LocalDensity.current
+    val businessStyle = if (settings.boldText) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium
+    val labelStyle = MaterialTheme.typography.labelMedium
+    val businessHeight = with(density) {
+        (businessStyle.lineHeight.takeIf { it.isSp }
+            ?: businessStyle.fontSize.takeIf { it.isSp }?.times(1.4f) ?: 20.sp).toDp()
+    } + 8.dp
+    val infoHeight = maxOf(24.dp, with(density) {
+        (labelStyle.lineHeight.takeIf { it.isSp }
+            ?: labelStyle.fontSize.takeIf { it.isSp }?.times(1.4f) ?: 16.sp).toDp()
+    } + 4.dp) + 6.dp
+    return remember(this, compact, businessHeight, infoHeight) {
+        val mainHeight = maxOf(if (compact) 32.dp else 36.dp, businessHeight)
+        val baseHeight = maxOf(if (compact) 48.dp else 54.dp, businessHeight)
+        val padding = if (compact) 4.dp else 3.dp
+        val limit = minOf(avatar.size, if (compact) 56 else 64).dp
+        val geometry = RoomPlayerCardMetrics(baseHeight, mainHeight, infoHeight, padding, limit, 0.dp)
+        val maxRows = if (enabled) {
+            (listOf(content) + listOfNotNull(local, host, ai, spectator) + slots.values)
+                .maxOf { it.rows.size }
+        } else 0
+        geometry.copy(avatarWidth = if (avatar.enabled) geometry.avatarSize(maxRows) + padding * 2 else 0.dp)
+    }
+}
+
+/** Header and every player reserve one column, even when static overrides use different row counts. */
+@Composable
+internal fun RoomPlayerCardSpec.avatarCellWidth(compact: Boolean): Dp = metrics(compact).avatarWidth
 
 /** Only the inside of an occupied player row is extended; actions and engine cells keep their owners. */
 @Composable
@@ -52,61 +102,69 @@ internal fun RowScope.RoomPlayerCardBody(
     player: Player,
     room: GameRoom,
     compact: Boolean,
+    avatarShape: Shape? = null,
     cells: @Composable RowScope.() -> Unit,
 ) {
-    if (!card.enabled || player == ConnectingPlayer) {
-        // Connecting placeholders keep the column alignment without displaying invented player data.
-        if (card.enabled) Spacer(Modifier.width(card.avatarCellWidth(compact)))
+    if (!card.enabled && !card.avatar.enabled) {
         cells()
         return
     }
+    val metrics = card.metrics(compact)
+    val connecting = player == ConnectingPlayer
     val slot = player.spawnPoint + 1
-    val content = card.contentFor(slot, player == room.localPlayer, player.isRoomHost, player.isAI, player.isSpectator)
+    val content = if (connecting) RoomPlayerCardContentSpec() else
+        card.contentFor(slot, player == room.localPlayer, player.isRoomHost, player.isAI, player.isSpectator)
+    val rows = if (card.enabled && !connecting) content.rows else emptyList()
     if (card.avatar.enabled) {
-        val avatar = card.avatar
-        val size = minOf(avatar.size, if (compact) 48 else 64).dp
-        val shape = RoundedCornerShape(avatar.corner.dp)
-        val tint = roomThemeColor(avatar.tint, MaterialTheme.colorScheme.primary)
-        Box(
-            Modifier.width(card.avatarCellWidth(compact)).fillMaxHeight().padding(6.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            val theme = ArtThemeController.activeTheme
-            val file = remember(theme, content.avatarImage) { roomThemeAsset(content.avatarImage) }
-            var loaded by remember(theme, file) { mutableStateOf(false) }
-            val accountAvatar = roomPlayerAccountAvatar(player, room)
+        if (connecting) {
+            // A placeholder reserves the column without inventing a player identity.
+            Spacer(Modifier.width(metrics.avatarWidth))
+        } else {
+            val avatar = card.avatar
+            val size = metrics.avatarSize(rows.size)
+            val shape = avatarShape ?: RoundedCornerShape(avatar.corner.dp)
+            val tint = roomThemeColor(avatar.tint, MaterialTheme.colorScheme.primary)
             Box(
-                Modifier.size(size).testTag("room-player-avatar-$slot").clip(shape)
-                    .background(roomThemeColor(avatar.backgroundColor, MaterialTheme.colorScheme.primaryContainer))
-                    .roomThemeBorder(avatar.borderWidth, roomThemeColor(avatar.borderColor, tint.copy(alpha = .6f)), shape),
+                Modifier.width(metrics.avatarWidth).fillMaxHeight().padding(metrics.avatarPadding),
                 contentAlignment = Alignment.Center,
             ) {
-                if (!loaded) {
-                    Icon(
-                        if (player.isAI) RoomRobotAvatarIcon else Icons.Default.Person,
-                        contentDescription = null,
-                        modifier = Modifier.size(size * .65f).testTag("room-player-avatar-fallback-$slot"),
-                        tint = tint,
-                    )
-                }
-                if (file != null) key(theme, file) {
-                    AsyncImage(file, null, Modifier.fillMaxSize().testTag("room-player-default-avatar-$slot"), contentScale = ContentScale.Fit,
-                        onSuccess = { loaded = true }, onError = { loaded = false })
-                }
-                // Account images always draw over the pack's default, without a theme tint.
-                // Loading, missing or corrupt account images leave the default visible below.
-                if (accountAvatar != null) key(accountAvatar) {
-                    AsyncImage(accountAvatar, null,
-                        Modifier.fillMaxSize().testTag("room-player-account-avatar-$slot"),
-                        contentScale = ContentScale.Crop)
+                val theme = ArtThemeController.activeTheme
+                val file = remember(theme, content.avatarImage) { roomThemeAsset(content.avatarImage) }
+                var loaded by remember(theme, file) { mutableStateOf(false) }
+                val accountAvatar = roomPlayerAccountAvatar(player, room)
+                Box(
+                    Modifier.size(size).testTag("room-player-avatar-$slot").clip(shape)
+                        .background(roomThemeColor(avatar.backgroundColor, MaterialTheme.colorScheme.primary.copy(alpha = .12f)))
+                        .roomThemeBorder(avatar.borderWidth, roomThemeColor(avatar.borderColor, tint.copy(alpha = .6f)), shape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (!loaded) {
+                        Icon(
+                            if (player.isAI) RoomRobotAvatarIcon else Icons.Default.Person,
+                            contentDescription = null,
+                            modifier = Modifier.size(size * .65f).testTag("room-player-avatar-fallback-$slot"),
+                            tint = tint,
+                        )
+                    }
+                    if (file != null) key(theme, file) {
+                        AsyncImage(file, null, Modifier.fillMaxSize().testTag("room-player-default-avatar-$slot"), contentScale = ContentScale.Fit,
+                            onSuccess = { loaded = true }, onError = { loaded = false })
+                    }
+                    // Account images always draw over the pack's default, without a theme tint.
+                    // Loading, missing or corrupt account images leave the default visible below.
+                    if (accountAvatar != null) key(accountAvatar) {
+                        AsyncImage(accountAvatar, null,
+                            Modifier.fillMaxSize().testTag("room-player-account-avatar-$slot"),
+                            contentScale = ContentScale.Crop)
+                    }
                 }
             }
         }
     }
-    Column(Modifier.weight(1f)) {
+    Column(Modifier.weight(1f).heightIn(min = if (card.avatar.enabled) metrics.baseHeight else metrics.mainRowHeight)) {
         Row(Modifier.fillMaxWidth().height(IntrinsicSize.Max)
-            .heightIn(min = if (compact) 32.dp else 36.dp), content = cells)
-        content.rows.forEachIndexed { rowIndex, row ->
+            .heightIn(min = if (rows.isEmpty() && card.avatar.enabled) metrics.baseHeight else metrics.mainRowHeight), content = cells)
+        rows.forEachIndexed { rowIndex, row ->
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp)
                     .height(IntrinsicSize.Max).testTag("room-player-info-$slot-$rowIndex"),
