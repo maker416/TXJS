@@ -23,7 +23,7 @@ data class ArtThemeSpec(
     val colors: Map<String, String> = emptyMap(),
     val menu: MenuSpec = MenuSpec(),
     val fonts: FontsSpec = FontsSpec(),
-    /** 等待战斗室的图片、配色等外观；PC / Android 布局由客户端固定管理。 */
+    /** 等待战斗室外观与可选玩家卡片；PC / Android 整体布局由客户端管理。 */
     val room: RoomThemeSpec = RoomThemeSpec(),
     /** 导入时记录作者显式填写的布局字段；不属于包格式，也不参与序列化。 */
     @kotlinx.serialization.Transient

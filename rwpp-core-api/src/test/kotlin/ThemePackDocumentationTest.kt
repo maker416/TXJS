@@ -16,8 +16,8 @@ import kotlin.test.assertTrue
 class ThemePackDocumentationTest {
     @Test
     fun publishedRoomExampleUsesTheProductionSchema() {
-        listOf("room-theme.example.toml", "theme.toml").forEach { name ->
-            val example = File("../examples/themes/pelagic-atlas", name)
+        listOf("pelagic-atlas/room-theme.example.toml", "pelagic-atlas/theme.toml", "room-player-cards/theme.toml").forEach { name ->
+            val example = File("../examples/themes", name)
             assertTrue(example.isFile, "找不到战斗室美术包示例配置 $name")
             val (spec, validation) = validateThemeToml(example.readText())
             assertNotNull(spec, validation.errors.joinToString())

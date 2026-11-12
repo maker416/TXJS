@@ -10,7 +10,7 @@ package io.github.rwpp.theme
 import kotlinx.serialization.Serializable
 
 /**
- * 等待战斗室的本地外观。布局由客户端按 PC / Android 决定。
+ * 等待战斗室的本地外观，以及显式启用的玩家卡片内容。页面布局由客户端按 PC / Android 决定。
  * 旧结构字段仅为兼容既有包保留，导入和渲染均须经 [sanitized]，不会参与页面布局。
  */
 @Serializable
@@ -161,6 +161,8 @@ data class RoomPlayerSpec(
     val showSpawn: Boolean = true,
     val showTeam: Boolean = true,
     val profile: RoomProfileSpec = RoomProfileSpec(),
+    /** 可选的头像格和静态信息行；默认关闭，不影响既有美术包。 */
+    val card: RoomPlayerCardSpec = RoomPlayerCardSpec(),
 ) {
     fun sanitized(): RoomPlayerSpec = copy(
         backgroundImage = backgroundImage.safeAssetPath(),
@@ -196,6 +198,116 @@ data class RoomPlayerSpec(
         showSpawn = true,
         showTeam = true,
         profile = profile.sanitized(),
+        card = card.sanitized(),
+    )
+}
+
+/**
+ * 客户端提供的受控玩家卡片扩展，不改变原有玩家列和操作。
+ * 附加信息行均为包内静态内容；客户端独立提供账号头像，不由美术包指定账号或改写游戏状态。
+ */
+@Serializable
+data class RoomPlayerCardSpec(
+    val enabled: Boolean = false,
+    val avatar: RoomPlayerAvatarSpec = RoomPlayerAvatarSpec(),
+    val content: RoomPlayerCardContentSpec = RoomPlayerCardContentSpec(),
+    val local: RoomPlayerCardContentSpec? = null,
+    val host: RoomPlayerCardContentSpec? = null,
+    val ai: RoomPlayerCardContentSpec? = null,
+    val spectator: RoomPlayerCardContentSpec? = null,
+    /** 出生位置加一（1..1000），不是玩家列表中的排序行号。 */
+    val slots: Map<String, RoomPlayerCardContentSpec> = emptyMap(),
+) {
+    fun sanitized(): RoomPlayerCardSpec = copy(
+        avatar = avatar.sanitized(),
+        content = content.sanitized(),
+        local = local?.sanitized(),
+        host = host?.sanitized(),
+        ai = ai?.sanitized(),
+        spectator = spectator?.sanitized(),
+        slots = slots.filterKeys { it.validSlotKey() }.mapValues { it.value.sanitized() },
+    )
+
+    /**
+     * [slot] 为一基出生位置。指定位置 > 自己 > 房主 > AI > 观战 > 通用。
+     * 命中的配置整份替换通用内容，包括显式空配置；观战不使用位置配置。
+     */
+    fun contentFor(
+        slot: Int,
+        isLocal: Boolean,
+        isHost: Boolean,
+        isAI: Boolean,
+        isSpectator: Boolean = false,
+    ): RoomPlayerCardContentSpec = when {
+        !isSpectator && slot in 1..1000 && slots.containsKey(slot.toString()) -> slots.getValue(slot.toString())
+        isLocal && local != null -> local
+        isHost && host != null -> host
+        isAI && ai != null -> ai
+        isSpectator && spectator != null -> spectator
+        else -> content
+    }
+}
+
+@Serializable
+data class RoomPlayerAvatarSpec(
+    val enabled: Boolean = true,
+    val size: Int = 48,
+    val corner: Int = 8,
+    val borderWidth: Int = 1,
+    val borderColor: String = "",
+    val backgroundColor: String = "",
+    val tint: String = "",
+) {
+    fun sanitized(): RoomPlayerAvatarSpec = copy(
+        size = size.coerceIn(32, 64),
+        corner = corner.coerceIn(0, 48),
+        borderWidth = borderWidth.coerceIn(0, 6),
+        borderColor = borderColor.validColor(),
+        backgroundColor = backgroundColor.validColor(),
+        tint = tint.validColor(),
+    )
+}
+
+@Serializable
+data class RoomPlayerCardContentSpec(
+    /** 无可用账号头像时的默认图；不能替换已核验账号设置的头像。 */
+    val avatarImage: String = "",
+    val rows: List<RoomPlayerInfoRowSpec> = emptyList(),
+) {
+    fun sanitized(): RoomPlayerCardContentSpec = copy(
+        avatarImage = avatarImage.safeAssetPath(),
+        rows = rows.asSequence().map { it.sanitized() }.filter { it.cells.isNotEmpty() }.take(3).toList(),
+    )
+}
+
+@Serializable
+data class RoomPlayerInfoRowSpec(
+    val cells: List<RoomPlayerInfoCellSpec> = emptyList(),
+) {
+    fun sanitized(): RoomPlayerInfoRowSpec = copy(
+        cells = cells.asSequence().map { it.sanitized() }
+            .filter { it.text.isNotBlank() || it.iconImage.isNotEmpty() }.take(4).toList(),
+    )
+}
+
+@Serializable
+data class RoomPlayerInfoCellSpec(
+    val text: String = "",
+    val iconImage: String = "",
+    val contentColor: String = "",
+    val backgroundColor: String = "",
+    val borderColor: String = "",
+    val borderWidth: Int = 0,
+    val corner: Int = 6,
+) {
+    fun sanitized(): RoomPlayerInfoCellSpec = copy(
+        text = text.filterNot { it.isISOControl() }.take(160),
+        iconImage = iconImage.safeAssetPath(),
+        contentColor = contentColor.validColor(),
+        backgroundColor = backgroundColor.validColor(),
+        borderColor = borderColor.validColor(),
+        borderWidth = borderWidth.coerceIn(0, 6),
+        corner = corner.coerceIn(0, 48),
     )
 }
 
@@ -328,6 +440,30 @@ fun validateRoomTheme(room: RoomThemeSpec): ThemeValidation {
         color("room.player.backgroundColor", backgroundColor)
         color("room.player.borderColor", borderColor)
         color("room.player.nameColor", nameColor)
+        with(card.avatar) {
+            color("room.player.card.avatar.borderColor", borderColor)
+            color("room.player.card.avatar.backgroundColor", backgroundColor)
+            color("room.player.card.avatar.tint", tint)
+        }
+        fun cardContent(key: String, content: RoomPlayerCardContentSpec) {
+            path("$key.avatarImage", content.avatarImage)
+            content.rows.forEachIndexed { rowIndex, row ->
+                row.cells.forEachIndexed { cellIndex, cell ->
+                    val cellKey = "$key.rows[$rowIndex].cells[$cellIndex]"
+                    path("$cellKey.iconImage", cell.iconImage)
+                    color("$cellKey.contentColor", cell.contentColor)
+                    color("$cellKey.backgroundColor", cell.backgroundColor)
+                    color("$cellKey.borderColor", cell.borderColor)
+                }
+            }
+        }
+        cardContent("room.player.card.content", card.content)
+        mapOf("local" to card.local, "host" to card.host, "ai" to card.ai, "spectator" to card.spectator)
+            .forEach { (id, content) -> if (content != null) cardContent("room.player.card.$id", content) }
+        card.slots.forEach { (key, content) ->
+            if (!key.validSlotKey()) warnings += "未知战斗室玩家卡片位置已忽略: $key（应为 1..1000 的整数）"
+            cardContent("room.player.card.slots.$key", content)
+        }
         with(profile) {
             mapOf("backgroundImage" to backgroundImage, "litImage" to litImage,
                 "unavailableImage" to unavailableImage, "iconImage" to iconImage)

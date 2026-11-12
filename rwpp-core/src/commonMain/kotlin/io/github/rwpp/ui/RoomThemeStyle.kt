@@ -53,7 +53,7 @@ import io.github.rwpp.theme.parseColorHex
 import io.github.rwpp.widget.v2.bounceClick
 import java.io.File
 
-/** The renderer consumes only appearance fields; all room geometry stays in MultiplayerRoom. */
+/** Room geometry stays in MultiplayerRoom; the optional player card extends occupied rows only. */
 @Composable
 internal fun roomThemeSpec(): RoomThemeSpec {
     val theme = ArtThemeController.activeTheme

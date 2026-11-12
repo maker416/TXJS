@@ -26,6 +26,12 @@ import androidx.compose.ui.text.font.FontWeight
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import coil3.annotation.DelicateCoilApi
+import coil3.decode.DataSource
+import coil3.decode.ImageSource
+import coil3.fetch.FetchResult
+import coil3.fetch.Fetcher
+import coil3.fetch.SourceFetchResult
+import coil3.request.Options
 import io.github.rwpp.AppContext
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.account.AccountSession
@@ -33,6 +39,8 @@ import io.github.rwpp.account.FriendsSession
 import io.github.rwpp.account.RoomIdentityController
 import io.github.rwpp.app.LauncherVisibility
 import io.github.rwpp.appKoin
+import io.github.rwpp.coil.AccountAvatar
+import io.github.rwpp.coil.AccountAvatarKeyer
 import io.github.rwpp.coil.ImageableFetcherFactory
 import io.github.rwpp.coil.ImageableKeyer
 import io.github.rwpp.config.*
@@ -53,6 +61,9 @@ import io.github.rwpp.i18n.reloadI18n
 import io.github.rwpp.koinInit
 import io.github.rwpp.logger
 import io.github.rwpp.net.Net
+import io.github.rwpp.net.account.AccountApiClient
+import io.github.rwpp.net.account.AccountUser
+import io.github.rwpp.net.roomid.RoomIdentityClient
 import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.widget.RWPPTheme
 import io.github.rwpp.widget.WindowManager
@@ -64,6 +75,13 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import net.peanuuutz.tomlkt.Toml
 import okhttp3.OkHttpClient
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.FileSystem
+import okio.buffer
+import okio.source
 import org.koin.compose.KoinContext
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
@@ -77,6 +95,8 @@ import java.io.IOException
 import java.lang.reflect.Proxy
 import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import javax.imageio.ImageIO
@@ -453,6 +473,341 @@ class RoomArtThemeUiTest {
         assertEquals(original, textLayout(localPlayer.name).layoutInput.style)
     }
 
+    @Test fun playerCardsRenderPackContentAndRetainIndependentPlayerActions() = runDesktopComposeUiTest(width = 700, height = 520) {
+        var rowClicks = 0
+        var profileClicks = 0
+        show { PlayerRows(onRow = { rowClicks++ }, onProfile = { profileClicks++ }) }
+        val originalRow = onNodeWithTag("room-player-1", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val id = install("static-player-cards", playerCardConfig())
+        runOnIdle { assertTrue(ArtThemeController.apply(id)) }
+
+        onNodeWithText("房主", useUnmergedTree = true).assertIsDisplayed()
+        onNodeWithText("战绩: 128胜 / 23负", useUnmergedTree = true).assertIsDisplayed()
+        onNodeWithText("进攻专家", useUnmergedTree = true).assertIsDisplayed()
+        onNodeWithText("AI 难度: 困难", useUnmergedTree = true).assertIsDisplayed()
+        onNodeWithText("本地覆盖", useUnmergedTree = true).assertDoesNotExist()
+        onNodeWithText(localPlayer.name, useUnmergedTree = true).assertIsDisplayed()
+        players.forEach { player ->
+            onNodeWithTag("room-player-avatar-${player.spawnPoint + 1}", useUnmergedTree = true).assertIsDisplayed()
+        }
+        val cardRow = onNodeWithTag("room-player-1", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertTrue(cardRow.bottom - cardRow.top > originalRow.bottom - originalRow.top)
+        onNodeWithTag("room-player-info-1-0-0", useUnmergedTree = true).performTouchInput { click() }
+        runOnIdle { assertEquals(1, rowClicks); assertEquals(0, profileClicks) }
+        onNodeWithTag("room-profile-1", useUnmergedTree = true).performClick()
+        runOnIdle { assertEquals(1, rowClicks); assertEquals(1, profileClicks) }
+        savePlayerCards("static-player-cards.png")
+
+        runOnIdle { assertTrue(ArtThemeController.apply(null)) }
+        onNodeWithTag("room-player-avatar-1", useUnmergedTree = true).assertDoesNotExist()
+        onNodeWithTag("room-player-info-1-0", useUnmergedTree = true).assertDoesNotExist()
+        onNodeWithText("战绩: 128胜 / 23负", useUnmergedTree = true).assertDoesNotExist()
+        assertEquals(originalRow, onNodeWithTag("room-player-1", useUnmergedTree = true).getUnclippedBoundsInRoot())
+        onNodeWithTag("room-profile-1", useUnmergedTree = true).performClick()
+        runOnIdle { assertEquals(1, rowClicks); assertEquals(2, profileClicks) }
+    }
+
+    @Test fun missingAndCorruptPlayerCardAvatarsUseVisibleFallbackAfterThemeSwitch() =
+        runDesktopComposeUiTest(width = 700, height = 520) {
+            show { PlayerRows() }
+            val imageColor = 0xFF37B4D8.toInt()
+            val fallbackColor = 0xFFE72CC6.toInt()
+            fun config(image: String) = """
+                [room.player.card]
+                enabled = true
+                [room.player.card.avatar]
+                tint = "#E72CC6"
+                borderWidth = 0
+                [room.player.card.content]
+                avatarImage = "$image"
+                [[room.player.card.content.rows]]
+                cells = [{ text = "头像资源回退" }]
+            """.trimIndent()
+            val valid = install("card-avatar-valid", config("room/avatar.png"), mapOf("room/avatar.png" to png(imageColor)))
+            runOnIdle { assertTrue(ArtThemeController.apply(valid)) }
+            waitForColor("room-player-avatar-1", imageColor)
+
+            val missing = install("card-avatar-missing", config("room/missing.png"))
+            runOnIdle { assertTrue(ArtThemeController.apply(missing)) }
+            waitForColor("room-player-avatar-1", fallbackColor, minimum = 5)
+            assertEquals(0, countColor(onNodeWithTag("room-player-avatar-1", useUnmergedTree = true).captureToImage().toAwtImage(), imageColor))
+            val corrupt = install("card-avatar-corrupt", config("room/broken.png"), mapOf("room/broken.png" to "bad png data".toByteArray()))
+            runOnIdle { assertTrue(ArtThemeController.apply(corrupt)) }
+            waitForColor("room-player-avatar-1", fallbackColor, minimum = 5)
+            waitForColor("room-player-avatar-3", fallbackColor, minimum = 5)
+            assertEquals(0, countColor(onNodeWithTag("room-player-avatar-1", useUnmergedTree = true).captureToImage().toAwtImage(), imageColor))
+            onNodeWithTag("room-player-info-1-0", useUnmergedTree = true).assertIsDisplayed()
+            savePlayerCards("avatar-resource-fallback.png")
+        }
+
+    @Test fun accountAvatarWinsOverSlotDefaultsAndThemeChangesUntilLogout() = runDesktopComposeUiTest(width = 700, height = 520) {
+        val accountColor = 0xFF367CE9.toInt()
+        val firstDefault = 0xFF37B4D8.toInt()
+        val secondDefault = 0xFFE49228.toInt()
+        val requests = fakeAccountAvatars { png(accountColor) }
+        runOnIdle { AccountSession.applyPreview(previewAvatarUser(hasAvatar = true)) }
+        val first = install("account-avatar-default-one", accountAvatarCardConfig("room/default.png"),
+            mapOf("room/default.png" to png(firstDefault)))
+        runOnIdle { assertTrue(ArtThemeController.apply(first)) }
+        show { PlayerRows() }
+        waitForColor("room-player-avatar-1", accountColor)
+        onNodeWithTag("room-player-account-avatar-1", useUnmergedTree = true).assertIsDisplayed()
+        onNodeWithTag("room-player-account-avatar-3", useUnmergedTree = true).assertDoesNotExist()
+        waitForColor("room-player-avatar-3", firstDefault)
+
+        val second = install("account-avatar-default-two", accountAvatarCardConfig("room/default.png"),
+            mapOf("room/default.png" to png(secondDefault)))
+        runOnIdle { assertTrue(ArtThemeController.apply(second)) }
+        waitForColor("room-player-avatar-3", secondDefault)
+        waitForColor("room-player-avatar-1", accountColor)
+        val avatar = onNodeWithTag("room-player-avatar-1", useUnmergedTree = true).captureToImage().toAwtImage()
+        assertEquals(0, countColor(avatar, firstDefault))
+        assertEquals(0, countColor(avatar, secondDefault))
+        assertTrue(requests.isNotEmpty())
+        assertTrue(requests.all { it.userId == 42L && it.hasAvatar }, "AI and unverified guests must not request account avatars")
+        savePlayerCards("account-avatar-priority.png")
+
+        runOnIdle { AccountSession.applyLoggedOutPreview() }
+        waitForColor("room-player-avatar-1", secondDefault)
+        onNodeWithTag("room-player-account-avatar-1", useUnmergedTree = true).assertDoesNotExist()
+        onNodeWithTag("room-player-default-avatar-1", useUnmergedTree = true).assertIsDisplayed()
+        assertEquals(0, countColor(onNodeWithTag("room-player-avatar-1", useUnmergedTree = true).captureToImage().toAwtImage(), accountColor))
+    }
+
+    @Test fun verifiedRemoteAccountAvatarWinsUntilTheRoomContainsDuplicateNames() =
+        runDesktopComposeUiTest(width = 700, height = 520) {
+            val defaultColor = 0xFF37B4D8.toInt()
+            val remoteColor = 0xFFD64CA2.toInt()
+            val remote = players[1]
+            val avatarRequests = fakeAccountAvatars { avatar ->
+                png(if (avatar.userId == 84L) remoteColor else 0xFF367CE9.toInt())
+            }
+            val identityRequests = CopyOnWriteArrayList<String>()
+            val http = OkHttpClient.Builder().addInterceptor { chain ->
+                val request = chain.request()
+                identityRequests += request.url.encodedPath
+                val body = when (request.url.encodedPath) {
+                    "/api/v1/capabilities" -> """{"room_id_membership_verified":true}"""
+                    "/api/v1/roomid/lookup" -> if (request.url.queryParameter("player_name") == remote.name) {
+                        """{"users":[{"user_id":84,"username":"verified-guest","nickname":"Ready guest"}]}"""
+                    } else """{"users":[]}"""
+                    "/api/v1/users/lookup" -> {
+                        assertEquals("verified-guest", request.url.queryParameter("username"))
+                        """{"user":{"id":84,"username":"verified-guest","nickname":"Ready guest","has_avatar":true}}"""
+                    }
+                    "/api/v1/roomid/publish" -> """{"ok":true}"""
+                    else -> error("Unexpected identity request: ${request.url.encodedPath}")
+                }
+                Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                    .body(body.toResponseBody("application/json".toMediaType())).build()
+            }.build()
+            runOnIdle {
+                AccountSession.applyPreview(previewAvatarUser(hasAvatar = false))
+                AccountSession.networkEnabled = true
+                AccountSession.bindClient(AccountApiClient("https://identity-test.invalid", "preview-app", http))
+                RoomIdentityController.clientOverride = RoomIdentityClient(listOf("https://identity-test.invalid"), http)
+                RoomIdentityController.onJoiningRoom("Q123456", null)
+            }
+            runBlocking { RoomIdentityController.prefetchPlayerCards(room) }
+            assertEquals(84L, assertNotNull(RoomIdentityController.playerAccountFor(remote, room)).id)
+            val config = accountAvatarCardConfig("room/default.png") + """
+
+                [room.player.card.slots."2"]
+                avatarImage = "room/default.png"
+                [[room.player.card.slots."2".rows]]
+                cells = [{ text = "远端玩家槽位默认" }]
+            """.trimIndent()
+            val id = install("verified-remote-avatar", config, mapOf("room/default.png" to png(defaultColor)))
+            runOnIdle { assertTrue(ArtThemeController.apply(id)) }
+            show { PlayerRows() }
+            waitForColor("room-player-avatar-2", remoteColor)
+            onNodeWithTag("room-player-account-avatar-2", useUnmergedTree = true).assertIsDisplayed()
+            waitForColor("room-player-avatar-1", defaultColor)
+            waitForColor("room-player-avatar-3", defaultColor)
+            onNodeWithTag("room-player-account-avatar-3", useUnmergedTree = true).assertDoesNotExist()
+            assertTrue(avatarRequests.any { it.userId == 84L && it.hasAvatar })
+            assertTrue(avatarRequests.all { it.userId == 84L }, "Only the verified guest has an account avatar")
+            assertTrue("/api/v1/users/lookup" in identityRequests)
+            savePlayerCards("verified-remote-account-avatar.png")
+
+            SwingUtilities.invokeAndWait {
+                players = players + player(remote.name, 4, 0)
+                RoomSnapshotStore.resample(game)
+            }
+            waitForColor("room-player-avatar-2", defaultColor)
+            onNodeWithTag("room-player-account-avatar-2", useUnmergedTree = true).assertDoesNotExist()
+            assertEquals(0, countColor(onNodeWithTag("room-player-avatar-2", useUnmergedTree = true).captureToImage().toAwtImage(), remoteColor))
+            savePlayerCards("duplicate-name-default-avatar.png")
+        }
+
+    @Test fun absentAccountAvatarUsesDefaultAndUploadsInvalidateTheVersionUntilDeletion() =
+        runDesktopComposeUiTest(width = 700, height = 520) {
+            val defaultColor = 0xFF37B4D8.toInt()
+            val firstAccountColor = 0xFF367CE9.toInt()
+            val updatedAccountColor = 0xFFE75DA3.toInt()
+            val bytes = AtomicReference(png(firstAccountColor))
+            val requests = fakeAccountAvatars { bytes.get() }
+            val mutations = bindAvatarMutationResponses()
+            runOnIdle { AccountSession.applyPreview(previewAvatarUser(hasAvatar = false)) }
+            val id = install("account-avatar-upload", accountAvatarCardConfig("room/default.png"),
+                mapOf("room/default.png" to png(defaultColor)))
+            runOnIdle { assertTrue(ArtThemeController.apply(id)) }
+            show { PlayerRows() }
+            waitForColor("room-player-avatar-1", defaultColor)
+            onNodeWithTag("room-player-account-avatar-1", useUnmergedTree = true).assertDoesNotExist()
+            assertTrue(requests.isEmpty())
+
+            val startingVersion = AccountSession.avatarVersion
+            runBlocking { AccountSession.uploadAvatar(bytes.get(), "first.png", "image/png") }
+            waitForColor("room-player-avatar-1", firstAccountColor)
+            assertTrue(requests.any { it.version == startingVersion + 1 && it.hasAvatar })
+            bytes.set(png(updatedAccountColor))
+            runBlocking { AccountSession.uploadAvatar(bytes.get(), "updated.png", "image/png") }
+            waitForColor("room-player-avatar-1", updatedAccountColor)
+            assertTrue(requests.any { it.version == startingVersion + 2 && it.hasAvatar }, "An upload must invalidate the account avatar cache")
+            assertEquals(0, countColor(onNodeWithTag("room-player-avatar-1", useUnmergedTree = true).captureToImage().toAwtImage(), firstAccountColor))
+
+            runBlocking { AccountSession.deleteAvatar() }
+            waitForColor("room-player-avatar-1", defaultColor)
+            assertEquals(startingVersion + 3, AccountSession.avatarVersion)
+            assertFalse(AccountSession.user!!.hasAvatar)
+            onNodeWithTag("room-player-account-avatar-1", useUnmergedTree = true).assertDoesNotExist()
+            assertEquals(listOf("POST", "POST", "DELETE"), mutations.toList())
+            savePlayerCards("account-avatar-deleted-default.png")
+        }
+
+    @Test fun failedAndCorruptAccountAvatarsRestoreTheThemeDefaultWithoutStalePixels() =
+        runDesktopComposeUiTest(width = 700, height = 520) {
+            val defaultColor = 0xFF37B4D8.toInt()
+            val accountColor = 0xFF367CE9.toInt()
+            val bytes = AtomicReference<ByteArray?>(png(accountColor))
+            val requests = fakeAccountAvatars { bytes.get() }
+            bindAvatarMutationResponses()
+            runOnIdle { AccountSession.applyPreview(previewAvatarUser(hasAvatar = true)) }
+            val id = install("account-avatar-errors", accountAvatarCardConfig("room/default.png"),
+                mapOf("room/default.png" to png(defaultColor)))
+            runOnIdle { assertTrue(ArtThemeController.apply(id)) }
+            show { PlayerRows() }
+            waitForColor("room-player-avatar-1", accountColor)
+
+            bytes.set(null)
+            runBlocking { AccountSession.uploadAvatar(png(accountColor), "unavailable.png", "image/png") }
+            val failedVersion = AccountSession.avatarVersion
+            waitUntil { requests.any { it.version == failedVersion } }
+            waitForColor("room-player-avatar-1", defaultColor)
+            assertEquals(0, countColor(onNodeWithTag("room-player-avatar-1", useUnmergedTree = true).captureToImage().toAwtImage(), accountColor))
+            bytes.set("invalid image bytes".toByteArray())
+            runBlocking { AccountSession.uploadAvatar(png(accountColor), "corrupt.png", "image/png") }
+            val corruptVersion = AccountSession.avatarVersion
+            waitUntil { requests.any { it.version == corruptVersion } }
+            waitForColor("room-player-avatar-1", defaultColor)
+            onNodeWithTag("room-player-default-avatar-1", useUnmergedTree = true).assertIsDisplayed()
+            assertEquals(0, countColor(onNodeWithTag("room-player-avatar-1", useUnmergedTree = true).captureToImage().toAwtImage(), accountColor))
+            savePlayerCards("account-avatar-error-default.png")
+        }
+
+    @Test fun playerCardsKeepDesktopListScrollableAndChatDraftOnThemeChanges() =
+        playerCardRoom(1280, 1000, WindowManager.Large)
+
+    @Test fun playerCardsKeepMiddleListScrollableAndChatDraftOnThemeChanges() =
+        playerCardRoom(800, 700, WindowManager.Middle)
+
+    @Test fun playerCardsKeepNarrowListScrollableAndChatDraftOnThemeChanges() =
+        playerCardRoom(360, 900, WindowManager.Small)
+
+    @Test fun hidingPlayerCardAvatarsKeepsInfoAndRestoresEngineColumnWidths() = runDesktopComposeUiTest(width = 700, height = 520) {
+        show { PlayerRows() }
+        val originalName = onNodeWithTag("room-cell-name-1", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val withAvatar = install("card-with-avatar", playerCardConfig())
+        runOnIdle { assertTrue(ArtThemeController.apply(withAvatar)) }
+        val avatarName = onNodeWithTag("room-cell-name-1", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertTrue(avatarName.right - avatarName.left < originalName.right - originalName.left)
+
+        val withoutAvatar = install("card-without-avatar", playerCardConfig()
+            .replace("[room.player.card.avatar]", "[room.player.card.avatar]\nenabled = false"))
+        runOnIdle { assertTrue(ArtThemeController.apply(withoutAvatar)) }
+        onNodeWithTag("room-player-avatar-1", useUnmergedTree = true).assertDoesNotExist()
+        onNodeWithTag("room-player-info-1-0", useUnmergedTree = true).assertIsDisplayed()
+        onNodeWithText("战绩: 128胜 / 23负", useUnmergedTree = true).assertIsDisplayed()
+        val hiddenAvatarName = onNodeWithTag("room-cell-name-1", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertEquals(originalName.left, hiddenAvatarName.left)
+        assertEquals(originalName.right - originalName.left, hiddenAvatarName.right - hiddenAvatarName.left)
+        savePlayerCards("player-cards-without-avatars.png")
+    }
+
+    @Test fun repositoryPlayerCardExampleRendersGreenHostAndAiCards() = runDesktopComposeUiTest(width = 1000, height = 700) {
+        val source = File("../examples/themes/room-player-cards").canonicalFile
+        val id = installRepositoryExample(source)
+        runOnIdle { assertTrue(ArtThemeController.apply(id)) }
+        showRoom(WindowManager.Middle)
+        onNodeWithText("房主", useUnmergedTree = true).assertIsDisplayed()
+        onNodeWithText("战绩：128胜 / 23负", useUnmergedTree = true).assertIsDisplayed()
+        onNodeWithText("进攻专家", useUnmergedTree = true).assertIsDisplayed()
+        onNodeWithTag("room-player-avatar-fallback-1", useUnmergedTree = true).assertIsDisplayed()
+        onNodeWithTag("room-player-avatar-fallback-3", useUnmergedTree = true).assertIsDisplayed()
+        waitForColor("room-player-avatar-3", 0xFFA8D562.toInt(), minimum = 5)
+        savePlayerCards("green-player-cards.png")
+        runOnIdle { assertEquals(0, networkAttempts.get()) }
+    }
+
+    private fun playerCardRoom(width: Int, height: Int, mode: WindowManager) =
+        runDesktopComposeUiTest(width = width, height = height) {
+            players = players + (4..7).map { index ->
+                player("Commander ${index + 1} with a very long display name", index, index % 2, ai = index == 5)
+            }
+            SwingUtilities.invokeAndWait { RoomSnapshotStore.resample(game) }
+            showRoom(mode)
+            val input = onNodeWithTag("room-chat-input", useUnmergedTree = true)
+            input.performTextInput("Unsent player card draft")
+            val panelBefore = onNodeWithTag("room-panel-players", useUnmergedTree = true).getUnclippedBoundsInRoot()
+            val id = install("scrollable-player-cards", playerCardConfig() + """
+
+                [[room.player.card.slots."8".rows]]
+                cells = [{ text = "最后一个玩家" }, { text = "额外信息仍可见" }]
+            """.trimIndent())
+            runOnIdle { assertTrue(ArtThemeController.apply(id)) }
+            input.assertIsFocused().assertTextContains("Unsent player card draft")
+            val panelAfter = onNodeWithTag("room-panel-players", useUnmergedTree = true).getUnclippedBoundsInRoot()
+            assertEquals(panelBefore.right - panelBefore.left, panelAfter.right - panelAfter.left,
+                "Player cards must retain the room panel width")
+            onNodeWithTag("room-player-avatar-1", useUnmergedTree = true).assertIsDisplayed()
+            savePlayerCards("room-${width}x${height}-player-cards.png")
+
+            val list = onNodeWithTag(if (mode == WindowManager.Large) "desktopRoomPlayers" else "compactRoomPlayers",
+                useUnmergedTree = true)
+            list.performScrollToNode(hasTestTag("room-player-8"))
+            onNodeWithText("最后一个玩家", useUnmergedTree = true).assertIsDisplayed()
+            onNodeWithTag("room-player-avatar-8", useUnmergedTree = true).assertIsDisplayed()
+            input.assertIsFocused().assertTextContains("Unsent player card draft")
+            savePlayerCards("room-${width}x${height}-player-cards-scrolled.png")
+
+            runOnIdle { assertTrue(ArtThemeController.apply(null)) }
+            input.assertIsFocused().assertTextContains("Unsent player card draft")
+            onAllNodes(hasTestTag("room-player-avatar-8"), useUnmergedTree = true).assertCountEquals(0)
+            onNodeWithTag("room-player-8", useUnmergedTree = true).assertExists()
+        }
+
+    private fun playerCardConfig() = """
+        [room.player]
+        backgroundColor = "#181E15"
+        borderColor = "#9ED351"
+        corner = 8
+        [room.player.card]
+        enabled = true
+        [room.player.card.avatar]
+        backgroundColor = "#293920"
+        borderColor = "#9ED351"
+        tint = "#9ED351"
+        [[room.player.card.content.rows]]
+        cells = [{ text = "普通成员", contentColor = "#9ED351" }, { text = "战绩: 12胜 / 3负" }]
+        [[room.player.card.local.rows]]
+        cells = [{ text = "本地覆盖" }]
+        [[room.player.card.ai.rows]]
+        cells = [{ text = "进攻专家", contentColor = "#EDAEF4", backgroundColor = "#632A6E" }, { text = "AI 难度: 困难" }]
+        [[room.player.card.slots."1".rows]]
+        cells = [{ text = "房主", contentColor = "#FFF2B3", backgroundColor = "#725515" }, { text = "战绩: 128胜 / 23负" }]
+    """.trimIndent()
+
     @Test fun profileArtRetainsLocalForeignAndAiClickRules() = runDesktopComposeUiTest(width = 700, height = 340) {
         authority = false
         var profileClicks = 0
@@ -566,6 +921,67 @@ class RoomArtThemeUiTest {
         File(output, "README.txt").writeText("Real Compose waiting-room UI with offline engine test data. These are logical viewport captures, not Android device or multiplayer-game validation.\n")
     }
 
+    private fun ComposeUiTest.savePlayerCards(name: String) {
+        val output = File("../build/artifacts/room-player-cards/previews").apply { mkdirs() }
+        ImageIO.write(onNodeWithTag("room-art-test-root").captureToImage().toAwtImage(), "png", File(output, name))
+        File(output, "README.txt").writeText("Real Compose waiting-room UI with offline engine test data. Player card text is static theme content. These are logical viewport captures, not Android device or multiplayer-game validation.\n")
+    }
+
+    private fun previewAvatarUser(hasAvatar: Boolean) = AccountUser(
+        id = 42, username = "commander", nickname = localPlayer.name, hasAvatar = hasAvatar,
+    )
+
+    private fun accountAvatarCardConfig(defaultImage: String) = """
+        [room.player.card]
+        enabled = true
+        [room.player.card.content]
+        avatarImage = "$defaultImage"
+        [[room.player.card.content.rows]]
+        cells = [{ text = "账号头像优先，主题提供默认头像" }]
+        [room.player.card.slots."1"]
+        avatarImage = "$defaultImage"
+        [[room.player.card.slots."1".rows]]
+        cells = [{ text = "本地槽位默认头像" }]
+    """.trimIndent()
+
+    /** Exercise the real model/key while keeping image delivery entirely in memory. */
+    private fun fakeAccountAvatars(bytes: (AccountAvatar) -> ByteArray?): CopyOnWriteArrayList<AccountAvatar> {
+        val requests = CopyOnWriteArrayList<AccountAvatar>()
+        SingletonImageLoader.setUnsafe { context -> ImageLoader.Builder(context).components {
+            add(ImageableFetcherFactory()); add(ImageableKeyer()); add(AccountAvatarKeyer())
+            add(object : Fetcher.Factory<AccountAvatar> {
+                override fun create(data: AccountAvatar, options: Options, imageLoader: ImageLoader): Fetcher = object : Fetcher {
+                    override suspend fun fetch(): FetchResult {
+                        requests += data
+                        check(data.hasAvatar) { "A player without an account avatar must use the theme default" }
+                        val response = bytes(data) ?: throw IOException("Simulated account avatar request failure")
+                        return SourceFetchResult(
+                            source = ImageSource(ByteArrayInputStream(response).source().buffer(), fileSystem = FileSystem.SYSTEM),
+                            mimeType = "image/png", dataSource = DataSource.MEMORY,
+                        )
+                    }
+                }
+            })
+        }.build() }
+        return requests
+    }
+
+    /** Real upload/delete session updates, with intercepted responses and no socket or HTTP server. */
+    private fun bindAvatarMutationResponses(): CopyOnWriteArrayList<String> {
+        val methods = CopyOnWriteArrayList<String>()
+        val http = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            check(request.url.encodedPath == "/api/v1/users/me/avatar") { "Unexpected account request: ${request.url.encodedPath}" }
+            check(request.method == "POST" || request.method == "DELETE")
+            methods += request.method
+            Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body("""{"ok":true,"has_avatar":${request.method == "POST"}}""".toResponseBody("application/json".toMediaType()))
+                .build()
+        }.build()
+        AccountSession.bindClient(AccountApiClient("https://avatar-test.invalid", "preview-app", http))
+        return methods
+    }
+
     private fun install(id: String, config: String, entries: Map<String, ByteArray> = emptyMap()): String {
         val pack = File(work, "$id.rwtheme")
         ZipOutputStream(pack.outputStream()).use { out ->
@@ -582,7 +998,8 @@ class RoomArtThemeUiTest {
     private fun installRepositoryExample(source: File): String {
         val config = File(source, "theme.toml")
         assertTrue(config.isFile, "Repository theme example is missing")
-        val files = linkedSetOf("theme.toml", "strings_zh.toml", "strings_en.toml")
+        val files = linkedSetOf("theme.toml")
+        files += listOf("strings_zh.toml", "strings_en.toml").filter { File(source, it).isFile }
         files += source.listFiles().orEmpty().filter { it.isFile && it.extension == "png" }.map { it.name }
         files += File(source, "buttons").listFiles().orEmpty().filter { it.isFile && it.extension == "png" }
             .map { "buttons/${it.name}" }

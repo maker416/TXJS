@@ -1068,7 +1068,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                         modifier = Modifier.fillMaxWidth(),
                                     ) {
                                         LazyColumn(
-                                            modifier = Modifier.fillMaxWidth(),
+                                            modifier = Modifier.fillMaxWidth().testTag("desktopRoomPlayers"),
                                             state = state,
                                         ) {
                                             items(
@@ -2504,6 +2504,13 @@ private val RoomPlayerNameWeight = 0.6f
 private val RoomPlayerSpawnWeight = 0.1f
 private val RoomPlayerTeamWeight = 0.1f
 private val RoomPlayerPingWeight = 0.2f
+/** An avatar leaves less room on compact screens; keep the two short column headings readable. */
+private data class RoomPlayerColumnWeights(val name: Float, val spawn: Float, val team: Float, val ping: Float)
+
+private fun roomPlayerColumnWeights(compact: Boolean, style: RoomPlayerSpec) =
+    if (compact && style.card.enabled && style.card.avatar.enabled) RoomPlayerColumnWeights(.4f, .18f, .18f, .24f)
+    else RoomPlayerColumnWeights(RoomPlayerNameWeight, RoomPlayerSpawnWeight, RoomPlayerTeamWeight, RoomPlayerPingWeight)
+
 /** 行尾「查看名片」操作格的固定宽度：表头与数据行取同一值，保证列对齐 */
 private val RoomPlayerCardCellWidth = 40.dp
 private val CompactRoomPlayerCardCellWidth = 34.dp
@@ -3306,6 +3313,7 @@ private fun RoomPlayerTableHeader(
     val themed = style != RoomPlayerSpec()
     val shape = if (themed) RoundedCornerShape(style.corner.dp) else rowShape
     val strokeColor = MaterialTheme.colorScheme.secondaryContainer
+    val columns = roomPlayerColumnWeights(compact, style)
     Row(
         modifier = modifier
             .padding(if (compact) 2.dp else 5.dp)
@@ -3315,10 +3323,11 @@ private fun RoomPlayerTableHeader(
             } else Modifier.border(BorderStroke(2.dp, MaterialTheme.colorScheme.secondary), rowShape))
             .fillMaxWidth(),
     ) {
-        TableCell(readI18n("multiplayer.room.colName"), RoomPlayerNameWeight, drawStroke = false, strokeColor = strokeColor)
-        TableCell(readI18n("multiplayer.room.colSpawn"), RoomPlayerSpawnWeight, strokeColor = strokeColor)
-        TableCell(readI18n("multiplayer.room.colTeam"), RoomPlayerTeamWeight, strokeColor = strokeColor)
-        TableCell(readI18n("multiplayer.room.colPing"), RoomPlayerPingWeight, drawStroke = false, strokeColor = strokeColor)
+        if (style.card.enabled) Spacer(Modifier.width(style.card.avatarCellWidth(compact)))
+        TableCell(readI18n("multiplayer.room.colName"), columns.name, drawStroke = false, strokeColor = strokeColor)
+        TableCell(readI18n("multiplayer.room.colSpawn"), columns.spawn, strokeColor = strokeColor)
+        TableCell(readI18n("multiplayer.room.colTeam"), columns.team, strokeColor = strokeColor)
+        TableCell(readI18n("multiplayer.room.colPing"), columns.ping, drawStroke = false, strokeColor = strokeColor)
         // 行尾操作列表头：与数据行名片按钮同宽，放说明性图标表明该列用途
         Box(
             modifier = Modifier
@@ -3356,6 +3365,7 @@ internal fun RoomPlayerTableRow(
     val themed = style != RoomPlayerSpec()
     val shape = if (themed) RoundedCornerShape(style.corner.dp) else rowShape
     val slot = player.spawnPoint + 1
+    val columns = roomPlayerColumnWeights(compact, style)
     Box(modifier.testTag("room-player-background-$slot")) {
         KickPlayerContextMenuAreaMultiplatform(player, onViewProfile = onViewProfile) {
             Row(
@@ -3378,46 +3388,49 @@ internal fun RoomPlayerTableRow(
                         onPlayerClick(player)
                     },
             ) {
-                val baseName = player.name + if (!isDetector && player.startingUnit != -1) {
-                    " - ${options.firstOrNull { it.first == player.startingUnit }?.second ?: "Unknown"}"
-                } else ""
-                RoomPlayerNameCell(
-                    name = baseName,
-                    nameColor = if (style.nameUseTeamColor && player.color != -1) {
-                        Player.getTeamColor(player.color)
-                    } else {
-                        roomThemeColor(style.nameColor, MaterialTheme.colorScheme.onSurface)
-                    },
-                    syncPeer = if (isDetector) null else ModSyncController.roomPeerBadges[player.name],
-                    showReadySpinner = !isDetector && !player.data.ready,
-                    compact = compact,
-                    slot = slot,
-                )
-                TableCell(
-                    if (player.isSpectator) "S" else (player.spawnPoint + 1).toString(),
-                    RoomPlayerSpawnWeight,
-                    color = if (player.isSpectator) Color.Black else Player.getTeamColor(player.spawnPoint),
-                    modifier = Modifier.fillMaxHeight(),
-                )
-                TableCell(
-                    player.teamAlias(),
-                    RoomPlayerTeamWeight,
-                    color = Player.getTeamColor(player.team),
-                    modifier = Modifier.fillMaxHeight(),
-                )
-                val ping = remember(update) { player.ping }
-                TableCell(
-                    ping,
-                    RoomPlayerPingWeight,
-                    drawStroke = false,
-                    modifier = Modifier.fillMaxHeight(),
-                )
-                RoomPlayerCardActionCell(
-                    player = player,
-                    room = room,
-                    compact = compact,
-                    onViewProfile = onViewProfile,
-                )
+                RoomPlayerCardBody(style.card, player, room, compact) {
+                    val baseName = player.name + if (!isDetector && player.startingUnit != -1) {
+                        " - ${options.firstOrNull { it.first == player.startingUnit }?.second ?: "Unknown"}"
+                    } else ""
+                    RoomPlayerNameCell(
+                        name = baseName,
+                        nameColor = if (style.nameUseTeamColor && player.color != -1) {
+                            Player.getTeamColor(player.color)
+                        } else {
+                            roomThemeColor(style.nameColor, MaterialTheme.colorScheme.onSurface)
+                        },
+                        syncPeer = if (isDetector) null else ModSyncController.roomPeerBadges[player.name],
+                        showReadySpinner = !isDetector && !player.data.ready,
+                        compact = compact,
+                        slot = slot,
+                        weight = columns.name,
+                    )
+                    TableCell(
+                        if (player.isSpectator) "S" else (player.spawnPoint + 1).toString(),
+                        columns.spawn,
+                        color = if (player.isSpectator) Color.Black else Player.getTeamColor(player.spawnPoint),
+                        modifier = Modifier.fillMaxHeight(),
+                    )
+                    TableCell(
+                        player.teamAlias(),
+                        columns.team,
+                        color = Player.getTeamColor(player.team),
+                        modifier = Modifier.fillMaxHeight(),
+                    )
+                    val ping = remember(update) { player.ping }
+                    TableCell(
+                        ping,
+                        columns.ping,
+                        drawStroke = false,
+                        modifier = Modifier.fillMaxHeight(),
+                    )
+                    RoomPlayerCardActionCell(
+                        player = player,
+                        room = room,
+                        compact = compact,
+                        onViewProfile = onViewProfile,
+                    )
+                }
             }
         }
     }
@@ -3899,6 +3912,7 @@ private fun RowScope.RoomPlayerNameCell(
     showReadySpinner: Boolean,
     compact: Boolean,
     slot: Int,
+    weight: Float = RoomPlayerNameWeight,
 ) {
     val settings = koinInject<Settings>()
     val baseNameStyle = if (settings.boldText) {
@@ -3914,7 +3928,7 @@ private fun RowScope.RoomPlayerNameCell(
     val syncing = syncPeer != null && syncPeer.phase != SyncPeerPhase.SYNCED
     Column(
         modifier = Modifier
-            .weight(RoomPlayerNameWeight)
+            .weight(weight)
             .fillMaxHeight()
             .testTag("room-cell-name-$slot")
             .padding(horizontal = if (compact) 4.dp else 6.dp, vertical = 2.dp),

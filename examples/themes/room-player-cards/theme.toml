@@ -1,0 +1,136 @@
+# Copyright 2023-2025 RWPP contributors
+# 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束，可以在以下链接找到该许可证。
+# Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
+# https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
+
+[theme]
+id = "room-player-cards"
+name = "绿色玩家卡片 · 静态演示"
+author = "RWJS contributors"
+version = "1.0.0"
+description = "等待战斗室头像格与双行玩家槽位示例。战绩、专家称号及AI难度文案均为美术包写死的演示内容。"
+
+[colors]
+primary = "#A8D562"
+onPrimary = "#14200A"
+primaryContainer = "#263D1B"
+onPrimaryContainer = "#D7F4BD"
+secondary = "#89B54F"
+onSecondary = "#14200A"
+secondaryContainer = "#394B2B"
+onSecondaryContainer = "#EAF6D8"
+tertiary = "#D5A736"
+onTertiary = "#281C00"
+background = "#060806"
+onBackground = "#F3F6EE"
+surface = "#141711"
+onSurface = "#F3F6EE"
+surfaceContainer = "#3B4930"
+error = "#FF7878"
+
+[room.panels.players]
+backgroundColor = "#11140F"
+contentColor = "#F3F6EE"
+borderColor = "#89B54F"
+borderWidth = 1
+corner = 8
+
+[room.panels.map]
+backgroundColor = "#11140F"
+contentColor = "#F3F6EE"
+borderColor = "#89B54F"
+borderWidth = 1
+corner = 8
+
+[room.panels.chat]
+backgroundColor = "#11140F"
+contentColor = "#F3F6EE"
+borderColor = "#89B54F"
+borderWidth = 1
+corner = 8
+
+[room.panels.details]
+backgroundColor = "#11140F"
+contentColor = "#F3F6EE"
+borderColor = "#89B54F"
+borderWidth = 1
+corner = 8
+
+[room.panels.actions]
+backgroundColor = "#11140F"
+contentColor = "#F3F6EE"
+borderColor = "#89B54F"
+borderWidth = 1
+corner = 8
+
+[room.player]
+backgroundColor = "#151811"
+borderColor = "#89B54F"
+borderWidth = 1
+corner = 8
+nameColor = "#F3F6EE"
+nameUseTeamColor = false
+nameWeight = 600
+
+[room.player.profile]
+backgroundColor = "#263D1B"
+borderColor = "#89B54F"
+borderWidth = 1
+corner = 6
+tint = "#A8D562"
+
+[room.player.card]
+enabled = true
+
+[room.player.card.avatar]
+enabled = true
+size = 48
+corner = 8
+backgroundColor = "#172211"
+borderColor = "#89B54F"
+borderWidth = 1
+tint = "#A8D562"
+
+[[room.player.card.content.rows]]
+cells = [
+  { text = "联机玩家", backgroundColor = "#263D1B", contentColor = "#D7F4BD", borderColor = "#89B54F", borderWidth = 1 },
+  { text = "战绩：128胜 / 23负", contentColor = "#C8CEC1" },
+]
+
+[[room.player.card.host.rows]]
+cells = [
+  { text = "房主", backgroundColor = "#725000", contentColor = "#FFF0A5", borderColor = "#D5A736", borderWidth = 1 },
+  { text = "战绩：128胜 / 23负", contentColor = "#C8CEC1" },
+]
+
+[[room.player.card.ai.rows]]
+cells = [
+  { text = "进攻专家", backgroundColor = "#50205C", contentColor = "#F0CDF7", borderColor = "#AA5BB9", borderWidth = 1 },
+  { text = "AI 难度：困难", contentColor = "#C8CEC1" },
+]
+
+[[room.player.card.spectator.rows]]
+cells = [
+  { text = "观战席", backgroundColor = "#343A3F", contentColor = "#D9DFE5" },
+  { text = "静态信息展示", contentColor = "#C8CEC1" },
+]
+
+# 槽位覆盖只按出生位置选择，以下称号与AI难度也是演示内容。
+# 真人进入这些出生位置也会看到同样的写死文案。
+[[room.player.card.slots."2".rows]]
+cells = [
+  { text = "防守大师", backgroundColor = "#163C6A", contentColor = "#D8E9FF", borderColor = "#4D8CD8", borderWidth = 1 },
+  { text = "AI 难度：困难", contentColor = "#C8CEC1" },
+]
+
+[[room.player.card.slots."3".rows]]
+cells = [
+  { text = "进攻专家", backgroundColor = "#50205C", contentColor = "#F0CDF7", borderColor = "#AA5BB9", borderWidth = 1 },
+  { text = "AI 难度：困难", contentColor = "#C8CEC1" },
+]
+
+[[room.player.card.slots."4".rows]]
+cells = [
+  { text = "经济发展", backgroundColor = "#31531F", contentColor = "#E5F7D3", borderColor = "#89B54F", borderWidth = 1 },
+  { text = "AI 难度：困难", contentColor = "#C8CEC1" },
+]
