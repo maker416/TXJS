@@ -7,7 +7,6 @@
 
 package io.github.rwpp.desktop
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -84,6 +83,8 @@ class DesktopNativeMenuInputWindowTest {
         val previousApi = System.getProperty("skiko.renderApi")
         val ownerRef = AtomicReference<JFrame?>()
         val overlayRef = AtomicReference<DesktopLauncherOverlay?>()
+        val canvasRef = AtomicReference<Canvas>()
+        val canvasColor = AtomicReference(Color(32, 96, 144))
         val dialogShown = mutableStateOf(false)
         val popupShown = mutableStateOf(false)
         val rootLetters = AtomicInteger()
@@ -104,11 +105,12 @@ class DesktopNativeMenuInputWindowTest {
             onEdt {
                 val canvas = object : Canvas() {
                     override fun paint(graphics: Graphics) {
-                        graphics.color = Color(32, 96, 144)
+                        graphics.color = canvasColor.get()
                         graphics.fillRect(0, 0, width, height)
                     }
                     override fun update(graphics: Graphics) = paint(graphics)
                 }
+                canvasRef.set(canvas)
                 host = JPanel(NativeCanvasCardLayout(canvas) { 1.0 }).apply {
                     add(canvas, DisplayMode.Game.cardName)
                 }
@@ -119,7 +121,8 @@ class DesktopNativeMenuInputWindowTest {
                     MaterialTheme {
                         Column(
                             Modifier.fillMaxSize()
-                                .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 1f / 255f))
+                                // A transparency probe must not add its own tinted background:
+                                // the default Dialog scrim composites into the host's painted alpha.
                                 .padding(24.dp)
                                 .focusRequester(rootFocus)
                                 .onFocusChanged { rootHasFocus.set(it.hasFocus) }
@@ -190,6 +193,7 @@ class DesktopNativeMenuInputWindowTest {
                 overlay.focusMenu()
             }
             val robot = Robot().apply { autoDelay = 20 }
+            activateNativeMenuForTest(ownerRef.get()!!, menuWindow, robot, overlay::focusMenu)
             awaitKeyboardFocus("native menu keyboard focus", menuWindow) {
                 overlay.contentComponent.isFocusOwner && rootHasFocus.get()
             }
@@ -204,7 +208,7 @@ class DesktopNativeMenuInputWindowTest {
                         "Repeated menu focus requests must preserve the active Compose keyboard target")
                 }
             }
-            verifyBackgroundVisible(robot, overlay.contentComponent, menuWindow)
+            verifyBackgroundVisible(robot, overlay.contentComponent, menuWindow, canvasColor.get())
 
             click(robot, overlay.contentComponent, dialogButton)
             await("owned native dialog") { visibleLayers(menuWindow).size == 1 }
@@ -213,7 +217,12 @@ class DesktopNativeMenuInputWindowTest {
                 dialogWindow.bounds == Rectangle(overlay.contentComponent.locationOnScreen, overlay.contentComponent.size)
             }
             verifyLayer(menuWindow, overlay.contentComponent, dialogWindow)
-            verifyBackgroundVisible(robot, overlay.contentComponent, dialogWindow)
+            verifyBackgroundVisible(robot, overlay.contentComponent, dialogWindow, canvasColor.get())
+            onEdt {
+                canvasColor.set(Color(72, 128, 192))
+                canvasRef.get().repaint()
+            }
+            verifyBackgroundVisible(robot, overlay.contentComponent, dialogWindow, canvasColor.get())
             awaitKeyboardFocus("dialog keyboard focus", dialogWindow) {
                 dialogHasFocus.get()
             }
@@ -241,7 +250,12 @@ class DesktopNativeMenuInputWindowTest {
                 popupWindow.bounds == Rectangle(overlay.contentComponent.locationOnScreen, overlay.contentComponent.size)
             }
             verifyStableLayer(menuWindow, overlay.contentComponent, popupWindow)
-            verifyBackgroundVisible(robot, overlay.contentComponent, popupWindow)
+            verifyBackgroundVisible(robot, overlay.contentComponent, popupWindow, canvasColor.get())
+            onEdt {
+                canvasColor.set(Color(184, 80, 40))
+                canvasRef.get().repaint()
+            }
+            verifyBackgroundVisible(robot, overlay.contentComponent, popupWindow, canvasColor.get())
             awaitKeyboardFocus("popup keyboard focus", popupWindow) {
                 popupHasFocus.get()
             }
@@ -258,6 +272,8 @@ class DesktopNativeMenuInputWindowTest {
             press(robot, KeyEvent.VK_ESCAPE, menuWindow)
             await("root Escape callback restored") { rootEscapes.get() == 1 }
             onEdt { assertEquals("OPENGL", System.getProperty("skiko.renderApi")) }
+            println("Native menu keyboard chain completed: root=${rootLetters.get()}, " +
+                "dialog=${dialogLetters.get()}, popup=${popupLetters.get()}, rootEscape=${rootEscapes.get()}")
         } finally {
             try {
                 onEdt {
@@ -274,7 +290,6 @@ class DesktopNativeMenuInputWindowTest {
     @Composable
     private fun LayerKeyboardContent(key: Key, count: AtomicInteger, focused: AtomicBoolean, label: String) {
         val focus = remember { FocusRequester() }
-        val windowFocused = LocalWindowInfo.current.isWindowFocused
         Surface {
             Box(Modifier.padding(24.dp).focusRequester(focus).onFocusChanged { focused.set(it.hasFocus) }.onPreviewKeyEvent {
                 if (it.type == KeyEventType.KeyDown && it.key == key) {
@@ -283,7 +298,10 @@ class DesktopNativeMenuInputWindowTest {
                 } else false
             }.focusable()) { Text(label) }
         }
-        LaunchedEffect(windowFocused) { if (windowFocused) focus.requestFocus() }
+        // WINDOW layers have their own WindowInfo, which Compose 1.10.1 does not
+        // update with native focus events. Request the attached target directly;
+        // the assertions below still require actual AWT, Win32 and Robot input.
+        LaunchedEffect(Unit) { focus.requestFocus() }
     }
 
     private fun verifyStableLayer(menu: JDialog, content: Component, layer: Window) {
@@ -317,12 +335,11 @@ class DesktopNativeMenuInputWindowTest {
         robot.keyRelease(key)
     }
 
-    private fun verifyBackgroundVisible(robot: Robot, content: Component, foreground: Window) {
+    private fun verifyBackgroundVisible(robot: Robot, content: Component, foreground: Window, expected: Color) {
         val sample = onEdtValue {
             requireForeground(foreground)
             content.locationOnScreen.apply { translate(content.width - 24, content.height - 24) }
         }
-        val expected = Color(32, 96, 144)
         val until = System.nanoTime() + 3_000_000_000L
         var actual: Color
         do {
@@ -363,6 +380,8 @@ class DesktopNativeMenuInputWindowTest {
     private fun requireForeground(window: Window, stage: String = "Robot input") {
         val foreground = ForegroundWindows.INSTANCE.GetForegroundWindow()
         val testWindow = Window.getWindows().firstOrNull { it.isDisplayable && Native.getWindowPointer(it) == foreground }
+        assertTrue(testWindow == null || testWindow === window,
+            "$stage focused another test window: expected=$window, actual=$testWindow")
         assumeTrue("$stage requires its native window in the foreground; foreground test window=$testWindow; no external input was sent",
             foreground == Native.getWindowPointer(window))
     }
