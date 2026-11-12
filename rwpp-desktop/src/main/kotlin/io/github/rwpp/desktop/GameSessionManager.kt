@@ -14,6 +14,8 @@ import io.github.rwpp.game.base.Difficulty
 import io.github.rwpp.game.map.Mission
 import io.github.rwpp.game.map.Replay
 import io.github.rwpp.logger
+import java.util.concurrent.atomic.AtomicLong
+import javax.swing.SwingUtilities
 
 sealed class GameStartMode {
     data class Mission(val difficulty: Difficulty, val mission: io.github.rwpp.game.map.Mission) : GameStartMode()
@@ -28,12 +30,14 @@ class GameSessionManager(
     private val onStart: (GameStartMode) -> Unit,
     private val onReturnToMenu: () -> Unit
 ) {
+    private val transitionGeneration = AtomicLong()
     var isGameOver: Boolean by mutableStateOf(false)
     var gameSpeed: Float by mutableStateOf(1f)
     var isHost: Boolean by mutableStateOf(false)
 
     fun startGame(mode: GameStartMode) {
         if (!io.github.rwpp.core.MatchStartController.ensureCanStart()) return
+        transitionGeneration.incrementAndGet()
         logger.info("[GameSession] startGame({}) — currentMode={} (thread={})",
             gameStartModeSummary(mode), displaySwitcher.currentMode.value, Thread.currentThread().name)
         displaySwitcher.switchTo(DisplayMode.Game)
@@ -43,12 +47,23 @@ class GameSessionManager(
     }
 
     fun returnToMenu() {
+        val generation = transitionGeneration.incrementAndGet()
         logger.info("[GameSession] returnToMenu() — currentMode={} (thread={})",
             displaySwitcher.currentMode.value, Thread.currentThread().name)
-        logger.debug("[GameSession] returnToMenu: invoking onReturnToMenu callback")
-        onReturnToMenu()
-        displaySwitcher.switchTo(DisplayMode.Menu)
-        logger.info("[GameSession] returnToMenu() done")
+        val returnAction = {
+            if (transitionGeneration.get() == generation) {
+                logger.debug("[GameSession] returnToMenu: invoking onReturnToMenu callback")
+                onReturnToMenu()
+                displaySwitcher.switchTo(DisplayMode.Menu)
+                logger.info("[GameSession] returnToMenu() done")
+            } else {
+                logger.debug("[GameSession] ignored returnToMenu superseded by a newer transition")
+            }
+        }
+        // Windows 显示菜单窗口时可能等待 LWJGL 子窗口线程处理原生消息。
+        // 原版脚本从游戏线程退回时不能同步等待 EDT，否则双方互等；引擎清理仍留在调用方。
+        if (SwingUtilities.isEventDispatchThread()) returnAction()
+        else SwingUtilities.invokeLater(returnAction)
     }
 
     private fun gameStartModeSummary(mode: GameStartMode): String = when (mode) {

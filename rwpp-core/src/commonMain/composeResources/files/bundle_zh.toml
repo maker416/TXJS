@@ -1286,3 +1286,10 @@ actionHint = "登录已有账号，或从这里开始。"
 create = "创建新账号"
 optional = "单人、多人游戏均可免登录游玩"
 guest = "先去游戏"
+
+[startup]
+cache = "正在准备网络模组缓存…"
+graphics = "正在准备图形…"
+audio = "正在准备声音…"
+interface = "正在加载游戏界面和字体…"
+engine = "正在加载游戏资源和模组…"

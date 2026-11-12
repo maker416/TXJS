@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposePanel
 import androidx.compose.ui.layout.boundsInWindow
@@ -25,8 +27,12 @@ import io.github.rwpp.logger
 import org.junit.Assume.assumeFalse
 import org.junit.Assume.assumeTrue
 import org.slf4j.LoggerFactory
+import org.jetbrains.skiko.ExperimentalSkikoApi
+import org.jetbrains.skiko.GraphicsApi
+import org.jetbrains.skiko.SkiaLayer
 import java.awt.Canvas
 import java.awt.Color
+import java.awt.Component
 import java.awt.Frame
 import java.awt.Graphics
 import java.awt.GraphicsDevice
@@ -54,14 +60,62 @@ import kotlin.math.roundToInt
 /** Uses native windows: an offscreen Compose test cannot detect an opaque menu over the engine Canvas. */
 class DesktopMenuBackgroundWindowTest {
     @Test
-    fun transparentMenuShowsCanvasUpdatesReceivesClicksAndPreservesCanvasPeer() {
+    fun transparentMenuShowsCanvasUpdatesReceivesClicksAndPreservesCanvasPeer() = verifyCanvasAndInput(native = false)
+
+    @Test
+    fun nativeTransparentMenuShowsCanvasUpdatesReceivesClicksAndPreservesCanvasPeer() =
+        withRenderApi("OPENGL") { verifyCanvasAndInput(native = true) }
+
+    @Test
+    fun softwareRenderingChoiceRetainsTheCompatibilityMenu() =
+        withRenderApi("SOFTWARE_FAST") { verifyCanvasAndInput(native = true, expectedNative = false) }
+
+    @Test
+    fun nativeCreationFailureFallsBackWithoutMovingCanvasOrComposingTwice() =
+        verifyCanvasAndInput(native = true, failNative = true)
+
+    @OptIn(ExperimentalSkikoApi::class)
+    @Test
+    fun rendererChangeReleasesNativeWindowAndRestoresCompatibilityMenu() = withRenderApi("OPENGL") {
         requireNativeTransparency()
-        val fixture = createFixture()
+        val fixture = createFixture(native = true)
+        try {
+            await("native menu composition") { fixture.overlay.isNativeRendering && fixture.activeContent.get() == 1 }
+            val nativeWindow = onEdtValue { SwingUtilities.getWindowAncestor(fixture.menu) }
+            onEdt {
+                assertEquals(GraphicsApi.DIRECT3D, (fixture.menu as SkiaLayer).renderApi)
+                // Simulate the API notification Skiko sends when the native device falls back.
+                (fixture.menu as SkiaLayer).renderApi = GraphicsApi.SOFTWARE_FAST
+            }
+            await("compatibility recovery after native renderer change") {
+                !fixture.overlay.isNativeRendering && fixture.menu.isShowing && fixture.activeContent.get() == 1
+            }
+            onEdt {
+                assertFalse(nativeWindow.isDisplayable, "The unusable native window must be disposed")
+                assertSame(fixture.fallbackMenu, fixture.menu)
+                assertSame(fixture.host, fixture.canvas.parent)
+                assertTrue(fixture.canvas.isDisplayable)
+                fixture.switcher.switchTo(DisplayMode.Game)
+                fixture.switcher.switchTo(DisplayMode.Menu)
+            }
+            await("recovered menu can return from game") { fixture.menu.isShowing && fixture.overlay.isMenuVisible }
+        } finally {
+            fixture.dispose()
+        }
+    }
+
+    private fun verifyCanvasAndInput(native: Boolean, failNative: Boolean = false, expectedNative: Boolean = native && !failNative) {
+        requireNativeTransparency()
+        val fixture = createFixture(native = native, failNative = failNative)
         val robot = Robot().apply { autoDelay = 30 }
         try {
             await("menu above canvas") { fixture.overlay.isMenuVisible && fixture.menu.isShowing && fixture.canvas.isShowing }
             val menuWindow = onEdtValue { SwingUtilities.getWindowAncestor(fixture.menu) as JDialog }
             onEdt {
+                assertEquals(expectedNative, fixture.overlay.isNativeRendering)
+                assertEquals(1, fixture.activeContent.get(), "Only one menu surface may own the App composition")
+                if (expectedNative) assertFalse(fixture.fallbackMenu.isDisplayable,
+                    "The unused Swing menu must not initialize a second renderer")
                 assertSame(fixture.frame, menuWindow.owner)
                 assertTrue(menuWindow.isUndecorated)
                 assertFalse(menuWindow.isAlwaysOnTop)
@@ -117,9 +171,14 @@ class DesktopMenuBackgroundWindowTest {
     }
 
     @Test
-    fun menuTracksViewportAndOwnerVisibilityWithoutFloatingAboveOtherApplications() {
+    fun menuTracksViewportAndOwnerVisibilityWithoutFloatingAboveOtherApplications() = verifyViewport(native = false)
+
+    @Test
+    fun nativeMenuTracksViewportAndOwnerVisibilityWithoutFloatingAboveOtherApplications() = verifyViewport(native = true)
+
+    private fun verifyViewport(native: Boolean) {
         requireNativeTransparency()
-        val fixture = createFixture()
+        val fixture = createFixture(native = native)
         try {
             await("initial menu") { fixture.menu.isShowing }
             val menuWindow = onEdtValue { SwingUtilities.getWindowAncestor(fixture.menu) as JDialog }
@@ -151,28 +210,31 @@ class DesktopMenuBackgroundWindowTest {
         }
     }
 
-    private fun createFixture(): Fixture {
+    private fun createFixture(native: Boolean = false, failNative: Boolean = false): Fixture {
         val previousLayerType = System.getProperty("compose.layers.type")
         System.setProperty("compose.layers.type", "WINDOW")
         return try {
             assertTrue(DesktopWindowLayers.install())
-            createFixtureOnEdt(previousLayerType)
+            createFixtureOnEdt(previousLayerType, native, failNative)
         } catch (failure: Throwable) {
             restoreLayerType(previousLayerType)
             throw failure
         }
     }
 
-    private fun createFixtureOnEdt(previousLayerType: String?): Fixture = onEdtValue {
+    private fun createFixtureOnEdt(previousLayerType: String?, native: Boolean, failNative: Boolean): Fixture = onEdtValue {
         logger = LoggerFactory.getLogger(DesktopMenuBackgroundWindowTest::class.java)
         val canvas = ColorCanvas()
         val layout = NativeCanvasCardLayout(canvas) { 1.0 }
         val host = JPanel(layout).apply { add(canvas, DisplayMode.Game.cardName) }
         val clicks = AtomicInteger()
+        val activeContent = AtomicInteger()
         val buttonCenter = AtomicReference<Point?>()
-        val menu = DesktopLauncherOverlay.createMenuPanel(liveBackground = true).apply {
-            isOpaque = false
-            setContent {
+        val content: @Composable () -> Unit = {
+                DisposableEffect(Unit) {
+                    activeContent.incrementAndGet()
+                    onDispose { activeContent.decrementAndGet() }
+                }
                 val density = LocalDensity.current.density
                 MaterialTheme {
                     // Keep a minimally nonzero alpha so Windows routes blank-area input to the menu.
@@ -187,7 +249,10 @@ class DesktopMenuBackgroundWindowTest {
                         ) { Text("Start match") }
                     }
                 }
-            }
+        }
+        val menu = DesktopLauncherOverlay.createMenuPanel(liveBackground = true).apply {
+            isOpaque = false
+            setContent(content)
         }
         val frame = JFrame("RWJS live menu background regression").apply {
             defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
@@ -196,10 +261,13 @@ class DesktopMenuBackgroundWindowTest {
             setLocationRelativeTo(null)
             isVisible = true
         }
-        val overlay = DesktopLauncherOverlay(menu, host, frame)
+        val overlay = if (failNative) {
+            DesktopLauncherOverlay(menu, host, frame, nativeContent = content,
+                nativeWindowFactory = { throw IllegalStateException("Simulated native renderer initialization failure") })
+        } else DesktopLauncherOverlay(menu, host, frame, nativeContent = if (native) content else null)
         val switcher = DisplaySwitcher(menu, canvas, host, layout, frame, launcherOverlay = overlay)
         overlay.showMenu()
-        Fixture(frame, host, canvas, menu, buttonCenter, clicks, overlay, switcher, previousLayerType)
+        Fixture(frame, host, canvas, menu, buttonCenter, clicks, activeContent, overlay, switcher, previousLayerType)
     }
 
     private class ColorCanvas : Canvas() {
@@ -215,19 +283,23 @@ class DesktopMenuBackgroundWindowTest {
         val frame: JFrame,
         val host: JPanel,
         val canvas: ColorCanvas,
-        val menu: ComposePanel,
+        val fallbackMenu: ComposePanel,
         val buttonCenter: AtomicReference<Point?>,
         val clicks: AtomicInteger,
+        val activeContent: AtomicInteger,
         val overlay: DesktopLauncherOverlay,
         val switcher: DisplaySwitcher,
         val previousLayerType: String?,
     ) {
+        val menu: Component get() = overlay.contentComponent
+
         fun dispose() {
             try {
                 SwingUtilities.invokeAndWait {
                     overlay.dispose()
                     frame.ownedWindows.forEach(Window::dispose)
                     frame.dispose()
+                    assertEquals(0, activeContent.get(), "Disposing the owner must dispose its menu composition")
                 }
             } finally {
                 restoreLayerType(previousLayerType)
@@ -240,6 +312,17 @@ class DesktopMenuBackgroundWindowTest {
         assumeFalse(GraphicsEnvironment.isHeadless())
         assumeTrue(GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice
             .isWindowTranslucencySupported(GraphicsDevice.WindowTranslucency.PERPIXEL_TRANSLUCENT))
+    }
+
+    private fun withRenderApi(api: String, action: () -> Unit) {
+        val previous = System.getProperty("skiko.renderApi")
+        try {
+            System.setProperty("skiko.renderApi", api)
+            action()
+            assertEquals(api, System.getProperty("skiko.renderApi"), "Selecting a native menu must not change the global backend")
+        } finally {
+            if (previous == null) System.clearProperty("skiko.renderApi") else System.setProperty("skiko.renderApi", previous)
+        }
     }
 
     private fun awaitPixel(robot: Robot, point: Point, expected: Color) {

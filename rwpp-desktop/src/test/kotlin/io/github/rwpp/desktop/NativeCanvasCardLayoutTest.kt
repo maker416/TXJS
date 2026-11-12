@@ -18,6 +18,29 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class NativeCanvasCardLayoutTest {
+    @Test fun glStartupDefersNativeResizeAndAppliesLatestSizeAndDpiOnRelease() = onEdt {
+        var scale = 1.0
+        val canvas = RecordingCanvas()
+        val menu = JPanel()
+        val layout = NativeCanvasCardLayout(canvas) { scale }
+        val host = JPanel(layout).apply {
+            add(menu, "menu")
+            add(canvas, "game")
+            setSize(800, 600)
+        }
+        host.doLayout()
+        layout.deferCanvasResize = true
+        host.setSize(1000, 700)
+        scale = 1.5
+        repeat(4) { host.doLayout() }
+        assertEquals(Dimension(1000, 700), menu.size)
+        assertEquals(listOf(Dimension(800, 600)), canvas.resizes)
+        layout.deferCanvasResize = false
+        host.doLayout()
+        assertEquals(Dimension(1500, 1050), canvas.size)
+        assertEquals(listOf(Dimension(800, 600), Dimension(1500, 1050)), canvas.resizes)
+    }
+
     @Test fun repeatedLayoutNeverResetsNativeCanvasToLogicalPixels() = onEdt {
         val canvas = RecordingCanvas()
         val menu = JPanel()

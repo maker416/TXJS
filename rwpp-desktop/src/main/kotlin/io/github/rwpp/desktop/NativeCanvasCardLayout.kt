@@ -19,6 +19,10 @@ internal class NativeCanvasCardLayout(
     private val gameCanvas: Canvas,
     private val dpiScale: () -> Double
 ) : CardLayout() {
+    // 启动 GL 创建期间保留已排好布局的 Canvas，避免新增 resize 事件在 EDT 等待 LWJGL 全局锁。
+    // 仅 EDT 读写；容器与普通 Compose 卡片仍照常布局，解除后统一应用最新尺寸和 DPI。
+    var deferCanvasResize: Boolean = false
+
     override fun layoutContainer(parent: Container) {
         synchronized(parent.treeLock) {
             val insets = parent.insets
@@ -28,7 +32,7 @@ internal class NativeCanvasCardLayout(
             var hasVisibleCard = false
             for (component in parent.components) {
                 val nativeCanvas = component === gameCanvas
-                component.setBounds(
+                if (!nativeCanvas || !deferCanvasResize) component.setBounds(
                     insets.left + hgap,
                     insets.top + vgap,
                     if (nativeCanvas) (width * scale).toInt() else width,

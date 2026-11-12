@@ -6,10 +6,10 @@
 
 1. 接管运行日志、安装窗口兼容层、创建 Koin、读取配置。
 2. `Builder.prepareReloadingLib()` 扫描扩展并比较注入配置。
-3. 普通启动执行 `AppContext.init()`：注册业务事件、初始化 Lua 和 UI、执行各 `Initialization`（国际化、扩展/资源、网络配置等）。
-4. `DesktopNetworkModCache.prepareStartup()` 恢复网络模组工作副本，清理临时地图。
-5. 创建 Swing/Compose 窗口；加载协程调用 `GameImpl.load()`。
-6. 游戏线程创建 GL 上下文，初始化音频、libRocket/字体和原版引擎；等待 `DesktopEngineStartup` 完成后切换到主菜单。
+3. 创建宿主窗口与独立、不透明的普通 Compose 加载窗口；标题图在 IO 解码，首帧不依赖主题字体、国际化或引擎。
+4. 加载首帧完成且初始布局事件已处理后，暂缓 Canvas 尺寸更新，在 IO 执行 `AppContext.init()`、恢复网络模组工作副本、清理临时地图；原有准备顺序保持不变。
+5. 加载协程调用 `GameImpl.load()`，游戏线程创建 GL 上下文；容器 setup 返回后排队解除尺寸暂缓，统一应用期间最新窗口尺寸/DPI，再继续原有音频、libRocket/字体和引擎资源初始化。
+6. 引擎就绪后显示菜单，菜单首帧绘制后销毁加载窗口并停止启动诊断。Windows 原生透明 Direct3D 菜单（或 SwingGraphics 兼容菜单）及游戏背景仅在此时启用；不透明回退菜单沿用原有模式。
 
 Android 入口是 `MainApplication` → `LoadingScreen` → `MainActivity`：
 
@@ -22,6 +22,24 @@ Android 入口是 `MainApplication` → `LoadingScreen` → `MainActivity`：
 两端首次安装/注入变更另走类库生成分支，Android 还需编译 DEX，然后重启。它与已有有效产物的普通进程冷启动应分开统计。版本检查、账号恢复等在共享 `App` 的协程中启动，不是原版引擎加载之前的串行网络等待。
 
 ## 本次优化
+
+### PC 加载画面（2026-11-12）
+
+旧加载页复用透明菜单的 SwingGraphics 绘制路径，并通过 `painterResource` 在首次组合时同步解码标题、加载主题字体。真实隔离启动的线程采样观察到 EDT 位于 `MenuLoadingView` 标题图的 `Image.makeFromEncoded` / resources `runBlocking` 调用链；单次栈只能证明同步解码，不能证明数秒等待全部耗于该处。
+
+现在启动全程使用普通、不透明 Compose 窗口及系统字体，先绘制转圈和提示，标题图、用户背景图在 IO 解码。内存信息和受保护模组提示在国际化准备完成后恢复；动画开关继续生效。原版 GL、音频、字体和单位加载仍在游戏线程，未改变引擎上下文归属或初始化顺序。
+
+LWJGL 的 `Display.create` 与 Canvas resize listener 共用全局锁。启动首绘后先处理已有尺寸事件，再暂缓 Canvas 布局更新；setup 返回后在 EDT 应用最新尺寸，降低尺寸回调撞上 GL 创建的机会。这不保证消除显卡驱动或原生 AWT surface 的所有等待；不替换原版 listener，不修改 GL 锁或重建 Canvas。
+
+实际运行进一步抓到了更长的阻塞：EDT 连续停在 `WWindowPeer.requestWindowFocus → WindowsDisplay$3.run`，游戏线程同时正常执行资源初始化。Windows 焦点调用等待拥有原生游戏子窗口的线程处理消息，导致加载页也停住。LWJGL 的 `$2` 回调会先把 `isFocusable` 重设 false/true，单设 false 不足以解决。`DesktopGameCanvas` 因此在启动期间门控 `requestFocus()` / `requestFocusInWindow()`，引擎加载返回后才允许正常请求；被抑制的启动抢焦点不重放，进入对局仍由原有 DisplaySwitcher 获取输入。
+
+启动期间的 `DesktopStartupDiagnostics` 使用后台 daemon 监测 EDT 心跳，最多排一个待处理心跳；超过 500ms 时限量抓取 EDT/游戏线程栈与锁持有者，重复抓栈至少间隔 1s。首帧、连续动画长帧及收尾汇总使用 `[STARTUP-UI]`。成功、失败、取消或窗口销毁时关闭采样，不留下局内轮询。关闭动画时不把文本离散更新之间的空闲时间当成长帧。
+
+2026-11-12 本机 Windows / Java 21 / 无模组、无网络缓存，在 `build/tmp/desktop-startup-baseline-20261112` 隔离目录使用真实原版资源运行；未修改实际安装或账号配置。焦点门控之前的两轮诊断版分别出现 4504/4219ms 的加载内容绘制间隔及 3627/3444ms 的 EDT 焦点等待。门控后的两轮窗口模式分别绘制 406/414 次，最大间隔 139/122ms，多秒焦点等待消失。
+
+最终 `RWJS-windows-x64-1.20.73-release.jar` 又验证了全屏与关闭动画：全屏加载内容绘制 366 次、最大间隔 121ms、菜单首绘约 6.99s；关闭动画时仍按进度更新，未误报长帧，菜单首绘约 6.73s。两轮菜单后的线程转储均确认诊断线程已退出。全屏一轮出现本机 OpenAL 播放设备初始化失败后继续启动，未据此验收音频播放。
+
+绘制间隔从滚动内容层内采样，避免父层复用绘制记录导致少计动画帧；它不等于显示器实际帧率，也不包含首次绘制前的初始化或最后一帧到主菜单的交接等待。本机仍观察到首次 Compose 初始化和主菜单初次提交各约 0.6–0.7s 的 EDT 等待，真实引擎资源加载约 2.6–2.9s。总启动耗时未表现出稳定、大幅下降，本轮验证的是加载期间可持续刷新。大模组、网络缓存、其他显卡/驱动仍需分别复测。
 
 ### 桌面网络模组缓存
 
@@ -66,23 +84,28 @@ try {
 
 ## 后续如何定位
 
-两端增加 `[STARTUP]` 阶段日志，采用 `System.nanoTime()`，不切换线程或引入异步初始化：
+两端 `[STARTUP]` 阶段日志采用 `System.nanoTime()`；计时包装本身不切换线程：
 
 - `*.config`、`*.injectCheck`：启动器配置与注入检查。
 - `app.logic`、`app.scripts`、`app.ui`、`app.<实现类名>`：共享初始化各阶段。
 - `*.networkModCache`：网络缓存恢复。
 - `desktop.engine`、`android.engine`：原版引擎加载。
+- `desktop.engine.containerSetup/sharedGlContext/audio/platform/libRocketSetup/fonts/cjkFonts/libRocketScripts/resources`：PC 容器（包含 GL）、共享上下文、音频、界面、字体和真实引擎的细分阶段，父子阶段不能相加。
 - `*.injectBuild`、`android.dexBuild`、`android.dexLoad`：首次构建与 DEX 工作。
-- `desktop.beforeWindow`、`desktop.menuReady`、`android.engineReady`：从平台入口计时的里程碑。
+- `desktop.beforeWindow/windowVisible/menuReady/menuFirstFrame`、`android.engineReady`：从平台入口计时的里程碑。`menuFirstFrame` 是绘制回调后排队的标记，不代表显示器实际呈现时间；加载首绘和帧间隔另见 `[STARTUP-UI]`。
 
 `completed=false` 表示该阶段异常退出。父子阶段有包含关系，不能相加；`menuReady/engineReady` 也不代表首帧已实际显示，更不包含操作系统创建进程之前的耗时。
 
-下一步应对无模组、大量本地模组、大量网络缓存三种场景分别采样，确认主耗时后再做优化。候选包括无脚本扩展时按需初始化 Lua、桌面窗口显示前的资源准备、地图目录扫描及原版单位/贴图加载。它们尚未实测或修改，尤其引擎并行化与线程迁移必须先核实 GL/View 依赖并做真实游戏回归。
+后续继续对无模组、大量本地模组、大量网络缓存三种场景分别采样，确认主耗时后再做优化。尚未实施的候选包括无脚本扩展时按需初始化 Lua、注入检查中的扩展目录扫描、地图目录扫描及原版单位/贴图加载。引擎并行化与线程迁移必须先核实 GL/View 依赖并做真实游戏回归。
 
 ## 回归检查
 
 ```powershell
 .\gradlew.bat :rwpp-core-api:test :rwpp-desktop:test --tests io.github.rwpp.desktop.DesktopNetworkModCacheTest --tests io.github.rwpp.desktop.DesktopEngineStartupTest :rwpp-android:testDebugUnitTest
+.\gradlew.bat :rwpp-desktop:test --tests io.github.rwpp.desktop.DesktopStartupDiagnosticsTest --tests io.github.rwpp.desktop.DesktopStartupWindowTest --tests io.github.rwpp.desktop.NativeCanvasCardLayoutTest --tests io.github.rwpp.desktop.MatchStartLoadingWindowTest --tests io.github.rwpp.desktop.DesktopMenuBackgroundWindowTest --tests io.github.rwpp.desktop.ReloadLoadingWindowTest
+.\gradlew.bat :rwpp-core:testDebugUnitTest --tests BundleParseTest
 ```
 
 桌面测试覆盖多缓存恢复、幂等、损坏隔离、最新版本选择、历史版本激活、过期清理、多字节长名称和空载荷；Android 测试覆盖版本切换、同长度篡改、过期/孤立文件及坏元数据清理。上述编译和 JVM 测试不能替代首次安装、普通启动及带模组进房的真机验收。
+
+本轮 21 项桌面定向回归（含真实窗口、慢标题解码期间的动画/静态进度、LWJGL 重设 focusable 后的门控及恢复、尺寸/DPI 暂缓、诊断收尾、开局与重载提示）和 23 项 `BundleParseTest` 均通过；桌面发布 JAR 构建通过。没有生成或安装新安装器，没有验收带模组的真实对局。

@@ -1285,3 +1285,10 @@ actionHint = "Sign in to your account or start fresh."
 create = "Create an account"
 optional = "An account is optional for playing."
 guest = "Continue to game"
+
+[startup]
+cache = "Preparing network mod cache…"
+graphics = "Preparing graphics…"
+audio = "Preparing audio…"
+interface = "Loading game interface and fonts…"
+engine = "Loading game resources and mods…"

@@ -272,6 +272,10 @@ Android `actual` 实现在 `rwpp-core/src/androidMain/`；桌面 `actual` 实现
 
 动画设置统一经 `Settings.setUiAnimationsEnabled()` 写入、`uiAnimationsEnabled()` 读取，`RWPPTheme` 同时控制 Material 内部动效和波纹。禁用时无限动画必须退出组合，加载器显示静态不定进度；真实进度/业务超时仍继续。不要用动画完成作为邀请等业务计时依据。动画值尽量在布局/绘制阶段读取。当前 Material3 1.9.0-beta03 的 MotionScheme 适配集中在 `widget/UiMotion.kt`，升级依赖须运行两端编译、`UiMotionTest` 和 `ThemeSettingsUiTest`。详情见 `docs/ui-performance.md`。
 
+Windows 透明菜单优先由 `DesktopLauncherOverlay` 的原生 `ComposeDialog` 承载，菜单局部选择 Direct3D；显式软件模式、初始化失败和设备回退保留 Swing 兼容路径。不要把正常菜单恢复为整窗 SwingGraphics 回读/透明窗提交，也不要临时改全局渲染属性来选择菜单后端。局部 Renderer 回调只在首次 `pack()` 初始化期间生效，之后必须允许真实设备回退；正常路径只组合一次 App，游戏 Canvas 句柄和父容器不变。验证运行 `DesktopMenuBackgroundWindowTest`、`DesktopNativeMenuInputWindowTest`、`DesktopStartupWindowTest`、`MatchStartLoadingWindowTest`。页面纯文件扫描使用 `PageFileLoadState`，引擎字段先在原线程捕获；不要直接把包含原版 UI/GL 调用的整组接口移到 IO。
+
+游戏线程经 `GameSessionManager.returnToMenu()` 返回启动器时只排 EDT 任务，不得恢复为同步等待：Windows 显示原生菜单的 `pShow` 可能等待 LWJGL 线程响应，`invokeAndWait` 会形成互等。引擎清理继续由原调用方执行；EDT 调用保持同步，旧返回任务由新开局代次作废。验证 `GameSessionManagerReturnTest` 和真实对局开始/返回，普通 Canvas 窗口测试不能替代原生消息泵验证。
+
 ### 局内辅助渲染
 
 攻击范围圈、目标线、改进血条、快速选择、局内时间/延迟、范围快捷按钮和保护/巡逻放大按键走两端 `UnitAssistInject` / `InGameHudInject` 的**原生引擎渲染与输入回调**，默认关闭，可在设置「游戏玩法 → 局内辅助」独立开启。共享规则在 `rwpp-core-api/game/ui/InGameAssistRules.kt`，共享绘制在 `rwpp-core/game/InGameAssistRenderer.kt`。禁止恢复旧 `OffscreenSurfaceView`、离屏 Compose 整屏纹理上传、忙等线程与逐单位组件列表。保连接重载期间跳过绘制/选择；迷雾按原版可见性过滤，选择在引擎 HUD 回调内完成并消费按钮抬起事件。`GameUnit.attackRangeHighlighted` 仅为本地显示字段。详情及验收清单见 `docs/in-game-assists.md`。
