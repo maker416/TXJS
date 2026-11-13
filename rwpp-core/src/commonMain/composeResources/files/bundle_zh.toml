@@ -268,9 +268,12 @@ cancel = "取消"
 save = "保存"
 
 [multiplayer.filter]
+title = "筛选房间"
+subtitle = "调整后立即生效"
+labelHint = "可多选，显示符合任一标签的房间"
 gameMapNameFilter = "地图名称"
 creatorNameFilter = "创建者"
-playerLimitRange = "玩家限制范围"
+playerLimitRange = "房间人数上限"
 blacklist = "黑名单"
 reset = "重置"
 sectionSearch = "搜索条件"

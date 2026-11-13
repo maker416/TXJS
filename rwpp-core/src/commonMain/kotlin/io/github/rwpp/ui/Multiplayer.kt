@@ -9,7 +9,6 @@
 
 package io.github.rwpp.ui
 
-import io.github.rwpp.widget.UiSwitch
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -102,7 +101,6 @@ import io.github.rwpp.rwpp_core.generated.resources.*
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.UiCircularProgressIndicator
 import io.github.rwpp.widget.v2.*
-import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
@@ -132,75 +130,6 @@ private const val LIST_POSITION_APPLICATION_URL = "http://listup.xn--rhqr8xvr4ah
 
 private class HostModSyncFailurePrompt(val message: String) {
     val decision = CompletableDeferred<HostModSyncFailureAction>()
-}
-
-@Composable
-private fun FilterSectionCard(
-    title: String,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = .35f))
-            .border(
-                BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .5f)),
-                RoundedCornerShape(16.dp)
-            )
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Text(
-            title,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        content()
-    }
-}
-
-@Composable
-private fun FilterSwitchRow(
-    label: String,
-    hint: String?,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Surface(
-        color = Color.Transparent,
-        modifier = Modifier.fillMaxWidth(),
-        onClick = { onCheckedChange(!checked) },
-    ) {
-        Row(
-            modifier = Modifier.padding(vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    label,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                if (!hint.isNullOrBlank()) {
-                    Text(
-                        hint,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 2.dp),
-                    )
-                }
-            }
-            UiSwitch(
-                checked = checked,
-                onCheckedChange = onCheckedChange,
-                colors = SwitchDefaults.colors(
-                    checkedTrackColor = MaterialTheme.colorScheme.primary,
-                    checkedThumbColor = MaterialTheme.colorScheme.onSurface,
-                ),
-            )
-        }
-    }
 }
 
 @Composable
@@ -1582,195 +1511,49 @@ fun MultiplayerView(
         visible: Boolean,
         onDismissRequest: () -> Unit
     ) {
-        AnimatedAlertDialog(
-            visible, onDismissRequest = onDismissRequest
-        ) { dismiss ->
-            BorderCard(
-                modifier = Modifier
-                    .fillMaxSize(GeneralProportion())
-                    .padding(10.dp)
-                    .autoClearFocus(),
-                backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(.6f)
-            ) {
-                var showBlacklistDialog by remember { mutableStateOf(false) }
-                BlacklistTargetDialog(showBlacklistDialog) { showBlacklistDialog = false }
+        AnimatedAlertDialog(visible, onDismissRequest = onDismissRequest) { dismiss ->
+            var showBlacklistDialog by remember { mutableStateOf(false) }
+            BlacklistTargetDialog(showBlacklistDialog) { showBlacklistDialog = false }
 
-                Box(modifier = Modifier.fillMaxSize()) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 20.dp, vertical = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
-                    ) {
-                        Spacer(Modifier.height(30.dp))
-                        Text(
-                            readI18n("common.filter"),
-                            style = MaterialTheme.typography.headlineSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-
-                        FilterSectionCard(readI18n("multiplayer.filter.sectionSearch")) {
-                            RWSingleOutlinedTextField(
-                                readI18n("multiplayer.filter.gameMapNameFilter"),
-                                mapNameFilter,
-                                modifier = Modifier.fillMaxWidth()
-                            ) { mapNameFilter = it }
-                            RWSingleOutlinedTextField(
-                                readI18n("multiplayer.filter.creatorNameFilter"),
-                                creatorNameFilter,
-                                modifier = Modifier.fillMaxWidth()
-                            ) { creatorNameFilter = it }
-                        }
-
-                        FilterSectionCard(readI18n("multiplayer.filter.sectionRange")) {
-                            var range by remember(playerLimitRange) { mutableStateOf(playerLimitRange) }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    readI18n("multiplayer.filter.playerLimitRange"),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                                Text(
-                                    "${range.first} ~ ${range.last}",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                            RangeSlider(
-                                valueRange = 0f..100f,
-                                modifier = Modifier.fillMaxWidth(),
-                                value = range.first.toFloat()..range.last.toFloat(),
-                                colors = RWSliderColors,
-                                onValueChange = { range = it.start.roundToInt()..it.endInclusive.roundToInt() },
-                                onValueChangeFinished = { playerLimitRange = range }
-                            )
-                        }
-
-                        FilterSectionCard(readI18n("multiplayer.filter.sectionDisplay")) {
-                            FilterSwitchRow(
-                                label = readI18n("multiplayer.filter.hideModdedRooms"),
-                                hint = readI18n("multiplayer.filter.hideModdedRoomsHint"),
-                                checked = enableModFilter,
-                                onCheckedChange = { enableModFilter = it }
-                            )
-                            FilterSwitchRow(
-                                label = readI18n("multiplayer.filter.hideNonJoinableRooms"),
-                                hint = readI18n("multiplayer.filter.hideNonJoinableRoomsHint"),
-                                checked = hideNonJoinableRooms,
-                                onCheckedChange = { hideNonJoinableRooms = it }
-                            )
-                        }
-
-                        // --- 标签筛选区块 ---
-                        var availableLabels by remember { mutableStateOf<List<String>?>(null) }
-                        var labelsLoading by remember { mutableStateOf(false) }
-                        var labelsFailed by remember { mutableStateOf(false) }
-
-                        LaunchedEffect(visible, instance.roomListApiUrls) {
-                            if (!visible) return@LaunchedEffect
-                            availableLabels = null
-                            labelsLoading = true
-                            labelsFailed = false
-                            val result = runCatching {
-                                net.fetchRoomListLabels(instance.roomListApiUrls)
-                            }
-                            labelsLoading = false
-                            result.onSuccess { list ->
-                                availableLabels = list
-                            }.onFailure {
-                                labelsFailed = true
-                            }
-                        }
-
-                        FilterSectionCard(readI18n("multiplayer.filter.sectionLabel")) {
-                            when {
-                                labelsLoading -> {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        UiCircularProgressIndicator(
-                                            modifier = Modifier.size(16.dp),
-                                            strokeWidth = 2.dp,
-                                        )
-                                        Text(
-                                            readI18n("multiplayer.filter.labelLoading"),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                }
-                                labelsFailed || availableLabels == null -> {
-                                    Text(
-                                        if (labelsFailed)
-                                            readI18n("multiplayer.filter.labelLoadFailed")
-                                        else
-                                            readI18n("multiplayer.filter.labelUnavailable"),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                availableLabels!!.isEmpty() -> {
-                                    Text(
-                                        readI18n("multiplayer.filter.labelUnavailable"),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                else -> {
-                                    FlowRow(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                                    ) {
-                                        availableLabels!!.forEach { labelText ->
-                                            val selected = labelText in roomLabelFilterSelection
-                                            FilterChip(
-                                                selected = selected,
-                                                onClick = {
-                                                    roomLabelFilterSelection =
-                                                        if (selected)
-                                                            roomLabelFilterSelection - labelText
-                                                        else
-                                                            roomLabelFilterSelection + labelText
-                                                },
-                                                label = { Text(labelText) },
-                                            )
-                                        }
-                                    }
-                                    if (roomLabelFilterSelection.isNotEmpty()) {
-                                        TextButton(
-                                            onClick = { roomLabelFilterSelection = emptySet() },
-                                            modifier = Modifier.padding(top = 2.dp),
-                                        ) {
-                                            Text(readI18n("multiplayer.filter.labelClearSelection"))
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            TextButton(onClick = { resetFilter() }) {
-                                Text(readI18n("multiplayer.filter.reset"))
-                            }
-                            FilledTonalButton(onClick = { showBlacklistDialog = true }) {
-                                Text(readI18n("multiplayer.filter.blacklist"))
-                            }
-                        }
-                    }
-
-                    ExitButton(dismiss)
-                }
+            var availableLabels by remember { mutableStateOf<List<String>?>(null) }
+            var labelsLoading by remember { mutableStateOf(true) }
+            var labelsFailed by remember { mutableStateOf(false) }
+            LaunchedEffect(instance.roomListApiUrls) {
+                availableLabels = null
+                labelsLoading = true
+                labelsFailed = false
+                val result = runCatching { net.fetchRoomListLabels(instance.roomListApiUrls) }
+                labelsLoading = false
+                result.onSuccess { availableLabels = it }.onFailure { labelsFailed = true }
             }
+
+            MultiplayerFilterPanel(
+                filters = MultiplayerFilters(
+                    mapName = mapNameFilter,
+                    creatorName = creatorNameFilter,
+                    playerLimitRange = playerLimitRange,
+                    hideModdedRooms = enableModFilter,
+                    hideNonJoinableRooms = hideNonJoinableRooms,
+                    selectedLabels = roomLabelFilterSelection,
+                ),
+                availableLabels = availableLabels,
+                labelsLoading = labelsLoading,
+                labelsFailed = labelsFailed,
+                onFiltersChange = {
+                    mapNameFilter = it.mapName
+                    creatorNameFilter = it.creatorName
+                    playerLimitRange = it.playerLimitRange
+                    enableModFilter = it.hideModdedRooms
+                    hideNonJoinableRooms = it.hideNonJoinableRooms
+                    roomLabelFilterSelection = it.selectedLabels
+                },
+                onReset = { resetFilter() },
+                onBlacklist = { showBlacklistDialog = true },
+                onDismiss = dismiss,
+                modifier = Modifier.padding(12.dp)
+                    .widthIn(max = 780.dp).fillMaxWidth()
+                    .heightIn(max = 840.dp).fillMaxHeight(.94f),
+            )
         }
     }
 
