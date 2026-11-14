@@ -83,8 +83,9 @@ data class BrowserKernelRequirement(
     }
 }
 
-enum class BrowserKernelStage { CHECKING, DOWNLOADING, VERIFYING, INSTALLING, READY }
-data class BrowserKernelProgress(val stage: BrowserKernelStage, val bytes: Long = 0, val total: Long = 0)
+enum class BrowserKernelStage { CHECKING, DOWNLOADING, VERIFYING, INSTALLING, RETRYING, READY }
+data class BrowserKernelProgress(val stage: BrowserKernelStage, val bytes: Long = 0, val total: Long = 0,
+    val retryAttempt: Int = 0, val maxRetries: Int = 0, val retryDelayMillis: Long = 0)
 
 /** 可替换的附件定位；生产只访问最新 Gitee Release，测试使用本地 HTTP 服务。 */
 fun interface BrowserKernelSource { fun asset(tag: String, name: String, session: UpdateDownloadSession): String }
@@ -94,9 +95,14 @@ class GiteeBrowserKernelSource(client: OkHttpClient,
     private val client = client.newBuilder().callTimeout(10, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).build()
     @Volatile private var release: BrowserKernelRelease? = null
     fun latest(session: UpdateDownloadSession): BrowserKernelRelease {
-        val result = session.execute(client.newCall(Request.Builder().url(latestUrl).build())) { response ->
-            if (!response.isSuccessful) throw IOException("Kernel release returned HTTP ${response.code}")
-            val json = Json.parseToJsonElement(readKernelMetadata(response.body?.byteStream() ?: throw IOException("Empty release"))).jsonObject
+        val metadata = browserKernelOperation(BrowserKernelStage.CHECKING, kind = BrowserKernelFailureKind.NETWORK) {
+            session.execute(client.newCall(Request.Builder().url(latestUrl).build())) { response ->
+                if (!response.isSuccessful) throw IOException("Kernel release returned HTTP ${response.code}")
+                readKernelMetadata(response.body?.byteStream() ?: throw IOException("Empty release"))
+            }
+        }
+        val result = browserKernelOperation(BrowserKernelStage.VERIFYING, kind = BrowserKernelFailureKind.VERIFICATION) {
+            val json = Json.parseToJsonElement(metadata).jsonObject
             val tag = json.getValue("tag_name").jsonPrimitive.content
             require(tag.isNotBlank())
             val assets = json["assets"]?.jsonArray.orEmpty().map { entry ->
@@ -114,7 +120,9 @@ class GiteeBrowserKernelSource(client: OkHttpClient,
 }
 
 /** 阻塞 IO 管理器。调用方在 IO 线程运行；安装目录、分卷和 profile 相互独立。 */
-class BrowserKernelManager(val root: File, private val client: OkHttpClient) {
+class BrowserKernelManager internal constructor(val root: File, private val client: OkHttpClient,
+    private val retrySleep: (Long) -> Unit) {
+    constructor(root: File, client: OkHttpClient) : this(root, client, { Thread.sleep(it) })
     /** Persist the trusted Release manifest separately from the native runtime and browser profile. */
     private fun remember(requirement: BrowserKernelRequirement) {
         val target = File(root, ".installed-${requirement.id}.json")
@@ -134,13 +142,15 @@ class BrowserKernelManager(val root: File, private val client: OkHttpClient) {
         atomicWrite(File(root, ".active-${m.engine}-${m.version}-v${m.format}-${m.platform}-${m.arch}"), requirement.id)
     }
     private fun atomicWrite(target: File, text: String) {
-        root.mkdirs()
-        val temporary = File.createTempFile(".kernel-metadata-", ".tmp", root)
-        try {
-            temporary.writeText(text)
-            try { Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING) }
-            catch (_: java.nio.file.AtomicMoveNotSupportedException) { Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING) }
-        } finally { temporary.delete() }
+        browserKernelOperation(BrowserKernelStage.INSTALLING, target.absolutePath) {
+            Files.createDirectories(root.toPath())
+            val temporary = Files.createTempFile(root.toPath(), ".kernel-metadata-", ".tmp")
+            withBrowserKernelCleanup(cleanup = { Files.deleteIfExists(temporary) }) {
+                browserKernelOutput(temporary.toString(), BrowserKernelStage.INSTALLING) { Files.newOutputStream(temporary) }.bufferedWriter(Charsets.UTF_8).use { it.write(text) }
+                try { Files.move(temporary, target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING) }
+                catch (_: java.nio.file.AtomicMoveNotSupportedException) { Files.move(temporary, target.toPath(), StandardCopyOption.REPLACE_EXISTING) }
+            }
+        }
     }
     /** Only import an exact, fully verified legacy runtime; never carry profile/cache files. */
     fun adoptLegacy(requirement: BrowserKernelRequirement, legacy: File): File? {
@@ -158,7 +168,7 @@ class BrowserKernelManager(val root: File, private val client: OkHttpClient) {
                     val staging = File(root, ".${requirement.id}.staging")
                     deleteTree(staging)
                     staging.mkdirs()
-                    try {
+                    withBrowserKernelCleanup(cleanup = { deleteTree(staging) }) {
                         requirement.manifest.files.forEach { entry ->
                             val file = File(staging, entry.path).apply { parentFile.mkdirs() }
                             File(legacy, entry.path).copyTo(file)
@@ -170,8 +180,6 @@ class BrowserKernelManager(val root: File, private val client: OkHttpClient) {
                         deleteTree(target)
                         Files.move(staging.toPath(), target.toPath())
                         return@withLock target
-                    } finally {
-                        deleteTree(staging)
                     }
                 }
             }
@@ -187,69 +195,121 @@ class BrowserKernelManager(val root: File, private val client: OkHttpClient) {
 
     fun install(requirement: BrowserKernelRequirement, source: BrowserKernelSource,
         session: UpdateDownloadSession, onProgress: (BrowserKernelProgress) -> Unit = {}): File {
-        requirement.validate()
-        require(requirement.manifest.format == 1) { "Unsupported browser kernel format" }
-        root.mkdirs()
-        require(!Files.isSymbolicLink(root.toPath())) { "Invalid browser kernel root" }
-        val lock = locks.computeIfAbsent(File(root, requirement.id).canonicalPath) { ReentrantLock() }
-        while (!lock.tryLock(100, TimeUnit.MILLISECONDS)) session.checkActive()
-        try {
-            FileChannel.open(File(root, ".${requirement.id}.lock").toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE).use { channel ->
-                channel.lock().use {
+        val previousFailures = mutableListOf<BrowserKernelException>()
+        val retryDelays = longArrayOf(1_000, 2_000, 4_000)
+        while (true) {
+            session.checkActive()
+            try {
+                return installOnce(requirement, source, session, onProgress)
+            } catch (error: BrowserKernelException) {
+                session.checkActive()
+                if (!error.isRetryableAccessDenial() || previousFailures.size >= retryDelays.size) {
+                    previousFailures.filter { it !== error }.forEach(error::addSuppressed)
+                    throw error
+                }
+                val delay = retryDelays[previousFailures.size]
+                previousFailures += error
+                org.slf4j.LoggerFactory.getLogger("browser-kernel").warn(
+                    "Browser component file access denied; retry {}/{} in {} ms", previousFailures.size, retryDelays.size, delay, error)
+                onProgress(BrowserKernelProgress(BrowserKernelStage.RETRYING, retryAttempt = previousFailures.size,
+                    maxRetries = retryDelays.size, retryDelayMillis = delay))
+                // installOnce has already released both locks and cleaned staging before waiting.
+                var remaining = delay
+                while (remaining > 0) {
                     session.checkActive()
-                    onProgress(BrowserKernelProgress(BrowserKernelStage.CHECKING))
-                    installed(requirement)?.let { remember(requirement); return it }
-                    val bytes = Json.parseToJsonElement(fetch(source.asset(requirement.releaseTag, requirement.manifestName, session), session, 2 * 1024 * 1024).toString(Charsets.UTF_8)).toString().toByteArray()
-                    require(digest(bytes) == requirement.manifestSha256) { "Kernel manifest checksum mismatch" }
-                    require(Json.decodeFromString<BrowserKernelManifest>(bytes.toString(Charsets.UTF_8)) == requirement.manifest) { "Kernel manifest mismatch" }
-                    val work = File(root, ".${requirement.id}.download").apply { mkdirs() }
-                    val total = requirement.manifest.parts.sumOf { it.size }
-                    var downloaded = 0L
-                    val parts = requirement.manifest.parts.mapIndexed { index, part ->
-                        session.checkActive()
-                        val file = File(work, "part-$index")
-                        if (file.isFile && file.length() == part.size && hashFile(file) == part.sha256) {
-                            downloaded += part.size
-                        } else {
-                            if (file.length() >= part.size) file.delete()
-                            downloadPart(source.asset(requirement.releaseTag, part.name, session), file, part, session) { current ->
-                                onProgress(BrowserKernelProgress(BrowserKernelStage.DOWNLOADING, downloaded + current, total))
-                            }
-                            downloaded += part.size
-                        }
-                        file
-                    }
-                    onProgress(BrowserKernelProgress(BrowserKernelStage.VERIFYING, total, total))
-                    val hash = MessageDigest.getInstance("SHA-256")
-                    parts.forEach { file -> file.inputStream().buffered().use { input -> copy(input, null, hash, session) } }
-                    if (hex(hash.digest()) != requirement.manifest.sha256) {
-                        deleteTree(work); throw IOException("Kernel package checksum mismatch")
-                    }
-                    val staging = File(root, ".${requirement.id}.staging")
-                    deleteTree(staging); staging.mkdirs()
-                    try {
-                        onProgress(BrowserKernelProgress(BrowserKernelStage.INSTALLING, total, total))
-                        extract(parts, staging, requirement.manifest, session)
-                        session.checkActive()
-                        File(staging, ".ready").writeText(requirement.manifestSha256)
-                        require(verifyFiles(staging, requirement.manifest)) { "Kernel installation verification failed" }
-                        val target = File(root, requirement.id)
-                        // Record first: interrupted commits are ignored unless the entire directory verifies.
-                        // Once the directory is committed it can be discovered offline, even after a crash.
-                        remember(requirement)
-                        session.startInstallation {
-                            deleteTree(target)
-                            try { Files.move(staging.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE) }
-                            catch (_: java.nio.file.AtomicMoveNotSupportedException) { Files.move(staging.toPath(), target.toPath()) }
-                        }
-                        session.checkActive()
-                        deleteTree(work)
-                        onProgress(BrowserKernelProgress(BrowserKernelStage.READY, total, total))
-                        return target
-                    } finally { deleteTree(staging) }
+                    val slice = minOf(100L, remaining)
+                    retrySleep(slice)
+                    remaining -= slice
                 }
             }
-        } finally { lock.unlock() }
+        }
+    }
+
+    private fun installOnce(requirement: BrowserKernelRequirement, source: BrowserKernelSource,
+        session: UpdateDownloadSession, onProgress: (BrowserKernelProgress) -> Unit): File {
+        return browserKernelOperation(BrowserKernelStage.CHECKING, root.absolutePath) {
+            browserKernelOperation(BrowserKernelStage.CHECKING, kind = BrowserKernelFailureKind.VERIFICATION) {
+                requirement.validate()
+                require(requirement.manifest.format == 1) { "Unsupported browser kernel format" }
+            }
+            Files.createDirectories(root.toPath())
+            require(!Files.isSymbolicLink(root.toPath())) { "Invalid browser kernel root" }
+            val lock = locks.computeIfAbsent(File(root, requirement.id).canonicalPath) { ReentrantLock() }
+            while (!lock.tryLock(100, TimeUnit.MILLISECONDS)) session.checkActive()
+            try {
+                FileChannel.open(File(root, ".${requirement.id}.lock").toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE).use { channel ->
+                    channel.lock().use {
+                        session.checkActive()
+                        onProgress(BrowserKernelProgress(BrowserKernelStage.CHECKING))
+                        installed(requirement)?.let { remember(requirement); return it }
+                        val metadata = browserKernelOperation(BrowserKernelStage.CHECKING, kind = BrowserKernelFailureKind.NETWORK) {
+                            fetch(source.asset(requirement.releaseTag, requirement.manifestName, session), session, 2 * 1024 * 1024)
+                        }
+                        browserKernelOperation(BrowserKernelStage.VERIFYING, kind = BrowserKernelFailureKind.VERIFICATION) {
+                            val bytes = Json.parseToJsonElement(metadata.toString(Charsets.UTF_8)).toString().toByteArray()
+                            require(digest(bytes) == requirement.manifestSha256) { "Kernel manifest checksum mismatch" }
+                            require(Json.decodeFromString<BrowserKernelManifest>(bytes.toString(Charsets.UTF_8)) == requirement.manifest) { "Kernel manifest mismatch" }
+                        }
+                        val work = File(root, ".${requirement.id}.download")
+                        browserKernelOperation(BrowserKernelStage.DOWNLOADING, work.absolutePath) { Files.createDirectories(work.toPath()) }
+                        val total = requirement.manifest.parts.sumOf { it.size }
+                        var downloaded = 0L
+                        val parts = requirement.manifest.parts.mapIndexed { index, part ->
+                            session.checkActive()
+                            val file = File(work, "part-$index")
+                            if (browserKernelOperation(BrowserKernelStage.VERIFYING, file.absolutePath) {
+                                    file.isFile && file.length() == part.size && hashFile(file) == part.sha256
+                                }) {
+                                downloaded += part.size
+                            } else {
+                                if (file.length() >= part.size) browserKernelOperation(BrowserKernelStage.DOWNLOADING, file.absolutePath) { Files.deleteIfExists(file.toPath()) }
+                                val url = browserKernelOperation(BrowserKernelStage.DOWNLOADING, kind = BrowserKernelFailureKind.NETWORK) { source.asset(requirement.releaseTag, part.name, session) }
+                                downloadPart(url, file, part, session) { current ->
+                                    onProgress(BrowserKernelProgress(BrowserKernelStage.DOWNLOADING, downloaded + current, total))
+                                }
+                                downloaded += part.size
+                            }
+                            file
+                        }
+                        onProgress(BrowserKernelProgress(BrowserKernelStage.VERIFYING, total, total))
+                        val hash = MessageDigest.getInstance("SHA-256")
+                        parts.forEach { file -> browserKernelOperation(BrowserKernelStage.VERIFYING, file.absolutePath) { Files.newInputStream(file.toPath()).buffered().use { input -> copy(input, null, hash, session) } } }
+                        if (hex(hash.digest()) != requirement.manifest.sha256) {
+                            withBrowserKernelCleanup(cleanup = { deleteTree(work) }) {
+                                browserKernelOperation(BrowserKernelStage.VERIFYING, kind = BrowserKernelFailureKind.VERIFICATION) { throw IOException("Kernel package checksum mismatch") }
+                            }
+                        }
+                        val staging = File(root, ".${requirement.id}.staging")
+                        deleteTree(staging)
+                        browserKernelOperation(BrowserKernelStage.INSTALLING, staging.absolutePath) { Files.createDirectories(staging.toPath()) }
+                        withBrowserKernelCleanup(cleanup = { deleteTree(staging) }) {
+                            onProgress(BrowserKernelProgress(BrowserKernelStage.INSTALLING, total, total))
+                            browserKernelOperation(BrowserKernelStage.VERIFYING, staging.absolutePath, BrowserKernelFailureKind.VERIFICATION) { extract(parts, staging, requirement.manifest, session) }
+                            session.checkActive()
+                            val ready = File(staging, ".ready")
+                            browserKernelOutput(ready.absolutePath, BrowserKernelStage.INSTALLING) { Files.newOutputStream(ready.toPath(), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE) }
+                                .bufferedWriter(Charsets.UTF_8).use { it.write(requirement.manifestSha256) }
+                            browserKernelOperation(BrowserKernelStage.VERIFYING, staging.absolutePath, BrowserKernelFailureKind.VERIFICATION) { require(verifyFiles(staging, requirement.manifest, tolerateErrors = false)) { "Kernel installation verification failed" } }
+                            val target = File(root, requirement.id)
+                            // Record first: interrupted commits are ignored unless the entire directory verifies.
+                            // Once the directory is committed it can be discovered offline, even after a crash.
+                            remember(requirement)
+                            session.startInstallation {
+                                deleteTree(target)
+                                browserKernelOperation(BrowserKernelStage.INSTALLING, target.absolutePath) {
+                                    try { Files.move(staging.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE) }
+                                    catch (_: java.nio.file.AtomicMoveNotSupportedException) { Files.move(staging.toPath(), target.toPath()) }
+                                }
+                            }
+                            session.checkActive()
+                            deleteTree(work)
+                            onProgress(BrowserKernelProgress(BrowserKernelStage.READY, total, total))
+                            return target
+                        }
+                    }
+                }
+            } finally { lock.unlock() }
+        }
     }
 
     private fun fetch(url: String, session: UpdateDownloadSession, limit: Int): ByteArray =
@@ -279,7 +339,10 @@ class BrowserKernelManager(val root: File, private val client: OkHttpClient) {
                     var count = if (append) offset else 0L
                     var lastProgress = 0L
                     response.body?.byteStream()?.use { input ->
-                        java.io.FileOutputStream(file, append).buffered().use { output ->
+                        val options = if (append) arrayOf(StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND)
+                            else arrayOf(StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)
+                        val stream = browserKernelOutput(file.absolutePath, BrowserKernelStage.DOWNLOADING) { Files.newOutputStream(file.toPath(), *options) }
+                        stream.buffered().use { output ->
                             val buffer = ByteArray(65536)
                             while (true) {
                                 session.checkActive()
@@ -295,9 +358,18 @@ class BrowserKernelManager(val root: File, private val client: OkHttpClient) {
                     continuation = count < part.size
                 }
                 if (continuation) continue // A valid 206 may cap its chunk; continue without consuming a retry.
-                if (hashFile(file) != part.sha256) { file.delete(); throw IOException("Kernel part checksum mismatch") }
+                if (browserKernelOperation(BrowserKernelStage.VERIFYING, file.absolutePath) { hashFile(file) } != part.sha256) {
+                    withBrowserKernelCleanup(cleanup = { browserKernelOperation(BrowserKernelStage.VERIFYING, file.absolutePath) { Files.deleteIfExists(file.toPath()) } }) {
+                        browserKernelOperation(BrowserKernelStage.VERIFYING, file.absolutePath, BrowserKernelFailureKind.VERIFICATION) { throw IOException("Kernel part checksum mismatch") }
+                    }
+                }
                 return
-            } catch (e: IOException) { session.checkActive(); failure = e; failures++ }
+            } catch (e: IOException) {
+                session.checkActive()
+                if (e is BrowserKernelException && e.kind != BrowserKernelFailureKind.NETWORK && e.kind != BrowserKernelFailureKind.VERIFICATION) throw e
+                failure = BrowserKernelException.from(e, BrowserKernelStage.DOWNLOADING, file.absolutePath, BrowserKernelFailureKind.NETWORK)
+                failures++
+            }
         }
         throw failure ?: IOException("Kernel download failed")
     }
@@ -309,27 +381,34 @@ class BrowserKernelManager(val root: File, private val client: OkHttpClient) {
                 requireNotNull(BrowserKernelVersion.parse(b.componentVersion)) >= requireNotNull(BrowserKernelVersion.parse(a.componentVersion))
         }
         private val locks = ConcurrentHashMap<String, ReentrantLock>()
-        private fun verifyFiles(root: File, manifest: BrowserKernelManifest): Boolean = runCatching {
-            if (Files.isSymbolicLink(root.toPath())) return false
-            val actual = mutableSetOf<String>()
-            Files.walkFileTree(root.toPath(), object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
-                override fun visitFile(path: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes): java.nio.file.FileVisitResult {
-                    require(!attrs.isSymbolicLink && actual.size <= manifest.files.size) { "Invalid kernel directory" }
-                    actual += root.toPath().relativize(path).toString().replace(File.separatorChar, '/')
-                    return java.nio.file.FileVisitResult.CONTINUE
+        private fun verifyFiles(root: File, manifest: BrowserKernelManifest, tolerateErrors: Boolean = true): Boolean {
+            return try {
+                if (Files.isSymbolicLink(root.toPath())) return false
+                val actual = mutableSetOf<String>()
+                Files.walkFileTree(root.toPath(), object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
+                    override fun visitFile(path: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes): java.nio.file.FileVisitResult {
+                        require(!attrs.isSymbolicLink && actual.size <= manifest.files.size) { "Invalid kernel directory" }
+                        actual += root.toPath().relativize(path).toString().replace(File.separatorChar, '/')
+                        return java.nio.file.FileVisitResult.CONTINUE
+                    }
+                })
+                if (actual != manifest.files.map { it.path }.toSet() + ".ready") return false
+                manifest.files.all { entry ->
+                    val file = File(root, entry.path)
+                    !Files.isSymbolicLink(file.toPath()) && file.isFile && file.length() == entry.size && (!entry.executable || file.canExecute()) && hashFile(file) == entry.sha256
                 }
-            })
-            if (actual != manifest.files.map { it.path }.toSet() + ".ready") return false
-            manifest.files.all { entry ->
-                val file = File(root, entry.path)
-                !Files.isSymbolicLink(file.toPath()) && file.isFile && file.length() == entry.size && (!entry.executable || file.canExecute()) && hashFile(file) == entry.sha256
+            } catch (error: Exception) {
+                if (!tolerateErrors) throw error
+                false
             }
-        }.getOrDefault(false)
+        }
 
         private fun extract(parts: List<File>, root: File, manifest: BrowserKernelManifest, session: UpdateDownloadSession) {
             val expected = manifest.files.associateBy { it.path }
             val found = mutableSetOf<String>()
-            ZipInputStream(SequenceInputStream(Collections.enumeration(parts.map { it.inputStream().buffered() }))).use { zip ->
+            ZipInputStream(SequenceInputStream(Collections.enumeration(parts.map { file ->
+                browserKernelOperation(BrowserKernelStage.INSTALLING, file.absolutePath) { Files.newInputStream(file.toPath()).buffered() }
+            }))).use { zip ->
                 while (true) {
                     session.checkActive()
                     val entry = zip.nextEntry ?: break
@@ -337,22 +416,35 @@ class BrowserKernelManager(val root: File, private val client: OkHttpClient) {
                     val specification = expected[entry.name] ?: throw IOException("Unexpected kernel file")
                     val file = File(root, entry.name)
                     require(file.canonicalPath.startsWith(root.canonicalPath + File.separator))
-                    file.parentFile.mkdirs()
-                    val hash = MessageDigest.getInstance("SHA-256")
-                    val size = file.outputStream().buffered().use { copy(zip, it, hash, session, specification.size) }
-                    require(size == specification.size && hex(hash.digest()) == specification.sha256) { "Kernel file checksum mismatch" }
-                    if (specification.executable) require(file.setExecutable(true, true)) { "Cannot set kernel executable permission" }
+                    browserKernelOperation(BrowserKernelStage.INSTALLING, file.absolutePath) {
+                        Files.createDirectories(file.parentFile.toPath())
+                        val hash = MessageDigest.getInstance("SHA-256")
+                        val output = browserKernelOutput(file.absolutePath, BrowserKernelStage.INSTALLING) {
+                            Files.newOutputStream(file.toPath(), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
+                        }
+                        val size = output.buffered().use {
+                            browserKernelOperation(BrowserKernelStage.VERIFYING, file.absolutePath, BrowserKernelFailureKind.VERIFICATION) { copy(zip, it, hash, session, specification.size) }
+                        }
+                        browserKernelOperation(BrowserKernelStage.VERIFYING, file.absolutePath, BrowserKernelFailureKind.VERIFICATION) {
+                            require(size == specification.size && hex(hash.digest()) == specification.sha256) { "Kernel file checksum mismatch" }
+                        }
+                        if (specification.executable && !file.setExecutable(true, true)) {
+                            throw java.nio.file.AccessDeniedException(file.absolutePath, null, "Cannot set kernel executable permission")
+                        }
+                    }
                     zip.closeEntry()
                 }
             }
             require(found == expected.keys) { "Incomplete kernel archive" }
         }
         private fun deleteTree(file: File) {
-            if (!Files.exists(file.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) return
-            Files.walkFileTree(file.toPath(), object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
-                override fun visitFile(path: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes): java.nio.file.FileVisitResult { Files.delete(path); return java.nio.file.FileVisitResult.CONTINUE }
-                override fun postVisitDirectory(path: java.nio.file.Path, error: IOException?): java.nio.file.FileVisitResult { if (error != null) throw error; Files.delete(path); return java.nio.file.FileVisitResult.CONTINUE }
-            })
+            browserKernelOperation(BrowserKernelStage.INSTALLING, file.absolutePath) {
+                if (!Files.exists(file.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) return
+                Files.walkFileTree(file.toPath(), object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
+                    override fun visitFile(path: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes): java.nio.file.FileVisitResult { Files.delete(path); return java.nio.file.FileVisitResult.CONTINUE }
+                    override fun postVisitDirectory(path: java.nio.file.Path, error: IOException?): java.nio.file.FileVisitResult { if (error != null) throw error; Files.delete(path); return java.nio.file.FileVisitResult.CONTINUE }
+                })
+            }
         }
         private fun copy(input: java.io.InputStream, output: java.io.OutputStream?, hash: MessageDigest, session: UpdateDownloadSession, limit: Long = Long.MAX_VALUE): Long {
             val buffer = ByteArray(65536); var count = 0L
@@ -370,12 +462,18 @@ private fun safePath(value: String) = value.isNotBlank() && value.split('/').all
 private fun validHash(value: String) = value.matches(Regex("[a-f0-9]{64}"))
 private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
 private fun digest(bytes: ByteArray) = hex(MessageDigest.getInstance("SHA-256").digest(bytes))
-private fun hashFile(file: File): String = file.inputStream().buffered().use { input ->
+private fun hashFile(file: File): String = Files.newInputStream(file.toPath()).buffered().use { input ->
     val hash = MessageDigest.getInstance("SHA-256"); val buffer = ByteArray(65536)
     while (true) { val n = input.read(buffer); if (n < 0) break; hash.update(buffer, 0, n) }; hex(hash.digest())
 }
 private fun readLimited(input: java.io.InputStream, limit: Int): String = input.use {
     val out = java.io.ByteArrayOutputStream(); val buffer = ByteArray(8192)
-    while (true) { val n = it.read(buffer); if (n < 0) break; require(out.size() + n <= limit) { "Kernel metadata too large" }; out.write(buffer, 0, n) }
+    while (true) {
+        val n = it.read(buffer); if (n < 0) break
+        browserKernelOperation(BrowserKernelStage.VERIFYING, kind = BrowserKernelFailureKind.VERIFICATION) {
+            require(out.size() + n <= limit) { "Kernel metadata too large" }
+        }
+        out.write(buffer, 0, n)
+    }
     out.toString("UTF-8")
 }

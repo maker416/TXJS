@@ -87,6 +87,28 @@ class BrowserKernelReleaseTest {
             assertEquals("/releases/latest", server.takeRequest().path)
         }
     }
+    @Test fun latestReleaseFailuresDistinguishHttpFailureFromInvalidMetadata() {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(503))
+            server.enqueue(MockResponse().setBody("invalid release JSON"))
+            val source = GiteeBrowserKernelSource(OkHttpClient(), server.url("/releases/latest").toString())
+            val network = assertFailsWith<BrowserKernelException> { source.latest(UpdateDownloadSession()) }
+            assertEquals(BrowserKernelFailureKind.NETWORK, network.kind)
+            assertEquals(BrowserKernelStage.CHECKING, network.stage)
+            val metadata = assertFailsWith<BrowserKernelException> { source.latest(UpdateDownloadSession()) }
+            assertEquals(BrowserKernelFailureKind.VERIFICATION, metadata.kind)
+            assertEquals(BrowserKernelStage.VERIFYING, metadata.stage)
+        }
+    }
+    @Test fun releaseManifestHttpFailureIsNotMisreportedAsVerification(): Unit = Fixture().use { f ->
+        val baseline = f.component("1.0.0")
+        val failure = assertFailsWith<BrowserKernelException> {
+            BrowserKernelUpdateResolver(f.client).resolve(baseline, f.release(), UpdateDownloadSession(),
+                BrowserKernelSource { _, _, _ -> f.server.url("/missing-manifest").toString() })
+        }
+        assertEquals(BrowserKernelFailureKind.NETWORK, failure.kind)
+        assertEquals(BrowserKernelStage.CHECKING, failure.stage)
+    }
     @Test fun refreshingLatestDoesNotChangeAnInFlightReleaseSnapshot() {
         MockWebServer().use { server ->
             for (version in listOf("v1", "v2")) server.enqueue(MockResponse().setBody("""{"tag_name":"$version","assets":[{"name":"component","browser_download_url":"https://gitee.com/$version/component"}]}"""))

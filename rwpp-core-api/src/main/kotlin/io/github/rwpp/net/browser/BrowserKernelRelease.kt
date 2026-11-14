@@ -43,9 +43,11 @@ data class BrowserKernelRelease(val tag: String, val assets: List<BrowserKernelR
         return candidates.sortedByDescending { it.version }
     }
     fun source(): BrowserKernelSource = BrowserKernelSource { _, name, _ ->
-        val matching = assets.filter { it.name == name }
-        if (matching.size != 1) throw IOException("Kernel asset is missing or duplicated: $name")
-        matching.single().url.also { require(it.startsWith("https://")) { "Insecure kernel asset" } }
+        browserKernelOperation(BrowserKernelStage.CHECKING, kind = BrowserKernelFailureKind.VERIFICATION) {
+            val matching = assets.filter { it.name == name }
+            if (matching.size != 1) throw IOException("Kernel asset is missing or duplicated: $name")
+            matching.single().url.also { require(it.startsWith("https://")) { "Insecure kernel asset" } }
+        }
     }
 }
 
@@ -55,25 +57,30 @@ data class BrowserKernelUpdate(val requirement: BrowserKernelRequirement?, val n
 class BrowserKernelUpdateResolver(private val client: OkHttpClient) {
     fun resolve(baseline: BrowserKernelRequirement, release: BrowserKernelRelease, session: UpdateDownloadSession,
         source: BrowserKernelSource = release.source()): BrowserKernelUpdate {
-        var incompatible = false
-        for (candidate in release.candidates(baseline)) {
-            session.checkActive()
-            if (candidate.version < requireNotNull(BrowserKernelVersion.parse(baseline.manifest.componentVersion))) continue
-            val text = session.execute(client.newCall(Request.Builder().url(source.asset(release.tag, candidate.asset.name, session)).build())) { response ->
-                if (!response.isSuccessful) throw IOException("Kernel manifest returned HTTP ${response.code}")
-                readKernelMetadata(response.body?.byteStream() ?: throw IOException("Empty kernel manifest"))
+        return browserKernelOperation(BrowserKernelStage.VERIFYING, kind = BrowserKernelFailureKind.VERIFICATION) {
+            var incompatible = false
+            for (candidate in release.candidates(baseline)) {
+                session.checkActive()
+                if (candidate.version < requireNotNull(BrowserKernelVersion.parse(baseline.manifest.componentVersion))) continue
+                val url = source.asset(release.tag, candidate.asset.name, session)
+                val text = browserKernelOperation(BrowserKernelStage.CHECKING, kind = BrowserKernelFailureKind.NETWORK) {
+                    session.execute(client.newCall(Request.Builder().url(url).build())) { response ->
+                        if (!response.isSuccessful) throw IOException("Kernel manifest returned HTTP ${response.code}")
+                        readKernelMetadata(response.body?.byteStream() ?: throw IOException("Empty kernel manifest"))
+                    }
+                }
+                val requirement = BrowserKernelRequirement.fromManifest(text, candidate.asset.name)
+                require(requirement.manifest.componentVersion == candidate.version.toString()) { "Kernel filename/version mismatch" }
+                val expected = baseline.manifest
+                val actual = requirement.manifest
+                if (actual.engine != expected.engine || actual.platform != expected.platform || actual.arch != expected.arch) throw IOException("Kernel platform mismatch")
+                if (actual.version != expected.version || actual.format != expected.format) { incompatible = true; continue }
+                // Resolve every volume now, so an incomplete release cannot replace a working installation.
+                actual.parts.forEach { source.asset(release.tag, it.name, session) }
+                return BrowserKernelUpdate(requirement, incompatible)
             }
-            val requirement = BrowserKernelRequirement.fromManifest(text, candidate.asset.name)
-            require(requirement.manifest.componentVersion == candidate.version.toString()) { "Kernel filename/version mismatch" }
-            val expected = baseline.manifest
-            val actual = requirement.manifest
-            if (actual.engine != expected.engine || actual.platform != expected.platform || actual.arch != expected.arch) throw IOException("Kernel platform mismatch")
-            if (actual.version != expected.version || actual.format != expected.format) { incompatible = true; continue }
-            // Resolve every volume now, so an incomplete release cannot replace a working installation.
-            actual.parts.forEach { source.asset(release.tag, it.name, session) }
-            return BrowserKernelUpdate(requirement, incompatible)
+            return BrowserKernelUpdate(null, incompatible)
         }
-        return BrowserKernelUpdate(null, incompatible)
     }
 }
 
@@ -83,7 +90,9 @@ internal fun readKernelMetadata(input: java.io.InputStream): String = input.use 
     while (true) {
         val count = it.read(buffer)
         if (count < 0) break
-        require(output.size() + count <= 2 * 1024 * 1024) { "Kernel metadata too large" }
+        browserKernelOperation(BrowserKernelStage.VERIFYING, kind = BrowserKernelFailureKind.VERIFICATION) {
+            require(output.size() + count <= 2 * 1024 * 1024) { "Kernel metadata too large" }
+        }
         output.write(buffer, 0, count)
     }
     output.toString("UTF-8")
