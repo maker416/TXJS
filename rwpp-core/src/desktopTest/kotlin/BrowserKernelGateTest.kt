@@ -21,9 +21,11 @@ import java.io.File
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.nio.file.Files
+import java.nio.file.AccessDeniedException
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.test.*
@@ -49,6 +51,8 @@ class BrowserKernelGateTest {
         }
         val calls = AtomicInteger()
         val fail = AtomicBoolean(false)
+        val failure = AtomicReference<BrowserKernelException?>(null)
+        val blocked = AtomicBoolean(false)
         val client = OkHttpClient()
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
             createContext("/") { exchange ->
@@ -57,35 +61,147 @@ class BrowserKernelGateTest {
             }
             start()
         }
-        val source = BrowserKernelSource { _, name, _ ->
+        val source = BrowserKernelSource { _, name, session ->
             calls.incrementAndGet()
+            while (blocked.get()) { session.checkActive(); Thread.sleep(10) }
+            failure.get()?.let { throw it }
             if (fail.get()) throw IOException("Fixture failure")
             "http://127.0.0.1:${server.address.port}/$name"
         }
         init { i18nTable = Toml.parseToTomlTable(File("src/commonMain/composeResources/files/bundle_zh.toml").readText()) }
-        override fun close() { server.stop(0); root.deleteRecursively() }
+        override fun close() { blocked.set(false); server.stop(0); root.deleteRecursively() }
     }
 
     @Test fun consentRetryAndReplacementCallerReceiveReadyState(): Unit = Fixture().use { f ->
         runDesktopComposeUiTest {
             var consumer by mutableStateOf(0)
             val first = AtomicBoolean(false); val replacement = AtomicBoolean(false)
+            val checks = AtomicInteger()
             setContent { MaterialTheme {
                 val receiver = consumer
                 BrowserKernelGateContent(f.environment, f.client, f.source, true,
-                    { if (receiver == 0) first.set(it) else replacement.set(it) }) { Text("Browser ready") }
+                    { if (receiver == 0) first.set(it) else replacement.set(it) },
+                    discover = { checks.incrementAndGet(); BrowserKernelDiscovery(BrowserKernelUpdate(f.requirement), f.source) }) { Text("Browser ready") }
             } }
             waitUntil(timeoutMillis = 5000) { onAllNodesWithText("下载并启用").fetchSemanticsNodes().isNotEmpty() }
             runOnIdle { assertEquals(0, f.calls.get()); assertFalse(first.get()) }
             onNodeWithText("Browser ready").assertDoesNotExist()
             f.fail.set(true); onNodeWithText("下载并启用").performClick()
-            waitUntil(timeoutMillis = 5000) { onAllNodesWithText("重试下载").fetchSemanticsNodes().isNotEmpty() }
+            waitUntil(timeoutMillis = 5000) { onAllNodesWithText("重试").fetchSemanticsNodes().isNotEmpty() }
+            onNodeWithText("无法下载浏览器组件，请检查网络连接后重试。").assertIsDisplayed()
             runOnIdle { assertFalse(first.get()) }
-            f.fail.set(false); onNodeWithText("重试下载").performClick()
+            f.fail.set(false); onNodeWithText("重试").performClick()
             waitUntil(timeoutMillis = 5000) { first.get() }
             onNodeWithText("Browser ready").assertIsDisplayed()
+            runOnIdle { assertEquals(1, checks.get(), "An installation retry must proceed without another consent click") }
             runOnIdle { consumer = 1 }
             waitUntil(timeoutMillis = 5000) { replacement.get() }
+        }
+    }
+    @Test fun failureKindsShowTheirOwnReasonAndKeepRetryVisibleInASmallViewport() {
+        val explanations = mapOf(
+            BrowserKernelFailureKind.NETWORK to "无法下载浏览器组件，请检查网络连接后重试。",
+            BrowserKernelFailureKind.VERIFICATION to "浏览器组件校验失败，请重试；若持续失败，请联系维护者检查发布文件。",
+            BrowserKernelFailureKind.FILE_ACCESS to "无法访问组件文件，请检查路径权限、文件占用或安全软件拦截记录后重试。",
+            BrowserKernelFailureKind.INSTALLATION to "浏览器组件安装失败，请查看下方原因后重试。",
+        )
+        for ((kind, explanation) in explanations) Fixture().use { f ->
+            val path = File(f.root, "nested/".repeat(16) + "chrome_elf.dll").absolutePath
+            val reason = if (kind == BrowserKernelFailureKind.FILE_ACCESS) "Access is denied" else "Fixture ${kind.name.lowercase()} failure"
+            f.failure.set(BrowserKernelException(kind, BrowserKernelStage.INSTALLING,
+                if (kind == BrowserKernelFailureKind.FILE_ACCESS) path else null, reason, reason, IOException(reason)))
+            runDesktopComposeUiTest(width = 360, height = 240) {
+                val ready = AtomicBoolean(false)
+                setContent { MaterialTheme { BrowserKernelGateContent(f.environment, f.client, f.source, true, ready::set) { Text("Browser ready") } } }
+                waitUntil(timeoutMillis = 5000) { onAllNodesWithText("下载并启用").fetchSemanticsNodes().isNotEmpty() }
+                onNodeWithText("下载并启用").performClick()
+                waitUntil(timeoutMillis = 5000) { onAllNodesWithText("重试").fetchSemanticsNodes().isNotEmpty() }
+                onNodeWithText(explanation).assertExists()
+                onNodeWithTag("browser-kernel-failure-details").assertTextContains(reason, substring = true)
+                if (kind == BrowserKernelFailureKind.FILE_ACCESS) {
+                    onNodeWithTag("browser-kernel-failure-details").assertTextContains(path, substring = true)
+                }
+                onNodeWithTag("browser-kernel-body").assert(hasScrollAction())
+                onNodeWithText("重试").assertIsDisplayed()
+                onNodeWithText("浏览器组件准备失败，请检查网络后重试。").assertDoesNotExist()
+                runOnIdle { assertFalse(ready.get()) }
+            }
+        }
+    }
+    @Test fun cancellingPreparationDoesNotShowAnInstallationFailure(): Unit = Fixture().use { f ->
+        f.blocked.set(true)
+        runDesktopComposeUiTest {
+            val ready = AtomicBoolean(false)
+            setContent { MaterialTheme { BrowserKernelGateContent(f.environment, f.client, f.source, true, ready::set) { Text("Browser ready") } } }
+            waitUntil(timeoutMillis = 5000) { onAllNodesWithText("下载并启用").fetchSemanticsNodes().isNotEmpty() }
+            onNodeWithText("下载并启用").performClick()
+            waitUntil(timeoutMillis = 5000) { f.calls.get() > 0 }
+            onNodeWithText("取消").performClick()
+            waitUntil(timeoutMillis = 5000) { onAllNodesWithText("下载并启用").fetchSemanticsNodes().isNotEmpty() }
+            onNodeWithTag("browser-kernel-failure-details").assertDoesNotExist()
+            onNodeWithText("重试").assertDoesNotExist()
+            runOnIdle { assertFalse(ready.get()) }
+            f.blocked.set(false)
+            onNodeWithText("下载并启用").performClick()
+            waitUntil(timeoutMillis = 5000) { ready.get() }
+        }
+    }
+    @Test fun transientFileAccessShowsRetryAttemptsThenReturnsToPreparationAndBecomesReady(): Unit = Fixture().use { f ->
+        val path = File(f.root, "chrome_elf.dll").absolutePath
+        f.failure.set(BrowserKernelException.from(AccessDeniedException(path, null, "Access is denied"), BrowserKernelStage.INSTALLING))
+        runDesktopComposeUiTest {
+            val ready = AtomicBoolean(false)
+            setContent { MaterialTheme { BrowserKernelGateContent(f.environment, f.client, f.source, true, ready::set) { Text("Browser ready") } } }
+            waitUntil(timeoutMillis = 5000) { onAllNodesWithText("下载并启用").fetchSemanticsNodes().isNotEmpty() }
+            onNodeWithText("下载并启用").performClick()
+            waitUntil(timeoutMillis = 5000) { onAllNodesWithText("组件文件暂时无法访问，正在自动重试（1/3）…").fetchSemanticsNodes().isNotEmpty() }
+            onNodeWithText("取消").assertIsDisplayed()
+            onNodeWithTag("browser-kernel-failure-details").assertDoesNotExist()
+            waitUntil(timeoutMillis = 5000) { onAllNodesWithText("组件文件暂时无法访问，正在自动重试（2/3）…").fetchSemanticsNodes().isNotEmpty() }
+            runOnIdle { f.blocked.set(true); f.failure.set(null) }
+            waitUntil(timeoutMillis = 5000) { onAllNodesWithText("正在准备浏览器组件…").fetchSemanticsNodes().isNotEmpty() }
+            onNodeWithText("取消").assertIsDisplayed()
+            onNodeWithTag("browser-kernel-failure-details").assertDoesNotExist()
+            runOnIdle { assertFalse(ready.get()); f.blocked.set(false) }
+            waitUntil(timeoutMillis = 5000) { ready.get() }
+            onNodeWithText("Browser ready").assertIsDisplayed()
+        }
+    }
+    @Test fun cancellingAnAutomaticFileAccessRetryDoesNotShowFailureOrInstall(): Unit = Fixture().use { f ->
+        val path = File(f.root, "chrome_elf.dll").absolutePath
+        f.failure.set(BrowserKernelException.from(AccessDeniedException(path, null, "Access is denied"), BrowserKernelStage.INSTALLING))
+        runDesktopComposeUiTest {
+            val ready = AtomicBoolean(false)
+            setContent { MaterialTheme { BrowserKernelGateContent(f.environment, f.client, f.source, true, ready::set) { Text("Browser ready") } } }
+            waitUntil(timeoutMillis = 5000) { onAllNodesWithText("下载并启用").fetchSemanticsNodes().isNotEmpty() }
+            onNodeWithText("下载并启用").performClick()
+            waitUntil(timeoutMillis = 5000) { onAllNodesWithText("组件文件暂时无法访问，正在自动重试（1/3）…").fetchSemanticsNodes().isNotEmpty() }
+            onNodeWithText("取消").assertIsDisplayed().performClick()
+            waitUntil(timeoutMillis = 5000) { onAllNodesWithText("下载并启用").fetchSemanticsNodes().isNotEmpty() }
+            onNodeWithTag("browser-kernel-failure-details").assertDoesNotExist()
+            onNodeWithText("重试").assertDoesNotExist()
+            runOnIdle {
+                assertFalse(ready.get())
+                assertNull(BrowserKernelManager(f.root, f.client).installed(f.requirement))
+            }
+        }
+    }
+    @Test fun exhaustedAutomaticRetriesKeepTheFileReasonAndAllowManualRetry(): Unit = Fixture().use { f ->
+        val path = File(f.root, "chrome_elf.dll").absolutePath
+        f.failure.set(BrowserKernelException.from(AccessDeniedException(path, null, "Access is denied"), BrowserKernelStage.INSTALLING))
+        runDesktopComposeUiTest {
+            val ready = AtomicBoolean(false)
+            setContent { MaterialTheme { BrowserKernelGateContent(f.environment, f.client, f.source, true, ready::set) { Text("Browser ready") } } }
+            waitUntil(timeoutMillis = 5000) { onAllNodesWithText("下载并启用").fetchSemanticsNodes().isNotEmpty() }
+            onNodeWithText("下载并启用").performClick()
+            waitUntil(timeoutMillis = 12000) { onAllNodesWithText("重试").fetchSemanticsNodes().isNotEmpty() }
+            onNodeWithText("无法访问组件文件，请检查路径权限、文件占用或安全软件拦截记录后重试。").assertIsDisplayed()
+            onNodeWithTag("browser-kernel-failure-details").assertTextContains(path, substring = true)
+                .assertTextContains("Access is denied", substring = true)
+            runOnIdle { assertFalse(ready.get()); f.failure.set(null) }
+            onNodeWithText("重试").performClick()
+            waitUntil(timeoutMillis = 5000) { ready.get() }
+            onNodeWithText("Browser ready").assertIsDisplayed()
         }
     }
     @Test fun installedComponentNeedsNoNetworkOrConsent(): Unit = Fixture().use { f ->
@@ -184,7 +300,7 @@ class BrowserKernelGateTest {
             val ready = AtomicBoolean(false)
             setContent { MaterialTheme { BrowserKernelGateContent(f.environment.copy(requirement = local), f.client, f.source, true, ready::set,
                 discover = { BrowserKernelDiscovery(BrowserKernelUpdate(changed), f.source) }) { Text("Keep trusted local content") } } }
-            waitUntil(timeoutMillis = 5000) { onAllNodesWithText("重试下载").fetchSemanticsNodes().isNotEmpty() }
+            waitUntil(timeoutMillis = 5000) { onAllNodesWithText("重试").fetchSemanticsNodes().isNotEmpty() }
             assertFalse(ready.get()); assertEquals(0, f.calls.get())
             onNodeWithText("继续使用当前版本").performClick()
             waitUntil(timeoutMillis = 5000) { ready.get() }
