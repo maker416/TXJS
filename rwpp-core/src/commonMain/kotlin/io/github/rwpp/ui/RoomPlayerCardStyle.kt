@@ -45,6 +45,7 @@ import io.github.rwpp.game.Player
 import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.theme.RoomPlayerCardContentSpec
 import io.github.rwpp.theme.RoomPlayerCardSpec
+import io.github.rwpp.theme.RoomPlayerSizingSpec
 import org.koin.compose.koinInject
 
 /** Stable text geometry excludes temporary sync status and the dimensions of downloaded images. */
@@ -55,16 +56,22 @@ private data class RoomPlayerCardMetrics(
     val avatarPadding: Dp,
     val avatarLimit: Dp,
     val avatarWidth: Dp,
+    val columns: Int,
+    val rowSpacing: Dp,
 ) {
-    fun avatarSize(rowCount: Int): Dp {
-        val contentHeight = if (rowCount == 0) baseHeight
-            else maxOf(baseHeight, mainRowHeight + infoRowHeight * rowCount)
+    fun avatarSize(content: RoomPlayerCardContentSpec): Dp {
+        val infoHeight = content.rows.fold(0.dp) { total, row ->
+            total + row.cells.chunked(columns).fold(0.dp) { height, cells ->
+                height + maxOf(infoRowHeight, row.height.dp, cells.maxOfOrNull { it.height }?.dp ?: 0.dp) + rowSpacing
+            }
+        }
+        val contentHeight = if (content.rows.isEmpty()) baseHeight else maxOf(baseHeight, mainRowHeight + infoHeight)
         return minOf(avatarLimit, contentHeight - avatarPadding * 2)
     }
 }
 
 @Composable
-private fun RoomPlayerCardSpec.metrics(compact: Boolean): RoomPlayerCardMetrics {
+private fun RoomPlayerCardSpec.metrics(compact: Boolean, minimumHeight: Int = 0): RoomPlayerCardMetrics {
     val settings = koinInject<Settings>()
     val density = LocalDensity.current
     val businessStyle = if (settings.boldText) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium
@@ -76,24 +83,22 @@ private fun RoomPlayerCardSpec.metrics(compact: Boolean): RoomPlayerCardMetrics 
     val infoHeight = maxOf(24.dp, with(density) {
         (labelStyle.lineHeight.takeIf { it.isSp }
             ?: labelStyle.fontSize.takeIf { it.isSp }?.times(1.4f) ?: 16.sp).toDp()
-    } + 4.dp) + 6.dp
-    return remember(this, compact, businessHeight, infoHeight) {
+    } + 4.dp)
+    return remember(this, compact, minimumHeight, businessHeight, infoHeight) {
         val mainHeight = maxOf(if (compact) 32.dp else 36.dp, businessHeight)
-        val baseHeight = maxOf(if (compact) 48.dp else 54.dp, businessHeight)
+        val baseHeight = maxOf(if (compact) 48.dp else 54.dp, businessHeight, minimumHeight.dp)
         val padding = if (compact) 4.dp else 3.dp
         val limit = minOf(avatar.size, if (compact) 56 else 64).dp
-        val geometry = RoomPlayerCardMetrics(baseHeight, mainHeight, infoHeight, padding, limit, 0.dp)
-        val maxRows = if (enabled) {
-            (listOf(content) + listOfNotNull(local, host, ai, spectator) + slots.values)
-                .maxOf { it.rows.size }
-        } else 0
-        geometry.copy(avatarWidth = if (avatar.enabled) geometry.avatarSize(maxRows) + padding * 2 else 0.dp)
+        val geometry = RoomPlayerCardMetrics(baseHeight, mainHeight, infoHeight, padding, limit, 0.dp, columns, rowSpacing.dp)
+        val contents = if (enabled) listOf(content) + listOfNotNull(local, host, ai, spectator) + slots.values
+            else listOf(RoomPlayerCardContentSpec())
+        geometry.copy(avatarWidth = if (avatar.enabled) contents.maxOf { geometry.avatarSize(it) } + padding * 2 else 0.dp)
     }
 }
 
 /** Header and every player reserve one column, even when static overrides use different row counts. */
 @Composable
-internal fun RoomPlayerCardSpec.avatarCellWidth(compact: Boolean): Dp = metrics(compact).avatarWidth
+internal fun RoomPlayerCardSpec.avatarCellWidth(compact: Boolean, minimumHeight: Int = 0): Dp = metrics(compact, minimumHeight).avatarWidth
 
 /** Only the inside of an occupied player row is extended; actions and engine cells keep their owners. */
 @Composable
@@ -103,13 +108,14 @@ internal fun RowScope.RoomPlayerCardBody(
     room: GameRoom,
     compact: Boolean,
     avatarShape: Shape? = null,
+    sizing: RoomPlayerSizingSpec = RoomPlayerSizingSpec(),
     cells: @Composable RowScope.() -> Unit,
 ) {
     if (!card.enabled && !card.avatar.enabled) {
         cells()
         return
     }
-    val metrics = card.metrics(compact)
+    val metrics = card.metrics(compact, sizing.minHeight)
     val connecting = player == ConnectingPlayer
     val slot = player.spawnPoint + 1
     val content = if (connecting) RoomPlayerCardContentSpec() else
@@ -121,7 +127,7 @@ internal fun RowScope.RoomPlayerCardBody(
             Spacer(Modifier.width(metrics.avatarWidth))
         } else {
             val avatar = card.avatar
-            val size = metrics.avatarSize(rows.size)
+            val size = metrics.avatarSize(content.copy(rows = rows))
             val shape = avatarShape ?: RoundedCornerShape(avatar.corner.dp)
             val tint = roomThemeColor(avatar.tint, MaterialTheme.colorScheme.primary)
             Box(
@@ -165,16 +171,19 @@ internal fun RowScope.RoomPlayerCardBody(
         Row(Modifier.fillMaxWidth().height(IntrinsicSize.Max)
             .heightIn(min = if (rows.isEmpty() && card.avatar.enabled) metrics.baseHeight else metrics.mainRowHeight), content = cells)
         rows.forEachIndexed { rowIndex, row ->
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp)
-                    .height(IntrinsicSize.Max).testTag("room-player-info-$slot-$rowIndex"),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            RoomPlayerInfoLayout(
+                row = row,
+                columns = card.columns,
+                cellSpacing = card.cellSpacing,
+                rowSpacing = card.rowSpacing,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = (card.rowSpacing / 2f).dp)
+                    .testTag("room-player-info-$slot-$rowIndex"),
             ) {
                 row.cells.forEachIndexed { cellIndex, cell ->
                     val shape = RoundedCornerShape(cell.corner.dp)
                     val color = roomThemeColor(cell.contentColor, MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(
-                        Modifier.weight(1f).fillMaxHeight().heightIn(min = 24.dp)
+                        Modifier
                             .testTag("room-player-info-$slot-$rowIndex-$cellIndex")
                             .clip(shape).background(roomThemeColor(cell.backgroundColor, Color.Transparent))
                             .roomThemeBorder(cell.borderWidth, roomThemeColor(cell.borderColor, color.copy(alpha = .4f)), shape)

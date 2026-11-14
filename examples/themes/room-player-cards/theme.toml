@@ -7,8 +7,8 @@
 id = "room-player-cards"
 name = "绿色玩家卡片 · 静态演示"
 author = "RWJS contributors"
-version = "1.0.0"
-description = "等待战斗室头像格与双行玩家槽位示例。战绩、专家称号及AI难度文案均为美术包写死的演示内容。"
+version = "1.1.0"
+description = "等待战斗室大玩家槽位、列比例、头像格与可换行静态信息格示例。战绩、专家称号及AI难度文案均为美术包写死的演示内容。"
 
 [colors]
 primary = "#A8D562"
@@ -72,6 +72,15 @@ nameColor = "#F3F6EE"
 nameUseTeamColor = false
 nameWeight = 600
 
+# 新的独立尺寸表；不要改用旧 room.player.rowHeight/nameWidth 等字段。
+[room.player.sizing]
+minHeight = 240
+widthPercent = 96
+nameWidth = 0.48
+spawnWidth = 0.16
+teamWidth = 0.16
+pingWidth = 0.2
+
 [room.player.profile]
 backgroundColor = "#263D1B"
 borderColor = "#89B54F"
@@ -81,6 +90,9 @@ tint = "#A8D562"
 
 [room.player.card]
 enabled = true
+columns = 4
+rowSpacing = 8
+cellSpacing = 6
 
 [room.player.card.avatar]
 enabled = true
@@ -92,15 +104,60 @@ borderWidth = 1
 tint = "#A8D562"
 
 [[room.player.card.content.rows]]
+height = 36
 cells = [
-  { text = "联机玩家", backgroundColor = "#263D1B", contentColor = "#D7F4BD", borderColor = "#89B54F", borderWidth = 1 },
-  { text = "战绩：128胜 / 23负", contentColor = "#C8CEC1" },
+  { text = "联机玩家", width = 112, height = 32, backgroundColor = "#263D1B", contentColor = "#D7F4BD", borderColor = "#89B54F", borderWidth = 1 },
+  { text = "战绩：128胜 / 23负", width = 0, weight = 2.0, contentColor = "#C8CEC1" },
+  { text = "徽章：演示", width = 96, height = 40, backgroundColor = "#263D1B", contentColor = "#D7F4BD" },
+  { text = "本地静态信息", width = 0, weight = 1.0, contentColor = "#C8CEC1" },
+  { width = 40, height = 24, backgroundColor = "#263D1B", borderColor = "#89B54F", borderWidth = 1 },
+]
+
+# 前一配置行有5格，columns=4 时至少换成两条视觉行。
+[[room.player.card.content.rows]]
+cells = [
+  { text = "较宽弹性格", width = 0, weight = 2.5, backgroundColor = "#263D1B", contentColor = "#D7F4BD" },
+  { text = "较窄弹性格", width = 0, weight = 1.0, contentColor = "#C8CEC1" },
+]
+
+[[room.player.card.content.rows]]
+height = 48
+cells = [
+  { text = "宽260dp，窄屏时自动缩小", width = 260, height = 40, contentColor = "#C8CEC1" },
+]
+
+[[room.player.card.content.rows]]
+height = 28
+cells = [
+  { text = "第4行：不查询账号战绩", width = 0, weight = 1.0, contentColor = "#D7F4BD" },
+]
+
+[[room.player.card.host.rows]]
+height = 36
+cells = [
+  { text = "房主", width = 88, height = 32, backgroundColor = "#725000", contentColor = "#FFF0A5", borderColor = "#D5A736", borderWidth = 1 },
+  { text = "战绩：128胜 / 23负", width = 0, weight = 2.0, contentColor = "#C8CEC1" },
+  { text = "金色徽章", width = 96, height = 40, backgroundColor = "#725000", contentColor = "#FFF0A5" },
+  { text = "静态演示", width = 0, weight = 1.0, contentColor = "#C8CEC1" },
+  { width = 40, height = 24, backgroundColor = "#725000", borderColor = "#D5A736", borderWidth = 1 },
 ]
 
 [[room.player.card.host.rows]]
 cells = [
-  { text = "房主", backgroundColor = "#725000", contentColor = "#FFF0A5", borderColor = "#D5A736", borderWidth = 1 },
-  { text = "战绩：128胜 / 23负", contentColor = "#C8CEC1" },
+  { text = "较宽弹性格", width = 0, weight = 2.5, backgroundColor = "#725000", contentColor = "#FFF0A5" },
+  { text = "较窄弹性格", width = 0, weight = 1.0, contentColor = "#C8CEC1" },
+]
+
+[[room.player.card.host.rows]]
+height = 48
+cells = [
+  { text = "宽260dp，窄屏时自动缩小", width = 260, height = 40, contentColor = "#C8CEC1" },
+]
+
+[[room.player.card.host.rows]]
+height = 28
+cells = [
+  { text = "第4行：文案不会赋予房主权限", width = 0, weight = 1.0, contentColor = "#FFF0A5" },
 ]
 
 [[room.player.card.ai.rows]]
