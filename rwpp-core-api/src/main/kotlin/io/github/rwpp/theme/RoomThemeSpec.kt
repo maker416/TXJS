@@ -163,6 +163,8 @@ data class RoomPlayerSpec(
     val profile: RoomProfileSpec = RoomProfileSpec(),
     /** 默认头像格的外观和可选静态信息行；头像默认显示，信息行默认关闭。 */
     val card: RoomPlayerCardSpec = RoomPlayerCardSpec(),
+    /** 玩家槽位内部尺寸；不会改变房间面板布局或操作权限。 */
+    val sizing: RoomPlayerSizingSpec = RoomPlayerSizingSpec(),
 ) {
     fun sanitized(): RoomPlayerSpec = copy(
         backgroundImage = backgroundImage.safeAssetPath(),
@@ -199,6 +201,28 @@ data class RoomPlayerSpec(
         showTeam = true,
         profile = profile.sanitized(),
         card = card.sanitized(),
+        sizing = sizing.sanitized(),
+    )
+}
+
+@Serializable
+data class RoomPlayerSizingSpec(
+    /** 0 沿用客户端原生行高；其他值为槽位最小高度（dp）。 */
+    val minHeight: Int = 0,
+    val widthPercent: Int = 100,
+    /** 全部省略时沿用平台原生比例；填写任一列后，未填写列回落通用默认比例。 */
+    val nameWidth: Float? = null,
+    val spawnWidth: Float? = null,
+    val teamWidth: Float? = null,
+    val pingWidth: Float? = null,
+) {
+    fun sanitized(): RoomPlayerSizingSpec = copy(
+        minHeight = if (minHeight == 0) 0 else minHeight.coerceIn(48, 480),
+        widthPercent = widthPercent.coerceIn(50, 100),
+        nameWidth = nameWidth?.finiteWeight(0.05f, 0.6f),
+        spawnWidth = spawnWidth?.finiteWeight(0.05f, 0.1f),
+        teamWidth = teamWidth?.finiteWeight(0.05f, 0.1f),
+        pingWidth = pingWidth?.finiteWeight(0.05f, 0.2f),
     )
 }
 
@@ -218,8 +242,15 @@ data class RoomPlayerCardSpec(
     val spectator: RoomPlayerCardContentSpec? = null,
     /** 出生位置加一（1..1000），不是玩家列表中的排序行号。 */
     val slots: Map<String, RoomPlayerCardContentSpec> = emptyMap(),
+    /** 每个信息行的最大列数；较窄屏幕由渲染层折行。 */
+    val columns: Int = 4,
+    val rowSpacing: Int = 6,
+    val cellSpacing: Int = 6,
 ) {
     fun sanitized(): RoomPlayerCardSpec = copy(
+        columns = columns.coerceIn(1, 12),
+        rowSpacing = rowSpacing.coerceIn(0, 24),
+        cellSpacing = cellSpacing.coerceIn(0, 24),
         avatar = avatar.sanitized(),
         content = content.sanitized(),
         local = local?.sanitized(),
@@ -278,17 +309,23 @@ data class RoomPlayerCardContentSpec(
 ) {
     fun sanitized(): RoomPlayerCardContentSpec = copy(
         avatarImage = avatarImage.safeAssetPath(),
-        rows = rows.asSequence().map { it.sanitized() }.filter { it.cells.isNotEmpty() }.take(3).toList(),
+        rows = rows.asSequence().map { it.sanitized() }.filter { it.cells.isNotEmpty() }.take(12).toList(),
     )
 }
 
 @Serializable
 data class RoomPlayerInfoRowSpec(
     val cells: List<RoomPlayerInfoCellSpec> = emptyList(),
+    /** 0 随内容测量；其他值为行最小高度（dp）。 */
+    val height: Int = 0,
 ) {
     fun sanitized(): RoomPlayerInfoRowSpec = copy(
+        height = if (height == 0) 0 else height.coerceIn(24, 240),
         cells = cells.asSequence().map { it.sanitized() }
-            .filter { it.text.isNotBlank() || it.iconImage.isNotEmpty() }.take(4).toList(),
+            .filter {
+                it.text.isNotBlank() || it.iconImage.isNotEmpty() || it.backgroundColor.isNotEmpty() ||
+                    it.borderColor.isNotEmpty() || it.width > 0 || it.height > 0
+            }.take(12).toList(),
     )
 }
 
@@ -301,6 +338,11 @@ data class RoomPlayerInfoCellSpec(
     val borderColor: String = "",
     val borderWidth: Int = 0,
     val corner: Int = 6,
+    /** 0 使用弹性列宽；其他值为单元格宽度（dp）。 */
+    val width: Int = 0,
+    /** 0 随内容测量；其他值为单元格最小高度（dp）。 */
+    val height: Int = 0,
+    val weight: Float = 1f,
 ) {
     fun sanitized(): RoomPlayerInfoCellSpec = copy(
         text = text.filterNot { it.isISOControl() }.take(160),
@@ -310,8 +352,14 @@ data class RoomPlayerInfoCellSpec(
         borderColor = borderColor.validColor(),
         borderWidth = borderWidth.coerceIn(0, 6),
         corner = corner.coerceIn(0, 48),
+        width = if (width == 0) 0 else width.coerceIn(24, 1200),
+        height = if (height == 0) 0 else height.coerceIn(24, 240),
+        weight = weight.finiteWeight(0.1f, 1f),
     )
 }
+
+private fun Float.finiteWeight(minimum: Float, fallback: Float): Float =
+    if (isFinite()) coerceIn(minimum, 10f) else fallback
 
 @Serializable
 data class RoomProfileSpec(

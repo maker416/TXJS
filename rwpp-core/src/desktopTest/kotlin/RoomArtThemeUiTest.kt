@@ -8,6 +8,7 @@
 package io.github.rwpp.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -964,6 +965,154 @@ class RoomArtThemeUiTest {
             assertEquals(beforeRow, onNodeWithTag("temporary-status-row", useUnmergedTree = true).getUnclippedBoundsInRoot())
         }
 
+    @Test fun playerSizingChangesSlotBoundsAndBusinessColumnsAndRestoresOnDisable() =
+        runDesktopComposeUiTest(width = 700, height = 900) {
+            show { PlayerRows(compact = true) }
+            val original = onNodeWithTag("room-player-1", useUnmergedTree = true).getUnclippedBoundsInRoot()
+            val originalName = onNodeWithTag("room-cell-name-1", useUnmergedTree = true).getUnclippedBoundsInRoot()
+            val id = install("sized-player-slots", """
+                [room.player.sizing]
+                minHeight = 140
+                widthPercent = 80
+                nameWidth = 0.2
+                spawnWidth = 0.3
+                teamWidth = 0.3
+                pingWidth = 0.2
+            """.trimIndent())
+            runOnIdle { assertTrue(ArtThemeController.apply(id)) }
+            val sized = onNodeWithTag("room-player-1", useUnmergedTree = true).getUnclippedBoundsInRoot()
+            val sizedName = onNodeWithTag("room-cell-name-1", useUnmergedTree = true).getUnclippedBoundsInRoot()
+            assertTrue(sized.bottom - sized.top >= 140.dp)
+            assertTrue(sized.right - sized.left < original.right - original.left)
+            assertTrue(sizedName.right - sizedName.left < originalName.right - originalName.left)
+            onNodeWithTag("room-player-1", useUnmergedTree = true).assertHasClickAction()
+            savePlayerCards("sized-player-slots.png")
+            runOnIdle { assertTrue(ArtThemeController.apply(null)) }
+            assertEquals(original, onNodeWithTag("room-player-1", useUnmergedTree = true).getUnclippedBoundsInRoot())
+            assertEquals(originalName, onNodeWithTag("room-cell-name-1", useUnmergedTree = true).getUnclippedBoundsInRoot())
+        }
+
+    @Test fun addedInformationCellsKeepRequestedSizesWeightsAndWrapOversizedContent() =
+        runDesktopComposeUiTest(width = 700, height = 1000) {
+            val id = install("sized-information-cells", """
+                [room.player.card]
+                enabled = true
+                columns = 3
+                rowSpacing = 8
+                cellSpacing = 10
+                [room.player.card.avatar]
+                enabled = false
+                [[room.player.card.content.rows]]
+                cells = [
+                  { text = "固定宽度", width = 96, height = 44 },
+                  { text = "比例一", weight = 1 },
+                  { text = "比例二", weight = 2 },
+                  { text = "超宽自动适配", width = 1200, height = 48 },
+                  { text = "新增第五格", width = 80 },
+                ]
+                [[room.player.card.content.rows]]
+                height = 52
+                cells = [{ text = "第二行" }]
+                [[room.player.card.content.rows]]
+                cells = [{ text = "第三行" }]
+                [[room.player.card.content.rows]]
+                cells = [{ text = "新增第四行" }, { backgroundColor = "#527A35", width = 40, height = 32 }]
+            """.trimIndent())
+            runOnIdle { assertTrue(ArtThemeController.apply(id)) }
+            show { PlayerRows(compact = true) }
+            fun bounds(row: Int, cell: Int) = onNodeWithTag("room-player-info-1-$row-$cell", useUnmergedTree = true)
+                .getUnclippedBoundsInRoot()
+            val fixed = bounds(0, 0)
+            val firstWeight = bounds(0, 1)
+            val secondWeight = bounds(0, 2)
+            val oversized = bounds(0, 3)
+            val fifth = bounds(0, 4)
+            assertEquals(96.dp, fixed.right - fixed.left)
+            assertTrue(fixed.bottom - fixed.top >= 44.dp)
+            assertTrue(kotlin.math.abs(((secondWeight.right - secondWeight.left) -
+                (firstWeight.right - firstWeight.left) * 2).value) <= 2f)
+            assertTrue(oversized.top >= fixed.bottom)
+            assertTrue(oversized.right - oversized.left <= 696.dp)
+            assertTrue(fifth.top >= oversized.bottom)
+            assertTrue(bounds(1, 0).bottom - bounds(1, 0).top >= 52.dp)
+            onNode(hasText("新增第四行") and hasAnyAncestor(hasTestTag("room-player-1")),
+                useUnmergedTree = true).assertIsDisplayed()
+            onNodeWithTag("room-player-info-1-3-1", useUnmergedTree = true).assertIsDisplayed()
+            savePlayerCards("sized-information-cells.png")
+        }
+
+    @Test fun maximumInformationGridStaysInsideHalfWidthSlotsWithLargeFonts() =
+        runDesktopComposeUiTest(width = 360, height = 900) {
+            val rows = List(12) { row ->
+                "[[room.player.card.content.rows]]\nheight = 24\ncells = [" +
+                    List(12) { cell -> "{ text = \"${row + 1}:${cell + 1}\", width = 1200, height = 24 }" }.joinToString() + "]"
+            }.joinToString("\n")
+            val id = install("maximum-sized-player-grid", """
+                [room.player.sizing]
+                minHeight = 480
+                widthPercent = 50
+                [room.player.card]
+                enabled = true
+                columns = 12
+                rowSpacing = 0
+                cellSpacing = 24
+            """.trimIndent() + "\n" + rows)
+            runOnIdle { assertTrue(ArtThemeController.apply(id)) }
+            show {
+                val originalDensity = LocalDensity.current
+                CompositionLocalProvider(LocalDensity provides Density(originalDensity.density, fontScale = 2f)) {
+                    LazyColumn {
+                        item { RoomPlayerTableRow(localPlayer, room, game, update = false,
+                            onPlayerClick = {}, compact = true) }
+                    }
+                }
+            }
+            val player = onNodeWithTag("room-player-1", useUnmergedTree = true).getUnclippedBoundsInRoot()
+            val last = onNodeWithTag("room-player-info-1-11-11", useUnmergedTree = true).getUnclippedBoundsInRoot()
+            assertTrue(player.bottom - player.top > 480.dp, "Large grids must grow rather than clip at minHeight")
+            assertTrue(last.left >= player.left && last.right <= player.right)
+            assertTrue(last.bottom <= player.bottom)
+            val avatar = onNodeWithTag("room-player-avatar-1", useUnmergedTree = true).getUnclippedBoundsInRoot()
+            assertTrue(avatar.right - avatar.left <= 56.dp)
+        }
+
+    @Test fun customPlayerSizingKeepsNarrowHeaderAlignedAndChatDraftWhileScrolling() =
+        runDesktopComposeUiTest(width = 360, height = 900) {
+            showRoom(WindowManager.Small)
+            val input = onNodeWithTag("room-chat-input", useUnmergedTree = true)
+            input.performTextInput("Sizing draft")
+            val id = install("narrow-sized-player-slots", """
+                [room.player.sizing]
+                minHeight = 100
+                widthPercent = 85
+                nameWidth = 0.4
+                spawnWidth = 0.2
+                teamWidth = 0.2
+                pingWidth = 0.2
+                [room.player.card]
+                enabled = true
+                columns = 2
+                [[room.player.card.content.rows]]
+                cells = [{ text = "甲", width = 120 }, { text = "乙", width = 120 }, { text = "第三格" }]
+                [[room.player.card.content.rows]]
+                cells = [{ text = "第二行" }]
+                [[room.player.card.content.rows]]
+                cells = [{ text = "第三行" }]
+                [[room.player.card.content.rows]]
+                cells = [{ text = "第四行" }]
+            """.trimIndent())
+            runOnIdle { assertTrue(ArtThemeController.apply(id)) }
+            input.assertIsFocused().assertTextContains("Sizing draft")
+            assertPlayerSpawnColumnAligned()
+            val list = onNodeWithTag("compactRoomPlayers", useUnmergedTree = true)
+            list.performScrollToNode(hasTestTag("room-player-4"))
+            onNodeWithTag("room-player-4", useUnmergedTree = true).assertIsDisplayed()
+            input.assertIsFocused().assertTextContains("Sizing draft")
+            savePlayerCards("narrow-sized-player-slots.png")
+            runOnIdle { assertTrue(ArtThemeController.apply(null)) }
+            input.assertIsFocused().assertTextContains("Sizing draft")
+        }
+
     @Test fun doubledFontScaleKeepsCompactAvatarsWithin56dpAndHeaderAligned() =
         runDesktopComposeUiTest(width = 1000, height = 900) {
             val id = install("large-font-avatar", playerCardConfig()
@@ -1063,11 +1212,13 @@ class RoomArtThemeUiTest {
         showRoom(WindowManager.Middle)
         onNodeWithText("房主", useUnmergedTree = true).assertIsDisplayed()
         onNodeWithText("战绩：128胜 / 23负", useUnmergedTree = true).assertIsDisplayed()
-        onNodeWithText("进攻专家", useUnmergedTree = true).assertIsDisplayed()
         onNodeWithTag("room-player-avatar-fallback-1", useUnmergedTree = true).assertIsDisplayed()
+        savePlayerCards("green-player-cards.png")
+        onNodeWithTag("compactRoomPlayers", useUnmergedTree = true).performScrollToNode(hasTestTag("room-player-3"))
+        onNodeWithText("进攻专家", useUnmergedTree = true).assertIsDisplayed()
         onNodeWithTag("room-player-avatar-fallback-3", useUnmergedTree = true).assertIsDisplayed()
         waitForColor("room-player-avatar-3", 0xFFA8D562.toInt(), minimum = 5)
-        savePlayerCards("green-player-cards.png")
+        savePlayerCards("green-player-cards-scrolled.png")
         runOnIdle { assertEquals(0, networkAttempts.get()) }
     }
 

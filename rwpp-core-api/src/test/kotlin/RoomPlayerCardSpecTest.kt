@@ -29,6 +29,11 @@ class RoomPlayerCardSpecTest {
         assertTrue(validation.warnings.isEmpty())
         assertFalse(spec.room.player.card.enabled)
         assertEquals(RoomPlayerCardSpec(), spec.room.player.card)
+        assertEquals(RoomPlayerSizingSpec(), spec.room.player.sizing)
+        assertNull(spec.room.player.sizing.nameWidth)
+        assertNull(spec.room.player.sizing.spawnWidth)
+        assertNull(spec.room.player.sizing.teamWidth)
+        assertNull(spec.room.player.sizing.pingWidth)
         assertEquals(spec.room, spec.room.sanitized())
     }
 
@@ -36,8 +41,18 @@ class RoomPlayerCardSpecTest {
     fun explicitCardTablesParseWithoutLegacyStructureWarningsAndRoundTrip() {
         val (spec, validation) = validateThemeToml(meta + """
 
+            [room.player.sizing]
+            minHeight = 180
+            widthPercent = 80
+            nameWidth = 0.5
+            spawnWidth = 0.2
+            teamWidth = 0.15
+            pingWidth = 0.15
             [room.player.card]
             enabled = true
+            columns = 8
+            rowSpacing = 12
+            cellSpacing = 10
             [room.player.card.avatar]
             enabled = true
             size = 56
@@ -49,6 +64,7 @@ class RoomPlayerCardSpecTest {
             [room.player.card.content]
             avatarImage = "room/default.png"
             [[room.player.card.content.rows]]
+            height = 72
             [[room.player.card.content.rows.cells]]
             text = "默认称号"
             iconImage = "room/badge.png"
@@ -57,6 +73,9 @@ class RoomPlayerCardSpecTest {
             borderColor = "#83C74D"
             borderWidth = 1
             corner = 6
+            width = 180
+            height = 60
+            weight = 2.5
             [[room.player.card.content.rows.cells]]
             text = "战绩: 128胜 / 23负"
             [room.player.card.local]
@@ -76,13 +95,21 @@ class RoomPlayerCardSpecTest {
         assertNotNull(spec, validation.errors.joinToString())
         assertTrue(validation.warnings.isEmpty(), validation.warnings.joinToString())
         val card = spec.room.player.card
+        assertEquals(RoomPlayerSizingSpec(180, 80, 0.5f, 0.2f, 0.15f, 0.15f), spec.room.player.sizing)
         assertTrue(card.enabled)
+        assertEquals(8, card.columns)
+        assertEquals(12, card.rowSpacing)
+        assertEquals(10, card.cellSpacing)
         assertEquals(56, card.avatar.size)
         assertEquals("#83C74D", card.avatar.borderColor)
         assertEquals("room/default.png", card.content.avatarImage)
         assertEquals(2, card.content.rows.single().cells.size)
         assertEquals("战绩: 128胜 / 23负", card.content.rows.single().cells[1].text)
         assertEquals("room/badge.png", card.content.rows.single().cells[0].iconImage)
+        assertEquals(72, card.content.rows.single().height)
+        assertEquals(180, card.content.rows.single().cells[0].width)
+        assertEquals(60, card.content.rows.single().cells[0].height)
+        assertEquals(2.5f, card.content.rows.single().cells[0].weight)
         assertEquals("room/local.png", card.local?.avatarImage)
         assertEquals("进攻专家", card.ai?.rows?.single()?.cells?.first()?.text)
         assertEquals("观战中", card.spectator?.rows?.single()?.cells?.single()?.text)
@@ -92,11 +119,18 @@ class RoomPlayerCardSpecTest {
         val (reparsed, reparsedValidation) = validateThemeToml(encoded)
         assertNotNull(reparsed, reparsedValidation.errors.joinToString())
         assertEquals(card, reparsed.room.player.card)
+        assertEquals(spec.room.player.sizing, reparsed.room.player.sizing)
     }
 
     @Test
     fun contentSelectionUsesBirthPositionAndWholeRoleOverrides() {
-        fun content(label: String) = RoomPlayerCardContentSpec(avatarImage = "room/$label.png")
+        fun content(label: String) = RoomPlayerCardContentSpec(
+            avatarImage = "room/$label.png",
+            rows = listOf(RoomPlayerInfoRowSpec(
+                cells = listOf(RoomPlayerInfoCellSpec(text = label, width = label.length * 24, height = 48, weight = 2f)),
+                height = 72,
+            )),
+        )
         val normal = content("normal")
         val local = content("local")
         val host = content("host")
@@ -131,7 +165,7 @@ class RoomPlayerCardSpecTest {
             RoomPlayerInfoRowSpec(),
             RoomPlayerInfoRowSpec(listOf(RoomPlayerInfoCellSpec(text = " \n\t"))),
             RoomPlayerInfoRowSpec(listOf(RoomPlayerInfoCellSpec(iconImage = "../empty.png"))),
-        ) + List(5) { RoomPlayerInfoRowSpec(listOf(RoomPlayerInfoCellSpec()) + List(6) { cell }) })
+        ) + List(14) { RoomPlayerInfoRowSpec(listOf(RoomPlayerInfoCellSpec()) + List(14) { cell }) })
         val raw = RoomPlayerCardSpec(enabled = true,
             avatar = RoomPlayerAvatarSpec(enabled = false, size = 999, corner = 999, borderWidth = -1,
                 borderColor = "wrong", backgroundColor = "wrong", tint = "wrong"),
@@ -151,9 +185,9 @@ class RoomPlayerCardSpecTest {
         val cleanContents = listOf(card.content, card.local!!, card.host!!, card.ai!!, card.spectator!!) + card.slots.values
         cleanContents.forEach { clean ->
             assertEquals("", clean.avatarImage)
-            assertEquals(3, clean.rows.size)
+            assertEquals(12, clean.rows.size)
             clean.rows.forEach { row ->
-                assertEquals(4, row.cells.size)
+                assertEquals(12, row.cells.size)
                 row.cells.forEach {
                     assertEquals("A" + "中".repeat(159), it.text)
                     assertEquals("", it.iconImage)
@@ -168,6 +202,180 @@ class RoomPlayerCardSpecTest {
         assertEquals(card, card.sanitized())
         assertEquals(6, RoomPlayerAvatarSpec(borderWidth = 999).sanitized().borderWidth)
         assertEquals(48, RoomPlayerInfoCellSpec(corner = 999).sanitized().corner)
+    }
+
+    @Test
+    fun playerSizingKeepsNativeDefaultsAndClampsExplicitDimensionsAndFiniteWeights() {
+        assertEquals(RoomPlayerSizingSpec(), RoomPlayerSizingSpec().sanitized())
+        val low = RoomPlayerSizingSpec(
+            minHeight = -1, widthPercent = -1,
+            nameWidth = -1f, spawnWidth = 0f, teamWidth = 0.001f, pingWidth = -Float.MAX_VALUE,
+        ).sanitized()
+        assertEquals(RoomPlayerSizingSpec(48, 50, 0.05f, 0.05f, 0.05f, 0.05f), low)
+        val high = RoomPlayerSizingSpec(
+            minHeight = Int.MAX_VALUE, widthPercent = Int.MAX_VALUE,
+            nameWidth = Float.MAX_VALUE, spawnWidth = 100f, teamWidth = 11f, pingWidth = 10f,
+        ).sanitized()
+        assertEquals(RoomPlayerSizingSpec(480, 100, 10f, 10f, 10f, 10f), high)
+        listOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY).forEach { invalid ->
+            val clean = RoomPlayerSizingSpec(
+                nameWidth = invalid, spawnWidth = invalid, teamWidth = invalid, pingWidth = invalid,
+            ).sanitized()
+            assertEquals(RoomPlayerSizingSpec(nameWidth = 0.6f, spawnWidth = 0.1f, teamWidth = 0.1f, pingWidth = 0.2f), clean)
+            assertEquals(clean, clean.sanitized())
+        }
+        assertEquals(low, low.sanitized())
+        assertEquals(high, high.sanitized())
+    }
+
+    @Test
+    fun explicitDefaultAndPartialColumnWeightsRemainDistinctFromPlatformDefaults() {
+        val (omitted, omittedValidation) = validateThemeToml(meta + """
+
+            [room.player.sizing]
+            minHeight = 120
+        """.trimIndent())
+        assertNotNull(omitted, omittedValidation.errors.joinToString())
+        assertEquals(RoomPlayerSizingSpec(minHeight = 120), omitted.room.player.sizing)
+        val (explicit, explicitValidation) = validateThemeToml(meta + """
+
+            [room.player.sizing]
+            nameWidth = 0.6
+            spawnWidth = 0.1
+            teamWidth = 0.1
+            pingWidth = 0.2
+        """.trimIndent())
+        assertNotNull(explicit, explicitValidation.errors.joinToString())
+        assertTrue(explicitValidation.warnings.isEmpty())
+        assertEquals(RoomPlayerSizingSpec(nameWidth = 0.6f, spawnWidth = 0.1f, teamWidth = 0.1f, pingWidth = 0.2f),
+            explicit.room.player.sizing)
+        assertTrue(explicit.room.player.sizing != RoomPlayerSizingSpec())
+        val (partial, partialValidation) = validateThemeToml(meta + """
+
+            [room.player.sizing]
+            spawnWidth = 0.1
+        """.trimIndent())
+        assertNotNull(partial, partialValidation.errors.joinToString())
+        assertEquals(RoomPlayerSizingSpec(spawnWidth = 0.1f), partial.room.player.sizing)
+        listOf(omitted, explicit, partial).forEach { spec ->
+            assertEquals(spec.room.player.sizing, spec.room.player.sizing.sanitized())
+            val encoded = Toml.encodeToString(ArtThemeSpec.serializer(), spec)
+            val (reparsed, validation) = validateThemeToml(encoded)
+            assertNotNull(reparsed, validation.errors.joinToString())
+            assertEquals(spec.room.player.sizing, reparsed.room.player.sizing)
+        }
+    }
+
+    @Test
+    fun nestedSizingIsAppliedWhileLegacyPlayerDimensionsRemainIgnored() {
+        val (spec, validation) = validateThemeToml(meta + """
+
+            [room.player]
+            rowHeight = 320
+            nameWidth = 8.0
+            spawnWidth = 9.0
+            teamWidth = 10.0
+            pingWidth = 7.0
+            [room.player.sizing]
+            minHeight = 200
+            widthPercent = 75
+            nameWidth = 3.0
+            spawnWidth = 1.0
+            teamWidth = 1.0
+            pingWidth = 2.0
+        """.trimIndent())
+        assertNotNull(spec, validation.errors.joinToString())
+        assertEquals(48, spec.room.player.rowHeight)
+        assertEquals(0.6f, spec.room.player.nameWidth)
+        assertEquals(0.1f, spec.room.player.spawnWidth)
+        assertEquals(0.1f, spec.room.player.teamWidth)
+        assertEquals(0.2f, spec.room.player.pingWidth)
+        assertEquals(RoomPlayerSizingSpec(200, 75, 3f, 1f, 1f, 2f), spec.room.player.sizing)
+        val warning = validation.warnings.single()
+        assertTrue("room.player.rowHeight" in warning)
+        assertTrue("room.player.nameWidth" in warning)
+        assertFalse("room.player.sizing" in warning)
+        assertEquals(spec.room, spec.room.sanitized())
+    }
+
+    @Test
+    fun cardGridAndCellDimensionsPreserveAutomaticDefaultsAndSanitizeAllRoles() {
+        assertEquals(RoomPlayerInfoRowSpec(), RoomPlayerInfoRowSpec().sanitized())
+        assertEquals(RoomPlayerInfoCellSpec(), RoomPlayerInfoCellSpec().sanitized())
+        val cell = RoomPlayerInfoCellSpec(text = "尺寸", width = Int.MAX_VALUE,
+            height = Int.MAX_VALUE, weight = Float.MAX_VALUE)
+        val content = RoomPlayerCardContentSpec(rows = listOf(RoomPlayerInfoRowSpec(listOf(cell), Int.MAX_VALUE)))
+        val card = RoomPlayerCardSpec(
+            columns = Int.MAX_VALUE, rowSpacing = -1, cellSpacing = Int.MAX_VALUE,
+            content = content, local = content, host = content, ai = content, spectator = content,
+            slots = mapOf("1" to content),
+        ).sanitized()
+        assertEquals(12, card.columns)
+        assertEquals(0, card.rowSpacing)
+        assertEquals(24, card.cellSpacing)
+        (listOf(card.content, card.local!!, card.host!!, card.ai!!, card.spectator!!) + card.slots.values).forEach { role ->
+            assertEquals(240, role.rows.single().height)
+            assertEquals(cell.copy(width = 1200, height = 240, weight = 10f), role.rows.single().cells.single())
+        }
+        val lowCell = cell.copy(width = -1, height = -1, weight = -1f).sanitized()
+        assertEquals(24, lowCell.width)
+        assertEquals(24, lowCell.height)
+        assertEquals(0.1f, lowCell.weight)
+        assertEquals(24, RoomPlayerInfoRowSpec(listOf(cell), -1).sanitized().height)
+        val lowCard = card.copy(columns = -1, rowSpacing = Int.MAX_VALUE, cellSpacing = -1).sanitized()
+        assertEquals(1, lowCard.columns)
+        assertEquals(24, lowCard.rowSpacing)
+        assertEquals(0, lowCard.cellSpacing)
+        listOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY).forEach { invalid ->
+            assertEquals(1f, cell.copy(weight = invalid).sanitized().weight)
+        }
+        assertEquals(card, card.sanitized())
+        assertEquals(lowCard, lowCard.sanitized())
+        assertEquals(lowCell, lowCell.sanitized())
+    }
+
+    @Test
+    fun twelveRowsAndCellsParseAndDecorativeCellsSurviveWithoutText() {
+        val row = "{ height = 60, cells = [" + List(12) { index ->
+            "{ text = \"格$index\", width = 80, height = 48, weight = 1.5 }"
+        }.joinToString() + "] }"
+        val (spec, validation) = validateThemeToml(meta + """
+
+            [room.player.card]
+            enabled = true
+            columns = 12
+            [room.player.card.content]
+            rows = [${List(12) { row }.joinToString()}]
+        """.trimIndent())
+        assertNotNull(spec, validation.errors.joinToString())
+        assertTrue(validation.warnings.isEmpty(), validation.warnings.joinToString())
+        val card = spec.room.player.card
+        assertEquals(12, card.content.rows.size)
+        card.content.rows.forEach { infoRow ->
+            assertEquals(60, infoRow.height)
+            assertEquals(12, infoRow.cells.size)
+            assertEquals("格11", infoRow.cells.last().text)
+        }
+        val decorations = listOf(
+            RoomPlayerInfoCellSpec(backgroundColor = "#123456"),
+            RoomPlayerInfoCellSpec(borderColor = "#123456", borderWidth = 1),
+            RoomPlayerInfoCellSpec(width = 80),
+            RoomPlayerInfoCellSpec(height = 48),
+        )
+        val clean = RoomPlayerInfoRowSpec(decorations + listOf(
+            RoomPlayerInfoCellSpec(),
+            RoomPlayerInfoCellSpec(text = " \n\t"),
+            RoomPlayerInfoCellSpec(backgroundColor = "bad", borderColor = "bad"),
+            RoomPlayerInfoCellSpec(contentColor = "#123456", weight = 2f),
+            RoomPlayerInfoCellSpec(iconImage = "../outside.png"),
+        )).sanitized()
+        assertEquals(decorations, clean.cells)
+        assertEquals(clean, clean.sanitized())
+        assertTrue(RoomPlayerCardContentSpec(rows = listOf(RoomPlayerInfoRowSpec(height = 80))).sanitized().rows.isEmpty())
+        val encoded = Toml.encodeToString(ArtThemeSpec.serializer(), spec)
+        val (reparsed, reparsedValidation) = validateThemeToml(encoded)
+        assertNotNull(reparsed, reparsedValidation.errors.joinToString())
+        assertEquals(card, reparsed.room.player.card)
     }
 
     @Test
@@ -205,8 +413,8 @@ class RoomPlayerCardSpecTest {
             val assignments = listOf(
                 "[room.player.card.$section]\navatarImage = \"../outside.png\"",
                 "[room.player.card.$section]\nrows = [{ cells = [{ text = \"徽章\", iconImage = \"https://example.com/icon.png\" }] }]",
-                "[room.player.card.$section]\nrows = [{ cells = [${List(4) { "{ text = \"ok\" }" }.joinToString()}, { iconImage = \"../fifth.png\" }] }]",
-                "[room.player.card.$section]\nrows = [${List(3) { "{ cells = [{ text = \"ok\" }] }" }.joinToString()}, { cells = [{ iconImage = \"../fourth.png\" }] }]",
+                "[room.player.card.$section]\nrows = [{ cells = [${List(12) { "{ text = \"ok\" }" }.joinToString()}, { iconImage = \"../thirteenth-cell.png\" }] }]",
+                "[room.player.card.$section]\nrows = [${List(12) { "{ cells = [{ text = \"ok\" }] }" }.joinToString()}, { cells = [{ iconImage = \"../thirteenth-row.png\" }] }]",
             )
             assignments.forEach { assignment ->
                 val (spec, validation) = validateThemeToml(meta + "\n" + assignment)

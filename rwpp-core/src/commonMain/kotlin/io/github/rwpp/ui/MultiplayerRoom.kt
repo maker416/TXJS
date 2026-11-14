@@ -2507,9 +2507,18 @@ private val RoomPlayerPingWeight = 0.2f
 /** An avatar leaves less room on compact screens; keep the two short column headings readable. */
 private data class RoomPlayerColumnWeights(val name: Float, val spawn: Float, val team: Float, val ping: Float)
 
-private fun roomPlayerColumnWeights(compact: Boolean, style: RoomPlayerSpec) =
-    if (compact && style.card.avatar.enabled) RoomPlayerColumnWeights(.4f, .18f, .18f, .24f)
-    else RoomPlayerColumnWeights(RoomPlayerNameWeight, RoomPlayerSpawnWeight, RoomPlayerTeamWeight, RoomPlayerPingWeight)
+private fun roomPlayerColumnWeights(compact: Boolean, style: RoomPlayerSpec): RoomPlayerColumnWeights {
+    val sizing = style.sizing
+    val customWeights = sizing.nameWidth != null || sizing.spawnWidth != null ||
+        sizing.teamWidth != null || sizing.pingWidth != null
+    return when {
+        customWeights -> RoomPlayerColumnWeights(sizing.nameWidth ?: RoomPlayerNameWeight,
+            sizing.spawnWidth ?: RoomPlayerSpawnWeight, sizing.teamWidth ?: RoomPlayerTeamWeight,
+            sizing.pingWidth ?: RoomPlayerPingWeight)
+        compact && style.card.avatar.enabled -> RoomPlayerColumnWeights(.4f, .18f, .18f, .24f)
+        else -> RoomPlayerColumnWeights(RoomPlayerNameWeight, RoomPlayerSpawnWeight, RoomPlayerTeamWeight, RoomPlayerPingWeight)
+    }
+}
 
 /** 行尾「查看名片」操作格的固定宽度：表头与数据行取同一值，保证列对齐 */
 private val RoomPlayerCardCellWidth = 40.dp
@@ -3270,8 +3279,9 @@ private fun RoomInviteSlotRow(
     val shape = if (themed) RoundedCornerShape(style.corner.dp) else rowShape
     Box(
         modifier = Modifier
-            .fillMaxWidth()
             .padding(if (compact) 2.dp else 5.dp)
+            .fillMaxWidth(style.sizing.widthPercent / 100f)
+            .heightIn(min = style.sizing.minHeight.dp)
             .then(if (themed) {
                 Modifier.roomThemePaint(style.emptyImage, roomThemeColor(style.backgroundColor, Color.Transparent), shape, style.opacity)
                     .roomThemeBorder(style.borderWidth,
@@ -3321,9 +3331,9 @@ private fun RoomPlayerTableHeader(
                 Modifier.roomThemeBorder(style.borderWidth,
                     roomThemeColor(style.borderColor, MaterialTheme.colorScheme.secondary), shape)
             } else Modifier.border(BorderStroke(2.dp, MaterialTheme.colorScheme.secondary), rowShape))
-            .fillMaxWidth(),
+            .fillMaxWidth(style.sizing.widthPercent / 100f),
     ) {
-        Spacer(Modifier.width(style.card.avatarCellWidth(compact)))
+        Spacer(Modifier.width(style.card.avatarCellWidth(compact, style.sizing.minHeight)))
         TableCell(readI18n("multiplayer.room.colName"), columns.name, drawStroke = false, strokeColor = strokeColor)
         TableCell(readI18n("multiplayer.room.colSpawn"), columns.spawn, strokeColor = strokeColor)
         TableCell(readI18n("multiplayer.room.colTeam"), columns.team, strokeColor = strokeColor)
@@ -3372,6 +3382,7 @@ internal fun RoomPlayerTableRow(
                 modifier = Modifier
                     .height(IntrinsicSize.Max)
                     .padding(rowPadding)
+                    .heightIn(min = style.sizing.minHeight.dp)
                     .clip(shape)
                     .then(if (themed) {
                         Modifier.roomThemePaint(roomPlayerBackground(style, player, room),
@@ -3379,7 +3390,7 @@ internal fun RoomPlayerTableRow(
                             .roomThemeBorder(style.borderWidth,
                                 roomThemeColor(style.borderColor, MaterialTheme.colorScheme.primary), shape)
                     } else Modifier.border(BorderStroke(2.dp, MaterialTheme.colorScheme.primary), rowShape))
-                    .fillMaxWidth()
+                    .fillMaxWidth(style.sizing.widthPercent / 100f)
                     .testTag("room-player-$slot")
                     // 任意真人玩家可点（个人名片）；房主/主机/点自己沿用玩家配置弹窗；AI 仅房主可点
                     .clickable(
@@ -3392,6 +3403,7 @@ internal fun RoomPlayerTableRow(
                 RoomPlayerCardBody(style.card, player, room, compact,
                     // A capsule row needs a round avatar; rectangular rows retain the pack's corner.
                     avatarShape = if (!themed && shape == CircleShape) CircleShape else null,
+                    sizing = style.sizing,
                 ) {
                     val baseName = player.name + if (!isDetector && player.startingUnit != -1) {
                         " - ${options.firstOrNull { it.first == player.startingUnit }?.second ?: "Unknown"}"
