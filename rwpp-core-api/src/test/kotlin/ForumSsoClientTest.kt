@@ -30,7 +30,7 @@ class ForumSsoClientTest {
     }
 
     @Test fun nativeHandoffPreservesCsrfAndKeepsBearerOffForumRequests() = runBlocking {
-        val server = MockWebServer()
+        val server = loopbackServer()
         val requests = CopyOnWriteArrayList<RecordedRequest>()
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
@@ -45,13 +45,12 @@ class ForumSsoClientTest {
                 }
             }
         }
-        server.start()
         try {
-            // A non-loopback hostname exercises production HTTP compatibility, not the localhost exception.
             val http = httpWithLocalDns()
-            val forum = ForumSsoClient(server.url("/").toString(), http)
+            val forum = ForumSsoClient(server.loopbackUrl(), http)
             val config = forum.config()
             val proof = ForumProof.create()
+            // UAS retains its deployed HTTP compatibility; the forum uses the explicit loopback exception.
             val sourceUrl = server.url("/").newBuilder().host("uas.example.test").build().toString()
             val ticket = AccountApiClient(sourceUrl, "source-app", http).issueForumTicket("source-token", config.targetAppCode, proof.challenge)
             val prepared = forum.prepare(ticket.ticket, proof.verifier)
@@ -62,7 +61,9 @@ class ForumSsoClientTest {
             assertEquals("http", uasRequest.requestUrl!!.scheme)
             assertTrue(uasRequest.body.readUtf8().contains(proof.challenge))
             val forumRequests = requests.filter { it.path!!.startsWith("/sso/client") }
-            assertTrue(forumRequests.all { it.getHeader("Authorization") == null && it.getHeader("X-App-Secret") == null })
+            assertTrue(forumRequests.all {
+                it.getHeader("Authorization") == null && it.getHeader("X-App-Key") == null && it.getHeader("X-App-Secret") == null
+            })
             forumRequests.filter { it.method == "POST" }.forEach {
                 assertEquals("csrf-proof", it.getHeader("X-CSRF-Token"))
                 assertEquals("native_session=separate", it.getHeader("Cookie"))
@@ -72,17 +73,35 @@ class ForumSsoClientTest {
     }
 
     @Test fun redirectsCannotForwardTicketToAnotherSite() = runBlocking {
-        val server = MockWebServer(); val other = MockWebServer()
-        server.start(); other.start()
+        val server = loopbackServer(); val other = loopbackServer()
         try {
-            server.enqueue(MockResponse().setResponseCode(302).addHeader("Location", other.url("/stolen")))
-            assertFailsWith<IllegalStateException> { ForumSsoClient(server.url("/").toString(), OkHttpClient()).config() }
+            val forum = ForumSsoClient(server.loopbackUrl(), httpWithLocalDns())
+            server.enqueue(MockResponse().setResponseCode(302).addHeader("Location", other.loopbackUrl("/stolen")))
+            val configFailure = assertFailsWith<ForumSsoHttpException> { forum.config() }
+            assertEquals(302, configFailure.statusCode)
             assertEquals(0, other.requestCount)
+
+            val ticket = "a".repeat(64)
+            val verifier = "b".repeat(43)
+            server.enqueue(MockResponse().setHeader("X-CSRF-Token", "csrf-proof"))
+            server.enqueue(MockResponse().setResponseCode(307).addHeader("Location", other.loopbackUrl("/stolen")))
+            val prepareFailure = assertFailsWith<ForumSsoHttpException> { forum.prepare(ticket, verifier) }
+            assertEquals(307, prepareFailure.statusCode)
+            assertEquals("/sso/client/config", server.takeRequest().path)
+            assertEquals("/sso/client", server.takeRequest().path)
+            val prepare = server.takeRequest()
+            assertEquals("POST", prepare.method)
+            assertEquals("/sso/client/prepare", prepare.path)
+            val body = prepare.body.readUtf8()
+            assertTrue(body.contains(ticket) && body.contains(verifier))
+            assertEquals(0, other.requestCount, "A redirect must never replay the ticket and verifier at another site")
         } finally { server.shutdown(); other.shutdown() }
     }
 
     @Test fun publicCleartextAndUrlCredentialsAreRejected() {
         assertFailsWith<ForumSsoRequiresHttpsException> { ForumSsoClient("http://example.com", OkHttpClient()) }
+        // A hostname resolving to loopback must not bypass the literal-loopback HTTP restriction.
+        assertFailsWith<ForumSsoRequiresHttpsException> { ForumSsoClient("http://loopback-alias.example.test", httpWithLocalDns()) }
         assertFailsWith<IllegalArgumentException> { ForumSsoUrls.base("https://user:password@example.com") }
         assertFailsWith<IllegalArgumentException> { ForumSsoUrls.base("https://example.com/?ticket=secret") }
         assertFailsWith<IllegalArgumentException> { ForumSsoUrls.base("https://example.com/#secret") }
@@ -91,12 +110,11 @@ class ForumSsoClientTest {
     }
 
     @Test fun httpUasRedirectCannotForwardBearerAndUrlCredentialsRemainInvalid() = runBlocking {
-        val uas = MockWebServer(); val other = MockWebServer()
-        uas.start(); other.start()
+        val uas = loopbackServer(); val other = loopbackServer()
         try {
             val http = httpWithLocalDns()
             val sourceUrl = uas.url("/").newBuilder().host("uas.example.test").build().toString()
-            uas.enqueue(MockResponse().setResponseCode(302).addHeader("Location", other.url("/stolen")))
+            uas.enqueue(MockResponse().setResponseCode(302).addHeader("Location", other.loopbackUrl("/stolen")))
             assertFailsWith<AccountApiException> { AccountApiClient(sourceUrl, "source-app", http).issueForumTicket("source-token", "forum", ForumProof.create().challenge) }
             assertEquals(0, other.requestCount)
             assertEquals("Bearer source-token", uas.takeRequest().getHeader("Authorization"))
@@ -114,11 +132,10 @@ class ForumSsoClientTest {
     }
 
     @Test fun forumHttpFailureRetainsStatusWithoutResponseBody() = runBlocking {
-        val server = MockWebServer()
-        server.start()
+        val server = loopbackServer()
         try {
             server.enqueue(MockResponse().setResponseCode(503).setBody("secret-token secret-key"))
-            val client = ForumSsoClient(server.url("/").toString(), OkHttpClient())
+            val client = ForumSsoClient(server.loopbackUrl(), httpWithLocalDns())
             val failure = assertFailsWith<ForumSsoHttpException> { client.config() }
             assertEquals(503, failure.statusCode)
             assertFalse(failure.message.orEmpty().contains("secret"))
@@ -128,6 +145,13 @@ class ForumSsoClientTest {
             assertEquals(419, csrfFailure.statusCode)
         } finally { server.shutdown() }
     }
+
+    // InetAddress/MockWebServer may reverse-resolve loopback to a Docker or machine alias on Windows.
+    // Bind and address the literal loopback so production HTTPS validation is exercised consistently.
+    private fun loopbackServer() = MockWebServer().apply { start(InetAddress.getByName("127.0.0.1"), 0) }
+
+    private fun MockWebServer.loopbackUrl(path: String = "/") =
+        url(path).newBuilder().host("127.0.0.1").build().toString()
 
     private fun httpWithLocalDns() = OkHttpClient.Builder().proxy(Proxy.NO_PROXY)
         .dns(object : okhttp3.Dns {
