@@ -90,6 +90,8 @@ kotlin {
 
         val desktopTest by getting {
             dependencies {
+                // 原生浏览器首屏测试复用桌面入口的 WINDOW 浮层兼容处理。
+                runtimeOnly(project(":rwpp-desktop"))
                 implementation(compose.desktop.currentOs)
                 implementation(compose.desktop.uiTestJUnit4)
                 implementation(kotlin("test"))
