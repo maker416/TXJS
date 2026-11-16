@@ -19,10 +19,11 @@ class FeedbackClientTest {
         ZipOutputStream(file.outputStream()).close()
         LogArchive(file,listOf("2026-10-25")).use { archive ->
             MockWebServer().use { server ->
-                server.enqueue(MockResponse().setBody("""{"id":"receipt-1","received_at":"2026-10-25T12:00:00Z"}"""))
+                val id = "12345678-1234-4321-8321-123456789abc"
+                server.enqueue(MockResponse().setBody("""{"id":"$id","received_at":"2026-10-25T12:00:00Z"}"""))
                 server.start()
-                val report = FeedbackReport("id", "进房黑屏", "加入房间后黑屏", "", "android", "Android 15", "1.20.38", "official", "2026-10-25T12:00:00Z",archive.days)
-                assertEquals("receipt-1",FeedbackClient().submit(server.url("/").toString(),report,archive).id)
+                val report = FeedbackReport(id, "进房黑屏", "加入房间后黑屏", "", "android", "Android 15", "1.20.38", "official", "2026-10-25T12:00:00Z",archive.days)
+                assertEquals(id,FeedbackClient().submit(server.url("/").toString(),report,archive).id)
                 val request=server.takeRequest()
                 assertEquals("/v1/feedback",request.path)
                 val body=request.body.readUtf8()

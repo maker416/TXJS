@@ -16,29 +16,47 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.AppContext
+import io.github.rwpp.account.AccountSession
+import io.github.rwpp.config.AccountPreferences
+import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.DEFAULT_ONLINE_CHANNEL
 import io.github.rwpp.config.FeedbackPreferences
 import io.github.rwpp.config.resolveFeedbackApiUrl
+import io.github.rwpp.config.resolveAccountApiUrl
+import io.github.rwpp.config.resolveAccountAppKey
 import io.github.rwpp.diagnostics.RuntimeLogs
 import io.github.rwpp.net.feedback.FeedbackClient
 import io.github.rwpp.net.feedback.FeedbackReport
+import io.github.rwpp.net.feedback.FeedbackCredentials
+import io.github.rwpp.net.feedback.FeedbackHistoryStore
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.projectVersion
 import io.github.rwpp.widget.ExitButton
 import io.github.rwpp.widget.v2.ExpandedCard
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.compose.koinInject
 import java.time.OffsetDateTime
 import java.util.UUID
+import java.security.MessageDigest
 
 @Composable
-fun FeedbackView(onExit: () -> Unit) {
+fun FeedbackView(initialHistory: Boolean = false, onExit: () -> Unit) {
     val appContext = koinInject<AppContext>()
     val preferences = koinInject<FeedbackPreferences>()
+    val accountPreferences = koinInject<AccountPreferences>()
+    val configIO = koinInject<ConfigIO>()
     val endpoint = resolveFeedbackApiUrl(preferences.apiUrl)
+    val session = AccountSession.sessionSnapshotOrNull()
+    val account = AccountSession.user
+    val appKey = resolveAccountAppKey(accountPreferences.appKey)
+    val owner = if (session != null && account != null) MessageDigest.getInstance("SHA-256")
+        .digest("${resolveAccountApiUrl(accountPreferences.apiUrl)}|$appKey|${account.id}".toByteArray())
+        .joinToString("") { "%02x".format(it) } else ""
+    val token = AccountSession.token
     var title by rememberSaveable { mutableStateOf("") }
     var description by rememberSaveable { mutableStateOf("") }
     var contact by rememberSaveable { mutableStateOf("") }
@@ -47,9 +65,22 @@ fun FeedbackView(onExit: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var status by rememberSaveable { mutableStateOf("") }
     var receipt by rememberSaveable { mutableStateOf("") }
+    var showHistory by rememberSaveable { mutableStateOf(initialHistory) }
+    var useAccount by rememberSaveable(owner) { mutableStateOf(owner.isNotEmpty()) }
+    var uploadJob by remember { mutableStateOf<Job?>(null) }
     var summary by remember { mutableStateOf("正在读取日志…") }
     val scope = rememberCoroutineScope()
     val client = remember { FeedbackClient() }
+    val history = remember(preferences, configIO) { FeedbackHistoryStore(preferences, configIO::saveConfig) }
+    LaunchedEffect(endpoint, token, owner) {
+        // 切号和登出立即作废上传回写；已预存的原账号/匿名回执不会串到新账号。
+        uploadJob?.cancel()
+        uploadJob = null
+        busy = false
+        receipt = ""
+        status = ""
+        requestId = UUID.randomUUID().toString()
+    }
     LaunchedEffect(Unit) {
         summary = withContext(Dispatchers.IO) {
             val files = RuntimeLogs.recentFiles()
@@ -65,7 +96,26 @@ fun FeedbackView(onExit: () -> Unit) {
             Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text("问题反馈", style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 48.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = !showHistory, onClick = { showHistory = false }, label = { Text("提交反馈") })
+                    FilterChip(selected = showHistory, onClick = { showHistory = true }, label = { Text("反馈记录") })
+                }
+                if (showHistory) {
+                    key(endpoint, token, owner) {
+                        FeedbackHistoryPanel(endpoint, owner, session, appKey, client, history)
+                    }
+                    return@Column
+                }
                 Text("请描述发生了什么、出现问题前的操作和大致时间，方便我们结合日志排查。")
+                if (session == null) {
+                    Text("未登录也可提交，本机会保存反馈编号以便查询状态。登录后提交可在其他设备查看账号历史。", style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick = { UI.showAccountView = true }, enabled = !busy) { Text("登录账号") }
+                } else {
+                    Row {
+                        Checkbox(useAccount, { useAccount = it; requestId = UUID.randomUUID().toString() }, enabled = !busy)
+                        Text("关联当前账号：${AccountSession.displayName}", modifier = Modifier.padding(top = 10.dp))
+                    }
+                }
                 if (receipt.isNotEmpty()) {
                     Text("反馈已收到\n反馈编号：$receipt", color = MaterialTheme.colorScheme.primary)
                     Button(onClick = { receipt = ""; status = ""; title = ""; description = ""; requestId = UUID.randomUUID().toString() }) {
@@ -92,23 +142,34 @@ fun FeedbackView(onExit: () -> Unit) {
                         onClick = {
                             busy = true
                             status = "正在打包并上传日志，请稍候…"
-                            scope.launch {
+                            val sessionSnapshot = if (useAccount) session else null
+                            val uploadOwner = if (sessionSnapshot != null) owner else ""
+                            val credentials = sessionSnapshot?.let { FeedbackCredentials(appKey, it.token) }
+                            val uploadId = requestId
+                            val uploadTitle = title.trim()
+                            val uploadDescription = description.trim()
+                            val uploadContact = contact.trim()
+                            fun current(): Boolean = endpoint == resolveFeedbackApiUrl(preferences.apiUrl) &&
+                                if (sessionSnapshot != null) AccountSession.isCurrentSession(sessionSnapshot)
+                                else AccountSession.token == token
+                            uploadJob = scope.launch {
                                 try {
                                     val result = withContext(Dispatchers.IO) {
+                                        // 必须先落盘 UUID，响应丢失或取消后仍可查询；落盘失败不发送日志。
+                                        history.record(endpoint, uploadOwner, uploadId)
                                         RuntimeLogs.createArchive().use { archive ->
-                                            client.submit(endpoint, FeedbackReport(requestId, title.trim(), description.trim(), contact.trim(),
+                                            client.submit(endpoint, FeedbackReport(uploadId, uploadTitle, uploadDescription, uploadContact,
                                                 if (appContext.isAndroid()) "android" else "desktop",
                                                 "${System.getProperty("os.name")} ${System.getProperty("os.version")} ${System.getProperty("os.arch")}",
-                                                projectVersion, DEFAULT_ONLINE_CHANNEL, OffsetDateTime.now().toString(), archive.days), archive)
+                                                projectVersion, DEFAULT_ONLINE_CHANNEL, OffsetDateTime.now().toString(), archive.days), archive, credentials)
                                         }
                                     }
-                                    receipt = result.id
-                                    status = ""
+                                    if (current()) { receipt = result.id; status = "" }
                                 } catch (error: CancellationException) {
                                     throw error
                                 } catch (error: Exception) {
-                                    status = error.message ?: "提交失败，请检查网络后重试。"
-                                } finally { busy = false }
+                                    if (current()) status = error.message ?: "提交失败，请检查网络后重试。"
+                                } finally { if (current()) busy = false }
                             }
                         }) { Text(if (busy) "正在提交…" else "提交反馈并上传日志") }
                 }

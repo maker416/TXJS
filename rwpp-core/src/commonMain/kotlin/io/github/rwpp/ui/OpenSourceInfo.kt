@@ -7,6 +7,8 @@
 
 package io.github.rwpp.ui
 
+import androidx.compose.material3.TextButton
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -66,8 +68,9 @@ fun OpenSourceInfoView(
     onExit: () -> Unit,
 ) {
     var showFeedback by rememberSaveable { mutableStateOf(false) }
+    var feedbackHistory by rememberSaveable { mutableStateOf(false) }
     if (showFeedback) {
-        FeedbackView { showFeedback = false }
+        FeedbackView(initialHistory = feedbackHistory) { showFeedback = false }
         return
     }
     ExpandedCard(
@@ -95,7 +98,8 @@ fun OpenSourceInfoView(
 
                 LargeDividingLine { 10.dp }
 
-                FeedbackEntryCard(onClick = { showFeedback = true })
+                FeedbackEntryCard(onClick = { feedbackHistory = false; showFeedback = true })
+                TextButton(onClick = { feedbackHistory = true; showFeedback = true }) { Text("查看我的反馈记录") }
 
                 OfficialQqGroupCard()
 

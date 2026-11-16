@@ -10,6 +10,7 @@ package io.github.rwpp.desktop.impl
 import io.github.rwpp.config.Config
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.ModPlaytimePreferences
+import io.github.rwpp.config.FeedbackPreferences
 import io.github.rwpp.desktop.AbstractConfigIO
 import io.github.rwpp.io.AtomicFileWrite
 import kotlinx.serialization.InternalSerializationApi
@@ -30,6 +31,13 @@ class ConfigIOImpl : AbstractConfigIO() {
     @OptIn(InternalSerializationApi::class)
     @Suppress("UNCHECKED_CAST")
     override fun saveConfig(config: Config) {
+        if (config is FeedbackPreferences) {
+            synchronized(config) {
+                val file = File(System.getProperty("user.dir"), "${config::class.qualifiedName}.toml")
+                AtomicFileWrite.text(file, Toml.encodeToString(FeedbackPreferences.serializer(), config))
+            }
+            return
+        }
         if (config is ModPlaytimePreferences) {
             synchronized(modPlaytimeSaveLock) {
                 // 设置页、saveAllConfig 与 IO 队列保存共用此锁，并在锁内读取同一个当前配置对象。

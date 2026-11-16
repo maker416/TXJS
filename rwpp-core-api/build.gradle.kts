@@ -27,7 +27,7 @@ buildConfig {
         ?: "official"
     buildConfigField("ONLINE_CHANNEL", onlineChannel)
     buildConfigField("FEEDBACK_API_URL", ((findProperty("feedbackApiUrl") as String?)
-        ?: "http://fk.xn--rhqr8xvr4ahqsgka.com:11556").trim().trimEnd('/'))
+        ?: "https://fk.xn--rhqr8xvr4ahqsgka.com").trim().trimEnd('/'))
 }
 
 dependencies {

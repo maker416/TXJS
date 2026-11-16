@@ -509,3 +509,7 @@ Windows 透明菜单优先由 `DesktopLauncherOverlay` 的原生 `ComposeDialog`
 - **关闭按钮与界面稳定性**：共用 `ExitButton` 保持 48dp 命中区并置于正文之上；新增标题/工具栏须为其预留区域。`LauncherOverlayHost` 活动层在退出层之上，退出层不接收点击和返回，其原生弹窗立即撤销。不可关闭的进度弹窗必须显式 `enableDismiss=false`。房间玩家列表始终预留滚动条宽度，禁止按滚动状态动画改变列宽；地图卡片保持固定行高并使用自适应列数。回归与人工检查见 `docs/ui-stability.md`。
 - **PC 开局加载提示**：`MatchStartLoadingOverlay` 必须位于启动器整窗根容器，PC 使用 `inlineDesktop=true` 随 ComposePanel 同步隐藏，Android 继续原生 Dialog。不要改回独立桌面 Dialog：先切换到游戏 Canvas、再 commit RUNNING 时隐藏的启动器会暂停界面帧，原生加载窗可能永远盖在对局上。仅此开局提示与账号根层允许内联遮罩，浏览器及普通/嵌套弹层继续原生 WINDOW。回归跑 `MatchStartLoadingWindowTest`（真实窗口、沙盒/多人、动画开关）与 `MatchStartRecoveryTest`。
 - **Windows 原生弹层**：`DesktopWindowLayers.install()` 必须在首个 `ComposePanel` 创建前执行，为 Compose 1.10.1 的可聚焦 WINDOW 弹层固定宿主视口；禁止恢复动画/缩略图驱动的逐帧 native 窗口裁剪与绘制期间 resize。所有弹层首次显示前取消系统级 `alwaysOnTop`，通过游戏窗口的 owner 关系保持层级并跟随最小化/恢复，禁止覆盖其他前台应用。非聚焦浏览器悬浮控件保留按内容裁剪的小窗口，避免挡住网页。保留 WINDOW 模式覆盖 Chromium 原生子窗口，宿主 resize/move 统一更新视口。该兼容处理校验内部 ABI，升级 Compose 时须检查启动日志 `[UI]` 并运行真实原生窗口回归 `DesktopWindowLayersTest`（支持 `-Prwjs.test.uiScale=1/1.5/2`，覆盖 Win32 层级及最小化/恢复），离屏测试不能代替。
+
+## 玩家反馈账号历史（2026-11-15）
+
+反馈界面在 ui/Feedback.kt、ui/FeedbackHistory.kt，区分提交、账号历史和本机匿名记录。账号上传复用现有 UAS 会话和 X-App-Key/Bearer，服务器核验归属；匿名仍可上传且不会自动认领到后续账号。本地只保存端点/身份分组/UUID，上传前先保存，失败不发送。账号分组不含 Token；切号或登出取消任务，账号历史以身份 key 销毁并校验原会话，防迟到回写。切换账号、服务端点或匿名/关联模式时生成新 UUID，原 UUID 仅属于原提交身份。公开状态只显示状态/时间/公开回复，管理员内部 note 不进入客户端 DTO。默认反馈 URL 改 HTTPS；旧 HTTP 地址仅保留匿名兼容，回环认证直连且不经代理，所有请求禁止重定向。SDK 和回执存储测试为 FeedbackClientTest、FeedbackHistoryStoreTest，Compose 回归为 FeedbackUiTest；两端 Kotlin 编译与公网真机联调分别验收。部署及接口见 docs/feedback.md。

@@ -12,7 +12,14 @@ import org.koin.core.annotation.Single
 
 @Single
 @Serializable
-data class FeedbackPreferences(var apiUrl: String = "") : Config
+data class FeedbackPreferences(
+    var apiUrl: String = "",
+    /** 仅保存回执编号和身份分组，不保存正文、日志、账号密码或 Token。 */
+    var history: List<FeedbackHistoryEntry> = emptyList(),
+) : Config
+
+@Serializable
+data class FeedbackHistoryEntry(val endpoint: String, val owner: String = "", val id: String)
 
 fun resolveFeedbackApiUrl(stored: String): String =
     (System.getProperty("rwjs.feedback.apiUrl") ?: System.getenv("RWJS_FEEDBACK_API_URL")

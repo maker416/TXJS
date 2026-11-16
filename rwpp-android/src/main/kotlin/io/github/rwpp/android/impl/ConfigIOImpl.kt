@@ -12,6 +12,7 @@ import com.corrodinggames.rts.gameFramework.SettingsEngine
 import io.github.rwpp.config.Config
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.ModPlaytimePreferences
+import io.github.rwpp.config.FeedbackPreferences
 import io.github.rwpp.core.Initialization
 import kotlinx.serialization.InternalSerializationApi
 import kotlinx.serialization.KSerializer
@@ -30,6 +31,16 @@ class ConfigIOImpl : ConfigIO {
     @Suppress("unchecked_cast")
     @OptIn(InternalSerializationApi::class)
     override fun saveConfig(config: Config) {
+        if (config is FeedbackPreferences) {
+            synchronized(config) {
+                val preferences = get<Context>().getSharedPreferences(config::class.qualifiedName, Context.MODE_PRIVATE)
+                val source = Toml.encodeToString(FeedbackPreferences.serializer(), config)
+                if (!preferences.edit().putString("src", source).commit()) {
+                    throw java.io.IOException("无法保存本地反馈编号，未发送反馈")
+                }
+            }
+            return
+        }
         if (config is ModPlaytimePreferences) {
             synchronized(modPlaytimeSaveLock) {
                 val live = get<ModPlaytimePreferences>()
