@@ -72,6 +72,7 @@ internal fun LauncherMainMenu(
     settings: () -> Unit,
     mods: () -> Unit,
     resources: () -> Unit,
+    gameplayHall: () -> Unit,
     extension: () -> Unit,
     resourceBrowser: () -> Unit,
     esports: () -> Unit,
@@ -170,7 +171,7 @@ internal fun LauncherMainMenu(
                 if (customGrid) {
                     ThemedLauncherGrid(
                         menuLayout!!, contentWidth,
-                        singlePlayer, multiplayer, resources, mods, settings, openSourceInfo,
+                        singlePlayer, multiplayer, gameplayHall, resources, mods, settings, openSourceInfo,
                         resourceBrowser, esports, extension, primaryAccent,
                     )
                 } else {
@@ -179,15 +180,20 @@ internal fun LauncherMainMenu(
                         LauncherMenuCard(
                             readI18n("menu.singlePlayerGame"), readI18n("menu.home.singleDescription"),
                             singlePlayer, Modifier.weight(1f), primaryHeight, primaryAccent,
-                            prominent = true, compact = compactLandscape, slotId = "singlePlayer",
-                        ) { Icon(Icons.Default.Person, null, Modifier.size(if (compactLandscape) 32.dp else 44.dp), tint = MenuWhite) }
+                            prominent = true, compact = true, slotId = "singlePlayer",
+                        ) { Icon(Icons.Default.Person, null, Modifier.size(if (compactLandscape) 24.dp else 32.dp), tint = MenuWhite) }
                         LauncherMenuCard(
                             readI18n("menu.multiplayer"), readI18n("menu.home.multiDescription"),
                             multiplayer, Modifier.weight(1f), primaryHeight, launcherThemeColor("secondaryContainer", launcherThemeColor("secondary", Color(0xFF365D78))),
-                            prominent = true, compact = compactLandscape, slotId = "multiplayer",
-                        ) { Icon(painterResource(Res.drawable.group_30), null, Modifier.size(if (compactLandscape) 36.dp else 48.dp), tint = MenuWhite) }
+                            prominent = true, compact = true, slotId = "multiplayer",
+                        ) { Icon(painterResource(Res.drawable.group_30), null, Modifier.size(if (compactLandscape) 24.dp else 32.dp), tint = MenuWhite) }
+                        LauncherMenuCard(
+                            readI18n("gameplayHall.title"), readI18n("gameplayHall.menuDescription"),
+                            gameplayHall, Modifier.weight(1f), primaryHeight, launcherThemeColor("tertiaryContainer", Color(0xFF566538)),
+                            prominent = true, compact = true, slotId = "gameplayHall",
+                        ) { Icon(painterResource(Res.drawable.swords_30), null, Modifier.size(if (compactLandscape) 24.dp else 32.dp), tint = MenuWhite) }
                     }
-                    if (narrow) {
+                    if (narrow || (!compactLandscape && contentWidth < 650.dp)) {
                         // 竖屏保留完整标题和 48dp 以上命中区。
                         Column(verticalArrangement = Arrangement.spacedBy(gap)) {
                             LauncherMenuCard(
@@ -198,6 +204,11 @@ internal fun LauncherMainMenu(
                                 readI18n("menu.multiplayer"), readI18n("menu.home.multiDescription"),
                                 multiplayer, Modifier.fillMaxWidth(), 94.dp, launcherThemeColor("secondaryContainer", launcherThemeColor("secondary", Color(0xFF365D78))), true, slotId = "multiplayer",
                             ) { Icon(painterResource(Res.drawable.group_30), null, Modifier.size(44.dp), tint = MenuWhite) }
+                            LauncherMenuCard(
+                                readI18n("gameplayHall.title"), readI18n("gameplayHall.menuDescription"),
+                                gameplayHall, Modifier.fillMaxWidth(), 94.dp, launcherThemeColor("tertiaryContainer", Color(0xFF566538)),
+                                true, slotId = "gameplayHall",
+                            ) { Icon(painterResource(Res.drawable.swords_30), null, Modifier.size(40.dp), tint = MenuWhite) }
                         }
                     } else {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap), content = primaryCards)
@@ -338,6 +349,7 @@ private fun ThemedLauncherGrid(
     width: Dp,
     singlePlayer: () -> Unit,
     multiplayer: () -> Unit,
+    gameplayHall: () -> Unit,
     resources: () -> Unit,
     mods: () -> Unit,
     settings: () -> Unit,
@@ -352,6 +364,7 @@ private fun ThemedLauncherGrid(
     val items = buildList {
         add(LauncherCardItem("singlePlayer", "menu.singlePlayerGame", "menu.home.singleDescription", singlePlayer, true))
         add(LauncherCardItem("multiplayer", "menu.multiplayer", "menu.home.multiDescription", multiplayer, true))
+        add(LauncherCardItem("gameplayHall", "gameplayHall.title", "gameplayHall.menuDescription", gameplayHall, true))
         add(LauncherCardItem("resources", "menu.home.resources", "menu.home.resourcesDescription", resources))
         add(LauncherCardItem("mods", "menu.modsAndMaps", "menu.home.modsDescription", mods))
         add(LauncherCardItem("settings", "menu.settings", "menu.home.settingsDescription", settings))
@@ -415,6 +428,7 @@ private fun LauncherCardIcon(id: String, prominent: Boolean) {
         "settings" -> Icon(Icons.Default.Settings, null, Modifier.size(size), tint = tint)
         else -> Icon(painterResource(when (id) {
             "multiplayer" -> Res.drawable.group_30
+            "gameplayHall" -> Res.drawable.swords_30
             "mods" -> Res.drawable.launcher_maps
             "openSourceInfo" -> Res.drawable.launcher_feedback
             "extensions" -> Res.drawable.extension_30
@@ -455,6 +469,7 @@ private fun LauncherMenuCard(
     val borderColor = if (slot?.showBorder == true) launcherThemeColor("surfaceContainer", Color.White.copy(alpha = 0.55f))
         else if (prominent) accent.copy(alpha = 0.95f) else launcherThemeColor("surfaceContainer", Color.White.copy(alpha = 0.14f))
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
+        val tight = maxWidth < 220.dp
         val cardWidth = (maxWidth * (slot?.widthPercent ?: 100) / 100f).coerceIn(minOf(48.dp, maxWidth), maxWidth)
         Surface(
             onClick = onClick, modifier = Modifier.width(cardWidth).testTag("launcher-card-$slotId"), shape = shape,
@@ -477,17 +492,17 @@ private fun LauncherMenuCard(
                 ) {
                     icon()
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(title, fontSize = if (prominent && compact) 20.sp else if (prominent) 24.sp else if (compact) 13.sp else 15.sp, fontWeight = FontWeight.SemiBold,
+                        Text(title, fontSize = if (prominent && compact && tight) 16.sp else if (prominent && compact) 20.sp else if (prominent) 24.sp else if (compact) 13.sp else 15.sp, fontWeight = FontWeight.SemiBold,
                             color = textColor, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         if (prominent || !compact) {
                             Text(description, fontSize = if (prominent && compact) 11.sp else if (prominent) 13.sp else 10.sp,
                                 color = if (textColor != MenuWhite) textColor.copy(alpha = textColor.alpha * 0.72f) else MenuMuted,
-                                maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                maxLines = if (tight) 1 else 2, overflow = TextOverflow.Ellipsis)
                         }
                     }
                     if (prominent) {
-                        Box(Modifier.size(if (compact) 28.dp else 38.dp).border(1.dp, Color.White.copy(alpha = 0.13f), CircleShape), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Default.KeyboardArrowRight, null, tint = textColor, modifier = Modifier.size(28.dp))
+                        Box(Modifier.size(if (compact) 24.dp else 38.dp).border(1.dp, Color.White.copy(alpha = 0.13f), CircleShape), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.KeyboardArrowRight, null, tint = textColor, modifier = Modifier.size(if (compact) 20.dp else 28.dp))
                         }
                     }
                 }

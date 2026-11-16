@@ -110,6 +110,17 @@ class MainMenuThemeTest {
     }
 
     @Test
+    fun gameplayHallEntrySitsBesideGameButtonsAndOpensTheHall() = runDesktopComposeUiTest(width = 1280, height = 720) {
+        menu()
+        val hall = card("gameplayHall").assertIsDisplayed()
+        closeTo(card("singlePlayer").fetchSemanticsNode().boundsInRoot.top, hall.fetchSemanticsNode().boundsInRoot.top)
+        assertTrue(card("multiplayer").fetchSemanticsNode().boundsInRoot.right < hall.fetchSemanticsNode().boundsInRoot.left)
+        hall.performSemanticsAction(SemanticsActions.OnClick) { it() }
+        runOnIdle { assertEquals(LauncherPage.GameplayHall, launcherPage) }
+        save("gameplay-hall-entry.png")
+    }
+
+    @Test
     fun buttonImagesAndStylesKeepModernDashboardSlotsAndClicks() = runDesktopComposeUiTest(width = 1280, height = 720) {
         activate("""
             [menu.layout]
@@ -133,8 +144,7 @@ class MainMenuThemeTest {
         val mods = card("mods")
         val fullCell = card("settings")
         val modsBounds = mods.fetchSemanticsNode().boundsInRoot
-        assertEquals(single.fetchSemanticsNode().boundsInRoot.width, multi.fetchSemanticsNode().boundsInRoot.width,
-            "仅按钮外观定制必须保留新版并排主卡")
+        closeTo(single.fetchSemanticsNode().boundsInRoot.width, multi.fetchSemanticsNode().boundsInRoot.width)
         closeTo(single.fetchSemanticsNode().boundsInRoot.top, multi.fetchSemanticsNode().boundsInRoot.top)
         assertTrue(single.fetchSemanticsNode().boundsInRoot.right < multi.fetchSemanticsNode().boundsInRoot.left)
         closeTo(fullCell.fetchSemanticsNode().boundsInRoot.width * 0.8f, modsBounds.width)

@@ -417,6 +417,16 @@ fun App(
                     ModsAndMapsView { showModsView = false }
                 }
 
+                GameplayHallPageHost {
+                    GameplayHallView(
+                        onExit = { closePage(LauncherPage.GameplayHall) },
+                        onOpenPage = { page ->
+                            if (page == LauncherPage.Multiplayer) isSinglePlayerGame = false
+                            navigateTo(page)
+                        },
+                    )
+                }
+
                 LauncherPageHost(
                     LauncherPage.ResourceCenter,
                     enter = if (enableAnimations) fadeIn() + slideInHorizontally { it / 12 } else EnterTransition.None,

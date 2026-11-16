@@ -1302,3 +1302,62 @@ graphics = "Preparing graphics…"
 audio = "Preparing audio…"
 interface = "Loading game interface and fonts…"
 engine = "Loading game resources and mods…"
+
+[gameplayHall]
+title = "Play Hub"
+menuDescription = "Discover more ways to play"
+subtitle = "New battlefields. More possibilities."
+back = "Back to home"
+search = "Search games, modes, tags…"
+clear = "Clear search"
+host = "Multiplayer / Host"
+discoveryNote = "New modes. New battlefields.\nYour next adventure starts here."
+tag = "Tags"
+status = "Availability"
+any = "All"
+available = "Available"
+comingSoon = "Coming soon"
+reset = "Reset filters"
+discover = "Discover games"
+entries = "games"
+empty = "No matching games. Try another search or filter."
+emptyFavorites = "No favorites yet. Tap a star on a game card to save it."
+featured = "FEATURED · SNEAK PEEK"
+preview = "View game"
+enter = "Play now"
+favorite = "Add to favorites"
+unfavorite = "Remove from favorites"
+comingSoonDescription = "This game is being prepared and is not available yet. Stay tuned for future updates."
+gotIt = "Got it"
+
+[gameplayHall.categories]
+recommended = "Featured"
+all = "All games"
+extended = "Extra modes"
+original = "Classic modes"
+favorites = "Favorites"
+
+[gameplayHall.tags]
+pvp = "PVP"
+pve = "PVE"
+strategy = "Strategy"
+explore = "Adventure"
+
+[gameplayHall.games.royale]
+title = "Clash Royale Mode"
+description = "Deploy cards · Take down towers · Fast multiplayer battles"
+[gameplayHall.games.pokemon]
+title = "Pokémon Adventure"
+description = "Collect companions · Explore freely · Start a new adventure"
+[gameplayHall.games.extraction]
+title = "Survival Extraction"
+description = "Gather supplies · Fight to survive · Bring the loot home"
+[gameplayHall.games.multiplayer]
+title = "Classic Multiplayer"
+description = "Browse public rooms and join friends for classic real-time strategy."
+[gameplayHall.games.missions]
+title = "Campaign Missions"
+description = "Take on campaign missions and hone your command on different battlefields."
+[gameplayHall.games.survival]
+title = "Survival Challenge"
+description = "Build defenses, expand your base and hold out against waves of enemies."

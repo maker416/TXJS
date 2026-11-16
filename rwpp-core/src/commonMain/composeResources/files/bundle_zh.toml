@@ -1303,3 +1303,62 @@ graphics = "正在准备图形…"
 audio = "正在准备声音…"
 interface = "正在加载游戏界面和字体…"
 engine = "正在加载游戏资源和模组…"
+
+[gameplayHall]
+title = "玩法大厅"
+menuDescription = "发现更多玩法与乐趣"
+subtitle = "发现新战场，探索更多可能"
+back = "返回主界面"
+search = "搜索玩法、模式、标签…"
+clear = "清空搜索"
+host = "联机与建房"
+discoveryNote = "新的玩法，新的战场。\n你的下一场冒险，从这里开始。"
+tag = "游戏标签"
+status = "开放状态"
+any = "全部"
+available = "可进入"
+comingSoon = "即将开放"
+reset = "重置筛选"
+discover = "发现玩法"
+entries = "个玩法"
+empty = "没有找到匹配的玩法，试试其他关键词或筛选。"
+emptyFavorites = "还没有收藏玩法，点击卡片上的星标即可收藏。"
+featured = "精选玩法 · 抢先看"
+preview = "查看玩法"
+enter = "进入玩法"
+favorite = "收藏玩法"
+unfavorite = "取消收藏"
+comingSoonDescription = "这个玩法还在筹备中，暂未开放进入。敬请期待后续更新。"
+gotIt = "知道了"
+
+[gameplayHall.categories]
+recommended = "精选推荐"
+all = "全部玩法"
+extended = "扩展玩法"
+original = "原版玩法"
+favorites = "我的收藏"
+
+[gameplayHall.tags]
+pvp = "PVP"
+pve = "PVE"
+strategy = "策略对抗"
+explore = "探索冒险"
+
+[gameplayHall.games.royale]
+title = "皇室战争玩法"
+description = "卡牌式出兵 · 推塔对抗 · 快节奏多人联机"
+[gameplayHall.games.pokemon]
+title = "宝可梦玩法"
+description = "收集伙伴 · 自由探索 · 开启不一样的冒险"
+[gameplayHall.games.extraction]
+title = "生存撤离"
+description = "搜集资源 · 战术生存 · 把战利品带回基地"
+[gameplayHall.games.multiplayer]
+title = "原版多人联机"
+description = "浏览公开房间，和朋友一起展开经典即时战略对抗。"
+[gameplayHall.games.missions]
+title = "战役任务"
+description = "挑战精心设计的战役，在不同战场中磨练指挥技巧。"
+[gameplayHall.games.survival]
+title = "生存挑战"
+description = "修筑防线、发展基地，迎战一波又一波的敌军。"

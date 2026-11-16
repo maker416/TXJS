@@ -119,7 +119,7 @@ data class MenuButtonSpec(
  */
 val MENU_BUTTON_IDS: Set<String> = setOf(
     "singlePlayer", "multiplayer", "resourceBrowser", "esports", "mods", "settings", "openSourceInfo",
-    "resources", "extensions",
+    "resources", "extensions", "gameplayHall",
 )
 
 /**

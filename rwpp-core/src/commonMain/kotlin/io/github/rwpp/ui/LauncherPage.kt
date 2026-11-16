@@ -32,6 +32,8 @@ import kotlin.reflect.KProperty
 sealed interface LauncherPage {
     /** 主菜单（无页面打开时的落点）。 */
     data object MainMenu : LauncherPage
+    /** 更多玩法的第二主界面。 */
+    data object GameplayHall : LauncherPage
     /** 单人游戏子菜单（战役/生存/遭遇战/沙盒入口）。 */
     data object SinglePlayer : LauncherPage
     /** 任务（战役）页。 */

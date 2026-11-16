@@ -235,6 +235,7 @@ open class UIProvider {
             multiplayer = multiplayer, singlePlayer = singlePlayer,
             settings = settings, mods = mods,
             resources = { navigateTo(LauncherPage.ResourceCenter) },
+            gameplayHall = { navigateTo(LauncherPage.GameplayHall) },
             extension = extension, resourceBrowser = resourceBrowser, esports = esports,
             openSourceInfo = openSourceInfo, account = account, friends = friends,
         )
