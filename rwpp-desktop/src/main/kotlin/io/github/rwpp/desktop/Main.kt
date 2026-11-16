@@ -270,6 +270,7 @@ fun swingApplication() = SwingUtilities.invokeLater {
     val menuFrameQueued = AtomicBoolean()
     val startupPanel = ComposePanel().apply { isOpaque = true }
     val startupSettings = appKoin.get<Settings>()
+    var menuInputReady by mutableStateOf(!startupSettings.enableAnimations)
     val initialMessage = if (LanguageHelper.resolveEffectiveLanguage(startupSettings) == "zh")
         "正在准备启动器…" else "Preparing launcher…"
     var isLoading by mutableStateOf(true)
@@ -314,8 +315,6 @@ fun swingApplication() = SwingUtilities.invokeLater {
                         val game = appKoin.get<Game>()
                         StartupTiming.measure("desktop.engine") { game.load { message = it } }
                         withContext(Dispatchers.Main.immediate) {
-                            (gameCanvas as? DesktopGameCanvas)?.startupInputEnabled = true
-                            gameCanvas.isFocusable = true
                             GameLoadedEvent().broadcastIn()
                             isLoading = false
                             StartupTiming.mark("desktop.menuReady")
@@ -391,7 +390,13 @@ fun swingApplication() = SwingUtilities.invokeLater {
     }
 
     val menuContent: @Composable () -> Unit = {
-        if (!isLoading) {
+        if (!isLoading && !menuInputReady) {
+            DesktopMenuInputWarmup(
+                message = initialMessage,
+                inputComponent = { launcherOverlay?.contentComponent ?: panel },
+                onFinished = { menuInputReady = true },
+            )
+        } else if (!isLoading) {
             val settings = koinInject<Settings>()
             val isPremium = true
             var backgroundImagePath by remember { mutableStateOf(settings.backgroundImagePath ?: "") }
@@ -423,6 +428,8 @@ fun swingApplication() = SwingUtilities.invokeLater {
                         } == true
                         startupOverlay?.dispose()
                         startupOverlayRef = null
+                        (gameCanvas as? DesktopGameCanvas)?.startupInputEnabled = true
+                        gameCanvas.isFocusable = true
                         if (startupHadFocus) launcherOverlay?.focusMenu()
                         diagnostics.close()
                     }
