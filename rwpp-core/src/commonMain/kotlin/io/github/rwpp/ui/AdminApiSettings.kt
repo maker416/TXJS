@@ -60,6 +60,7 @@ internal fun AdminApiSettings(unlocked: Boolean, onUnlock: () -> Unit) {
     val multiplayer = koinInject<MultiplayerPreferences>()
     val playtime = koinInject<ModPlaytimePreferences>()
     val feedback = koinInject<FeedbackPreferences>()
+    val onlinePresence = koinInject<OnlinePresencePreferences>()
     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(readI18n("settings.adminApiHint"), style = MaterialTheme.typography.bodySmall)
         ApiAddressField(readI18n("settings.adminAccountApi"), account.apiUrl) { account.apiUrl = it }
@@ -67,6 +68,7 @@ internal fun AdminApiSettings(unlocked: Boolean, onUnlock: () -> Unit) {
         ApiAddressField(readI18n("settings.adminRoomListApi"), multiplayer.roomListApiUrls) { multiplayer.roomListApiUrls = it }
         ApiAddressField(readI18n("settings.adminModSyncApi"), multiplayer.modSyncApiUrls) { multiplayer.modSyncApiUrls = it }
         ApiAddressField(readI18n("settings.adminPlaytimeApi"), playtime.apiUrl) { playtime.apiUrl = it }
+        ApiAddressField(readI18n("settings.adminOnlinePresenceApi"), onlinePresence.apiUrl) { onlinePresence.apiUrl = it }
         ApiAddressField(readI18n("settings.adminFeedbackApi"), feedback.apiUrl) { feedback.apiUrl = it }
     }
 }

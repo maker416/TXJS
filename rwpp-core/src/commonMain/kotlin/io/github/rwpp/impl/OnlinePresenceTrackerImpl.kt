@@ -11,7 +11,7 @@ import com.eclipsesource.json.Json
 import io.github.rwpp.AppContext
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.DEFAULT_ONLINE_CHANNEL
-import io.github.rwpp.config.DEFAULT_ONLINE_PRESENCE_API_URL
+import io.github.rwpp.config.OnlinePresencePreferences
 import io.github.rwpp.config.normalizeOnlinePresenceBaseUrl
 import io.github.rwpp.core.Initialization
 import io.github.rwpp.logger
@@ -47,10 +47,14 @@ class OnlinePresenceTrackerImpl : OnlinePresenceTracker, KoinComponent {
     @Volatile
     private var deviceId: String? = null
 
-    private val baseUrl: String
-        get() = normalizeOnlinePresenceBaseUrl(DEFAULT_ONLINE_PRESENCE_API_URL)
+    // 同一进程固定服务节点，设置页编辑地址不会把已有会话的心跳发往新节点。
+    private val baseUrl: String by lazy {
+        normalizeOnlinePresenceBaseUrl(get<OnlinePresencePreferences>().apiUrl)
+    }
 
     override fun init() {
+        // 两端均在读取持久化配置后初始化；新地址在重启后生效。
+        baseUrl
         val appContext = get<AppContext>()
         appContext.onExit { stop() }
         startHeartbeatLoop()
