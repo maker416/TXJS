@@ -17,6 +17,8 @@ import io.github.rwpp.game.mod.KeepConnectedReload
 import io.github.rwpp.game.mod.Mod
 import io.github.rwpp.game.mod.ModLoadSafety
 import io.github.rwpp.game.mod.ModManager
+import io.github.rwpp.game.mod.NetworkModCache
+import io.github.rwpp.game.mod.NetworkModDescriptor
 import io.github.rwpp.game.mod.ModReloadSelection
 import io.github.rwpp.game.mod.ReloadAbortToVanilla
 import io.github.rwpp.game.mod.deleteModFileSafely
@@ -29,6 +31,8 @@ import io.github.rwpp.widget.clearProtectedModLoadHint
 import io.github.rwpp.widget.refreshProtectedModLoadHint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import org.koin.core.annotation.Single
 import org.koin.core.component.get
 import java.io.File
@@ -40,6 +44,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 class ModManagerImpl : ModManager {
     private val game: Game = get()
     private val isReloadingMods = AtomicBoolean(false)
+
+    override suspend fun isLoadedModSetExact(descriptors: List<NetworkModDescriptor>, cache: NetworkModCache): Boolean =
+        withContext(Dispatchers.IO) {
+            val context = currentCoroutineContext()
+            !isReloadingMods.get() && AndroidLoadedModSnapshot.isExact(getAllMods(), descriptors, cache, context::ensureActive)
+        }
 
     private companion object {
         /** 等待游戏主循环开始执行已投递 action 的超时；主循环存活时一帧内即会开始。 */
@@ -58,6 +68,7 @@ class ModManagerImpl : ModManager {
     ) {
         io.github.rwpp.game.GameStartSafety.requireCanReload()
         check(isReloadingMods.compareAndSet(false, true)) { "模组仍在重载，请等待完成" }
+        val snapshotToken = AndroidLoadedModSnapshot.beginLoad()
         try {
             game.invalidateModPlaytimeSnapshot()
             ReloadModEvent().broadcastIn()
@@ -67,6 +78,7 @@ class ModManagerImpl : ModManager {
             if (forceImmediate) reload()
             else runOnGameThread(reload)
             game.getAllMaps(true)
+            AndroidLoadedModSnapshot.completeLoad(snapshotToken, getAllMods())
         } finally {
             game.invalidateModPlaytimeSnapshot()
             try { ReloadModFinishedEvent().broadcastIn() } finally {
@@ -81,6 +93,7 @@ class ModManagerImpl : ModManager {
      * 不把 `bW.a()` 投进 `i.a(float,int)`，否则主循环被占满网络保活停摆。
      */
     override suspend fun modReloadKeepConnected(enabledByFileName: Map<String, Boolean>?) {
+        AndroidLoadedModSnapshot.invalidate()
         io.github.rwpp.game.GameStartSafety.requireCanReload()
         if (!isReloadingMods.compareAndSet(false, true)) {
             error("模组仍在重载，请等待完成")
@@ -124,6 +137,7 @@ class ModManagerImpl : ModManager {
     }
 
     override suspend fun modReloadKeepConnectedVanillaOnly() {
+        AndroidLoadedModSnapshot.invalidate()
         if (isReloadingMods.get() && KeepConnectedReload.active) {
             logger.info("[MODSYNC] vanilla-only fallback delegated to in-flight keep-connected reload")
             return
@@ -315,6 +329,7 @@ class ModManagerImpl : ModManager {
     }
 
     private suspend fun auxiliaryReload(stage: String, action: () -> Unit) {
+        AndroidLoadedModSnapshot.invalidate()
         io.github.rwpp.game.GameStartSafety.requireCanReload()
         check(isReloadingMods.compareAndSet(false, true)) { "模组仍在重载，请等待完成" }
         try {

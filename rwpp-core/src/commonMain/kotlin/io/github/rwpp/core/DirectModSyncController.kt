@@ -39,13 +39,43 @@ import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 sealed interface DirectJoinSyncResult {
-    data class Applied(val reservation: DirectJoinReservation? = null) : DirectJoinSyncResult
+    data class Applied(val reservation: DirectJoinReservation? = null, val resume: DirectResumeConnection? = null,
+        val resumeInstance: String? = null) : DirectJoinSyncResult
     data object Unsupported : DirectJoinSyncResult
     data class Failed(val failure: ConnectionFailure) : DirectJoinSyncResult
+}
+
+class DirectResumeConnection internal constructor(private val endpoint: DirectJoinEndpoint, private val secret: ByteArray) {
+    suspend fun openCredentials(): AutoCloseable =
+        io.github.rwpp.net.sync.direct.DirectJoinReservationCredentials.openResume(endpoint, secret)
+    fun clear() = secret.fill(0)
+    override fun toString(): String = "DirectResumeConnection(<redacted>)"
+}
+
+private object DirectResumeStore {
+    private val entries = LinkedHashMap<DirectJoinEndpoint, Pair<String, ByteArray>>()
+    @Synchronized fun observe(endpoint: DirectJoinEndpoint, instance: String) {
+        val old = entries[endpoint] ?: return
+        if (old.first != instance) { entries.remove(endpoint); old.second.fill(0) }
+    }
+    @Synchronized fun put(endpoint: DirectJoinEndpoint, instance: String, secret: ByteArray) {
+        entries.remove(endpoint)?.second?.fill(0)
+        entries[endpoint] = instance to secret.copyOf()
+        while (entries.size > 32) {
+            val key = entries.keys.first()
+            entries.remove(key)?.second?.fill(0)
+        }
+    }
+    @Synchronized fun get(endpoint: DirectJoinEndpoint, instance: String): DirectResumeConnection? =
+        entries[endpoint]?.takeIf { it.first == instance }?.let { DirectResumeConnection(endpoint, it.second.copyOf()) }
+    @Synchronized fun revoke(endpoint: DirectJoinEndpoint) { entries.remove(endpoint)?.second?.fill(0) }
 }
 
 /** 可替换的引擎边界，便于在不启动原版连接的情况下验证 Direct 编排。 */
@@ -56,6 +86,7 @@ interface DirectModSyncEnvironment {
     /** Only a successfully loaded content snapshot may bypass engine parsing. */
     suspend fun isLoadedModSetExact(descriptors: List<NetworkModDescriptor>): Boolean = false
     suspend fun applyMods(descriptors: List<NetworkModDescriptor>)
+    /** Reads the official packet 110 handshake checksum cache. */
     fun getUnitsChecksum(): Int
     fun refreshHandshakeChecksumCache()
 }
@@ -122,13 +153,22 @@ class DirectModSyncController(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
+            if (error is DirectModSyncServerException && error.code == DirectModSyncErrorCode.RESUME_INVALID) {
+                DirectResumeStore.revoke(endpoint)
+            }
             return failed(error, ConnectionFailureStage.SYNC_MANIFEST)
+        }
+
+        if (first.protocolVersion == 3) {
+            DirectResumeStore.observe(endpoint, first.serverInstance)
+            if (first.lobby) DirectResumeStore.revoke(endpoint)
         }
 
         var stage = ConnectionFailureStage.SYNC_MANIFEST
         var reservation: DirectJoinReservation? = null
         var handedOff = false
         return try {
+            if (!first.lobby) return synchronizeNonLobby(first, transport, endpoint)
             prepare(first)
             if (first.protocolVersion >= 2) {
                 loadingContext.message(readI18n("modSync.directReserving", I18nType.RWPP))
@@ -189,7 +229,10 @@ class DirectModSyncController(
                 requireSameContent(second, finalManifest)
                 currentCoroutineContext().ensureActive()
                 reservation?.renewNow()
-                return DirectJoinSyncResult.Applied(reservation)
+                val instance = finalManifest.serverInstance.takeIf {
+                    finalManifest.protocolVersion == 3 && finalManifest.capabilities and 1 != 0
+                }
+                return DirectJoinSyncResult.Applied(reservation, resumeInstance = instance)
             }
             val result = reservation?.protect { synchronize() } ?: synchronize()
             handedOff = result is DirectJoinSyncResult.Applied
@@ -207,6 +250,95 @@ class DirectModSyncController(
             failed(error, stage)
         } finally {
             if (!handedOff) reservation?.close()
+        }
+    }
+
+    private suspend fun synchronizeNonLobby(first: DirectModManifest, transport: DirectModSyncTransport, endpoint: DirectJoinEndpoint): DirectJoinSyncResult {
+        validateManifest(first)
+        if (first.protocolVersion != 3 || first.phase != "match" || first.capabilities and 1 == 0 || first.serverInstance.isBlank()) {
+            throw DirectModSyncServerException(DirectModSyncErrorCode.RESUME_UNSUPPORTED)
+        }
+        val resume = DirectResumeStore.get(endpoint, first.serverInstance)
+            ?: throw DirectModSyncServerException(DirectModSyncErrorCode.RESUME_INVALID)
+        try {
+        if (first.status != "ready") throw DirectModSyncServerException(DirectModSyncErrorCode.PREPARING)
+        if (first.gameVersion != environment.gameVersion) throw DirectSyncFailure(ConnectionFailure(
+            ConnectionFailureReason.DATA_MISMATCH, ConnectionFailureStage.SYNC_MANIFEST,
+            details = "Direct game protocol version mismatch",
+        ))
+        if (!environment.isLoadedModSetExact(first.mods)) throw DirectSyncFailure(ConnectionFailure(
+            ConnectionFailureReason.MISSING_MODS, ConnectionFailureStage.SYNC_APPLY,
+            details = "Cannot verify currently loaded mods for a non-lobby room",
+        ))
+        if (first.hostUnitsChecksum == -1L || environment.getUnitsChecksum().toLong() != first.hostUnitsChecksum) {
+            throw DirectSyncFailure(ConnectionFailure(
+                ConnectionFailureReason.CHECKSUM_MISMATCH, ConnectionFailureStage.SYNC_APPLY,
+                details = "Cannot verify unit checksum for a non-lobby room",
+            ))
+        }
+        val finalManifest = transport.getManifest()
+        validateManifest(finalManifest)
+        if (finalManifest.status != "ready") throw DirectModSyncServerException(DirectModSyncErrorCode.PREPARING)
+        if (finalManifest.lobby) throw DirectSyncFailure(ConnectionFailure(
+            ConnectionFailureReason.MANIFEST_CHANGED, ConnectionFailureStage.SYNC_MANIFEST,
+            details = "Room returned to lobby during verification",
+        ))
+        requireSameContent(first, finalManifest)
+        if (!environment.isLoadedModSetExact(finalManifest.mods) ||
+            environment.getUnitsChecksum().toLong() != finalManifest.hostUnitsChecksum) {
+            throw DirectSyncFailure(ConnectionFailure(
+                ConnectionFailureReason.MANIFEST_CHANGED, ConnectionFailureStage.SYNC_MANIFEST,
+                details = "Loaded content changed during verification",
+            ))
+        }
+        currentCoroutineContext().ensureActive()
+        environment.refreshHandshakeChecksumCache()
+        return DirectJoinSyncResult.Applied(resume = resume)
+        } catch (error: Throwable) {
+            resume.clear()
+            throw error
+        }
+    }
+
+    suspend fun saveResumeGrant(reservation: DirectJoinReservation, instance: String) {
+        DirectResumeStore.revoke(reservation.endpoint)
+        var lastFailure: Exception? = null
+        try {
+            withTimeout(3_000) {
+                while (true) {
+                    val grant = try {
+                        reservation.issueResume()
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        val retryable = when (error) {
+                            is DirectModSyncServerException -> error.code == DirectModSyncErrorCode.NOT_READY
+                            is DirectModSyncUnsupportedException -> false
+                            is java.io.IOException -> true
+                            else -> false
+                        }
+                        if (!retryable) throw error
+                        lastFailure = error
+                        delay(250)
+                        continue
+                    }
+                    try {
+                        if (grant.serverInstance != instance) {
+                            throw java.io.IOException("Direct resume grant instance mismatch after registration")
+                        }
+                        currentCoroutineContext().ensureActive()
+                        DirectResumeStore.put(reservation.endpoint, instance, grant.secret)
+                        return@withTimeout
+                    } finally { grant.secret.fill(0) }
+                }
+            }
+        } catch (error: TimeoutCancellationException) {
+            currentCoroutineContext().ensureActive()
+            throw java.io.IOException("Already registered, but resume grant timed out; disconnecting", lastFailure ?: error)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            throw java.io.IOException("Already registered, but resume grant failed; disconnecting", error)
         }
     }
 

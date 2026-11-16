@@ -30,9 +30,183 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class DirectModSyncControllerTest {
+    @Test
+    fun resumeGrantRetriesNotReadyWithTheSameAdmittedProof() = runTest {
+        val transport = FakeTransport()
+        transport.onRenew = { lease().copy(state = "admitted") }
+        transport.onIssue = { if (transport.issueCalls == 1) throw DirectModSyncServerException(DirectModSyncErrorCode.NOT_READY)
+            io.github.rwpp.net.sync.direct.DirectResumeGrant("instance-a", ByteArray(32) { 7 }) }
+        val reservation = DirectJoinReservation.acquire(DirectJoinEndpoint("localhost", 6021), transport, "scope")
+        try {
+            reservation.awaitAdmission()
+            val subject = controller(FakeEnvironment(), transport)
+            subject.saveResumeGrant(reservation, "instance-a")
+            assertEquals(2, transport.issueCalls)
+            assertEquals(listOf("scope", "scope"), transport.issueScopes)
+            assertTrue(transport.issueTokens[0].contentEquals(transport.issueTokens[1]))
+            val match = manifest(emptyList()).copy(protocolVersion = 3, lobby = false, phase = "match",
+                capabilities = 1, serverInstance = "instance-a", hostUnitsChecksum = 123)
+            val reconnect = FakeTransport().also { repeat(2) { _ -> it.manifestResults += { match } } }
+            val environment = FakeEnvironment().also { it.loaded = true; it.checksum = 123 }
+            val result = assertIs<DirectJoinSyncResult.Applied>(controller(environment, reconnect).preJoinSync("localhost:6021", LoadingContext {}))
+            checkNotNull(result.resume).clear()
+        } finally { reservation.close() }
+    }
+
+    @Test
+    fun resumeGrantRetryDeadlineAndAuthoritativeErrorsFailClosed() = runTest {
+        val transport = FakeTransport()
+        transport.onRenew = { lease().copy(state = "admitted") }
+        transport.onIssue = { throw DirectModSyncServerException(DirectModSyncErrorCode.NOT_READY) }
+        val reservation = DirectJoinReservation.acquire(DirectJoinEndpoint("localhost", 6022), transport, "scope")
+        try {
+            reservation.awaitAdmission()
+            val subject = controller(FakeEnvironment(), transport)
+            val failure = assertFailsWith<java.io.IOException> { subject.saveResumeGrant(reservation, "instance-a") }
+            assertTrue(failure.message.orEmpty().contains("timed out"))
+            assertTrue(transport.issueCalls > 1)
+            assertTrue(transport.issueScopes.all { it == "scope" })
+            assertTrue(transport.issueTokens.all { it.contentEquals(transport.issueTokens.first()) })
+            transport.issueCalls = 0
+            transport.onIssue = { throw DirectModSyncServerException(DirectModSyncErrorCode.RESUME_INVALID) }
+            assertFailsWith<java.io.IOException> { subject.saveResumeGrant(reservation, "instance-a") }
+            assertEquals(1, transport.issueCalls)
+        } finally { reservation.close() }
+    }
+
+    @Test
+    fun resumeGrantRetriesIoAndBoundsAnInFlightRequest() = runTest {
+        val transport = FakeTransport()
+        transport.onRenew = { lease().copy(state = "admitted") }
+        val reservation = DirectJoinReservation.acquire(DirectJoinEndpoint("localhost", 6024), transport, "scope")
+        try {
+            reservation.awaitAdmission()
+            val subject = controller(FakeEnvironment(), transport)
+            transport.onIssue = {
+                if (transport.issueCalls == 1) throw java.io.IOException("temporary")
+                io.github.rwpp.net.sync.direct.DirectResumeGrant("instance-a", ByteArray(32) { 7 })
+            }
+            subject.saveResumeGrant(reservation, "instance-a")
+            assertEquals(2, transport.issueCalls)
+            assertTrue(transport.issueTokens[0].contentEquals(transport.issueTokens[1]))
+            transport.issueCalls = 0
+            transport.onIssue = { delay(10_000); error("request should have timed out") }
+            val failure = assertFailsWith<java.io.IOException> { subject.saveResumeGrant(reservation, "instance-a") }
+            assertTrue(failure.message.orEmpty().contains("timed out"))
+            assertEquals(1, transport.issueCalls)
+        } finally { reservation.close() }
+    }
+
+    @Test
+    fun cancellingResumeGrantRetryStopsFurtherRequests() = runTest {
+        val transport = FakeTransport()
+        transport.onRenew = { lease().copy(state = "admitted") }
+        transport.onIssue = { throw java.io.IOException("temporary") }
+        val reservation = DirectJoinReservation.acquire(DirectJoinEndpoint("localhost", 6023), transport, "scope")
+        try {
+            reservation.awaitAdmission()
+            val work = async { controller(FakeEnvironment(), transport).saveResumeGrant(reservation, "instance-a") }
+            runCurrent()
+            assertEquals(1, transport.issueCalls)
+            work.cancelAndJoin()
+            advanceTimeBy(4_000)
+            runCurrent()
+            assertTrue(work.isCancelled)
+            assertEquals(1, transport.issueCalls)
+        } finally { reservation.close() }
+    }
+    @Test
+    fun v3GrantRequiresAdmissionAndIsBoundToEndpointAndInstance() = runBlocking<Unit> {
+        val lobby = manifest(emptyList()).copy(protocolVersion = 3, hostUnitsChecksum = 123,
+            serverInstance = "instance-a", phase = "lobby", capabilities = 1)
+        val transport = FakeTransport().also { repeat(3) { _ -> it.manifestResults += { lobby } } }
+        val environment = FakeEnvironment().also { it.loaded = true; it.checksum = 123 }
+        val subject = controller(environment, transport)
+        val result = assertIs<DirectJoinSyncResult.Applied>(subject.preJoinSync("localhost:6011", LoadingContext {}))
+        val reservation = checkNotNull(result.reservation)
+        try {
+            assertFailsWith<java.io.IOException> { subject.saveResumeGrant(reservation, "instance-a") }
+            transport.onRenew = { lease().copy(state = "admitted") }
+            reservation.awaitAdmission()
+            subject.saveResumeGrant(reservation, "instance-a")
+        } finally { reservation.close() }
+        val match = lobby.copy(lobby = false, phase = "match", scope = "match-generation")
+        environment.checksumReads = 0
+        environment.loadedChecks = 0
+        val reconnect = FakeTransport().also { repeat(2) { _ -> it.manifestResults += { match } } }
+        val restored = assertIs<DirectJoinSyncResult.Applied>(controller(environment, reconnect).preJoinSync("localhost:6011", LoadingContext {}))
+        checkNotNull(restored.resume).clear()
+        assertEquals(2, environment.checksumReads, "Recovery must reread the official handshake checksum after manifest verification")
+        assertEquals(2, environment.loadedChecks, "Recovery must recheck the loaded snapshot after manifest verification")
+        environment.checksumReads = 0
+        environment.onChecksum = { if (environment.checksumReads == 2) 124 else 123 }
+        val changedChecksum = FakeTransport().also { repeat(2) { _ -> it.manifestResults += { match } } }
+        val mismatch = assertIs<DirectJoinSyncResult.Failed>(controller(environment, changedChecksum).preJoinSync("localhost:6011", LoadingContext {}))
+        assertEquals(ConnectionFailureReason.MANIFEST_CHANGED, mismatch.failure.reason)
+        assertEquals(2, environment.checksumReads)
+        environment.onChecksum = null
+        val wrongEndpoint = FakeTransport().also { it.manifestResults += { match } }
+        assertIs<DirectJoinSyncResult.Failed>(controller(environment, wrongEndpoint).preJoinSync("localhost:6012", LoadingContext {}))
+        val wrongInstance = FakeTransport().also { it.manifestResults += { match.copy(serverInstance = "instance-b") } }
+        assertIs<DirectJoinSyncResult.Failed>(controller(environment, wrongInstance).preJoinSync("localhost:6011", LoadingContext {}))
+        val stale = FakeTransport().also { it.manifestResults += { match } }
+        assertIs<DirectJoinSyncResult.Failed>(controller(environment, stale).preJoinSync("localhost:6011", LoadingContext {}))
+    }
+
+    @Test
+    fun v3UnavailableAuthorityStillAllowsLobbySync() = runBlocking<Unit> {
+        val lobby = manifest(emptyList()).copy(protocolVersion = 3, phase = "unavailable")
+        val transport = FakeTransport().also { repeat(3) { _ -> it.manifestResults += { lobby } } }
+        val result = assertIs<DirectJoinSyncResult.Applied>(controller(FakeEnvironment(), transport).preJoinSync("localhost:6013", LoadingContext {}))
+        assertEquals(null, result.resumeInstance)
+        checkNotNull(result.reservation).close()
+    }
+    @Test
+    fun legacyNonLobbyNeverFallsThroughToOrdinaryConnection() = runBlocking<Unit> {
+        for (version in 1..2) {
+            val value = manifest(emptyList()).copy(protocolVersion = version, lobby = false, hostUnitsChecksum = 123)
+            val transport = FakeTransport().also { repeat(2) { _ -> it.manifestResults += { value } } }
+            val environment = FakeEnvironment().also { it.loaded = true; it.checksum = 123 }
+            val result = assertIs<DirectJoinSyncResult.Failed>(controller(environment, transport).preJoinSync("localhost", LoadingContext {}))
+            assertEquals(ConnectionFailureReason.SYNC_FAILED, result.failure.reason)
+            assertEquals(0, transport.reserveCalls)
+            assertTrue(transport.downloads.isEmpty())
+            assertTrue(environment.applied.isEmpty())
+            assertFalse(environment.refreshed)
+        }
+    }
+
+    @Test
+    fun legacyNonLobbyFailsBeforeContentVerification() = runBlocking<Unit> {
+        val value = manifest(emptyList()).copy(protocolVersion = 2, lobby = false, hostUnitsChecksum = 123)
+        suspend fun check(first: DirectModManifest, second: DirectModManifest?, loaded: Boolean, checksum: Int, reason: ConnectionFailureReason) {
+            val transport = FakeTransport().also { it.manifestResults += { first }; if (second != null) it.manifestResults += { second } }
+            val environment = FakeEnvironment().also { it.loaded = loaded; it.checksum = checksum }
+            val result = assertIs<DirectJoinSyncResult.Failed>(controller(environment, transport).preJoinSync("localhost", LoadingContext {}))
+            assertEquals(reason, result.failure.reason)
+            assertEquals(0, transport.reserveCalls)
+            assertTrue(transport.downloads.isEmpty())
+            assertTrue(environment.applied.isEmpty())
+            assertFalse(environment.refreshed)
+        }
+        check(value, null, false, 123, ConnectionFailureReason.SYNC_FAILED)
+        check(value, null, true, 124, ConnectionFailureReason.SYNC_FAILED)
+        check(value.copy(hostUnitsChecksum = -1), null, true, 123, ConnectionFailureReason.SYNC_FAILED)
+        check(value, value.copy(scope = "new"), true, 123, ConnectionFailureReason.SYNC_FAILED)
+        check(value, value.copy(lobby = true), true, 123, ConnectionFailureReason.SYNC_FAILED)
+    }
+
     @Test
     fun loadedContentSkipsParsingButStillRechecksManifestAndChecksum() = runBlocking<Unit> {
         val value = manifest(emptyList()).copy(hostUnitsChecksum = 123)
@@ -356,7 +530,6 @@ class DirectModSyncControllerTest {
     @Test
     fun recognizedManifestReadinessFailuresAreExplicit() = runBlocking<Unit> {
         listOf(
-            manifest(emptyList()).copy(lobby = false) to ConnectionFailureReason.NOT_LOBBY,
             manifest(emptyList()).copy(status = "preparing") to ConnectionFailureReason.PREPARING,
         ).forEach { (value, reason) ->
             val transport = FakeTransport().also { it.manifestResults += { value } }
@@ -454,6 +627,11 @@ class DirectModSyncControllerTest {
         var reserveCalls = 0
         var renewCalls = 0
         var releaseCalls = 0
+        var issueCalls = 0
+        val issueScopes = mutableListOf<String>()
+        val issueTokens = mutableListOf<ByteArray>()
+        var onIssue: suspend () -> io.github.rwpp.net.sync.direct.DirectResumeGrant =
+            { io.github.rwpp.net.sync.direct.DirectResumeGrant("instance-a", ByteArray(32) { 7 }) }
         var onReserve: () -> DirectModLease = { DirectModLease("scope", 90_000, 30_000, "reserved", 1, 10, 1) }
         var onRenew: () -> DirectModLease = { DirectModLease("scope", 90_000, 30_000, "reserved", 1, 10, 1) }
         var onDownload: (NetworkModDescriptor) -> Unit = {}
@@ -473,6 +651,12 @@ class DirectModSyncControllerTest {
         }
         override suspend fun reserve(scope: String, token: ByteArray): DirectModLease { reserveCalls++; return onReserve() }
         override suspend fun renew(scope: String, token: ByteArray): DirectModLease { renewCalls++; return onRenew() }
+        override suspend fun issueResume(scope: String, token: ByteArray): io.github.rwpp.net.sync.direct.DirectResumeGrant {
+            issueCalls++
+            issueScopes += scope
+            issueTokens += token.copyOf()
+            return onIssue()
+        }
         override suspend fun release(scope: String, token: ByteArray) { releaseCalls++ }
     }
 
@@ -480,16 +664,19 @@ class DirectModSyncControllerTest {
         override val cache: NetworkModCache = EmptyCache
         val applied = mutableListOf<List<NetworkModDescriptor>>()
         var checksum = 0
+        var checksumReads = 0
+        var onChecksum: (() -> Int)? = null
         var refreshed = false
         var loaded = false
+        var loadedChecks = 0
         var onApply: () -> Unit = {}
         override fun getAllMods(): List<Mod> = emptyList()
-        override suspend fun isLoadedModSetExact(descriptors: List<NetworkModDescriptor>) = loaded
+        override suspend fun isLoadedModSetExact(descriptors: List<NetworkModDescriptor>): Boolean { loadedChecks++; return loaded }
         override suspend fun applyMods(descriptors: List<NetworkModDescriptor>) {
             onApply()
             applied += descriptors
         }
-        override fun getUnitsChecksum(): Int = checksum
+        override fun getUnitsChecksum(): Int { checksumReads++; return onChecksum?.invoke() ?: checksum }
         override fun refreshHandshakeChecksumCache() { refreshed = true }
     }
 

@@ -382,6 +382,8 @@ fun MultiplayerView(
                 var joined = false
                 var opened = false
                 var directReservation: io.github.rwpp.core.DirectJoinReservation? = null
+                var directResume: io.github.rwpp.core.DirectResumeConnection? = null
+                var resumeInstance: String? = null
                 logger.info("[JOIN] begin room entry")
                 try {
                     ModSyncController.awaitJoinEntryCleanup()
@@ -433,6 +435,8 @@ fun MultiplayerView(
                         when (val direct = io.github.rwpp.core.DirectModSyncController.shared.preJoinSync(address, this)) {
                             is io.github.rwpp.core.DirectJoinSyncResult.Applied -> {
                                 directReservation = direct.reservation
+                                directResume = direct.resume
+                                resumeInstance = direct.resumeInstance
                                 // 本轮未创建 relay joining Presence，也清掉任何旧会话遗留上下文。
                                 ModSyncController.finishJoinerPresence()
                             }
@@ -461,13 +465,20 @@ fun MultiplayerView(
                             directReservation?.let { reservation ->
                                 message(readI18n("modSync.directConfirmingSeat"))
                                 reservation.awaitAdmission()
+                                resumeInstance?.let { instance ->
+                                    io.github.rwpp.core.DirectModSyncController.shared.saveResumeGrant(reservation, instance)
+                                }
                             }
                         }
                         return result
                     }
                     val result = try {
                         val reservation = directReservation
-                        if (reservation == null) connectAndConfirmAdmission()
+                        if (reservation == null) {
+                            val resume = directResume
+                            if (resume == null) connectAndConfirmAdmission()
+                            else resume.openCredentials().use { connectAndConfirmAdmission() }
+                        }
                         else reservation.protect {
                             reservation.openCredentials().use { connectAndConfirmAdmission() }
                         }
@@ -519,6 +530,7 @@ fun MultiplayerView(
                     } finally {
                         if (hostSession && !opened) ModSyncController.discardPreparedHostSession()
                         directReservation?.close()
+                        directResume?.clear()
                         // 成功时为空操作；被踢重试已排定时保留 Presence。
                         ModSyncController.finishJoinerPresence()
                     }

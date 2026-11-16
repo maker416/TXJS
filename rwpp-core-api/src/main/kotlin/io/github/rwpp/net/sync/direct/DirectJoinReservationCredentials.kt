@@ -16,6 +16,11 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 const val DIRECT_JOIN_RESERVATION_QUERY_PREFIX = "txjsmd2_"
+const val DIRECT_JOIN_RESUME_QUERY_PREFIX = "txjsmd3r_"
+
+fun isDirectJoinCredentialQuery(query: String?): Boolean =
+    query?.startsWith(DIRECT_JOIN_RESERVATION_QUERY_PREFIX) == true ||
+        query?.startsWith(DIRECT_JOIN_RESUME_QUERY_PREFIX) == true
 
 /**
  * 只在本轮真实连接建立期间，把租约凭证提供给原版包 160 的 query 字段。
@@ -32,11 +37,18 @@ object DirectJoinReservationCredentials {
         open(endpoint, DirectModSyncProtocol.encodeSha256(token))
 
     suspend fun open(endpoint: DirectJoinEndpoint, tokenHex: String): AutoCloseable {
+        return openQuery(endpoint, tokenHex, DIRECT_JOIN_RESERVATION_QUERY_PREFIX)
+    }
+
+    suspend fun openResume(endpoint: DirectJoinEndpoint, secret: ByteArray): AutoCloseable =
+        openQuery(endpoint, DirectModSyncProtocol.encodeSha256(secret), DIRECT_JOIN_RESUME_QUERY_PREFIX)
+
+    private suspend fun openQuery(endpoint: DirectJoinEndpoint, tokenHex: String, prefix: String): AutoCloseable {
         require(tokenHex.matches(Regex("[0-9a-f]{64}"))) { "Invalid direct reservation credential" }
         // DNS 只能在 IO 上解析，原版连接接点仅比较已经解析好的远端地址。
         val addresses = withContext(Dispatchers.IO) { InetAddress.getAllByName(endpoint.host).toSet() }
         currentCoroutineContext().ensureActive()
-        val active = Active(endpoint.port, addresses, DIRECT_JOIN_RESERVATION_QUERY_PREFIX + tokenHex)
+        val active = Active(endpoint.port, addresses, prefix + tokenHex)
         current.set(active)
         return object : AutoCloseable {
             override fun close() {

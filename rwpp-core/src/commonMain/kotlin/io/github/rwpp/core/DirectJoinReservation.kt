@@ -48,6 +48,7 @@ class DirectJoinReservation private constructor(
     parentScope: CoroutineScope,
 ) {
     private val closed = AtomicBoolean()
+    private val admitted = AtomicBoolean()
     private val terminalFailure = AtomicReference<Exception?>()
     private val failed = CompletableDeferred<Exception>()
     private val expiresAt = java.util.concurrent.atomic.AtomicLong(initialExpiresAt)
@@ -135,7 +136,7 @@ class DirectJoinReservation private constructor(
             withTimeout(30_000) {
                 while (true) {
                     currentCoroutineContext().ensureActive()
-                    if (renewNow().state == "admitted") return@withTimeout
+                    if (renewNow().state == "admitted") { admitted.set(true); return@withTimeout }
                     delay(300)
                 }
             }
@@ -143,6 +144,12 @@ class DirectJoinReservation private constructor(
             currentCoroutineContext().ensureActive()
             throw java.net.SocketTimeoutException("Server did not confirm reserved slot admission")
         }
+    }
+
+    suspend fun issueResume(): io.github.rwpp.net.sync.direct.DirectResumeGrant {
+        ensureValid()
+        check(admitted.get()) { "Direct resume requires confirmed admission" }
+        return transport.issueResume(scope, token)
     }
 
     /** 取消和失败释放未交付位置；已注册的真实玩家不会被 RELEASE 踢出。 */

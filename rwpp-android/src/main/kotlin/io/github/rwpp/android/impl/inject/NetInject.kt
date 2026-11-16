@@ -37,7 +37,7 @@ import io.github.rwpp.net.Client
 import io.github.rwpp.net.InternalPacketType
 import io.github.rwpp.net.Net
 import io.github.rwpp.net.sync.direct.DirectJoinReservationCredentials
-import io.github.rwpp.net.sync.direct.DIRECT_JOIN_RESERVATION_QUERY_PREFIX
+import io.github.rwpp.net.sync.direct.isDirectJoinCredentialQuery
 import io.github.rwpp.ui.UI
 import io.github.rwpp.utils.Reflect
 import java.io.ByteArrayInputStream
@@ -50,7 +50,7 @@ object NetInject {
     @Inject("a", InjectMode.InsertBefore, "(Ljava/net/Socket;)Z")
     fun ae.applyDirectReservationCredential(socket: java.net.Socket): Any {
         val query = DirectJoinReservationCredentials.queryFor(socket)
-        if (query != null || N?.startsWith(DIRECT_JOIN_RESERVATION_QUERY_PREFIX) == true) N = query
+        if (query != null || isDirectJoinCredentialQuery(N)) N = query
         return Unit
     }
 

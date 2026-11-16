@@ -14,9 +14,35 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
 
 class DirectJoinReservationCredentialsTest {
+    @Test
+    fun identifiesBothDirectCredentialQueriesWithoutTreatingRelayQueriesAsCredentials() {
+        assertTrue(isDirectJoinCredentialQuery("txjsmd2_" + "01".repeat(32)))
+        assertTrue(isDirectJoinCredentialQuery("txjsmd3r_" + "02".repeat(32)))
+        assertFalse(isDirectJoinCredentialQuery("relay-query"))
+        assertFalse(isDirectJoinCredentialQuery(null))
+    }
+    @Test
+    fun resumeQueryIsScopedToTheExactSocketAndCleared() = runBlocking {
+        ServerSocket(0, 8, InetAddress.getByName("127.0.0.1")).use { server ->
+            Socket("127.0.0.1", server.localPort).use { socket ->
+                server.accept().use {
+                    val endpoint = DirectJoinEndpoint("127.0.0.1", server.localPort)
+                    val holder = DirectJoinReservationCredentials.openResume(endpoint, ByteArray(32) { 9 })
+                    try {
+                        assertEquals("txjsmd3r_" + "09".repeat(32), DirectJoinReservationCredentials.queryFor(socket))
+                        assertFalse(holder.toString().contains("09".repeat(32)))
+                    } finally { holder.close() }
+                    assertNull(DirectJoinReservationCredentials.queryFor(socket))
+                    val wrong = DirectJoinReservationCredentials.openResume(endpoint.copy(host = "127.0.0.2"), ByteArray(32) { 9 })
+                    try { assertNull(DirectJoinReservationCredentials.queryFor(socket)) } finally { wrong.close() }
+                }
+            }
+        }
+    }
     @Test
     fun matchesOnlyTheExactRemoteEndpointAndNeverPrintsCredentials() = runBlocking {
         ServerSocket(0, 8, InetAddress.getByName("127.0.0.1")).use { server ->

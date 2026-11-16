@@ -11,6 +11,7 @@ import com.corrodinggames.rts.gameFramework.i.a
 import com.corrodinggames.rts.gameFramework.i.b
 import io.github.rwpp.android.impl.AndroidModSourceCache
 import io.github.rwpp.game.mod.ModReloadSelection
+import io.github.rwpp.android.impl.AndroidLoadedModSnapshot
 import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
@@ -50,5 +51,6 @@ object ModManagerInject {
             }
             ModReloadSelection.resolve(candidates)?.let { mod.f = !it }
         }
+        AndroidLoadedModSnapshot.beforeLoad()
     }
 }

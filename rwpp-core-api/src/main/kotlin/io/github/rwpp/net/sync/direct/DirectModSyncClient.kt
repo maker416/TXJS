@@ -33,6 +33,8 @@ interface DirectModSyncTransport {
         throw DirectModSyncUnsupportedException("Direct mod sync reservations are unavailable")
     suspend fun renew(scope: String, token: ByteArray): DirectModLease =
         throw DirectModSyncUnsupportedException("Direct mod sync reservations are unavailable")
+    suspend fun issueResume(scope: String, token: ByteArray): DirectResumeGrant =
+        throw DirectModSyncUnsupportedException("Direct resume is unavailable")
     suspend fun release(scope: String, token: ByteArray) {
         throw DirectModSyncUnsupportedException("Direct mod sync reservations are unavailable")
     }
@@ -107,16 +109,17 @@ class DirectModSyncClient @JvmOverloads constructor(
             "Direct mod sync timeouts must be positive"
         }
         require(maxAttempts > 0) { "Direct mod sync attempts must be positive" }
-        require(preferredProtocolVersion == null || preferredProtocolVersion in 1..2) { "Unsupported direct protocol version" }
+        require(preferredProtocolVersion == null || preferredProtocolVersion in 1..3) { "Unsupported direct protocol version" }
     }
 
     override suspend fun getManifest(): DirectModManifest = withContext(Dispatchers.IO) {
         val selected = negotiatedProtocolVersion
         if (selected != null) return@withContext probeManifest(selected)
         try {
-            probeManifest(DIRECT_MOD_SYNC_RESERVATION_PROTOCOL_VERSION)
+            probeManifest(DIRECT_MOD_SYNC_RESUME_PROTOCOL_VERSION)
         } catch (_: DirectModSyncUnsupportedException) {
-            probeManifest(DIRECT_MOD_SYNC_PROTOCOL_VERSION)
+            try { probeManifest(DIRECT_MOD_SYNC_RESERVATION_PROTOCOL_VERSION) }
+            catch (_: DirectModSyncUnsupportedException) { probeManifest(DIRECT_MOD_SYNC_PROTOCOL_VERSION) }
         }
     }
 
@@ -124,7 +127,7 @@ class DirectModSyncClient @JvmOverloads constructor(
         return try {
             withSocket(probeReadTimeoutMillis) { _, input, output ->
                 DirectModSyncProtocol.writeGetManifest(output, protocolVersion)
-                DirectModSyncProtocol.readManifest(input).also { manifest ->
+                DirectModSyncProtocol.readManifest(input) { recognizedProtocol = true }.also { manifest ->
                     recognizedProtocol = true
                     negotiatedProtocolVersion = protocolVersion
                     if (manifest.protocolVersion != protocolVersion) throw IOException("Direct manifest protocol version mismatch")
@@ -153,7 +156,7 @@ class DirectModSyncClient @JvmOverloads constructor(
         requireReservations()
         val credential = token.copyOf()
         withSocket(probeReadTimeoutMillis) { _, input, output ->
-            DirectModSyncProtocol.writeLeaseRequest(output, kind, scope, credential)
+            DirectModSyncProtocol.writeLeaseRequest(output, kind, scope, credential, negotiatedProtocolVersion!!)
             DirectModSyncProtocol.readLease(input, scope).also {
                 if (input.read() != -1) throw IOException("Trailing bytes after direct lease response")
             }
@@ -164,14 +167,24 @@ class DirectModSyncClient @JvmOverloads constructor(
         requireReservations()
         val credential = token.copyOf()
         withSocket(probeReadTimeoutMillis) { _, input, output ->
-            DirectModSyncProtocol.writeLeaseRequest(output, DirectModSyncProtocol.RELEASE, scope, credential)
+            DirectModSyncProtocol.writeLeaseRequest(output, DirectModSyncProtocol.RELEASE, scope, credential, negotiatedProtocolVersion!!)
             DirectModSyncProtocol.readReleased(input)
             if (input.read() != -1) throw IOException("Trailing bytes after direct release response")
         }
     }
 
+    override suspend fun issueResume(scope: String, token: ByteArray): DirectResumeGrant = withContext(Dispatchers.IO) {
+        if (!recognizedProtocol || negotiatedProtocolVersion != 3) throw DirectModSyncUnsupportedException("Direct resume requires v3")
+        withSocket(probeReadTimeoutMillis) { _, input, output ->
+            DirectModSyncProtocol.writeLeaseRequest(output, DirectModSyncProtocol.ISSUE_RESUME, scope, token, 3)
+            DirectModSyncProtocol.readResumeGrant(input).also {
+                if (input.read() != -1) { it.secret.fill(0); throw IOException("Trailing bytes after direct resume grant") }
+            }
+        }
+    }
+
     private fun requireReservations() {
-        if (!recognizedProtocol || negotiatedProtocolVersion != DIRECT_MOD_SYNC_RESERVATION_PROTOCOL_VERSION) {
+        if (!recognizedProtocol || negotiatedProtocolVersion !in 2..3) {
             throw DirectModSyncUnsupportedException("Direct mod sync reservations require protocol v2")
         }
     }
