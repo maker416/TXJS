@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.game.map.GameMap
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.widget.ExitButton
 import io.github.rwpp.widget.uiAnimationsEnabled
@@ -51,10 +53,11 @@ import io.github.rwpp.widget.v2.bounceClick
 enum class ModsMapsTab {
     Mods,
     Maps,
+    Saves,
 }
 
 /**
- * 模组 / 地图顶部分段切换控件。
+ * 本地内容的模组 / 地图 / 存档分段切换控件。
  */
 @Composable
 fun ModsMapsSegmentedControl(
@@ -89,6 +92,12 @@ fun ModsMapsSegmentedControl(
                 onClick = { onSelect(ModsMapsTab.Maps) },
                 modifier = Modifier.weight(1f),
             )
+            Segment(
+                label = readI18n("saves.tab"),
+                selected = selected == ModsMapsTab.Saves,
+                onClick = { onSelect(ModsMapsTab.Saves) },
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }
@@ -120,7 +129,7 @@ private fun Segment(
             text = label,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 6.dp),
+                .padding(horizontal = 6.dp, vertical = 6.dp),
             style = MaterialTheme.typography.labelLarge,
             color = fg,
             textAlign = TextAlign.Center,
@@ -130,20 +139,21 @@ private fun Segment(
 }
 
 /**
- * 模组与自定义地图合一管理页。
+ * 本地内容管理页：模组、自定义地图和存档。
  *
  * 共用 ExpandedCard 外壳与关闭按钮；分段控件下沉到各子页顶栏，
  * 避免外壳再占一行高度。内容区左右滑动切换。
  */
 @Composable
-fun ModsAndMapsView(onExit: () -> Unit) {
+fun ModsAndMapsView(onLoadSavedGame: suspend (GameMap) -> Unit, onExit: () -> Unit) {
+    var saveBusy by remember { mutableStateOf(false) }
     var tab by rememberSaveable {
         val initial = UI.pendingModsMapsTab ?: ModsMapsTab.Mods
         UI.pendingModsMapsTab = null
         mutableStateOf(initial)
     }
 
-    BackHandler(true, onExit)
+    BackHandler(true) { if (!saveBusy) onExit() }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -160,14 +170,14 @@ fun ModsAndMapsView(onExit: () -> Unit) {
                 modifier = Modifier.fillMaxSize(),
                 transitionSpec = {
                     if (!contentAnimations) return@AnimatedContent (EnterTransition.None togetherWith ExitTransition.None).using(null)
-                    val toMaps = targetState == ModsMapsTab.Maps
+                    val forward = targetState.ordinal > initialState.ordinal
                     val enter = slideInHorizontally(
                         animationSpec = tween(320),
-                        initialOffsetX = { full -> if (toMaps) full else -full },
+                        initialOffsetX = { full -> if (forward) full else -full },
                     ) + fadeIn(animationSpec = tween(240))
                     val exit = slideOutHorizontally(
                         animationSpec = tween(320),
-                        targetOffsetX = { full -> if (toMaps) -full else full },
+                        targetOffsetX = { full -> if (forward) -full else full },
                     ) + fadeOut(animationSpec = tween(200))
                     enter togetherWith exit
                 },
@@ -187,10 +197,15 @@ fun ModsAndMapsView(onExit: () -> Unit) {
                             onTabChange = { tab = it },
                             embedded = true,
                         )
+                        ModsMapsTab.Saves -> SavedGamesManagementView(
+                            onLoadSavedGame = onLoadSavedGame,
+                            onTabChange = { tab = it },
+                            onBusyChange = { saveBusy = it },
+                        )
                     }
                 }
             }
-            ExitButton(onExit)
+            ExitButton { if (!saveBusy) onExit() }
         }
     }
 }

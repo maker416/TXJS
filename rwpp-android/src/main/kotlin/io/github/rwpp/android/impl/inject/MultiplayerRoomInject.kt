@@ -9,6 +9,8 @@ package io.github.rwpp.android.impl.inject
 
 import com.corrodinggames.rts.appFramework.MultiplayerBattleroomActivity
 import com.corrodinggames.rts.gameFramework.h.a
+import com.corrodinggames.rts.gameFramework.j.j
+import io.github.rwpp.android.impl.GameEngine
 import io.github.rwpp.android.questionOption
 import io.github.rwpp.appKoin
 import io.github.rwpp.event.broadcastIn
@@ -18,11 +20,25 @@ import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
 import io.github.rwpp.inject.InterruptResult
+import io.github.rwpp.inject.RedirectMethod
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.ui.UI
 
 @InjectClass(MultiplayerBattleroomActivity::class)
 object MultiplayerRoomInject {
+    /** 原版丢弃加载结果会把失败存档当作旧地图启动，转交统一开局恢复。 */
+    @RedirectMethod("startGameCommon", "()V", "com.corrodinggames.rts.gameFramework.aj", "c")
+    fun loadHostedSave(name: String, network: Boolean): Boolean {
+        check(GameEngine.t().bX.c(name, network)) { "Saved game loading failed" }
+        return true
+    }
+
+    @RedirectMethod("startGameCommon", "()V", "com.corrodinggames.rts.gameFramework.aj", "a")
+    fun loadReceivedSave(stream: j, network: Boolean, resync: Boolean): Boolean {
+        check(GameEngine.t().bX.a(stream, network, resync)) { "Received saved game loading failed" }
+        return true
+    }
+
     @Inject("updateUI", InjectMode.Override)
     fun onUpdateUI() {
         RefreshUIEvent().broadcastIn()

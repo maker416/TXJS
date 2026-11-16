@@ -1,5 +1,8 @@
 /*
  * Copyright 2023-2025 RWPP contributors
+ * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
+ * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
+ * https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
  */
 
 package io.github.rwpp.ui
@@ -26,10 +29,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,7 +39,6 @@ import androidx.compose.ui.unit.dp
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
-import io.github.rwpp.game.map.GameMap
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.platform.BackHandler
@@ -63,7 +61,7 @@ fun SinglePlayerView(
     onSurvival: () -> Unit,
     onSkirmish: () -> Unit,
     onSandbox: () -> Unit,
-    onLoadSavedGame: (GameMap) -> Unit,
+    onSavedGames: () -> Unit,
 ) {
     BackHandler(true, onExit)
     DisposableEffect(Unit) {
@@ -72,17 +70,7 @@ fun SinglePlayerView(
         }
     }
 
-    var savedGamePickerVisible by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
-
-    SavedGamePickerDialog(
-        visible = savedGamePickerVisible,
-        onDismissRequest = { savedGamePickerVisible = false },
-        onSelectedSave = { map ->
-            savedGamePickerVisible = false
-            onLoadSavedGame(map)
-        },
-    )
 
     val cardWidth = when (LocalWindowManager.current) {
         WindowManager.Small -> 1f
@@ -146,7 +134,7 @@ fun SinglePlayerView(
                         icon = painterResource(Res.drawable.file_open),
                         title = readI18n("menus.singlePlayer.loadSave", I18nType.RW),
                         description = readI18n("menu.singlePlayer.loadSaveDesc"),
-                        onClick = { savedGamePickerVisible = true },
+                        onClick = onSavedGames,
                     )
                 }
                 item { Spacer(Modifier.height(24.dp)) }

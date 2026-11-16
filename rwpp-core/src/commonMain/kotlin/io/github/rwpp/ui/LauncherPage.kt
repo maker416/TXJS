@@ -48,7 +48,7 @@ sealed interface LauncherPage {
     data object Replay : LauncherPage
     /** 设置页。 */
     data object Settings : LauncherPage
-    /** 模组与地图页。 */
+    /** 本地内容页（模组、地图和存档）。 */
     data object Mods : LauncherPage
     /** 扩展页。 */
     data object Extensions : LauncherPage

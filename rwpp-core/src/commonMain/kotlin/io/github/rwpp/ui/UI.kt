@@ -56,7 +56,7 @@ object UI : Initialization, IUserInterface {
     var showSettingsView by pageBinding(LauncherPage.Settings)
     var showModsView by pageBinding(LauncherPage.Mods)
     /**
-     * 打开「模组与地图」页时的初始 tab；消费一次后清空。
+     * 打开「本地内容」页时的初始 tab；消费一次后清空。
      * 供 Android `.tmx` 深链等场景直达地图管理。
      */
     var pendingModsMapsTab by mutableStateOf<ModsMapsTab?>(null)

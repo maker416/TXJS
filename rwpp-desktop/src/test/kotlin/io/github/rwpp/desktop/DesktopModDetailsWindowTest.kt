@@ -161,7 +161,7 @@ class DesktopModDetailsWindowTest {
                     KoinContext(appKoin) {
                         MaterialTheme(colorScheme = defaultRWPPColorScheme.copy(surfaceContainerHigh = DetailColor)) {
                             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 1f / 255f))) {
-                                ModsAndMapsView(onExit = {})
+                                ModsAndMapsView(onLoadSavedGame = {}, onExit = {})
                             }
                         }
                     }

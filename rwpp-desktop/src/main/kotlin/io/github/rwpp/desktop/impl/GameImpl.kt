@@ -24,6 +24,7 @@ import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
 import io.github.rwpp.core.LoadingContext
 import io.github.rwpp.core.ModSyncController
+import io.github.rwpp.core.MatchStartController
 import io.github.rwpp.core.StartupTiming
 import io.github.rwpp.desktop.AbstractGame
 import io.github.rwpp.desktop.DesktopEngineStartup
@@ -45,8 +46,12 @@ import io.github.rwpp.desktop.native
 import io.github.rwpp.desktop.impl.inject.EffectLimitInject
 import io.github.rwpp.desktop.singlePlayer
 import io.github.rwpp.event.GlobalEventChannel
+import io.github.rwpp.event.broadcastIn
+import io.github.rwpp.event.events.StartGameEvent
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.GameRoom
+import io.github.rwpp.game.GameStartSafety
+import io.github.rwpp.game.recoverableStartCause
 import io.github.rwpp.game.base.Difficulty
 import io.github.rwpp.game.map.GameMap
 import io.github.rwpp.game.map.MapType
@@ -54,6 +59,7 @@ import io.github.rwpp.game.map.Mission
 import io.github.rwpp.game.map.MissionType
 import io.github.rwpp.game.map.Replay
 import io.github.rwpp.game.map.scanReplayFiles
+import io.github.rwpp.game.map.scanSavedGameFiles
 import io.github.rwpp.game.map.browserCustomMapPaths
 import io.github.rwpp.game.mod.KeepConnectedReload
 import io.github.rwpp.game.mod.ModManager
@@ -71,6 +77,9 @@ import io.github.rwpp.utils.Reflect
 import io.github.rwpp.widget.composeEngineLoadingMessage
 import io.github.rwpp.widget.loadingMessage
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import org.koin.core.annotation.Single
 import org.lwjgl.input.Cursor
 import org.lwjgl.opengl.Display
@@ -84,7 +93,6 @@ import java.io.InputStream
 @Single(binds = [Game::class])
 class GameImpl : AbstractGame() {
     private var _missions: List<Mission>? = null
-    private var _allMaps: List<GameMap>? = null
     private var _maps = mutableMapOf<MapType, List<GameMap>>()
     private var lastPlaytimeFrame: Int? = null
     private var lastPlaytimeGameTime: Int? = null
@@ -158,13 +166,57 @@ class GameImpl : AbstractGame() {
     }
 
     override suspend fun loadSavedGame(map: GameMap) {
-        if (!io.github.rwpp.core.MatchStartController.ensureCanStart()) return
         require(map.mapType == MapType.SavedGame)
-        DesktopGameThreadDispatcher(::post, { Thread.currentThread() === gameThread }).run {
-            // 同一个游戏线程任务内完成三步，避免默认地图初始化覆盖刚选中的存档。
-            initializeSinglePlayer(false)
-            gameRoom.selectedMap = map
-            gameRoom.startGame()
+        val attempt = checkNotNull(MatchStartController.request()) { "A game is already starting" }
+        val dispatcher = DesktopGameThreadDispatcher(::post, { Thread.currentThread() === gameThread })
+        var engineTouched = false
+        try {
+            MatchStartController.gate.describe(attempt, map.displayName())
+            check(MatchStartController.gate.sending(attempt))
+            check(MatchStartController.gate.beginLoading() === attempt)
+            dispatcher.run {
+                engineTouched = true
+                GameStartSafety.requireCanReload()
+                val engine = GameEngine.B()
+                engine.bX.b("loading new save")
+                engine.bv = false
+                // 原版单人读档使用 false，并保留返回值；房间启动会忽略失败并沿用旧地图。
+                check(engine.ca.c(map.mapName + map.getMapSuffix(), false)) { "Saved game loading failed" }
+                check(engine.bL != null && engine.bL.W) { "Saved game map loading did not complete" }
+                singlePlayer = true
+                gameOver = false
+                ScriptEngine.getInstance().root.resumeNonMenu()
+            }
+            withContext(Dispatchers.Main.immediate) {
+                check(MatchStartController.gate.isCurrent(attempt)) { "Saved game loading was cancelled" }
+                gameSessionManager.startGame(GameStartMode.SavedGame(map.mapName + map.getMapSuffix()))
+                check(MatchStartController.gate.commit(attempt))
+                StartGameEvent().broadcastIn()
+            }
+        } catch (error: Throwable) {
+            val cause = recoverableStartCause(error)
+            if (cause is OutOfMemoryError) GameStartSafety.markMemoryExhausted()
+            withContext(NonCancellable) {
+                if (engineTouched) {
+                    runCatching {
+                        dispatcher.run {
+                            val engine = GameEngine.B()
+                            engine.bG = false
+                            engine.bH = false
+                            engine.bI = false
+                            engine.bX.aW = false
+                            engine.bX.bd = false
+                            engine.bX.bc = true
+                        }
+                        gameRoom.disconnectAndWait("Saved game loading failed")
+                    }.exceptionOrNull()?.let(cause::addSuppressed)
+                }
+                withContext(Dispatchers.Main.immediate) {
+                    displaySwitcher.switchTo(io.github.rwpp.desktop.DisplayMode.Menu)
+                    MatchStartController.gate.reset()
+                }
+            }
+            throw cause
         }
     }
 
@@ -419,7 +471,7 @@ class GameImpl : AbstractGame() {
                             libRocket.clearHistory()
                         }
                     }
-                    is GameStartMode.Skirmish, is GameStartMode.Multiplayer -> { }
+                    is GameStartMode.Skirmish, is GameStartMode.Multiplayer, is GameStartMode.SavedGame -> { }
                     is GameStartMode.Replay -> {
                         gameOver = false
                         container.post {
@@ -495,7 +547,6 @@ class GameImpl : AbstractGame() {
             val mapFolders = mapOf(
                 MapType.SkirmishMap to File("assets/maps/skirmish"),
                 MapType.CustomMap to browserCustomMapPaths(B.bZ.a(levelDirs, "/SD/rusted_warfare_maps")),
-                MapType.SavedGame to File("saves")
             )
             for((type, folder) in mapFolders) {
                 val maps = mutableListOf<GameMap>()
@@ -552,15 +603,19 @@ class GameImpl : AbstractGame() {
             }
         }
 
-        return if (!flush && _allMaps != null)
-            _allMaps!!
-        else buildList { _maps.values.forEach(::addAll) }.also { _allMaps = it }
+        // 存档在局内由引擎直接写入；不能沿用启动时的地图缓存。
+        _maps[MapType.SavedGame] = readSavedGames()
+        return buildList { _maps.values.forEach(::addAll) }
     }
 
     override fun getAllMapsByMapType(mapType: MapType): List<GameMap> {
+        if (mapType == MapType.SavedGame) return readSavedGames()
         if(_maps.isEmpty()) getAllMaps()
         return _maps[mapType]!!
     }
+
+    private fun readSavedGames(): List<GameMap> =
+        scanSavedGameFiles().mapIndexed { index, save -> save.toGameMap(index) }
 
     override fun getMissionsByType(type: MissionType): List<Mission> =
         getAllMissions().filter { it.type == type }

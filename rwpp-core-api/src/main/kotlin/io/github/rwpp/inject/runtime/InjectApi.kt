@@ -333,6 +333,9 @@ object InjectApi {
                 placeholderBody,
                 clazz
             )
+            // 静态入口（如两端房间 startGameCommon/r）内不能调用实例跳板；
+            // 字节码的参数槽位也已按原入口是否 static 计算，二者必须保持一致。
+            newMethod.modifiers = Modifier.PUBLIC or (method.modifiers and Modifier.STATIC)
 
             val injectClass = injectFunctionPath.substringBeforeLast(".")
             val bytecode = Bytecode(clazz.classFile.constPool)

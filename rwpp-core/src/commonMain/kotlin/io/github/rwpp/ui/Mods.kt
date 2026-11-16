@@ -623,54 +623,63 @@ fun ModsView(
         var searchExpanded by remember { mutableStateOf(false) }
         BoxWithConstraints(modifier.fillMaxWidth()) {
             val narrow = maxWidth < 600.dp
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 56.dp, top = 4.dp, bottom = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                if (searchExpanded) {
-                    FilterField(Modifier.weight(1f))
-                    if (!narrow) MemoryUsageButton(Modifier.width(140.dp))
-                    IconButton(
-                        onClick = {
-                            filter = ""
-                            searchExpanded = false
-                        },
-                        modifier = Modifier.size(48.dp),
-                    ) {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = readI18n("mod.closeSearch"),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                } else {
-                    if (onTabChange != null) {
-                        ModsMapsSegmentedControl(
-                            selected = selectedTab,
-                            onSelect = onTabChange,
-                            modifier = Modifier.width(if (narrow) 132.dp else 176.dp),
-                        )
+            Column {
+                if (narrow && onTabChange != null && !searchExpanded) {
+                    ModsMapsSegmentedControl(
+                        selected = selectedTab,
+                        onSelect = onTabChange,
+                        modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 56.dp, top = 4.dp),
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 56.dp, top = 4.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (searchExpanded) {
+                        FilterField(Modifier.weight(1f))
+                        if (!narrow) MemoryUsageButton(Modifier.width(140.dp))
+                        IconButton(
+                            onClick = {
+                                filter = ""
+                                searchExpanded = false
+                            },
+                            modifier = Modifier.size(48.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = readI18n("mod.closeSearch"),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     } else {
-                        Text(
-                            readI18n("menu.mods"),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    if (!narrow) Spacer(Modifier.weight(1f))
-                    MemoryUsageButton(if (narrow) Modifier.weight(1f) else Modifier.width(140.dp))
-                    IconButton(
-                        onClick = { searchExpanded = true },
-                        modifier = Modifier.size(48.dp).testTag("mods-search-button"),
-                    ) {
-                        Icon(
-                            Icons.Default.Search,
-                            contentDescription = readI18n("mod.search"),
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
+                        if (onTabChange != null && !narrow) {
+                            ModsMapsSegmentedControl(
+                                selected = selectedTab,
+                                onSelect = onTabChange,
+                                modifier = Modifier.width(240.dp),
+                            )
+                        } else if (onTabChange == null) {
+                            Text(
+                                readI18n("menu.mods"),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        if (!narrow) Spacer(Modifier.weight(1f))
+                        MemoryUsageButton(if (narrow) Modifier.weight(1f) else Modifier.width(140.dp))
+                        IconButton(
+                            onClick = { searchExpanded = true },
+                            modifier = Modifier.size(48.dp).testTag("mods-search-button"),
+                        ) {
+                            Icon(
+                                Icons.Default.Search,
+                                contentDescription = readI18n("mod.search"),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
                     }
                 }
             }

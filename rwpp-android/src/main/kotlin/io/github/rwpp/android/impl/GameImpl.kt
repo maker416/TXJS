@@ -12,7 +12,6 @@ import android.content.Intent
 import androidx.lifecycle.Lifecycle
 import com.corrodinggames.rts.appFramework.LevelGroupSelectActivity
 import com.corrodinggames.rts.appFramework.LevelSelectActivity
-import com.corrodinggames.rts.appFramework.LoadLevelActivity
 import com.corrodinggames.rts.gameFramework.j.ae
 import com.corrodinggames.rts.gameFramework.k
 import io.github.rwpp.android.*
@@ -20,11 +19,14 @@ import io.github.rwpp.android.MainActivity.Companion.gameView
 import io.github.rwpp.android.impl.inject.EffectLimitInject
 import io.github.rwpp.appKoin
 import io.github.rwpp.core.LoadingContext
+import io.github.rwpp.core.MatchStartController
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.*
 import io.github.rwpp.game.BlockingJoinController
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.GameRoom
+import io.github.rwpp.game.GameStartSafety
+import io.github.rwpp.game.recoverableStartCause
 import io.github.rwpp.game.base.Difficulty
 import io.github.rwpp.game.map.*
 import io.github.rwpp.game.mod.KeepConnectedReload
@@ -52,7 +54,6 @@ class GameImpl : Game, CoroutineScope {
 
     private val joinController = BlockingJoinController()
     private var _missions: List<Mission>? = null
-    private var _allMaps: List<GameMap>? = null
     private var _maps = mutableMapOf<MapType, List<GameMap>>()
     private var lastPlaytimeFrame: Int? = null
     private var lastPlaytimeGameTime: Int? = null
@@ -140,8 +141,49 @@ class GameImpl : Game, CoroutineScope {
     }
 
     override suspend fun loadSavedGame(map: GameMap) {
-        if (!io.github.rwpp.core.MatchStartController.ensureCanStart()) return
-        super<Game>.loadSavedGame(map)
+        require(map.mapType == MapType.SavedGame)
+        // 沿用 Android 开局的 UI 线程约定，不将入口迁至游戏主循环。
+        withContext(Dispatchers.Main.immediate) {
+            val attempt = checkNotNull(MatchStartController.request()) { "A game is already starting" }
+            try {
+                MatchStartController.gate.describe(attempt, map.displayName())
+                check(MatchStartController.gate.sending(attempt))
+                check(MatchStartController.gate.beginLoading() === attempt)
+                GameStartSafety.requireCanReload()
+                val engine = GameEngine.t()
+                engine.bU.b("loading new save")
+                check(engine.bX.c(map.mapName + map.getMapSuffix(), false)) { "Saved game loading failed" }
+                check(engine.bI != null && engine.bI.X) { "Saved game map loading did not complete" }
+                isSinglePlayerGame = true
+                gameOver = false
+                val intent = Intent(get(), CustomInGameActivity::class.java)
+                intent.putExtra("level", engine.di)
+                gameLauncher.launch(intent)
+                isGaming = true
+                check(MatchStartController.gate.commit(attempt))
+                StartGameEvent().broadcastIn()
+            } catch (error: Throwable) {
+                val cause = recoverableStartCause(error)
+                if (cause is OutOfMemoryError) GameStartSafety.markMemoryExhausted()
+                withContext(NonCancellable) {
+                    val engine = GameEngine.t()
+                    synchronized(engine) {
+                        engine.bD = false
+                        engine.bE = false
+                        engine.bF = false
+                        engine.bU.aY = false
+                        engine.bU.bf = false
+                        engine.bU.be = true
+                    }
+                    runCatching { gameRoom.disconnectAndWait("Saved game loading failed") }
+                        .exceptionOrNull()?.let(cause::addSuppressed)
+                    isGaming = false
+                    isSinglePlayerGame = false
+                    MatchStartController.gate.reset()
+                }
+                throw cause
+            }
+        }
     }
 
     override suspend fun load(context: LoadingContext) {
@@ -313,7 +355,6 @@ class GameImpl : Game, CoroutineScope {
             val levelDirs = com.corrodinggames.rts.gameFramework.e.a.a(LevelGroupSelectActivity.customLevelsDir, true)
             val mapPaths = mapOf<MapType, Array<String>?>(
                 MapType.CustomMap to browserCustomMapPaths(t.bW.a(levelDirs, LevelGroupSelectActivity.customLevelsDir)),
-                MapType.SavedGame to LoadLevelActivity.getGameSaves()
             )
 
 
@@ -370,15 +411,19 @@ class GameImpl : Game, CoroutineScope {
             }
         }
 
-        return if (!flush && _allMaps != null)
-            _allMaps!!
-        else buildList { _maps.values.forEach(::addAll) }.also { _allMaps = it }
+        // 存档在局内由引擎直接写入；不能沿用启动时的地图缓存。
+        _maps[MapType.SavedGame] = readSavedGames()
+        return buildList { _maps.values.forEach(::addAll) }
     }
 
     override fun getAllMapsByMapType(mapType: MapType): List<GameMap> {
+        if (mapType == MapType.SavedGame) return readSavedGames()
         if(_maps.isEmpty()) getAllMaps()
         return _maps[mapType]!!
     }
+
+    private fun readSavedGames(): List<GameMap> =
+        scanSavedGameFiles().mapIndexed { index, save -> save.toGameMap(index) }
 
     override fun getMissionsByType(type: MissionType): List<Mission> = getAllMissions().filter { it.type == type }
     override fun getStartingUnitOptions(): List<Pair<Int, String>> {

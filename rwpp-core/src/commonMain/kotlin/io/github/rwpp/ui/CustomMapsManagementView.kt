@@ -478,7 +478,7 @@ fun CustomMapsManagementView(
                 ModsMapsSegmentedControl(
                     selected = selectedTab,
                     onSelect = onTabChange,
-                    modifier = Modifier.widthIn(min = 140.dp, max = 220.dp),
+                    modifier = Modifier.width(176.dp),
                 )
             } else {
                 Text(

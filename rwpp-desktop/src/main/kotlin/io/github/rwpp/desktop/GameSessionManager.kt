@@ -20,6 +20,8 @@ import javax.swing.SwingUtilities
 sealed class GameStartMode {
     data class Mission(val difficulty: Difficulty, val mission: io.github.rwpp.game.map.Mission) : GameStartMode()
     data class Skirmish(val sandbox: Boolean = false) : GameStartMode()
+    /** 存档已在游戏线程完整加载后，仅切换对局画面。 */
+    data class SavedGame(val name: String) : GameStartMode()
     data object Multiplayer : GameStartMode()
     data class Replay(val replay: io.github.rwpp.game.map.Replay) : GameStartMode()
     data object Continue : GameStartMode()
@@ -69,6 +71,7 @@ class GameSessionManager(
     private fun gameStartModeSummary(mode: GameStartMode): String = when (mode) {
         is GameStartMode.Mission -> "Mission(name=${mode.mission.displayName()}, difficulty=${mode.difficulty})"
         is GameStartMode.Skirmish -> "Skirmish(sandbox=${mode.sandbox})"
+        is GameStartMode.SavedGame -> "SavedGame(name=${mode.name})"
         is GameStartMode.Multiplayer -> "Multiplayer"
         is GameStartMode.Replay -> "Replay(name=${mode.replay.name})"
         is GameStartMode.Continue -> "Continue"

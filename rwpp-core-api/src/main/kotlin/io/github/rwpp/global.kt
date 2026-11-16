@@ -144,6 +144,11 @@ val replayDir by lazy {
     appKoin.get<AppContext>().externalStoragePath("replays/")
 }
 
+/** 原版存档实际读写的目录；管理页与引擎列表共用，避免另建一套存档路径。 */
+val saveDir by lazy {
+    appKoin.get<AppContext>().externalStoragePath("saves/")
+}
+
 /**
  * 应用私有模组目录：用于存放网络同步过来的房主模组。
  *

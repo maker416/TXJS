@@ -77,17 +77,13 @@ interface Game : KoinComponent {
     fun hostNewSinglePlayer(sandbox: Boolean)
 
     /**
-     * 初始化单人房间后选择存档并开局。
+     * 从真实存档恢复单人对局，完成加载并成功展示后才返回。
      *
-     * Android 保留调用方的 UI 线程；异步初始化的平台必须重写并等待初始化完成，
-     * 不能在 [hostNewSinglePlayer] 仅完成排队后就选择存档。
+     * 平台必须确认原版读档返回成功，失败应清理残缺会话并抛出异常；不能通过
+     * [hostNewSinglePlayer] 加载默认地图再走房间启动（原版房间会忽略读档失败结果）。
+     * Desktop 保持游戏线程及主 GL 上下文，Android 保持 UI 线程入口，不能强行对齐线程。
      */
-    suspend fun loadSavedGame(map: GameMap) {
-        require(map.mapType == MapType.SavedGame)
-        hostNewSinglePlayer(false)
-        gameRoom.selectedMap = map
-        gameRoom.startGame()
-    }
+    suspend fun loadSavedGame(map: GameMap)
 
     /**
      * Set the displayName of the local player.

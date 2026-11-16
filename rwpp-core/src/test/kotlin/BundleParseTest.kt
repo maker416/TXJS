@@ -27,6 +27,18 @@ class BundleParseTest {
     private val bundleNames = listOf("bundle_zh.toml", "bundle_en.toml")
 
     @Test
+    fun savedGamesManagementKeysExistInAllBundles() {
+        bundleNames.forEach { name ->
+            val root = Toml.parseToTomlTable(File(bundleDir, name).readText())
+            val saves = assertNotNull(root["saves"] as? TomlTable)
+            listOf("tab", "title", "hint", "search", "newestFirst", "oldestFirst", "import", "load", "loadFailed", "internalStorage",
+                "rename", "delete", "name", "empty", "emptyFiltered", "deleteConfirm").forEach { key ->
+                assertTrue((saves[key] as? TomlLiteral)?.content?.isNotBlank() == true, "$name: missing saves.$key")
+            }
+        }
+    }
+
+    @Test
     fun desktopStartupStageKeysExistInAllBundles() {
         bundleNames.forEach { name ->
             val root = Toml.parseToTomlTable(File(bundleDir, name).readText())
