@@ -60,6 +60,7 @@ internal fun DesktopStartupView(
     error: Throwable? = null,
     onFrameRendered: () -> Unit = {},
     titleLoader: () -> Painter? = ::loadDesktopStartupTitle,
+    progressContent: @Composable () -> Unit = { UiLinearProgressIndicator(Modifier.fillMaxWidth()) },
     onExit: () -> Unit = {},
 ) {
     // painterResource 在 JVM 首次解码会同步等待，标题不能挡住转圈的首帧。
@@ -97,7 +98,7 @@ internal fun DesktopStartupView(
                     LineSpinFadeLoaderIndicator(radius = 22f, penThickness = 8f)
                 }
                 Text(message, color = Color.White)
-                if (error == null) UiLinearProgressIndicator(Modifier.fillMaxWidth())
+                if (error == null) progressContent()
                 else {
                     Text(error.toString(), color = Color.White)
                     TextButton(onClick = onExit) { Text("退出 / Exit") }
