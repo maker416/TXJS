@@ -17,6 +17,7 @@ import com.corrodinggames.rts.gameFramework.k as GameEngine
 import com.corrodinggames.rts.gameFramework.m.e as EngineImage
 import com.corrodinggames.rts.gameFramework.m.f as LazyTeamImage
 import io.github.rwpp.game.mod.ModResourceCacheAdapter
+import io.github.rwpp.game.mod.DetachedModResources
 import io.github.rwpp.game.mod.ModResourceCacheSweeper
 import io.github.rwpp.game.mod.ReferenceFieldScanner
 import java.util.concurrent.atomic.AtomicBoolean
@@ -90,6 +91,19 @@ internal class AndroidModResourceCache(
         private val scanner = ReferenceFieldScanner(EngineImage::class.java)
         private val binding: Result<Binding> by lazy { runCatching { Binding() } }
         private val warned = AtomicBoolean(false)
+        private val invalidated = mutableListOf<DetachedModResources<EngineImage, EngineSound>>()
+
+        /** 旧单位/场景可能仍引用资源，先移出路径缓存，成功重载后再检查释放条件。 */
+        fun invalidateSources(belongs: (String) -> Boolean) {
+            check(available) { "Mod resource cache structure changed" }
+            val adapter = AndroidModResourceCache()
+            // 上轮失败后若旧资源再次进入缓存，先归还所有权，避免下一批重复登记同一对象。
+            val pending = invalidated.mapNotNull { ModResourceCacheSweeper.relinquishCached(adapter, it) }
+            invalidated.clear()
+            invalidated.addAll(pending)
+            val detached = ModResourceCacheSweeper.invalidateSources(adapter, belongs)
+            if (!detached.isEmpty) invalidated += detached
+        }
 
         /** 引擎结构与预期一致；否则整个清理关闭（只记一次日志）。 */
         val available: Boolean get() = binding.isSuccess
@@ -102,7 +116,11 @@ internal class AndroidModResourceCache(
                 }
                 return
             }
-            ModResourceCacheSweeper.sweep(AndroidModResourceCache())
+            val adapter = AndroidModResourceCache()
+            val remaining = invalidated.mapNotNull { ModResourceCacheSweeper.releaseInvalidated(adapter, it) }
+            invalidated.clear()
+            invalidated.addAll(remaining)
+            ModResourceCacheSweeper.sweep(adapter)
         }
     }
 }

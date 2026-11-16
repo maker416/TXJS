@@ -15,6 +15,33 @@ import java.io.File
 import kotlin.test.*
 
 class DesktopModLoadSafetyInjectionTest {
+    @Test fun generatedScannerHooksInvalidateSourcesBeforeRestoringSelection() {
+        val root = Toml.decodeFromString(RootInfo.serializer(), File("build/generated/config.toml").readText())
+        val names = listOf("invalidateChangedSourcesBeforeScan", "applyReloadSelectionAfterScan")
+        val hooks = root.injectInfos.filter { hook -> names.any { hook.path.endsWith(".$it") } }
+        assertEquals(2, hooks.size)
+        assertEquals(io.github.rwpp.inject.InjectMode.InsertBefore,
+            hooks.single { it.path.endsWith(".invalidateChangedSourcesBeforeScan") }.injectMode)
+        assertTrue(hooks.all { it.hasReceiver && it.methodName == "k" && it.methodDesc == "()Ljava/util/ArrayList;" })
+        val previous = GameLibraries.includes.toSet()
+        try {
+            GameLibraries.includes.clear()
+            GameLibraries.includes.add(GameLibraries.`game-lib`)
+            GameLibraries.defClassPool.appendClassPath(File("../lib/android.jar").absolutePath)
+            GameLibraries.`game-lib`.load(File("../lib/game-lib.jar"))
+            hooks.forEach { hook ->
+                InjectApi.injectMethod(hook.className, hook.hasReceiver, hook.methodName, hook.methodDesc,
+                    hook.injectMode, hook.path, hook.returnClassIsVoid, hook.pathType)
+            }
+            val target = GameLibraries.`game-lib`.classTree.defPool.get(hooks.first().className)
+            Analyzer().analyze(target, target.getMethod("k", "()Ljava/util/ArrayList;").methodInfo)
+            assertTrue(target.toBytecode().isNotEmpty())
+        } finally {
+            GameLibraries.includes.clear()
+            GameLibraries.includes.addAll(previous)
+        }
+    }
+
     @Test fun generatedBudgetAndRecoveryHooksApplyToTheRealEngine() {
         val root = Toml.decodeFromString(RootInfo.serializer(), File("build/generated/config.toml").readText())
         val names = listOf("checkUnitLoadBudget", "stopWrappedMemoryFailure", "checkExpressionBudget", "preserveSelectionDuringRecovery", "parseDeepSelect")

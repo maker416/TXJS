@@ -44,7 +44,7 @@ fun deleteModFileSafely(
 
         if (!isInAllowedRoot) return@runCatching false
 
-        ModPlaytimeHashCache.sourceChanged(target)
+        ModSourceChanges.sourceChanged(target)
         if (target.isDirectory) {
             target.deleteRecursively()
         } else {

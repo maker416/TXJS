@@ -10,6 +10,7 @@ package io.github.rwpp.desktop.impl.inject
 import com.corrodinggames.rts.gameFramework.i.a
 import com.corrodinggames.rts.gameFramework.i.b
 import io.github.rwpp.desktop.DesktopLoadedModSnapshot
+import io.github.rwpp.desktop.impl.DesktopModSourceCache
 import io.github.rwpp.game.mod.ModReloadSelection
 import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
@@ -25,9 +26,15 @@ object ModManagerInject {
     fun preserveSelectionDuringRecovery(): Any =
         if (io.github.rwpp.game.mod.ModLoadSafety.suppressSelectionSave) io.github.rwpp.inject.InterruptResult.Unit else Unit
 
+    @Inject("k", InjectMode.InsertBefore)
+    fun a.invalidateChangedSourcesBeforeScan() {
+        DesktopModSourceCache.instance.beforeScan(this)
+    }
+
     @Inject("k", InjectMode.InsertAfter)
     @Suppress("UNCHECKED_CAST")
     fun a.applyReloadSelectionAfterScan() {
+        DesktopModSourceCache.instance.afterScan(this)
         val mods = a::class.java.getDeclaredField("e").run {
             isAccessible = true
             get(this@applyReloadSelectionAfterScan) as ArrayList<b>

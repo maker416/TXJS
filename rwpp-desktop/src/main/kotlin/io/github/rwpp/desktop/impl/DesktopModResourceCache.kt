@@ -17,6 +17,8 @@ import com.corrodinggames.rts.java.q as SlickSound
 import com.corrodinggames.rts.java.s as SlickImage
 import com.corrodinggames.rts.java.audio.Sound
 import io.github.rwpp.game.mod.ModResourceCacheAdapter
+import io.github.rwpp.game.mod.DetachedModResources
+import io.github.rwpp.game.mod.ModResourceCacheSweeper
 import io.github.rwpp.game.mod.ReferenceFieldScanner
 
 /**
@@ -113,6 +115,19 @@ class DesktopModResourceCache internal constructor(
         val available: Boolean get() = binding.isSuccess
 
         private val warned = java.util.concurrent.atomic.AtomicBoolean(false)
+        private val invalidatedSources = mutableListOf<DetachedModResources<EngineImage, EngineSound>>()
+
+        /** 只摘除来源对应的 key；旧单位仍可能引用资源，延后到成功重载后释放。 */
+        fun invalidateSources(belongs: (String) -> Boolean) {
+            val adapter = adapter() ?: return
+            synchronized(invalidatedSources) {
+                val pending = invalidatedSources.mapNotNull { ModResourceCacheSweeper.relinquishCached(adapter, it) }
+                invalidatedSources.clear()
+                invalidatedSources.addAll(pending)
+            }
+            val detached = ModResourceCacheSweeper.invalidateSources(adapter, belongs)
+            if (!detached.isEmpty) synchronized(invalidatedSources) { invalidatedSources += detached }
+        }
 
         /**
          * 只在一次成功重载之后、持有主 GL 上下文的游戏线程上调用。
@@ -120,15 +135,37 @@ class DesktopModResourceCache internal constructor(
          */
         fun sweep() {
             val adapter = adapter() ?: return
-            io.github.rwpp.game.mod.ModResourceCacheSweeper.sweep(adapter)
+            releaseInvalidatedSources(adapter)
+            ModResourceCacheSweeper.sweep(adapter)
         }
 
-        fun detach(): io.github.rwpp.game.mod.DetachedModResources<EngineImage, EngineSound>? =
-            adapter()?.let { io.github.rwpp.game.mod.ModResourceCacheSweeper.detach(it) }
+        fun detach(): io.github.rwpp.game.mod.DetachedModResources<EngineImage, EngineSound>? {
+            val adapter = adapter() ?: return null
+            // 工作线程只移交所有权；被重新放回缓存的旧对象只能由本轮普通清理释放一次。
+            synchronized(invalidatedSources) {
+                val retained = invalidatedSources.mapNotNull { ModResourceCacheSweeper.relinquishCached(adapter, it) }
+                invalidatedSources.clear()
+                invalidatedSources.addAll(retained)
+            }
+            return ModResourceCacheSweeper.detach(adapter)
+        }
 
         fun release(detached: io.github.rwpp.game.mod.DetachedModResources<EngineImage, EngineSound>?) {
             val adapter = adapter() ?: return
+            releaseInvalidatedSources(adapter)
             io.github.rwpp.game.mod.ModResourceCacheSweeper.release(adapter, detached)
+        }
+
+        private fun releaseInvalidatedSources(adapter: DesktopModResourceCache) {
+            if (io.github.rwpp.game.GameStartSafety.requiresRestart) return
+            val pending = synchronized(invalidatedSources) {
+                invalidatedSources.toList().also { invalidatedSources.clear() }
+            }
+            pending.forEach { detached ->
+                ModResourceCacheSweeper.releaseInvalidated(adapter, detached)?.let { retained ->
+                    synchronized(invalidatedSources) { invalidatedSources += retained }
+                }
+            }
         }
 
         private fun adapter(): DesktopModResourceCache? {

@@ -3,6 +3,8 @@
 > 基于反编译 `android-game-lib.jar`（Android 端混淆类）分析整理。
 > 桌面端 `game-lib.jar` 类名映射不同但逻辑一致。
 
+同名 `.rwmod` 替换后的 ZIP、元信息及资源缓存失效机制，参见 [模组来源缓存分析与验证](mod-source-cache.md)。
+
 ## PC 模组目录约定
 
 PC 使用原版的 `mods/units/`，导入、资源浏览器下载、网络缓存激活和引擎扫描均使用该目录；Android 继续使用自己的 `units/` 路径。PC 不扫描根目录 `units/`，旧目录中的用户文件不自动搬移或删除。

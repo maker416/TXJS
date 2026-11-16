@@ -9,6 +9,7 @@ package io.github.rwpp.android.impl.inject
 
 import com.corrodinggames.rts.gameFramework.i.a
 import com.corrodinggames.rts.gameFramework.i.b
+import io.github.rwpp.android.impl.AndroidModSourceCache
 import io.github.rwpp.game.mod.ModReloadSelection
 import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
@@ -22,6 +23,11 @@ import io.github.rwpp.inject.InjectMode
  */
 @InjectClass(a::class)
 object ModManagerInject {
+    @Inject("j", InjectMode.InsertBefore)
+    fun a.invalidateChangedModSources() {
+        AndroidModSourceCache.instance.beforeScan(this)
+    }
+
     @Inject("d", InjectMode.InsertBefore, "()V")
     fun preserveSelectionDuringRecovery(): Any =
         if (io.github.rwpp.game.mod.ModLoadSafety.suppressSelectionSave) io.github.rwpp.inject.InterruptResult.Unit else Unit
@@ -30,6 +36,7 @@ object ModManagerInject {
     @Inject("j", InjectMode.InsertAfter)
     @Suppress("UNCHECKED_CAST")
     fun a.applyReloadSelectionAfterScan() {
+        AndroidModSourceCache.instance.afterScan(this)
         val mods = e as ArrayList<b>
         mods.forEach { mod ->
             val candidates = buildList {

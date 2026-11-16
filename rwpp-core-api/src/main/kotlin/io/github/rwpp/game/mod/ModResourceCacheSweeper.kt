@@ -60,6 +60,115 @@ data class ModResourceSweepStats(
 
 object ModResourceCacheSweeper {
     /**
+     * Remove keys belonging to replaced sources before parsing, without releasing resources used by
+     * the current scene. Objects still owned by another cache key remain the ordinary sweep's job.
+     * All dependency discovery finishes before changing either cache.
+     */
+    fun <I : Any, S : Any> invalidateSources(
+        adapter: ModResourceCacheAdapter<I, S>,
+        belongs: (String) -> Boolean,
+    ): DetachedModResources<I, S> {
+        val imageKeys = adapter.images.keys.filter(belongs).toSet()
+        val soundKeys = adapter.sounds.keys.filter(belongs).toSet()
+        val liveImages = identitySet<I>().apply {
+            addAll(orderedImages(adapter, adapter.images.filterKeys { it !in imageKeys }.values))
+        }
+        val images = orderedImages(adapter, imageKeys.map { adapter.images.getValue(it) })
+            .filter { it !in liveImages }
+        val liveSounds = identitySet<S>().apply { addAll(adapter.sounds.filterKeys { it !in soundKeys }.values) }
+        val seenSounds = identitySet<S>()
+        val sounds = soundKeys.mapNotNull { key ->
+            adapter.sounds.getValue(key).takeIf { it !in liveSounds && seenSounds.add(it) }
+        }
+        imageKeys.forEach { adapter.images.remove(it) }
+        soundKeys.forEach { adapter.sounds.remove(it) }
+        return DetachedModResources(images, sounds, imageKeys.size, soundKeys.size)
+    }
+
+    /**
+     * Hand reinserted resources back to the cache before an ordinary detach can claim them. This
+     * only updates ownership and never releases a resource, so it is also safe without a GL context.
+     */
+    fun <I : Any, S : Any> relinquishCached(
+        adapter: ModResourceCacheAdapter<I, S>,
+        detached: DetachedModResources<I, S>?,
+    ): DetachedModResources<I, S>? {
+        detached ?: return null
+        if (GameStartSafety.requiresRestart) return detached
+        return try {
+            val liveImages = identitySet<I>().apply { addAll(orderedImages(adapter, adapter.images.values)) }
+            val liveSounds = identitySet<S>().apply { addAll(adapter.sounds.values) }
+            val images = detached.images.filter { it !in liveImages }
+            val sounds = detached.sounds.filter { it !in liveSounds }
+            if (images.isEmpty() && sounds.isEmpty()) null
+            else DetachedModResources(images, sounds, 0, 0)
+        } catch (error: Throwable) {
+            log(true, "[MODCACHE] defer resource ownership update: {}", error.toString())
+            detached
+        }
+    }
+
+    /**
+     * After a successful reload, release invalidated resources that no current definition or cache
+     * owns. Old used flags describe the previous parse and deliberately do not participate here.
+     * Retained resources and failed releases are returned for a later successful reload. A resource
+     * reinserted into a cache is handed back to that cache, preventing a later double release.
+     */
+    fun <I : Any, S : Any> releaseInvalidated(
+        adapter: ModResourceCacheAdapter<I, S>,
+        detached: DetachedModResources<I, S>?,
+    ): DetachedModResources<I, S>? {
+        detached ?: return null
+        if (GameStartSafety.requiresRestart) return detached
+        val liveImages: Set<I>
+        val retained: Set<I>
+        val liveSounds: Set<S>
+        val dependencies: Map<I, List<I>>
+        try {
+            liveImages = identitySet<I>().apply { addAll(orderedImages(adapter, adapter.images.values)) }
+            retained = identitySet<I>().apply { addAll(orderedImages(adapter, adapter.retainedImages())) }
+            liveSounds = identitySet<S>().apply { addAll(adapter.sounds.values) }
+            dependencies = IdentityHashMap<I, List<I>>().apply {
+                detached.images.forEach { put(it, adapter.dependentImages(it)) }
+            }
+        } catch (error: Throwable) {
+            log(true, "[MODCACHE] defer invalidated resources: {}", error.toString())
+            return detached
+        }
+
+        val pendingImages = mutableListOf<I>()
+        val pendingSounds = mutableListOf<S>()
+        val failedImages = identitySet<I>()
+        var failures = 0
+        detached.images.forEach { image ->
+            when {
+                image in liveImages -> Unit
+                image in retained -> pendingImages += image
+                dependencies.getValue(image).any { it in failedImages } -> {
+                    // Keep the parent intact as well, so its failed dependency can be retried safely.
+                    failedImages += image
+                    pendingImages += image
+                }
+                else -> try { adapter.releaseImage(image) } catch (error: Throwable) {
+                    failedImages += image
+                    pendingImages += image
+                    if (failures++ == 0) log(true, "[MODCACHE] release invalidated image failed: {}", error.toString())
+                }
+            }
+        }
+        detached.sounds.forEach { sound ->
+            if (sound !in liveSounds) {
+                try { adapter.releaseSound(sound) } catch (error: Throwable) {
+                    pendingSounds += sound
+                    if (failures++ == 0) log(true, "[MODCACHE] release invalidated sound failed: {}", error.toString())
+                }
+            }
+        }
+        return if (pendingImages.isEmpty() && pendingSounds.isEmpty()) null
+        else DetachedModResources(pendingImages, pendingSounds, 0, 0)
+    }
+
+    /**
      * 计算并移出本轮未使用的条目。计算全部完成后才修改缓存；任何异常都放弃本次清理
      * 且不修改缓存（失败时宁可保留旧资源）。重载失败、需重启时不得调用，内部再兜底检查。
      */
@@ -124,6 +233,21 @@ object ModResourceCacheSweeper {
     /** 同一线程内完成移出与释放。 */
     fun <I : Any, S : Any> sweep(adapter: ModResourceCacheAdapter<I, S>): ModResourceSweepStats? =
         release(adapter, detach(adapter))
+
+    private fun <I : Any, S : Any> orderedImages(
+        adapter: ModResourceCacheAdapter<I, S>,
+        roots: Iterable<I>,
+    ): List<I> {
+        val seen = identitySet<I>()
+        val ordered = mutableListOf<I>()
+        fun visit(image: I) {
+            if (!seen.add(image)) return
+            adapter.dependentImages(image).forEach(::visit)
+            ordered += image
+        }
+        roots.forEach(::visit)
+        return ordered
+    }
 
     private fun <T> identitySet(): MutableSet<T> = Collections.newSetFromMap(IdentityHashMap())
 

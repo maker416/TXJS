@@ -33,6 +33,9 @@ fun copyImportedFile(input: InputStream, directory: File, name: String) {
     val temp = File.createTempFile("import-", ".tmp", directory)
     try {
         temp.outputStream().buffered(64 * 1024).use { input.copyTo(it, 64 * 1024) }
+        if (externalFileType(name) == ExternalFileType.Mod) {
+            io.github.rwpp.game.mod.ModSourceChanges.sourceChanged(target)
+        }
         try {
             Files.move(temp.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
         } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
