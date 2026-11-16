@@ -5,6 +5,8 @@
  * https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
  */
 
+import java.net.URI
+
 group = "io.github.rwpp"
 
 plugins {
@@ -28,6 +30,17 @@ buildConfig {
     buildConfigField("ONLINE_CHANNEL", onlineChannel)
     buildConfigField("FEEDBACK_API_URL", ((findProperty("feedbackApiUrl") as String?)
         ?: "https://fk.xn--rhqr8xvr4ahqsgka.com").trim().trimEnd('/'))
+    val openPlatformUrl = ((findProperty("openPlatformUrl") as String?)
+        ?: "https://listup.xn--rhqr8xvr4ahqsgka.com").trim().trimEnd('/')
+    val openPlatformUri = runCatching { URI(openPlatformUrl) }.getOrNull()
+    require(openPlatformUri != null && openPlatformUri.host != null
+        && (openPlatformUri.port == -1 || openPlatformUri.port in 1..65535)
+        && openPlatformUri.rawUserInfo == null && openPlatformUri.rawQuery == null && openPlatformUri.rawFragment == null
+        && (openPlatformUri.scheme == "https" || (openPlatformUri.scheme == "http"
+            && openPlatformUri.host in setOf("localhost", "127.0.0.1", "[::1]", "::1")))) {
+        "openPlatformUrl must use HTTPS (HTTP is allowed only for a loopback address), without credentials, query or fragment."
+    }
+    buildConfigField("OPEN_PLATFORM_URL", openPlatformUrl)
 }
 
 dependencies {

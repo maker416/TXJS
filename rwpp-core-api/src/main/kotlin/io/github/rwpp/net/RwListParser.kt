@@ -22,6 +22,7 @@ data class RwListServerEntry(
     val required_mod: String,
     val available: String,
     val server_id: String = "",
+    val closed_message: String = "",
 )
 
 data class RwListServersPage(
@@ -113,6 +114,7 @@ fun parseRwListServerEntry(obj: JsonObject): RwListServerEntry =
         required_mod = obj.getString("required_mod", "[]"),
         available = obj.getString("available", ""),
         server_id = obj.getString("server_id", ""),
+        closed_message = obj.get("closed_message")?.takeIf { it.isString }?.asString() ?: "",
     )
 
 fun parseRwListServersPage(body: String): RwListServersPage {
@@ -203,6 +205,7 @@ fun mapRwListEntryToRoomDescription(entry: RwListServerEntry): RoomDescription {
         roomJoinType = if (isShortCode) RoomJoinType.SHORT else RoomJoinType.IP,
         listAvailable = isRwListEntryJoinable(entry),
         listAvailabilityKnown = entry.available == "0" || entry.available == "1",
+        closedMessage = entry.closed_message,
     )
 }
 

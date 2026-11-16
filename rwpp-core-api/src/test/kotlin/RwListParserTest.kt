@@ -67,6 +67,31 @@ class RwListParserTest {
     }
 
     @Test
+    fun closedMessageIsOptionalAndLegacyRoomStillMaps() {
+        val entry = parseRwListServersPage(sampleListJson).list.single()
+        assertEquals("", entry.closed_message)
+        assertEquals("", mapRwListEntryToRoomDescription(entry).closedMessage)
+    }
+
+    @Test
+    fun closedMessageReachesRoomDetailsWithoutMakingTheRoomJoinable() {
+        val message = "服务器维护中，预计今晚 20:00 开放。"
+        val json = sampleListJson.replace("\"available\": \"1\"", "\"available\": \"0\", \"closed_message\": \"$message\"")
+        val entry = parseRwListServersPage(json).list.single()
+        val room = mapRwListEntryToRoomDescription(entry)
+        assertEquals(message, entry.closed_message)
+        assertEquals(message, room.closedMessage)
+        assertFalse(room.listAvailable)
+        assertFalse(room.isJoinableFromList)
+    }
+
+    @Test
+    fun nullOptionalClosedMessageDoesNotBreakTheList() {
+        val json = sampleListJson.replace("\"available\": \"1\"", "\"available\": \"0\", \"closed_message\": null")
+        assertEquals("", parseRwListServersPage(json).list.single().closed_message)
+    }
+
+    @Test
     fun emptyMapPreservesRoomNameAndLegacyAvailabilityRemainsUnknown() {
         val entry = parseRwListServersPage(sampleListJson).list.first().copy(
             name = "公开房间-R7471", mapname = "", roomtype = "默认|模组同步", available = "",

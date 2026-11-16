@@ -126,8 +126,6 @@ private fun roomModSyncStatusI18nKey(desc: RoomDescription): String? = when {
     else -> null
 }
 
-private const val LIST_POSITION_APPLICATION_URL = "http://listup.xn--rhqr8xvr4ahqsgka.com:11452/"
-
 private class HostModSyncFailurePrompt(val message: String) {
     val decision = CompletableDeferred<HostModSyncFailureAction>()
 }
@@ -1630,7 +1628,7 @@ fun MultiplayerView(
                     label = readI18n("multiplayer.apply24HourListPosition"),
                     leadingIcon = { Icon(painter = painterResource(Res.drawable.public_30), null, modifier = Modifier.size(30.dp)) },
                 ) {
-                    net.openUriInBrowser(LIST_POSITION_APPLICATION_URL)
+                    net.openUriInBrowser(resolveOpenPlatformUrl())
                 }
 
                 RWTextButton(
@@ -2096,7 +2094,7 @@ private fun BlockGlyph(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun JoinServerRequestDialog(
+internal fun JoinServerRequestDialog(
     visible: Boolean,
     onDismissRequest: () -> Unit,
     roomDescription: RoomDescription?,
@@ -2199,6 +2197,23 @@ private fun JoinServerRequestDialog(
                         RoomAccessChip(readI18n("multiplayer.roomList.accessPassword"))
                     }
                     if (statusText != null) RoomStatusChip(statusText)
+                }
+
+                if (!roomDescription.listAvailable && roomDescription.closedMessage.isNotBlank()) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        SelectionContainer {
+                            Text(
+                                roomDescription.closedMessage,
+                                modifier = Modifier.padding(14.dp),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                    }
                 }
 
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

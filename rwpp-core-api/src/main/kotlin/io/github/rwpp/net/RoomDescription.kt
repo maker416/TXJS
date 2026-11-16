@@ -49,6 +49,8 @@ data class RoomDescription(
     val listAvailable: Boolean = true,
     /** RWList `available` is explicitly "0" or "1"; empty legacy values have unknown status. */
     val listAvailabilityKnown: Boolean = true,
+    /** 开放平台提供的不可加入原因；旧列表未提供时保留通用状态提示。 */
+    val closedMessage: String = "",
 ) {
     fun addressProvider(): String {
         if (this.roomId != 0) {
