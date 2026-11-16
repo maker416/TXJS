@@ -22,12 +22,15 @@ import okhttp3.mockwebserver.SocketPolicy
 import okio.Buffer
 import okio.ForwardingSource
 import okio.buffer
+import java.net.InetAddress
 import java.util.concurrent.TimeUnit
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 class CancellableHttpTest {
     private lateinit var server: MockWebServer
@@ -36,12 +39,14 @@ class CancellableHttpTest {
 
     @BeforeTest
     fun setup() {
-        server = MockWebServer().apply { start() }
+        server = MockWebServer().apply { start(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)), 0) }
         bodyStarted = CompletableDeferred()
         http = OkHttpClient.Builder()
             .readTimeout(20, TimeUnit.SECONDS)
             .addNetworkInterceptor { chain ->
                 val response = chain.proceed(chain.request())
+                // 房间名片先探测能力；只让真实业务正文的阻塞读取触发本测试的取消时机。
+                if (chain.request().url.encodedPath == "/api/v1/capabilities") return@addNetworkInterceptor response
                 val original = response.body ?: return@addNetworkInterceptor response
                 val source = object : ForwardingSource(original.source()) {
                     override fun read(sink: Buffer, byteCount: Long): Long {
@@ -82,12 +87,25 @@ class CancellableHttpTest {
     }
 
     @Test
-    fun roomIdentityCancellationStillClosesCallWhileReadingBody() = assertCancels(
-        stalledBody("""{"users":[]}"""),
-        awaitBody = true,
-    ) {
-        RoomIdentityClient(listOf(server.url("/").toString()), http)
-            .lookup(listOf("code:Q1"), "alice", "ak_test", "token")
+    fun roomIdentityCancellationStillClosesCallWhileReadingBody() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"room_id_enabled":true,"room_id_public_lookup":true}"""))
+        server.enqueue(stalledBody("""{"users":[]}"""))
+        // MockWebServer.url() 的反向 DNS 名称可能不是 localhost，显式使用受允许的回环地址。
+        val url = server.url("/").newBuilder().host("127.0.0.1").build().toString()
+        val job = launch(Dispatchers.IO) {
+            RoomIdentityClient(listOf(url), http).lookup(listOf("code:Q1"), "alice", "ak_test", "token")
+        }
+        val probe = assertNotNull(server.takeRequest(2, TimeUnit.SECONDS))
+        assertEquals("/api/v1/capabilities", probe.path)
+        assertNull(probe.getHeader("Authorization"))
+        assertNull(probe.getHeader("X-App-Key"))
+        val lookup = assertNotNull(server.takeRequest(2, TimeUnit.SECONDS))
+        assertEquals("/api/v1/roomid/lookup?room_key=code%3AQ1&player_name=alice", lookup.path)
+        assertNull(lookup.getHeader("Authorization"))
+        assertNull(lookup.getHeader("X-App-Key"))
+        withTimeout(2_000) { bodyStarted.await() }
+        assertFalse(job.isCompleted)
+        withTimeout(2_000) { job.cancelAndJoin() }
     }
 
     @Test

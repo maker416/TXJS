@@ -15,7 +15,7 @@ import kotlinx.serialization.Serializable
  *
  * 机制：登录客户端在房内周期性公示 `{room_keys, player_name}`（带 `X-App-Key` + `Authorization: Bearer`），
  * 服务端向 UAS 转发 token 核验身份后记录「房间 key + 玩家名 → 账号」映射（TTL 90s）；
- * 同房间其他客户端按 `room_key + player_name` 查询，命中得账号三元组。
+ * 任何客户端均可按 `room_key + player_name` 匿名查询，命中得账号三元组；房间及玩家名由发布者自行声明。
  */
 
 /** 公示请求体。对应 `PUT /api/v1/roomid/publish`。[roomKeys] 1..8 个，[playerName] 1..64 字符。 */
@@ -35,7 +35,7 @@ data class RoomIdEntry(
 
 /**
  * 查询响应体。对应 `GET /api/v1/roomid/lookup?room_key=A&room_key=B&player_name=X`。
- * 无匹配 / 无权限时服务端同样返回 200 + 空数组。
+ * 公开查询不要求登录或同房绑定；无匹配时返回 200 + 空数组。
  */
 @Serializable
 data class RoomIdLookupResponse(

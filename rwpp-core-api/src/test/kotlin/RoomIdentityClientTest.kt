@@ -28,6 +28,7 @@ class RoomIdentityClientTest {
 
     private lateinit var serverA: MockWebServer
     private lateinit var serverB: MockWebServer
+    private val loopbackAddress = InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))
 
     @BeforeTest
     fun setup() {
@@ -36,9 +37,9 @@ class RoomIdentityClientTest {
             io.github.rwpp.logger = org.slf4j.LoggerFactory.getLogger("RoomIdentityClientTest")
         }
         serverA = MockWebServer()
-        serverA.start()
+        serverA.start(loopbackAddress, 0)
         serverB = MockWebServer()
-        serverB.start()
+        serverB.start(loopbackAddress, 0)
     }
 
     @AfterTest
@@ -47,13 +48,20 @@ class RoomIdentityClientTest {
         serverB.shutdown()
     }
 
-    private fun url(server: MockWebServer): String = server.url("/").toString().trimEnd('/')
+    // MockWebServer.url() 使用反向 DNS；本机可能将 127.0.0.1 反查为 Docker 别名。
+    // 固定回环字面地址，让正常请求真正进入协议测试，并保留生产 HTTP 白名单。
+    private fun url(server: MockWebServer): String = server.url("/").newBuilder()
+        .host("127.0.0.1").build().toString().trimEnd('/')
 
     private fun newClient(vararg servers: MockWebServer): RoomIdentityClient =
         RoomIdentityClient(servers.map { url(it) }, OkHttpClient.Builder().build())
 
     private fun MockWebServer.enqueueVerified() {
         enqueue(MockResponse().setBody("""{"room_id_membership_verified":true}"""))
+    }
+
+    private fun MockWebServer.enqueuePublic(publishEnabled: Boolean = true) {
+        enqueue(MockResponse().setBody("""{"room_id_enabled":true,"room_id_public_lookup":true,"room_id_publish_enabled":$publishEnabled,"room_id_membership_verified":false}"""))
     }
 
     private fun MockWebServer.takeAnonymousProbe() {
@@ -66,7 +74,7 @@ class RoomIdentityClientTest {
 
     @Test
     fun publishSendsHeadersAndBody() = runBlocking {
-        serverA.enqueueVerified()
+        serverA.enqueuePublic()
         serverA.enqueue(MockResponse().setResponseCode(200).setBody("""{"ok":true}"""))
         newClient(serverA).publish(
             roomKeys = listOf("code:Q77182", "addr:1.2.3.4:5123"),
@@ -88,7 +96,7 @@ class RoomIdentityClientTest {
 
     @Test
     fun lookupParsesEmptyUsers() = runBlocking {
-        serverA.enqueueVerified()
+        serverA.enqueuePublic()
         serverA.enqueue(MockResponse().setResponseCode(200).setBody("""{"users":[]}"""))
         val users = newClient(serverA).lookup(listOf("code:Q77182"), "萌新", "ak_test", "tok-1")
         assertTrue(users.isEmpty())
@@ -100,13 +108,13 @@ class RoomIdentityClientTest {
             "/api/v1/roomid/lookup?room_key=code%3AQ77182&player_name=%E8%90%8C%E6%96%B0",
             recorded.path,
         )
-        assertEquals("Bearer tok-1", recorded.getHeader("Authorization"))
-        assertEquals("ak_test", recorded.getHeader("X-App-Key"))
+        assertNull(recorded.getHeader("Authorization"))
+        assertNull(recorded.getHeader("X-App-Key"))
     }
 
     @Test
     fun lookupParsesEntries() = runBlocking {
-        serverA.enqueueVerified()
+        serverA.enqueuePublic(publishEnabled = false)
         serverA.enqueue(
             MockResponse().setResponseCode(200).setBody(
                 """{"users":[{"user_id":123,"username":"abc","nickname":"萌新"}]}"""
@@ -115,8 +123,6 @@ class RoomIdentityClientTest {
         val users = newClient(serverA).lookup(
             listOf("code:Q77182", "addr:1.2.3.4:5123"),
             "萌新",
-            "ak_test",
-            "tok-1",
         )
         assertEquals(listOf(RoomIdEntry(123L, "abc", "萌新")), users)
         serverA.takeAnonymousProbe()
@@ -192,7 +198,7 @@ class RoomIdentityClientTest {
 
     @Test
     fun deleteSendsDeleteMethod() = runBlocking {
-        serverA.enqueueVerified()
+        serverA.enqueuePublic()
         serverA.enqueue(MockResponse().setResponseCode(200).setBody("""{"ok":true}"""))
         newClient(serverA).delete("ak_test", "tok-1")
         serverA.takeAnonymousProbe()
@@ -200,6 +206,64 @@ class RoomIdentityClientTest {
         assertEquals("DELETE", recorded.method)
         assertEquals("/api/v1/roomid/publish", recorded.path)
         assertEquals("Bearer tok-1", recorded.getHeader("Authorization"))
+        assertEquals("ak_test", recorded.getHeader("X-App-Key"))
+    }
+
+    @Test
+    fun legacyLookupStillUsesVerifiedCredentials() = runBlocking {
+        serverA.enqueueVerified()
+        serverA.enqueue(MockResponse().setBody("""{"users":[]}"""))
+        newClient(serverA).lookup(listOf("code:Q77182"), "n", "ak_test", "tok-1")
+        serverA.takeAnonymousProbe()
+        val request = serverA.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("Bearer tok-1", request.getHeader("Authorization"))
+        assertEquals("ak_test", request.getHeader("X-App-Key"))
+    }
+
+    @Test
+    fun publicLookupDoesNotRequireCredentialsOrPublicationSupport() = runBlocking {
+        serverA.enqueuePublic(publishEnabled = false)
+        serverA.enqueue(MockResponse().setBody("""{"users":[]}"""))
+        assertTrue(newClient(serverA).lookup(listOf("code:Q77182"), "n").isEmpty())
+        serverA.takeAnonymousProbe()
+        val request = serverA.takeRequest(2, TimeUnit.SECONDS)!!
+        assertNull(request.getHeader("Authorization"))
+        assertNull(request.getHeader("X-App-Key"))
+    }
+
+    @Test
+    fun publicationDisabledNeverSendsCredentials() = runBlocking {
+        for (delete in listOf(false, true)) {
+            serverA.enqueuePublic(publishEnabled = false)
+            assertFailsWith<RoomIdFeatureUnavailableException> {
+                if (delete) newClient(serverA).delete("ak_test", "tok-1")
+                else newClient(serverA).publish(listOf("code:Q77182"), "n", "ak_test", "tok-1")
+            }
+            serverA.takeAnonymousProbe()
+        }
+        assertEquals(2, serverA.requestCount)
+    }
+
+    @Test
+    fun explicitDisableOverridesPublicAndLegacyFlags() = runBlocking {
+        serverA.enqueue(MockResponse().setBody("""{"room_id_enabled":false,"room_id_public_lookup":true,"room_id_membership_verified":true}"""))
+        assertFailsWith<RoomIdFeatureUnavailableException> {
+            newClient(serverA).lookup(listOf("code:Q77182"), "n", "ak_test", "tok-1")
+        }
+        serverA.takeAnonymousProbe()
+        assertEquals(1, serverA.requestCount)
+    }
+
+    @Test
+    fun anonymousLookupSkipsLegacyMirrorWithoutCredentials() = runBlocking {
+        serverA.enqueueVerified()
+        serverB.enqueuePublic()
+        serverB.enqueue(MockResponse().setBody("""{"users":[]}"""))
+        newClient(serverA, serverB).lookup(listOf("code:Q77182"), "n")
+        serverA.takeAnonymousProbe()
+        serverB.takeAnonymousProbe()
+        assertEquals(1, serverA.requestCount)
+        assertNull(serverB.takeRequest(2, TimeUnit.SECONDS)!!.getHeader("Authorization"))
     }
 
     @Test
@@ -240,10 +304,11 @@ class RoomIdentityClientTest {
 
     @Test
     fun localhostHttpDoesNotSendRequestsThroughProxy() = runBlocking {
-        val address = InetSocketAddress(InetAddress.getLoopbackAddress(), serverB.port)
+        val address = InetSocketAddress(loopbackAddress, serverB.port)
         val http = OkHttpClient.Builder().proxy(Proxy(Proxy.Type.HTTP, address)).build()
+        val localhost = serverA.url("/").newBuilder().host("localhost").build().toString()
         assertFailsWith<java.io.IOException> {
-            RoomIdentityClient(listOf(url(serverA)), http).publish(listOf("code:Q77182"), "n", "ak_test", "tok-1")
+            RoomIdentityClient(listOf(localhost), http).publish(listOf("code:Q77182"), "n", "ak_test", "tok-1")
         }
         assertEquals(0, serverA.requestCount)
         assertEquals(0, serverB.requestCount)

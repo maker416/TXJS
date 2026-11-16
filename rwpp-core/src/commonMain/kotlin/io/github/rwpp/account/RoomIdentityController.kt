@@ -60,7 +60,7 @@ sealed interface RoomIdentityResult {
     /** 目标是 AI 玩家（无账号概念，只展示游戏区）。 */
     data object AiPlayer : RoomIdentityResult
 
-    /** relaymod 未提供经过房间成员核验的身份公示功能。 */
+    /** relaymod 未提供可用的公开名片或兼容身份公示功能。 */
     data object FeatureUnavailable : RoomIdentityResult
 
     /** 命中唯一账号（[online] 查询失败时按离线）。 */
@@ -84,7 +84,7 @@ sealed interface RoomIdentityResult {
  * - 点击成员时按 `room_key + player_name` 调 `lookup`，命中得账号三元组，
  *   再调 UAS 公开接口（lookup / presence）补齐名片数据；加好友走 [FriendsSession.sendRequest]。
  * - 与模组同步共用 `MultiplayerPreferences.modSyncApiUrls` 多镜像配置；
- *   没有支持成员核验的节点时，本次运行停用公示。
+ *   没有支持名片的节点时，本次运行停用公示；公开查询不发送账号凭据。
  * - 游戏联机协议零改动；账号隐私沿用 [AccountSession] 的设置。
  */
 object RoomIdentityController {
@@ -102,7 +102,7 @@ object RoomIdentityController {
     @Volatile
     private var playerName: String = ""
 
-    /** 会话内降级标记：无可用的成员核验节点时置位，本次运行不再尝试公示。 */
+    /** 会话内降级标记：无可用的名片节点时置位，本次运行不再尝试公示。 */
     @Volatile
     var featureUnavailable: Boolean = false
         private set
@@ -141,10 +141,10 @@ object RoomIdentityController {
     private val playerAvatarVersions = mutableStateMapOf<String, Int>()
     private val avatarVersion = AtomicInteger()
 
-    /** 经唯一成员公示及账号 id 双重核验的公开资料，key 为 trim 后的玩家名。 */
+    /** 唯一公开名片与 UAS 账号 id 匹配的资料（不代表游戏成员核验），key 为 trim 后的玩家名。 */
     val playerAccounts = mutableStateMapOf<String, PublicUser>()
 
-    /** 单调时钟；公开资料（含 hasAvatar）最多复用 30s，成员核验仍每轮执行。 */
+    /** 单调时钟；公开资料（含 hasAvatar）最多复用 30s，名片查询仍每轮执行。 */
     internal var playerAccountClock: () -> Long = { System.nanoTime() / 1_000_000 }
 
     /**
@@ -254,7 +254,7 @@ object RoomIdentityController {
      * 幂等启动 25s 周期公示循环。单人/沙盒房调用方须先过滤（`GameRoom.isSinglePlayerGame`）。
      * 每个周期前置检查：已登录、[AccountSession.networkEnabled]、未开启「对陌生人隐身」、
      * key 集合非空、未标记 [featureUnavailable]；公示失败仅记日志，
-     * 401 记 warn 并停循环，FeatureUnavailable 置标记并停循环。
+     * 401 或发布能力不可用时记 warn 并停循环；公开查询独立探测能力。
      */
     fun startPublishing() {
         if (publishJob?.isActive == true) return
@@ -544,9 +544,8 @@ object RoomIdentityController {
             logger.warn("[ROOMID] 公示鉴权失败（token 无效），停止发布")
             false
         } catch (e: RoomIdFeatureUnavailableException) {
-            featureUnavailable = true
-            clearPlayerAccounts()
-            logger.warn("[ROOMID] 服务端未提供经过房间成员核验的身份公示功能")
+            // 发布受 UAS 配置约束，不能据此停用仍可用的匿名查询。
+            logger.warn("[ROOMID] 服务端未提供可用的名片发布功能，停止发布")
             false
         } catch (e: CancellationException) {
             throw e

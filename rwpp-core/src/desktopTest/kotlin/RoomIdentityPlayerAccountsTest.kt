@@ -113,7 +113,7 @@ class RoomIdentityPlayerAccountsTest {
     }
 
     @Test
-    fun uniqueVerifiedMemberUsesPublishedUsernameAndCachesPublicProfile() = runBlocking {
+    fun publicCardUsesPublishedUsernameAndCachesPublicProfile() = runBlocking {
         RoomIdentityController.prefetchPlayerCards(room)
         val user = assertNotNull(RoomIdentityController.playerAccountFor(remote.player, room))
         assertEquals(2L, user.id)
@@ -123,14 +123,34 @@ class RoomIdentityPlayerAccountsTest {
         assertTrue(RoomIdentityController.playerAvatarVersionFor(remote.player, room) > 0)
         assertNull(RoomIdentityController.playerAccountFor(self.player, room), "自己头像直接由账号会话提供")
         assertEquals(true, RoomIdentityController.cardAvailability["Guest"])
+        val cardRequest = requests.single { it.url.encodedPath == "/api/v1/roomid/lookup" }
+        assertNull(cardRequest.header("Authorization"))
+        assertNull(cardRequest.header("X-App-Key"))
         val profileRequest = requests.single { it.url.encodedPath == "/api/v1/users/lookup" }
         assertEquals("bob", profileRequest.url.queryParameter("username"))
         assertEquals("Bearer token-A", profileRequest.header("Authorization"))
 
         repeat(3) { RoomIdentityController.prefetchPlayerCards(room) }
-        assertEquals(4, count("/api/v1/roomid/lookup"), "成员核验继续每轮进行")
+        assertEquals(4, count("/api/v1/roomid/lookup"), "公开名片查询继续每轮进行")
         assertEquals(1, count("/api/v1/users/lookup"), "公开资料不应每秒重复查询")
         assertEquals(0, count("/api/v1/presence"))
+    }
+
+    @Test
+    fun unavailablePublicationDoesNotDisablePublicCardQueries() = runBlocking {
+        response = { request -> when (request.url.encodedPath) {
+            "/api/v1/capabilities" -> Reply("""{"room_id_enabled":true,"room_id_public_lookup":true,"room_id_publish_enabled":false}""")
+            "/api/v1/users/me/presence-settings" -> Reply("""{"settings":{"hide_from_strangers":false,"hide_from_friends":false}}""")
+            else -> defaultResponse(request)
+        } }
+        assertFalse(RoomIdentityController.publishOnce())
+        assertFalse(RoomIdentityController.featureUnavailable)
+        assertEquals(0, count("/api/v1/roomid/publish"))
+        RoomIdentityController.prefetchPlayerCards(room)
+        assertNotNull(RoomIdentityController.playerAccountFor(remote.player, room))
+        val lookup = requests.single { it.url.encodedPath == "/api/v1/roomid/lookup" }
+        assertNull(lookup.header("Authorization"))
+        assertNull(lookup.header("X-App-Key"))
     }
 
     @Test
@@ -320,13 +340,13 @@ class RoomIdentityPlayerAccountsTest {
         assertNull(RoomIdentityController.playerAccountFor(remote.player, room))
         assertFalse(requests.any { it.url.encodedPath == "/api/v1/roomid/lookup" &&
             it.url.queryParameter("player_name") == "Second guest" },
-            "登出作废代次后，不能继续带旧token查询剩余成员")
+            "登出作废代次后，不继续处理剩余成员")
     }
 
     private fun count(path: String) = requests.count { it.url.encodedPath == path }
 
     private fun defaultResponse(request: Request): Reply = when (request.url.encodedPath) {
-        "/api/v1/capabilities" -> Reply("""{"room_id_membership_verified":true}""")
+        "/api/v1/capabilities" -> Reply("""{"room_id_enabled":true,"room_id_public_lookup":true,"room_id_publish_enabled":true,"room_id_membership_verified":false}""")
         "/api/v1/roomid/lookup" -> Reply("""{"users":[{"user_id":2,"username":"bob","nickname":"Guest"}]}""")
         "/api/v1/users/lookup" -> publicUser()
         "/api/v1/users/logout", "/api/v1/roomid/publish" -> Reply("""{"ok":true}""")

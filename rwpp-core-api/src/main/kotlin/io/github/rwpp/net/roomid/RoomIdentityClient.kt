@@ -39,8 +39,15 @@ private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
 @Serializable
 private data class RoomIdCapabilities(
+    @SerialName("room_id_enabled") val enabled: Boolean? = null,
+    @SerialName("room_id_public_lookup") val publicLookup: Boolean = false,
+    @SerialName("room_id_publish_enabled") val publishEnabled: Boolean? = null,
     @SerialName("room_id_membership_verified") val membershipVerified: Boolean = false,
-)
+) {
+    fun supportsLookup(): Boolean = enabled != false && (publicLookup || membershipVerified)
+    fun supportsPublication(): Boolean = enabled != false && publishEnabled != false &&
+        (enabled == true || membershipVerified)
+}
 
 /**
  * 房间身份公示调用失败。[statusCode] 为 HTTP 状态码；网络层失败时为 null。
@@ -51,7 +58,7 @@ open class RoomIdException(message: String, val statusCode: Int?) : IOException(
 class RoomIdUnauthorizedException(message: String) : RoomIdException(message, 401)
 
 /**
- * 没有可用的成员核验节点，或服务端明确拒绝身份交换。调用方会话内停用身份公示。
+ * 没有可用的名片节点，或服务端明确停用名片。调用方会话内停用身份公示。
  */
 class RoomIdFeatureUnavailableException(message: String) : RoomIdException(message, null)
 
@@ -59,9 +66,9 @@ class RoomIdFeatureUnavailableException(message: String) : RoomIdException(messa
  * relaymod 房间身份公示端点组（`/api/v1/roomid/`）的 HTTP 客户端。
  *
  * - 全部方法为 suspend，并在 [Dispatchers.IO] 上执行，支持协程取消；
- * - 请求带 [APP_KEY_HEADER] 与 `Authorization: Bearer`（由服务端向 UAS 转发核验）；
- * - 只在通过 HTTPS（本机联调除外）和成员核验能力探测后发送凭据，不跟随重定向。
- * - 网络错误可换已验证的镜像，401 或明确拒绝成员身份交换时停止。
+ * - 公开查询不带账号凭据；发布和撤销带 [APP_KEY_HEADER] 与 `Authorization: Bearer`，由服务端向 UAS 核验；
+ * - 先匿名探测名片能力，兼容旧版成员核验节点；公网使用 HTTPS，本机联调可使用 HTTP，不跟随重定向。
+ * - 网络错误可换镜像，401 或服务端明确停用名片时停止。
  */
 class RoomIdentityClient(
     baseUrls: List<String>,
@@ -116,20 +123,21 @@ class RoomIdentityClient(
     /**
      * 按 `room_key + player_name` 查询账号三元组。
      * 对应 `GET /api/v1/roomid/lookup?room_key=A&room_key=B&player_name=X`（room_key 重复 query 参数）。
-     * 一律 200：无匹配 / 无权限返回空列表。
+     * 公开节点不发送账号凭据；可省略 appKey/token。无匹配返回 200 + 空列表。
+     * 旧版成员核验节点仍需提供 appKey/token。
      */
     suspend fun lookup(
         roomKeys: List<String>,
         playerName: String,
-        appKey: String,
-        token: String,
+        appKey: String = "",
+        token: String = "",
     ): List<RoomIdEntry> {
         val query = buildString {
             append("$API_PREFIX/lookup?")
             append(roomKeys.joinToString("&") { "room_key=${enc(it)}" })
             append("&player_name=${enc(playerName)}")
         }
-        return requestWithFailover(query, appKey, token, { get() }) { response ->
+        return requestWithFailover(query, appKey, token, { get() }, lookup = true) { response ->
             json.decodeFromString<RoomIdLookupResponse>(response.body?.string().orEmpty()).users
         }
     }
@@ -140,25 +148,34 @@ class RoomIdentityClient(
     }
 
     /**
-     * 仅向通过无凭据探测并声明验证房间成员身份的节点发送账号凭据。
-     * 网络错误与临时服务错误可换到其他已验证节点，服务端明确拒绝成员身份交换时立即停止。
+     * 能力探测始终匿名，公开查询也保持匿名；仅发布/撤销或兼容旧节点时发送凭据。
+     * 网络错误与临时服务错误可换镜像，确定性的认证失败立即停止。
      */
     private suspend fun <T> requestWithFailover(
         path: String,
         appKey: String,
         token: String,
         customize: Request.Builder.() -> Unit,
+        lookup: Boolean = false,
         onSuccess: (Response) -> T,
     ): T = withContext(Dispatchers.IO) {
         var lastError: IOException? = null
         for (base in baseUrls) {
             coroutineContext.ensureActive()
             try {
-                if (!supportsVerifiedMembership(base)) continue
+                val capabilities = readCapabilities(base) ?: continue
+                if (lookup && !capabilities.supportsLookup() || !lookup && !capabilities.supportsPublication()) continue
+                val authenticated = !lookup || !capabilities.publicLookup
+                // 兼容旧节点时不发送空凭据，允许继续寻找支持公开查询的镜像。
+                if (authenticated && (appKey.isBlank() || token.isBlank())) continue
                 val request = Request.Builder()
                     .url(base + path)
-                    .header(APP_KEY_HEADER, appKey)
-                    .header("Authorization", "Bearer $token")
+                    .apply {
+                        if (authenticated) {
+                            header(APP_KEY_HEADER, appKey)
+                            header("Authorization", "Bearer $token")
+                        }
+                    }
                     .header("Accept", "application/json")
                     .apply(customize)
                     .build()
@@ -185,19 +202,19 @@ class RoomIdentityClient(
                 lastError = e
             }
         }
-        throw lastError ?: RoomIdFeatureUnavailableException("没有支持成员身份核验的房间身份服务")
+        throw lastError ?: RoomIdFeatureUnavailableException("没有可用的房间名片服务")
     }
 
-    private suspend fun supportsVerifiedMembership(base: String): Boolean =
+    private suspend fun readCapabilities(base: String): RoomIdCapabilities? =
         http.useCancellable(Request.Builder().url(base + CAPABILITIES_PATH).build()) { response ->
             if (response.code in 500..599 && response.code != 503) {
                 throw IOException("HTTP ${response.code}")
             }
-            if (!response.isSuccessful) return@useCancellable false
+            if (!response.isSuccessful) return@useCancellable null
             try {
-                json.decodeFromString<RoomIdCapabilities>(response.body?.string().orEmpty()).membershipVerified
+                json.decodeFromString<RoomIdCapabilities>(response.body?.string().orEmpty())
             } catch (_: SerializationException) {
-                false
+                null
             }
         }
 
