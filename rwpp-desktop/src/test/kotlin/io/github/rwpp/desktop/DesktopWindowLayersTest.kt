@@ -29,6 +29,7 @@ import org.junit.Assume.assumeTrue
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
 import org.koin.dsl.module
+import java.awt.Dimension
 import java.awt.Frame
 import java.awt.GraphicsEnvironment
 import java.awt.Rectangle
@@ -71,6 +72,50 @@ class DesktopWindowLayersTest {
             onEdt { assertFalse(window.isDisplayable, "A queued viewport update must not recreate a disposed peer") }
         } finally {
             onEdt { owner.dispose() }
+        }
+    }
+
+    @Test
+    fun hiddenViewportUpdateSupersedesQueuedResizeAfterOwnerIsShownAgain() {
+        assumeFalse(GraphicsEnvironment.isHeadless())
+        val initial = Dimension(100, 80)
+        val queued = Rectangle(0, 0, 160, 120)
+        val latest = Rectangle(0, 0, 240, 160)
+        var owner: JFrame? = null
+        lateinit var window: JDialog
+        lateinit var content: JPanel
+        try {
+            onEdt {
+                val frame = JFrame("RWJS viewport restore regression")
+                owner = frame
+                frame.isAutoRequestFocus = false
+                frame.setSize(400, 300)
+                frame.isVisible = true
+                content = JPanel()
+                window = JDialog(frame).apply {
+                    isUndecorated = true
+                    isAutoRequestFocus = false
+                    add(content)
+                    size = initial
+                    isVisible = true
+                }
+
+                // 同一 EDT 回合内完成隐藏和恢复，确保旧的 invokeLater 只能在恢复后执行。
+                DesktopWindowLayers.syncViewport(window, frame.layeredPane, content, queued)
+                assertEquals(initial, window.size, "A visible resize must stay deferred")
+                frame.isVisible = false
+                assertFalse(window.isVisible)
+                DesktopWindowLayers.syncViewport(window, frame.layeredPane, content, latest)
+                assertEquals(latest.size, window.size, "A hidden layer must be sized before it is shown")
+                frame.isVisible = true
+                assertTrue(window.isShowing)
+            }
+            onEdt {
+                assertEquals(latest.size, window.size, "The queued resize must not roll back the restored window")
+                assertEquals(latest.size, content.size)
+            }
+        } finally {
+            onEdt { owner?.dispose() }
         }
     }
 

@@ -10,6 +10,7 @@ package io.github.rwpp.desktop.impl.inject
 import android.graphics.Paint
 import android.graphics.RectF
 import com.corrodinggames.rts.game.units.am
+import com.corrodinggames.rts.game.units.y
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
 import io.github.rwpp.desktop.GameEngine
@@ -31,25 +32,36 @@ object UnitAssistInject {
     @Inject("a", InjectMode.InsertAfter, "(FZ)V")
     fun am.drawAssist(delta: Float, simplified: Boolean) {
         if (KeepConnectedReload.active) return
-        if (!settings.showBuildingAttackRange && settings.showAttackRangeUnit == "Never" &&
-            !settings.showUnitTargetLine && !(this as GameUnit).attackRangeHighlighted) return
-        val engine = GameEngine.B()
-        if (bV || cN != null || engine.bs == null || !d(engine.bs)) return
-        val target = (this as? com.corrodinggames.rts.game.units.y)?.R
-        InGameAssistRenderer.drawUnit(this as GameUnit, target != null && target.d(engine.bs))
+        val config = settings
+        val unit = this as GameUnit
+        val range = config.showBuildingAttackRange || config.showAttackRangeUnit != "Never" || unit.attackRangeHighlighted
+        drawVisibleAssists(
+            range, config.showUnitTargetLine,
+            visibleViewer = { if (bV || cN != null) null else GameEngine.B().bs?.takeIf { d(it) } },
+            targetVisible = { viewer -> (this as? y)?.R?.d(viewer) == true },
+            draw = { targetVisible -> InGameAssistRenderer.drawUnit(unit, targetVisible) },
+        )
     }
 
     @RedirectMethod("a", "(FZ)V", "com.corrodinggames.rts.gameFramework.m.y", "a")
     fun am.drawHealthBar(rect: RectF, paint: Paint) {
-        val original = paint.e()
-        val color = if (settings.improvedHealthBar)
-            InGameAssistRules.healthBarColor(original, cu, cv) else original
-        val drawPaint = if (color == original) paint else {
+        val drawPaint = if (!settings.improvedHealthBar) paint else {
+            val original = paint.e()
+            val color = InGameAssistRules.healthBarColor(original, cu, cv)
             // 引擎的 Paint 是缓存共享对象，不能在上面直接改颜色。
-            healthPaint.a(paint)
-            healthPaint.b(color)
-            healthPaint
+            if (color == original) paint else healthPaint.apply { a(paint); b(color) }
         }
         GameEngine.B().bO.a(rect, drawPaint)
     }
+}
+
+// d(viewer) 可能查迷雾格。只在这次绘制需要时查询，不跨单位或帧缓存可见性。
+internal inline fun <V : Any> drawVisibleAssists(
+    range: Boolean, targetLine: Boolean,
+    visibleViewer: () -> V?, targetVisible: (V) -> Boolean, draw: (Boolean) -> Unit,
+) {
+    if (!range && !targetLine) return
+    val viewer = visibleViewer() ?: return
+    val visibleTarget = targetLine && targetVisible(viewer)
+    if (range || visibleTarget) draw(visibleTarget)
 }

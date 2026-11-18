@@ -167,11 +167,13 @@ internal object DesktopWindowLayers {
         }
         inheritNativeMenuRenderer(window, content)
         val request = ViewportUpdate(host, content, Rectangle(viewport))
+        val root = window.rootPane
         if (!window.isVisible) {
+            // 宿主可能在同一 EDT 回合恢复显示；之前排队的 resize 不得覆盖这次同步结果。
+            root.putClientProperty(UPDATE_PENDING, null)
             applyViewport(window, request)
             return
         }
-        val root = window.rootPane
         val queued = root.getClientProperty(UPDATE_PENDING) != null
         if (!queued && viewportMatches(window, request)) return
         root.putClientProperty(UPDATE_PENDING, request)

@@ -27,6 +27,29 @@ import io.github.rwpp.inject.InterruptResult
 
 private typealias AssistHud = com.corrodinggames.rts.gameFramework.f.a
 
+/** 每行只记最近一次布局（含窗口过小的 null）；引擎 HUD 线程独占。 */
+internal class AssistHudRowCache(private val fit: (Float, Float, Float) -> AssistHudLayout?) {
+    private var ready = false
+    private var widthBits = 0
+    private var heightBits = 0
+    private var scaleBits = 0
+    private var row: AssistHudLayout? = null
+
+    fun get(width: Float, height: Float, scale: Float): AssistHudLayout? {
+        val w = width.toBits()
+        val h = height.toBits()
+        val s = scale.toBits()
+        if (!ready || w != widthBits || h != heightBits || s != scaleBits) {
+            row = fit(width, height, scale)
+            widthBits = w
+            heightBits = h
+            scaleBits = s
+            ready = true
+        }
+        return row
+    }
+}
+
 /** 借用原版 HUD 的布局坐标、点击区域登记和 release 事件；不挂额外 View/Compose 层。 */
 @InjectClass(AssistHud::class)
 object InGameHudInject {
@@ -36,6 +59,9 @@ object InGameHudInject {
     private var labels = emptyList<String>()
     private val labelKeys = QuickSelectGroup.entries.map { it.labelKey } +
         listOf("buildingRange", "unitRange", "selectedRange", "rangeNever", "rangeLand", "rangeAir", "rangeAll")
+    private var unitRangeLabels = emptyList<String>()
+    private val quickRow = AssistHudRowCache { w, h, scale -> AssistHudLayout.fit(w, h, scale, 5) }
+    private val extraRow = AssistHudRowCache { w, h, scale -> AssistHudLayout.fit(w, h, scale, 3, 110f) }
     private var lastSecond = Long.MIN_VALUE
     private var lastPing: Int? = null
     private var clockLabel = ""
@@ -65,12 +91,13 @@ object InGameHudInject {
         if (!settings.enableQuickSelectMenu && !settings.showExtraButton) return
         if (labelLanguage != settings.language) {
             labels = labelKeys.map { readI18n("inGameAssist.$it") }
+            unitRangeLabels = labels.drop(8).map { "${labels[6]} $it" }
             labelLanguage = settings.language
         }
         val viewport = engine.cl - engine.cq
-        val layout = AssistHudLayout.fit(viewport, engine.cm, engine.cj, 5) ?: return
-        val canSelect = !game.gameRoom.localPlayer.isSpectator && !engine.cb.j()
-        if (settings.enableQuickSelectMenu && canSelect) {
+        val layout = quickRow.get(viewport, engine.cm, engine.cj) ?: return
+        val showQuickRow = settings.enableQuickSelectMenu && !game.gameRoom.localPlayer.isSpectator && !engine.cb.j()
+        if (showQuickRow) {
             for (group in QuickSelectGroup.entries) {
                 if (button(layout.x(group.ordinal), layout.top, layout.width, layout.height, labels[group.ordinal])) {
                     select(group)
@@ -78,15 +105,15 @@ object InGameHudInject {
             }
         }
         if (settings.showExtraButton) {
-            val extra = AssistHudLayout.fit(viewport, engine.cm, engine.cj, 3, 110f) ?: return
-            val y = if (settings.enableQuickSelectMenu && canSelect) layout.top - extra.height - extra.gap else extra.top
+            val extra = extraRow.get(viewport, engine.cm, engine.cj) ?: return
+            val y = if (showQuickRow) layout.top - extra.height - extra.gap else extra.top
             if (y < extra.height + 16) return
             val selected = game.world.selectedUnits
             if (button(extra.x(0), y, extra.width, extra.height, labels[5], settings.showBuildingAttackRange)) {
                 settings.showBuildingAttackRange = !settings.showBuildingAttackRange
             }
             val rangeIndex = Settings.unitAttackRangeTypes.indexOf(settings.showAttackRangeUnit).coerceAtLeast(0)
-            if (button(extra.x(1), y, extra.width, extra.height, "${labels[6]} ${labels[8 + rangeIndex]}", rangeIndex != 0)) {
+            if (button(extra.x(1), y, extra.width, extra.height, unitRangeLabels[rangeIndex], rangeIndex != 0)) {
                 settings.showAttackRangeUnit = Settings.unitAttackRangeTypes[(rangeIndex + 1) % Settings.unitAttackRangeTypes.size]
             }
             if (selected.isNotEmpty() && button(extra.x(2), y, extra.width, extra.height, labels[7],

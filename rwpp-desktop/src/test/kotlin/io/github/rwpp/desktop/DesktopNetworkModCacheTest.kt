@@ -21,6 +21,43 @@ import javax.crypto.spec.SecretKeySpec
 import kotlin.test.*
 
 class DesktopNetworkModCacheTest {
+    @Test fun preparedFileStoreValidatesOnceAndRejectsSameLengthWrongContent() = withRoot { root, context ->
+        val cache = DesktopNetworkModCache(context)
+        cache.prepareStartup()
+        val bytes = "valid".toByteArray()
+        val descriptor = NetworkModDescriptor.fromBytes("fixture", bytes)
+        // 准备好的逐文件导入不应在流式写入前再调用一次 validatePayload。
+        var lengthChecks = 0
+        val staging = object : File(root, "download.part") {
+            override fun length(): Long {
+                lengthChecks++
+                return super.length()
+            }
+        }
+        staging.writeBytes(bytes)
+        val encrypted = cache.storeVerified(descriptor, staging).payloadFile
+        assertEquals(1, lengthChecks, "缓存层与封装写入器不应各校验一遍暂存文件")
+        val previousEnvelope = encrypted.readBytes()
+        val active = cache.activate(descriptor).payloadFile
+
+        staging.writeText("other")
+        assertFailsWith<IllegalArgumentException> { cache.storeVerified(descriptor, staging) }
+        assertContentEquals(previousEnvelope, encrypted.readBytes(), "坏输入不得覆盖已验证封装")
+        assertContentEquals(bytes, active.readBytes())
+        assertEquals("other", staging.readText(), "暂存文件仍属于调用方")
+    }
+
+    @Test fun invalidColdFileStoreDoesNotCleanExistingWorkingCopy() = withRoot { root, context ->
+        val descriptor = NetworkModDescriptor.fromBytes("fixture", "old".toByteArray())
+        val active = NetworkModCacheFiles.activeFile(File(root, "mods/units"), descriptor)
+        active.parentFile.mkdirs()
+        active.writeText("old")
+        val staging = File(root, "download.part").apply { writeText("bad") }
+
+        assertFailsWith<IllegalArgumentException> { DesktopNetworkModCache(context).storeVerified(descriptor, staging) }
+        assertEquals("old", active.readText(), "拒绝坏文件不应触发首次启动清理")
+    }
+
     @Test fun corruptReplacementKeepsPreviousActiveVersion() = withRoot { root, context ->
         val cache = DesktopNetworkModCache(context)
         val old = NetworkModDescriptor.fromBytes("same", "old".toByteArray())

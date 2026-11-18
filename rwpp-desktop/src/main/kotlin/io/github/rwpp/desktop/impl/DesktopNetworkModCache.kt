@@ -108,7 +108,7 @@ class DesktopNetworkModCache(
         try {
             staging.writeBytes(bytes)
             NetworkModCacheFiles.writeAtomic(cacheFile, cacheRoot) { output ->
-                ChunkedModEnvelope.write(staging, descriptor, createdAt, key, output)
+                ChunkedModEnvelope.writeStaged(staging, descriptor, createdAt, key, output)
             }
         } finally { staging.delete() }
         val entry = DesktopEntry(descriptor, cacheFile, createdAt)
@@ -117,14 +117,17 @@ class DesktopNetworkModCache(
     }
 
     override fun storeVerified(descriptor: NetworkModDescriptor, file: File): NetworkModCacheEntry = synchronized(lock) {
-        require(descriptor.matches(file)) { "Network mod file does not match descriptor" }
-        prepareStartup()
+        // 热路径边加密边验证，成功后才发布临时文件。冷调用仍先拒绝坏输入，避免触发工作副本清理。
+        if (!prepared) {
+            require(descriptor.matches(file)) { "Network mod file does not match descriptor" }
+            prepareStartup()
+        }
         val cacheRoot = encryptedRoot.apply { mkdirs() }
         val key = loadOrCreateKey(cacheRoot)
         val createdAt = System.currentTimeMillis()
         val cacheFile = File(cacheRoot, "${descriptor.cacheKey()}.$CACHE_EXTENSION")
         NetworkModCacheFiles.writeAtomic(cacheFile, cacheRoot) { output ->
-            ChunkedModEnvelope.write(file, descriptor, createdAt, key, output)
+            ChunkedModEnvelope.writeStaged(file, descriptor, createdAt, key, output)
         }
         val entry = DesktopEntry(descriptor, cacheFile, createdAt)
         entries[descriptor.cacheKey()] = entry

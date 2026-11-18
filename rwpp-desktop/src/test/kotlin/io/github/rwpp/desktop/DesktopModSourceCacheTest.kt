@@ -98,6 +98,51 @@ class DesktopModSourceCacheTest {
         assertTrue(retained.all(File::isFile), "来源名仅前缀相似的兄弟包必须保留")
     }
 
+    @Test fun changedMountAliasesListEachMetadataDirectoryOncePerScan() = fixture { root ->
+        val mounts = listOf("first", "second", "untouched").associate { mount ->
+            val archive = File(root, "$mount/same.rwmod").apply { parentFile.mkdirs() }
+            writeArchive(archive, "root", "old")
+            "mounted/$mount/same.rwmod" to archive
+        }
+        fun registrations() = mounts.keys.map { alias -> EngineMod().apply { e = alias; p = alias } }
+        val manager = manager(*registrations().toTypedArray())
+        val listings = mutableMapOf<File, Int>()
+        val cache = DesktopModSourceCache(
+            resolvePath = { mounts[it]?.path ?: it },
+            cacheFile = { group, path -> cacheFile(root, group, path) },
+            listMetadataFiles = { dir ->
+                listings[dir] = listings.getOrDefault(dir, 0) + 1
+                dir.listFiles()
+            },
+            invalidateResources = {},
+        )
+        val cached = mounts.mapValues { (alias, archive) ->
+            groups.flatMap { group ->
+                listOf(alias, archive.path).map { path ->
+                    cacheFile(root, group, "$path/mod-info.txt.data").apply { parentFile.mkdirs(); writeText("cached") }
+                }
+            }
+        }
+        val (first, second, untouched) = mounts.keys.toList()
+        cache.afterScan(manager)
+        replaceArchive(mounts.getValue(first), "root", "new")
+        replaceArchive(mounts.getValue(second), "root", "new")
+        cache.beforeScan(manager)
+
+        assertEquals(groups.associate { File(root, it) to 1 }, listings)
+        assertTrue((cached.getValue(first) + cached.getValue(second)).none(File::exists))
+        assertTrue(cached.getValue(untouched).all(File::isFile), "同名但来自其他挂载的缓存应保留")
+
+        modsField.set(manager, ArrayList(registrations()))
+        cache.afterScan(manager)
+        (cached.getValue(first) + cached.getValue(second)).forEach { it.writeText("recached") }
+        replaceArchive(mounts.getValue(first), "root", "rev")
+        cache.beforeScan(manager)
+        assertEquals(groups.associate { File(root, it) to 2 }, listings, "第二代重新枚举，不能复用旧快照")
+        assertTrue(cached.getValue(first).none(File::exists))
+        assertTrue(cached.getValue(second).all(File::isFile), "上一代有变化的第二个包本轮不应再失效")
+    }
+
     @Test fun onlyChangedSourcesLoseTheirResourceKeys() = fixture { root ->
         val archive = File(root, "same.rwmod")
         val other = File(root, "same.rwmod2")

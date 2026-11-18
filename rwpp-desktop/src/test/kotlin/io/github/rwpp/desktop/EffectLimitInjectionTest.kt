@@ -17,6 +17,7 @@ import javassist.CtNewMethod
 import javassist.Loader
 import javassist.bytecode.analysis.Analyzer
 import javassist.expr.ExprEditor
+import javassist.expr.FieldAccess
 import javassist.expr.MethodCall
 import net.peanuuutz.tomlkt.Toml
 import java.io.File
@@ -31,7 +32,7 @@ class EffectLimitInjectionTest {
     private val effectName = "com.corrodinggames.rts.gameFramework.d.e"
     private val priorityName = "com.corrodinggames.rts.gameFramework.d.h"
 
-    private fun withEngine(test: (ClassLoader) -> Unit) {
+    private fun withEngine(countSlotReads: Boolean = false, test: (ClassLoader) -> Unit) {
         val root = Toml.decodeFromString(RootInfo.serializer(), File("build/generated/config.toml").readText())
         val hook = root.injectInfos.single { it.path.endsWith("EffectLimitInject.allocateEffect") }
         assertEquals(engineName, hook.className)
@@ -51,6 +52,21 @@ class EffectLimitInjectionTest {
             val pool = library.classTree.defPool
             val target = pool.get(engineName)
             val effect = pool.get(effectName)
+
+            if (countSlotReads) {
+                // Instrument only this loader's copy of the allocator, not the engine's update/draw loops.
+                val hookName = hook.path.substringBeforeLast('.')
+                val bytes = requireNotNull(javaClass.getResourceAsStream("/${hookName.replace('.', '/')}.class"))
+                val copy = bytes.use { pool.makeClass(it) }
+                copy.addField(CtField.make("public static int testSlotReads;", copy))
+                copy.getDeclaredMethod("allocateEffect").instrument(object : ExprEditor() {
+                    override fun edit(field: FieldAccess) {
+                        if (field.isReader && field.className == effectName && field.fieldName == "o") {
+                            field.replace("{ testSlotReads++; \$_ = \$proceed(); }")
+                        }
+                    }
+                })
+            }
 
             // No native graphics/device in this JVM. Keep the real effect constructor, allocator,
             // disposal and pool clear; omit only rendering initialization and the FPS supplier.
@@ -75,9 +91,11 @@ class EffectLimitInjectionTest {
             }
             effect.addField(CtField.make("public static int testUpdates = 0;", effect))
             target.addMethod(CtNewMethod.make("public void testEmit($priorityName priority) { a(priority); }", target))
-            // Simulate a death/trail callback, retaining the original engine traversal.
+            // 999 emits a trail; 998 dies and emits just before the real release method returns.
             effect.getDeclaredMethod("b", arrayOf(CtClass.floatType)).setBody(
-                "{ testUpdates++; if (V == 999f) { V = 0f; ay.testEmit(q); } }")
+                "{ testUpdates++; if (V == 999f) { V = 0f; ay.testEmit(q); } else if (V == 998f) b(); }")
+            effect.getDeclaredMethod("b", emptyArray()).insertAfter(
+                "{ if (V == 998f) { V = 0f; ay.testEmit(q); } }")
             target.getDeclaredMethod("a", arrayOf(CtClass.floatType)).instrument(object : ExprEditor() {
                 override fun edit(call: MethodCall) {
                     if (call.className == "com.corrodinggames.rts.gameFramework.l" &&
@@ -129,7 +147,11 @@ class EffectLimitInjectionTest {
         val hookInstance = hook.getField("INSTANCE").get(null)
         val allocate = engine.getDeclaredMethod("a", priority).apply { isAccessible = true }
         val original = engine.getDeclaredMethod("__original__a", priority).apply { isAccessible = true }
+        val update = engine.getDeclaredMethod("a", Float::class.javaPrimitiveType)
+        val clear = engine.getDeclaredMethod("a", Boolean::class.javaPrimitiveType)
+        val release = effect.getDeclaredMethod("b").apply { isAccessible = true }
         val constructor = effect.getDeclaredConstructor(engine).apply { isAccessible = true }
+        fun emit(instance: Any): Any? = allocate.invoke(instance, priorities[0])
         fun configure(limit: Int) { hook.getMethod("configure", Int::class.javaPrimitiveType).invoke(hookInstance, limit) }
         fun beginUpdate(instance: Any) {
             hook.getMethod("beforeEffectUpdate", engine, Float::class.javaPrimitiveType).invoke(hookInstance, instance, 0f)
@@ -172,7 +194,7 @@ class EffectLimitInjectionTest {
             emitted.forEach { assertEquals(123f, core.effect.getField("V").getFloat(it)) }
 
             val released = core.pool()[25]!!
-            core.effect.getDeclaredMethod("b").apply { isAccessible = true }.invoke(released)
+            core.release.invoke(released)
             assertEquals(1199, core.count(instance))
             val retainedPool = core.pool()
             assertSame(released, core.allocate.invoke(instance, core.priorities[0]))
@@ -189,6 +211,145 @@ class EffectLimitInjectionTest {
             assertEquals(1200, core.count(instance))
             assertEquals(1200, core.end())
         }
+    }
+
+    @Test fun denseBurstAndFusedFullPoolAvoidPrefixScans() = withEngine(countSlotReads = true) { loader ->
+        val core = Core(loader)
+        core.configure(Int.MAX_VALUE)
+        val instance = core.fresh(1200, 1)
+        val pool = core.pool()
+        val reads = core.hook.getField("testSlotReads")
+        val emit = { core.allocate.invoke(instance, core.priorities[0]) }
+
+        for (slot in pool) assertSame(slot, emit())
+        val denseReads = reads.getInt(null)
+        assertTrue(denseReads <= pool.size, "$denseReads slot probes for ${pool.size} dense allocations")
+        core.effect.getField("testFailConstruction").setBoolean(null, true)
+        repeat(32) { assertNull(emit()) }
+        assertEquals(denseReads, reads.getInt(null), "A full pool needs no slot probes, even after OOM")
+
+        val hole = pool[1100]
+        core.release.invoke(hole)
+        assertSame(hole, emit())
+        assertTrue(reads.getInt(null) > denseReads, "The counter must see the fallback scan")
+    }
+
+    @Test fun alternatingHolesAreRefilledInOrderInOnePass() = withEngine(countSlotReads = true) { loader ->
+        val core = Core(loader)
+        core.configure(Int.MAX_VALUE)
+        val instance = core.fresh(4096, 1)
+        val pool = core.pool()
+        for (slot in pool) assertSame(slot, core.emit(instance))
+        for (i in pool.indices step 2) core.release.invoke(pool[i])
+
+        val reads = core.hook.getField("testSlotReads")
+        reads.setInt(null, 0)
+        for (i in pool.indices step 2) {
+            if (i == pool.size / 2) {
+                core.clear.invoke(instance, true)
+                core.update.invoke(instance, 0f)
+            }
+            assertSame(pool[i], core.emit(instance), "Expected first free slot $i")
+        }
+        assertEquals(pool.size - 1, reads.getInt(null), "One probe per slot through the last hole (4094)")
+        assertEquals(pool.size, core.count(instance))
+        assertSame(pool, core.pool())
+    }
+
+    @Test fun deathDuringUpdateRechecksThePrefixBeforeEmittingItsChild() = withEngine { loader ->
+        val core = Core(loader)
+        core.configure(Int.MAX_VALUE)
+        val instance = core.fresh(8, 1)
+        val pool = core.pool()
+        repeat(8) { core.emit(instance) }
+        for (i in listOf(3, 5, 7)) core.release.invoke(pool[i])
+        assertSame(pool[3], core.emit(instance)) // Prefix [0, 4) is full; 5 and 7 are free.
+        val count = core.count(instance)
+        core.effect.getField("V").setFloat(pool[1], 998f)
+        core.update.invoke(instance, 0f)
+        assertEquals(count, core.count(instance), "Death and child emission cancel out across the update")
+        assertTrue(core.effect.getField("o").getBoolean(pool[1]))
+        assertFalse(core.effect.getField("o").getBoolean(pool[5]))
+        assertEquals(count, core.effect.getField("testUpdates").getInt(null), "The child must not tick twice")
+        assertSame(pool[5], core.emit(instance))
+        core.release.invoke(pool[0])
+        assertSame(pool[0], core.emit(instance), "A later release below the new prefix must also win")
+    }
+
+    @Test fun returningFromOriginalModeWithTheSameCountRechecksLowerHoles() = withEngine { loader ->
+        val core = Core(loader)
+        core.configure(Int.MAX_VALUE)
+        val instance = core.fresh(4, 16)
+        repeat(5) { core.emit(instance) }
+        val pool = core.pool()
+        val count = core.count(instance)
+        assertEquals(4, core.end()) // Slot 4 is pending.
+        core.configure(16)
+        assertSame(pool[5], core.emit(instance))
+        assertSame(pool[6], core.emit(instance))
+        core.release.invoke(pool[5])
+        core.release.invoke(pool[1])
+        assertEquals(count, core.count(instance)) // Same count, same engine and same array, different holes.
+        core.configure(Int.MAX_VALUE)
+        assertSame(pool[1], core.emit(instance), "Neither the old prefix nor the old pending end is sufficient")
+        assertSame(pool[5], core.emit(instance))
+        core.clear.invoke(instance, false)
+        core.beginUpdate(instance)
+        assertEquals(0, core.end())
+        assertSame(pool[0], core.emit(instance))
+    }
+
+    @Test fun sameSizeReplacementPoolWithTheSameCountDoesNotInheritThePrefix() = withEngine { loader ->
+        val core = Core(loader)
+        core.configure(Int.MAX_VALUE)
+        val instance = core.fresh(8, 1)
+        val pool = core.pool()
+        repeat(8) { core.emit(instance) }
+        for (i in listOf(4, 6, 7)) core.release.invoke(pool[i])
+        assertSame(pool[4], core.emit(instance))
+        // Same engine, count and objects; only the array identity and order change. Holes move to 0 and 1.
+        val replacement = pool.reversedArray()
+        core.engine.getField("f").set(null, replacement)
+        assertSame(replacement[0], core.emit(instance))
+        assertSame(replacement[1], core.emit(instance))
+        assertSame(replacement, core.pool())
+    }
+
+    @Test fun holesAcrossThePendingRangeAreRefilledInSlotOrder() = withEngine { loader ->
+        val core = Core(loader)
+        core.configure(Int.MAX_VALUE)
+        val instance = core.fresh(4, 1)
+        val emit = { core.allocate.invoke(instance, core.priorities[0]) }
+        repeat(7) { emit() }
+        val pool = core.pool()
+        for (index in listOf(5, 1, 4)) core.release.invoke(pool[index])
+        // count == g and slot g is free, but slot 6 is live beyond the old array and slot 1 is free.
+        assertEquals(4, core.end())
+        assertEquals(4, core.count(instance))
+        for (index in listOf(1, 4, 5, 7)) assertSame(pool[index], emit(), "Expected first free slot $index")
+        assertEquals(4, core.end())
+        core.beginUpdate(instance)
+        assertEquals(8, core.end())
+    }
+
+    @Test fun reentrantEmissionReusesAnAlreadyVisitedHoleWithoutUpdatingItTwice() = withEngine { loader ->
+        val core = Core(loader)
+        core.configure(Int.MAX_VALUE)
+        val instance = core.fresh(8, 1)
+        repeat(6) { core.allocate.invoke(instance, core.priorities[0]) }
+        val pool = core.pool()
+        core.release.invoke(pool[4])
+        core.release.invoke(pool[1])
+        core.effect.getField("V").setFloat(pool[2], 999f)
+        val update = core.engine.getDeclaredMethod("a", Float::class.javaPrimitiveType)
+        val updates = core.effect.getField("testUpdates")
+        update.invoke(instance, 0f)
+        val active = core.effect.getField("o")
+        assertTrue(active.getBoolean(pool[1]))
+        assertFalse(active.getBoolean(pool[4]))
+        assertEquals(4, updates.getInt(null), "Slot 1 was already passed when slot 2 emitted")
+        update.invoke(instance, 0f)
+        assertEquals(9, updates.getInt(null), "The child is visited in the next update")
     }
 
     @Test fun disabledHookMatchesOriginalZeroAndKeepIncludingPriorityEviction() = withEngine { loader ->
@@ -253,8 +414,13 @@ class EffectLimitInjectionTest {
         assertEquals(2, core.end())
         core.effect.getField("testFailConstruction").setBoolean(null, false)
         assertNull(core.allocate.invoke(instance, core.priorities[0]), "Do not repeatedly retry an exhausted engine")
-        core.effect.getDeclaredMethod("b").apply { isAccessible = true }.invoke(oldPool[0])
+        core.release.invoke(oldPool[0])
         assertSame(oldPool[0], core.allocate.invoke(instance, core.priorities[0]))
+        core.clear.invoke(instance, false)
+        core.configure(0)
+        core.configure(Int.MAX_VALUE)
+        for (slot in oldPool) assertSame(slot, core.emit(instance))
+        assertNull(core.emit(instance), "Resetting the hint must not reset the engine's OOM fuse")
         val next = core.fresh(2, 1)
         repeat(3) { assertNotNull(core.allocate.invoke(next, core.priorities[0])) }
         assertEquals(3, core.count(next))

@@ -33,7 +33,15 @@ object ChunkedModEnvelope {
     }
 
     fun write(file: File, descriptor: NetworkModDescriptor, createdAtMillis: Long, key: ByteArray, output: OutputStream) {
+        // Existing callers may supply a public stream: reject an already-invalid source before writing its header.
         require(descriptor.matches(file)) { "Payload changed before encryption" }
+        writeStaged(file, descriptor, createdAtMillis, key, output)
+    }
+
+    /** Hash the bytes actually encrypted in one pass. Discard the entire output unless this returns successfully. */
+    fun writeStaged(file: File, descriptor: NetworkModDescriptor, createdAtMillis: Long, key: ByteArray, output: OutputStream) {
+        require(file.isFile && file.length() == descriptor.payloadSize) { "Payload size changed before encryption" }
+        val digest = MessageDigest.getInstance("SHA-256")
         val header = Header(Metadata(descriptor, createdAtMillis), ByteArray(8).also(random::nextBytes))
         val encoded = encode(header)
         output.write(encoded)
@@ -44,12 +52,14 @@ object ChunkedModEnvelope {
             repeat(chunkCount(remaining)) { index ->
                 val length = minOf(remaining, CHUNK_SIZE.toLong()).toInt()
                 input.readFully(buffer, 0, length)
+                digest.update(buffer, 0, length)
                 val cipher = cipher(Cipher.ENCRYPT_MODE, key, header, encoded, index, length)
                 output.write(cipher.doFinal(buffer, 0, length))
                 remaining -= length
             }
             require(input.read() == -1) { "Payload changed during encryption" }
         }
+        require(digest.digest().toHexString() == descriptor.normalizedSha256) { "Payload hash changed during encryption" }
     }
 
     /** Output must be unpublished staging storage until this method returns successfully. */
@@ -73,7 +83,7 @@ object ChunkedModEnvelope {
                 remaining -= length
             }
             require(input.read() == -1) { "Trailing data in encrypted mod" }
-            val hash = digest.digest().joinToString("") { "%02x".format(it) }
+            val hash = digest.digest().toHexString()
             require(hash == header.metadata.descriptor.normalizedSha256) { "Cache payload hash mismatch" }
             header.metadata
         }

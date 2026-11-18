@@ -11,7 +11,9 @@ import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.*
 import okio.Buffer
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FilterOutputStream
 import java.io.IOException
 import java.nio.file.Files
 import java.util.concurrent.TimeUnit
@@ -95,6 +97,41 @@ class StreamingModTransferTest {
             }
             assertEquals("original", target.readText())
             assertEquals(listOf(target), root.listFiles()!!.toList())
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test fun stagedEncryptionChecksTheActualBytesAndDoesNotReplaceAGoodEnvelope() {
+        val root = Files.createTempDirectory("mod-encryption-change").toFile()
+        try {
+            val source = File(root, "source").apply { writeBytes(data) }
+            val descriptor = NetworkModDescriptor.fromBytes("fixture", data)
+            val key = ByteArray(32)
+            val target = File(root, "envelope")
+            NetworkModCacheFiles.writeAtomic(target, root) { ChunkedModEnvelope.writeStaged(source, descriptor, 1, key, it) }
+            val original = target.readBytes()
+
+            assertFailsWith<IllegalArgumentException> {
+                NetworkModCacheFiles.writeAtomic(target, root) { staging ->
+                    val changeOnHeader = object : FilterOutputStream(staging) {
+                        var headerWritten = false
+                        override fun write(b: ByteArray, off: Int, len: Int) {
+                            out.write(b, off, len)
+                            if (!headerWritten) {
+                                headerWritten = true
+                                source.writeBytes(ByteArray(data.size)) // same length, before the first payload chunk
+                            }
+                        }
+                    }
+                    ChunkedModEnvelope.writeStaged(source, descriptor, 2, key, changeOnHeader)
+                }
+            }
+            assertContentEquals(original, target.readBytes())
+            assertEquals(setOf(source, target), root.listFiles()!!.toSet())
+            assertEquals(1L, ChunkedModEnvelope.read(target, key).createdAtMillis)
+
+            val direct = ByteArrayOutputStream()
+            assertFailsWith<IllegalArgumentException> { ChunkedModEnvelope.write(source, descriptor, 3, key, direct) }
+            assertEquals(0, direct.size(), "The existing direct writer still rejects invalid inputs before emitting bytes")
         } finally { root.deleteRecursively() }
     }
 

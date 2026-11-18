@@ -24,6 +24,7 @@ internal class DesktopModSourceCache(
     private val tracker: ModSourceTracker = ModSourceTracker(),
     private val resolvePath: (String) -> String = EngineFiles::e,
     private val cacheFile: (String, String) -> File = { group, path -> File(EngineFileCache.a(group, path, false)) },
+    private val listMetadataFiles: (File) -> Array<File>? = File::listFiles,
     private val invalidateResources: ((String) -> Boolean) -> Unit = { DesktopModResourceCache.invalidateSources(it) },
 ) {
     private data class Selection(val disabled: Boolean, val saved: Boolean)
@@ -40,13 +41,9 @@ internal class DesktopModSourceCache(
         }
 
         // ZIP 表使用逻辑路径作 key；同一物理文件可能经多种抽象路径打开。
-        changed.forEach { source ->
-            pendingChanges[source].orEmpty().forEach { alias ->
-                EngineZipCache.e(alias, false)
-                clearMetadata(alias)
-            }
-        }
-        val aliases = changed.flatMap { pendingChanges[it].orEmpty() }
+        val aliases = changed.flatMapTo(linkedSetOf()) { pendingChanges[it].orEmpty() }
+        aliases.forEach { EngineZipCache.e(it, false) }
+        clearMetadata(aliases)
         invalidateResources { key ->
             aliases.any { pathBelongsToSource(key, it) } ||
                 changed.any { pathBelongsToSource(resolvePath(key), it) }
@@ -101,13 +98,29 @@ internal class DesktopModSourceCache(
         return result
     }
 
-    private fun clearMetadata(archive: String) {
-        CACHE_GROUPS.forEach { group ->
-            val base = cacheFile(group, archive)
-            val prefixes = listOf(cacheFile(group, "$archive/").name, cacheFile(group, "$archive\\").name)
-            base.parentFile?.listFiles()?.forEach { file ->
-                if (file.name == "${base.name}.meta" || file.name == "${base.name}.data" ||
-                    prefixes.any(file.name::startsWith)) {
+    private class MetadataNames {
+        val exact = mutableSetOf<String>()
+        val prefixes = mutableSetOf<String>()
+        fun matches(name: String): Boolean = name in exact || prefixes.any(name::startsWith)
+    }
+
+    private fun clearMetadata(archives: Set<String>) {
+        // 只在本轮按实际缓存目录合并枚举；不同目录不能共用匹配条件，下轮也不能复用目录快照。
+        val byDirectory = mutableMapOf<File, MetadataNames>()
+        for (archive in archives) {
+            for (group in CACHE_GROUPS) {
+                val base = cacheFile(group, archive)
+                val directory = base.parentFile ?: continue
+                val names = byDirectory.getOrPut(directory) { MetadataNames() }
+                names.exact += "${base.name}.meta"
+                names.exact += "${base.name}.data"
+                names.prefixes += cacheFile(group, "$archive/").name
+                names.prefixes += cacheFile(group, "$archive\\").name
+            }
+        }
+        byDirectory.forEach { (directory, names) ->
+            listMetadataFiles(directory)?.forEach { file ->
+                if (names.matches(file.name)) {
                     check(!file.isFile || file.delete() || !file.exists()) { "Cannot invalidate mod cache: $file" }
                 }
             }

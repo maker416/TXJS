@@ -16,6 +16,7 @@ import io.github.rwpp.internalModDir
 import org.koin.core.Koin
 import java.io.File
 import java.nio.file.Files
+import java.util.function.Consumer
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -24,6 +25,17 @@ class DesktopModDirectoryTest {
     fun desktopUsesOnlyOriginalModDirectory() {
         val scratch = File("build/tmp/mod-directory-test").apply { mkdirs() }.canonicalFile
         val root = Files.createTempDirectory(scratch.toPath(), "scan-").toFile().canonicalFile
+        try {
+            runDesktopModPathFixture(OriginalModDirectoryFixture::class.java, root, CustomUnitLoadInject::class.java)
+        } finally {
+            check(root.toPath().startsWith(scratch.toPath()) && root != scratch)
+            root.deleteRecursively()
+        }
+    }
+}
+
+internal class OriginalModDirectoryFixture : Consumer<File> {
+    override fun accept(root: File) {
         val context = object : AppContext by AppContextImpl() {
             override fun externalStoragePath(path: String): String = File(root, path).path
         }
@@ -35,8 +47,6 @@ class DesktopModDirectoryTest {
             assertEquals(modDir, internalModDir)
         } finally {
             appKoin.close()
-            check(root.toPath().startsWith(scratch.toPath()) && root != scratch)
-            root.deleteRecursively()
         }
     }
 }

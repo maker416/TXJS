@@ -30,6 +30,7 @@ import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.i18n.reloadI18n
 import io.github.rwpp.i18n.setI18nOverride
 import io.github.rwpp.logger
+import io.github.rwpp.modDir
 import io.github.rwpp.ui.ModsAndMapsView
 import io.github.rwpp.ui.ModsMapsTab
 import io.github.rwpp.ui.UI
@@ -37,8 +38,7 @@ import io.github.rwpp.widget.defaultRWPPColorScheme
 import net.peanuuutz.tomlkt.Toml
 import org.junit.Assume.assumeFalse
 import org.junit.Assume.assumeTrue
-import org.koin.core.context.startKoin
-import org.koin.core.context.stopKoin
+import org.koin.dsl.koinApplication
 import org.koin.dsl.module
 import org.koin.compose.KoinContext
 import org.slf4j.LoggerFactory
@@ -62,6 +62,7 @@ import java.io.File
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Proxy
 import java.nio.file.Files
+import java.util.function.Consumer
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import javax.accessibility.Accessible
@@ -84,12 +85,14 @@ import kotlin.test.fail
  * 默认使用定向 AWT 输入与 Skia 位图；RWJS_TEST_ROBOT_INPUT=true 显式启用前台 Robot。
  * 可用 -Prwjs.test.uiScale=2.0 验证 HiDPI。
  */
-@OptIn(ExperimentalSkikoApi::class)
 class DesktopModDetailsWindowTest {
-    @Test fun detailsRemainVisibleWithAnimations() = verify(animations = true)
-    @Test fun detailsRemainVisibleWithoutAnimations() = verify(animations = false)
+    @Test fun detailsRemainVisibleWithAnimations() = runDesktopModPathFixture(NativeModDetailsFixture::class.java, true)
+    @Test fun detailsRemainVisibleWithoutAnimations() = runDesktopModPathFixture(NativeModDetailsFixture::class.java, false)
+}
 
-    private fun verify(animations: Boolean) {
+@OptIn(ExperimentalSkikoApi::class)
+internal class NativeModDetailsFixture : Consumer<Boolean> {
+    override fun accept(animations: Boolean) {
         assumeTrue(System.getProperty("os.name").startsWith("Windows", ignoreCase = true))
         assumeFalse(GraphicsEnvironment.isHeadless())
         assumeTrue(GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice
@@ -97,19 +100,19 @@ class DesktopModDetailsWindowTest {
         val previousLayers = System.getProperty("compose.layers.type")
         val previousApi = System.getProperty("skiko.renderApi")
         val fixtureRoot = Files.createTempDirectory("rwpp-native-mod-details-").toFile()
-        val mod = fixtureMod(fixtureRoot)
+        val mod = fixtureMod(File(fixtureRoot, "mods/units").apply { mkdirs() })
         val report = File("build/reports/desktop-mod-details/animations-$animations-scale-${System.getProperty("sun.java2d.uiScale", "default")}")
             .apply { mkdirs() }
         var frame: JFrame? = null
         var overlay: DesktopLauncherOverlay? = null
         var menu: JDialog? = null
+        val fixtureKoin = koinApplication()
         try {
             System.setProperty("compose.layers.type", "WINDOW")
             System.setProperty("skiko.renderApi", "OPENGL")
             assertTrue(DesktopWindowLayers.install())
-            runCatching { stopKoin() }
             logger = LoggerFactory.getLogger("DesktopModDetailsWindowTest")
-            appKoin = startKoin {
+            appKoin = fixtureKoin.apply {
                 modules(module {
                     single { Settings(enableAnimations = animations) }
                     single<ModManager> {
@@ -192,6 +195,8 @@ class DesktopModDetailsWindowTest {
                     findBounds(menu!!, mod.name) != null
                 }
             }
+            assertEquals(File(mod.path).canonicalFile.parentFile, File(modDir).canonicalFile,
+                "The mod page must scan this window's installation")
             val robot = Robot().apply { autoDelay = 30 }
             if (!localInput) activate(menu!!)
             File(report, "verification-mode.txt").writeText(if (localInput)
@@ -249,10 +254,7 @@ class DesktopModDetailsWindowTest {
                 overlay?.dispose()
                 frame?.let(::disposeTree)
             }
-            stopKoin()
-            UI.pendingModsMapsTab = null
-            setI18nOverride(null)
-            reloadI18n()
+            fixtureKoin.close()
             fixtureRoot.deleteRecursively()
             restoreProperty("compose.layers.type", previousLayers)
             restoreProperty("skiko.renderApi", previousApi)

@@ -27,6 +27,38 @@
 
 设备验收待完成：两端选择“无限制”并重启，在密集爆炸/拖尾场景检查特效完整性、迷雾过滤、暂停/恢复、退局再开局；旧版本覆盖安装后确认核心重新注入，Android 同时重新生成 DEX。
 
+### PC：特效分配、模组导入与窗口恢复（2026-11-18）
+
+- **特效**：仅在“无限制”模式记录已连续占用到哪个槽位。当前池和活动数能证明此前没有释放时，接着上次位置查找；证明不成立则从已知安全位置重新查找，仍选最低空位。满池直接走已有的扩容或内存不足回退。不会改变更新中生成的子特效何时参与遍历，也不为每个特效增加释放回调。“保持”和“零”的行为不变。
+- **局内辅助**：只开范围圈时，仍查单位自身的迷雾，不再查询攻击目标的迷雾。只开目标线且目标不可见时，不进入绘制。原生 HUD 两行按钮各自复用最近一次布局，视口、侧栏占宽或缩放改变后重算；不缓存任何单位的可见性或选择状态。
+- **模组**：缓存已初始化时，文件导入由三次完整读取（两次预检哈希、一次加密）减为一次：把实际加密的字节同时送入 SHA-256，长度、文件末尾和哈希都通过后才发布临时文件。首次调用仍额外预检，避免错误输入触发启动清理。保留原缓存格式、认证解密和旧版本回退。多份 ZIP 或路径别名一起失效时，每个元数据目录本轮只枚举一次，不跨轮复用目录快照。
+- **资源与窗口**：主题包沿用当前引擎解析器的原始路径，只重定向 `assets/` 或 `assets\` 开头的解析结果，不把外部模组路径中的 `assets` 当成根目录；运行中创建或移除主题目录仍立即生效。可见窗口排队的旧尺寸不会在隐藏时同步调整尺寸后又覆盖新值。
+
+**Windows 实测**。使用 Java 21.0.12.1、同一份已注入的游戏核心、4,096 槽的预建特效池。每种场景和版本各启动 4 次 JVM，共采集 124 个样本。耗时仅统计分配循环，每次分配都检查是否按原顺序命中最早空槽。
+
+| 场景 | 中位耗时（旧版 → 优化后） | P95（旧版 → 优化后） |
+| --- | ---: | ---: |
+| 清场后连续分配 4,096 个特效 | 3.860 → 0.042 ms | 4.469 → 0.064 ms |
+| 隔槽释放后回填 2,048 个特效 | 1.931 → 0.025 ms | 2.405 → 0.053 ms |
+
+最终 Windows Release JAR 在隔离目录完成首次注入、全屏切换和最小化恢复。单人沙盒走通原生 Canvas 开局、两排辅助按钮绘制和返回 Direct3D 菜单。`DesktopWindowLayersTest` 在 150% 和 200% 缩放下各通过 4 项。密集爆炸以及大模组对局的整场帧时间仍待实战测量。
+
+**复测方法**。`EffectAllocatorBenchmark` 是 `rwpp-desktop/src/test/` 下的手动入口。先运行 `:rwpp-desktop:testClasses` 和 `:rwpp-desktop:packageReleaseUberJarForCurrentOS`，再在独立、资源齐全的游戏目录首次启动客户端，生成 `generated_lib/game-lib.jar`。下列命令需在 Java 21 下执行。`$test`、`$fat`、`$run` 分别是 `rwpp-desktop/build/classes/kotlin/test`、当前 Windows Release JAR 和独立游戏目录的绝对路径。
+
+```powershell
+$cp = "$test;$fat;$run\generated_lib\game-lib.jar;$run\libs\*"
+Push-Location -LiteralPath $run
+try {
+    foreach ($scenario in 'dense', 'holes') {
+        java -Xms256m -Xmx256m '-Djava.awt.headless=true' "-Djava.library.path=$run" -cp $cp io.github.rwpp.desktop.EffectAllocatorBenchmark $scenario
+    }
+} finally {
+    Pop-Location
+}
+```
+
+运行对照组时，把修改前的 `EffectLimitInject.class` 所在的类路径根目录放在 `$cp` 最前面。输出首行标明实际加载的实现。每个样本取 4 轮连续分配的平均值。
+
 ### Android 游戏核心 DEX 编译
 
 Android 启动器会注入原版核心，再把修改后的 JAR 转为 DEX 动态加载。原来调用的 `javassist.android.DexFile.addJarFile()` 使用默认 `CfOptions`，其中 `optimize=false`；APK 为 Release 并不会改变这条运行时转换路径的编译参数。

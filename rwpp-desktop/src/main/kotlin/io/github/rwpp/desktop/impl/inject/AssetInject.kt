@@ -7,7 +7,6 @@
 
 package io.github.rwpp.desktop.impl.inject
 
-import com.corrodinggames.rts.gameFramework.e.a
 import com.corrodinggames.rts.gameFramework.e.c
 import com.corrodinggames.rts.gameFramework.utility.j
 import io.github.rwpp.inject.Inject
@@ -15,56 +14,54 @@ import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
 import io.github.rwpp.inject.InterruptResult
 import io.github.rwpp.resourceOutputDir
-import io.github.rwpp.utils.Reflect
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileNotFoundException
 
 @InjectClass(c::class)
 object AssetInject {
-    /**
-     * 资源重定向是否生效：运行时可变（主题美术包/资源包切换时会重建或删除该目录），
-     * 不能在启动期缓存。目录不存在时引擎按原版路径读取，天然安全回落。
-     */
-    private val usingResource: Boolean
-        get() = File(resourceOutputDir).exists()
+    private val overlay by lazy { DesktopAssetOverlay(resourceOutputDir) }
+    // InjectApi preserves f(String) under this name in the loaded game class.
+    private val originalPath by lazy {
+        c::class.java.getDeclaredMethod("__original__f", String::class.java).apply { isAccessible = true }
+    }
 
     @Inject("f", injectMode = InjectMode.InsertBefore)
-    fun redirectAsset(str: String): Any {
-        if(!usingResource
-            || str.contains("builtin_mods")
-            || (str.contains("maps") && !str.contains("bitmaps"))
-            || str.contains("translations")) return Unit
-        val result = Reflect.call<c, String>(
-            a.b,
-            "__original__f",
-            listOf(String::class),
-            listOf(str)
-        )
-
-        if(result?.contains("assets") != true) return InterruptResult(result)
-
-        return InterruptResult(resourceOutputDir + result.removePrefix("assets/"))
+    fun c.redirectAsset(str: String): Any {
+        if (!overlay.handles(str)) return Unit
+        val resolved = originalPath.invoke(this, str) as String?
+        return InterruptResult(overlay.redirectResolvedPath(resolved))
     }
 
     @Inject("i", injectMode = InjectMode.InsertBefore)
     fun redirectImageAsset(str: String): Any {
-        if(!usingResource
-            || str.contains("builtin_mods")
-            || (str.contains("maps") && !str.contains("bitmaps"))
-            || str.contains("translations")) return Unit
-        val o = str.let {
-            if(it.startsWith("assets/") || it.startsWith("assets\\"))
-                it.removePrefix("assets/") else it
+        if (!overlay.handles(str)) return Unit
+        return InterruptResult(overlay.openAsset(str))
+    }
+}
+
+internal class DesktopAssetOverlay(private val outputDir: String) {
+    private val directory = File(outputDir)
+
+    // Cache the path only: switching a theme can rebuild or remove the directory at runtime.
+    fun handles(path: String): Boolean = !path.contains("builtin_mods") &&
+        !(path.contains("maps") && !path.contains("bitmaps")) && !path.contains("translations") &&
+        directory.isDirectory
+
+    private fun relativeAsset(path: String): String? =
+        if (path.startsWith("assets/") || path.startsWith("assets\\"))
+            path.substring("assets/".length).replace('\\', '/') else null
+
+    fun redirectResolvedPath(path: String?): String? =
+        path?.let(::relativeAsset)?.let { outputDir + it } ?: path
+
+    fun openAsset(path: String): j? {
+        val relative = relativeAsset(path) ?: path
+        val target = outputDir + relative
+        return try {
+            j(FileInputStream(target), target, relative)
+        } catch (_: FileNotFoundException) {
+            null
         }
-
-
-        val s3 = resourceOutputDir + o
-        return runCatching {
-            InterruptResult(
-                j(
-                FileInputStream(s3), s3, o
-            )
-            )
-        }.getOrElse { InterruptResult(null) }
     }
 }
