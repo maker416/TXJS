@@ -1172,6 +1172,8 @@ addFriend = "Add Friend"
 sendMessage = "Message"
 
 [themes]
+personalizedHint = "Supports player appearances; unverified players use the default style."
+copyPlatformCatalog = "Copy platform release catalog"
 title = "Art Packs"
 manageEntry = "Art Pack Manager"
 import = "Import Art Pack"

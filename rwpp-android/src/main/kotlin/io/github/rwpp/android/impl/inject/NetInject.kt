@@ -49,6 +49,7 @@ object NetInject {
     /** 只在 Socket 已连接且与租约目标匹配后设置原版包 160 的 query。 */
     @Inject("a", InjectMode.InsertBefore, "(Ljava/net/Socket;)Z")
     fun ae.applyDirectReservationCredential(socket: java.net.Socket): Any {
+        io.github.rwpp.theme.PersonalizedAppearanceController.onGameSocketConnected(socket)
         val query = DirectJoinReservationCredentials.queryFor(socket)
         if (query != null || N?.startsWith(DIRECT_JOIN_RESERVATION_QUERY_PREFIX) == true) N = query
         return Unit
@@ -138,6 +139,10 @@ object NetInject {
 
     @Inject("a", InjectMode.InsertBefore)
     fun onProcessPacket(packet: com.corrodinggames.rts.gameFramework.j.bi): Any {
+        if (packet.b == InternalPacketType.CHAT.type &&
+            io.github.rwpp.theme.PersonalizedAppearanceController.receiveChatPacket(packet.a?.e, packet.c)) {
+            return InterruptResult.Unit
+        }
         return when (val type = packet.b) {
             InternalPacketType.PREREGISTER_INFO.type -> {
                 val r0 = com.corrodinggames.rts.gameFramework.j.j(packet);     // Catch: java.lang.Throwable -> L603

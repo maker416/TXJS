@@ -84,7 +84,9 @@ private fun RoomPlayerCardSpec.metrics(compact: Boolean, minimumHeight: Int = 0)
         (labelStyle.lineHeight.takeIf { it.isSp }
             ?: labelStyle.fontSize.takeIf { it.isSp }?.times(1.4f) ?: 16.sp).toDp()
     } + 4.dp)
-    return remember(this, compact, minimumHeight, businessHeight, infoHeight) {
+    val personalContent = ArtThemeController.activeTheme?.spec?.personalization?.slots?.keys.orEmpty()
+        .any { it == "room.player.badges" || it == "room.player.info" }
+    return remember(this, compact, minimumHeight, businessHeight, infoHeight, personalContent) {
         val mainHeight = maxOf(if (compact) 32.dp else 36.dp, businessHeight)
         val baseHeight = maxOf(if (compact) 48.dp else 54.dp, businessHeight, minimumHeight.dp)
         val padding = if (compact) 4.dp else 3.dp
@@ -92,7 +94,9 @@ private fun RoomPlayerCardSpec.metrics(compact: Boolean, minimumHeight: Int = 0)
         val geometry = RoomPlayerCardMetrics(baseHeight, mainHeight, infoHeight, padding, limit, 0.dp, columns, rowSpacing.dp)
         val contents = if (enabled) listOf(content) + listOfNotNull(local, host, ai, spectator) + slots.values
             else listOf(RoomPlayerCardContentSpec())
-        geometry.copy(avatarWidth = if (avatar.enabled) contents.maxOf { geometry.avatarSize(it) } + padding * 2 else 0.dp)
+        geometry.copy(avatarWidth = if (avatar.enabled) {
+            (if (personalContent) limit else contents.maxOf { geometry.avatarSize(it) }) + padding * 2
+        } else 0.dp)
     }
 }
 
@@ -111,7 +115,9 @@ internal fun RowScope.RoomPlayerCardBody(
     sizing: RoomPlayerSizingSpec = RoomPlayerSizingSpec(),
     cells: @Composable RowScope.() -> Unit,
 ) {
-    if (!card.enabled && !card.avatar.enabled) {
+    val badges = io.github.rwpp.theme.PersonalizedAppearanceController.variantFor(player, "room.player.badges")
+    val personalInfo = io.github.rwpp.theme.PersonalizedAppearanceController.variantFor(player, "room.player.info")
+    if (!card.enabled && !card.avatar.enabled && badges == null && personalInfo == null) {
         cells()
         return
     }
@@ -120,7 +126,8 @@ internal fun RowScope.RoomPlayerCardBody(
     val slot = player.spawnPoint + 1
     val content = if (connecting) RoomPlayerCardContentSpec() else
         card.contentFor(slot, player == room.localPlayer, player.isRoomHost, player.isAI, player.isSpectator)
-    val rows = if (card.enabled && !connecting) content.rows else emptyList()
+    val rows = if (connecting) emptyList() else (badges?.content?.rows.orEmpty() +
+        (personalInfo?.content?.rows ?: if (card.enabled) content.rows else emptyList())).take(12)
     if (card.avatar.enabled) {
         if (connecting) {
             // A placeholder reserves the column without inventing a player identity.

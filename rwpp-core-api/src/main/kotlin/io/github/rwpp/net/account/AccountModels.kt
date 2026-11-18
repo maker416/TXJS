@@ -22,6 +22,8 @@ data class AccountUser(
     @SerialName("nickname_changed_at") val nicknameChangedAt: String? = null,
     @SerialName("created_at") val createdAt: String = "",
     @SerialName("has_avatar") val hasAvatar: Boolean = false,
+    /** UAS 全局账号；旧服务未返回时不参与跨应用外观分配。 */
+    @SerialName("account_id") val accountId: String? = null,
 )
 
 /** 社交公开资料。对应文档 4.2 `public_user`。 */
@@ -32,6 +34,7 @@ data class PublicUser(
     val nickname: String,
     val status: Int = 1,
     @SerialName("has_avatar") val hasAvatar: Boolean = false,
+    @SerialName("account_id") val accountId: String? = null,
 )
 
 @Serializable

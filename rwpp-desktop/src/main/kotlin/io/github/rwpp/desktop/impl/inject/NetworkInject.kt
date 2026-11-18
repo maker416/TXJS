@@ -39,6 +39,7 @@ object NetworkInject {
     /** 沿用原版 preregistration query，不把短期租约写进连接地址或 relay UUID。 */
     @Inject("a", InjectMode.InsertBefore, "(Ljava/net/Socket;)Z")
     fun ad.applyDirectReservationCredential(socket: java.net.Socket): Any {
+        io.github.rwpp.theme.PersonalizedAppearanceController.onGameSocketConnected(socket)
         val query = DirectJoinReservationCredentials.queryFor(socket)
         if (query != null || L?.startsWith(DIRECT_JOIN_RESERVATION_QUERY_PREFIX) == true) L = query
         return Unit
@@ -53,6 +54,10 @@ object NetworkInject {
 
     @Inject("c", injectMode = InjectMode.InsertBefore)
     fun onReceivePacket(auVar: au): Any {
+        if (auVar.b == InternalPacketType.CHAT.type &&
+            io.github.rwpp.theme.PersonalizedAppearanceController.receiveChatPacket(auVar.a?.d, auVar.c)) {
+            return InterruptResult.Unit
+        }
         return when(val type = auVar.b) {
             InternalPacketType.PREREGISTER_INFO.type -> {
                 with(GameEngine.B().bX) {

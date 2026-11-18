@@ -55,6 +55,9 @@ object ArtThemeController {
     ) {
         val id: String get() = spec.theme.id
 
+        /** 扫描的 IO 阶段实测，渲染时只读取；未登记或资源不完整时保持默认外观。 */
+        val personalizedCatalog: PersonalizedThemeCatalog? = personalizedThemeCatalog(dir, spec.personalization)
+
         /** 结构定制使用新版卡片网格；仅图片、圆角、描边或按钮宽度不改变新版首页的排布。 */
         val hasCustomMenuLayout: Boolean
             get() {
@@ -126,16 +129,32 @@ object ArtThemeController {
 
     private var initialized = false
 
+    internal data class TemporarySelection(
+        val token: Long, val previous: LoadedTheme?, val previousKey: String?,
+    )
+    private var selectionGeneration = 0L
+    private var temporaryToken: Long? = null
+    internal val temporarySelectionActive: Boolean get() = temporaryToken != null
+    internal var temporaryOverlayKey: String? = null
+        private set
+
     /** 测试钩子：覆盖主题根目录（默认 [themeDir]）。 */
     internal var themeRootOverride: File? = null
 
     private val themesRoot: File get() = themeRootOverride ?: File(themeDir)
+    internal val onlineGameCacheRoot: File get() = File(themesRoot, ".online-game-packs")
 
     /** 运行期按真实目录核对，不能把早期扫描时缺少游戏资源的结果永久缓存为 null。 */
     internal fun resolveGameOverlayDir(id: String): File? =
         File(themesRoot, "$id/game").takeIf { it.isDirectory && it.walkTopDown().any { file -> file.isFile } }
 
     private val settings: Settings get() = appKoin.get<Settings>()
+
+    /** 作者复制到开放平台发布页；目录只含资源摘要及变体标识，不含任何账号或凭据。 */
+    fun platformCatalogJson(theme: LoadedTheme): String? {
+        val catalog = theme.personalizedCatalog ?: return null
+        return catalog.platformReleaseJson(theme.spec.personalization.platformPackId, theme.spec.theme.version)
+    }
 
     /** 进程内一次：扫描并按 [Settings.selectedThemePack] 恢复激活项。 */
     fun ensureInitialized() {
@@ -158,40 +177,71 @@ object ArtThemeController {
         val root = themesRoot
         installedThemes = root.listFiles()
             ?.filter { it.isDirectory }
-            ?.mapNotNull { dir ->
-                val tomlFile = File(dir, "theme.toml")
-                if (!tomlFile.exists()) return@mapNotNull null
-                val (spec, validation) = runCatching { validateThemeToml(tomlFile.readText()) }
-                    .getOrElse {
-                        logger.warn("Failed to read theme.toml in ${dir.name}: ${it.message}")
-                        return@mapNotNull null
-                    }
-                if (spec == null) {
-                    logger.warn("Invalid theme pack ${dir.name}: ${validation.errors.joinToString()}")
-                    return@mapNotNull null
-                }
-                LoadedTheme(
-                    dir = dir,
-                    spec = spec,
-                    backgroundFile = pickFile(dir, "background.png", "background.jpg"),
-                    titleFile = pickFile(dir, "title.png"),
-                    iconFile = pickFile(dir, "icon.png"),
-                    stringsZhFile = pickFile(dir, "strings_zh.toml"),
-                    stringsEnFile = pickFile(dir, "strings_en.toml"),
-                    buttonImages = scanButtonImages(dir),
-                    fontRegularFile = resolveInDir(dir, spec.fonts.regular),
-                    fontBoldFile = resolveInDir(dir, spec.fonts.bold),
-                    musicFile = scanMusicFile(dir),
-                )
-            }
+            ?.mapNotNull(::loadTheme)
             ?.sortedBy { it.spec.theme.name }
             ?: emptyList()
     }
 
+    /** Also used for versioned game caches, which are deliberately outside the user's theme list. */
+    internal fun loadTheme(dir: File): LoadedTheme? {
+        val tomlFile = File(dir, "theme.toml")
+        if (!tomlFile.exists()) return null
+        val (spec, validation) = runCatching { validateThemeToml(tomlFile.readText()) }
+            .getOrElse {
+                logger.warn("Failed to read theme.toml in ${dir.name}: ${it.message}")
+                return null
+            }
+        if (spec == null) {
+            logger.warn("Invalid theme pack ${dir.name}: ${validation.errors.joinToString()}")
+            return null
+        }
+        return LoadedTheme(
+            dir = dir,
+            spec = spec,
+            backgroundFile = pickFile(dir, "background.png", "background.jpg"),
+            titleFile = pickFile(dir, "title.png"),
+            iconFile = pickFile(dir, "icon.png"),
+            stringsZhFile = pickFile(dir, "strings_zh.toml"),
+            stringsEnFile = pickFile(dir, "strings_en.toml"),
+            buttonImages = scanButtonImages(dir),
+            fontRegularFile = resolveInDir(dir, spec.fonts.regular),
+            fontBoldFile = resolveInDir(dir, spec.fonts.bold),
+            musicFile = scanMusicFile(dir),
+        )
+    }
+
     /** 启用指定主题包；传 null 停用并回落内置外观。配色/标题/背景/音乐经 Compose 状态与播放器热生效。 */
     fun apply(id: String?): Boolean {
-        val oldOverlay = GameArtOverlayManager.currentThemeOverlayDir()
         val target = if (id == null) null else installedThemes.firstOrNull { it.id == id }
+        if (!canApply(target)) return false
+        temporaryToken = null
+        temporaryOverlayKey = null
+        commitTheme(target, persist = true)
+        return true
+    }
+
+    /** Session-only selection never changes the saved theme, even if the process terminates in a room. */
+    internal fun applyTemporary(target: LoadedTheme?, sourceKey: String?, synchronizeOverlay: Boolean = true): TemporarySelection? {
+        if (!canApply(target)) return null
+        val handle = TemporarySelection(++selectionGeneration, activeTheme, temporaryOverlayKey)
+        temporaryToken = handle.token
+        temporaryOverlayKey = sourceKey
+        commitTheme(target, persist = false, synchronizeOverlay = synchronizeOverlay)
+        return handle
+    }
+
+    internal fun restoreTemporary(handle: TemporarySelection, synchronizeOverlay: Boolean = true): Boolean {
+        // A later explicit user selection takes precedence over this session's automatic restoration.
+        if (temporaryToken != handle.token) return true
+        if (!canApply(handle.previous)) return false
+        temporaryToken = null
+        temporaryOverlayKey = handle.previousKey
+        commitTheme(handle.previous, persist = false, synchronizeOverlay = synchronizeOverlay)
+        return true
+    }
+
+    private fun canApply(target: LoadedTheme?): Boolean {
+        val oldOverlay = GameArtOverlayManager.currentThemeOverlayDir()
         if (oldOverlay != target?.gameOverlayDir) {
             if (GameArtOverlayManager.applying) return false
             val game = appKoin.getOrNull<Game>()
@@ -202,13 +252,16 @@ object ArtThemeController {
                 return false
             }
         }
+        return true
+    }
+
+    private fun commitTheme(target: LoadedTheme?, persist: Boolean, synchronizeOverlay: Boolean = true) {
         activeTheme = target
-        settings.selectedThemePack = target?.id
+        if (persist) settings.selectedThemePack = target?.id
         applyStringOverrides()
         LauncherMusicController.sync()
         // 以磁盘/内存的实际来源做幂等核对，不能只靠已扫描主题对象的目录比较跳过。
-        GameArtOverlayManager.syncAsync()
-        return true
+        if (synchronizeOverlay) GameArtOverlayManager.syncAsync()
     }
 
     /**

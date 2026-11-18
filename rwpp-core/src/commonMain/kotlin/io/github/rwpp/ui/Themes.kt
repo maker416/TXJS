@@ -31,6 +31,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -55,6 +57,8 @@ import io.github.rwpp.widget.v2.LazyColumnScrollbar
 import io.github.rwpp.widget.v2.ListIndicatorSettings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
 
 /**
@@ -74,8 +78,10 @@ fun ThemesView(
     var deleteTarget by remember { mutableStateOf<ArtThemeController.LoadedTheme?>(null) }
 
     LaunchedEffect(Unit) {
-        ArtThemeController.ensureInitialized()
-        ArtThemeController.scan()
+        withContext(Dispatchers.IO) {
+            ArtThemeController.ensureInitialized()
+            ArtThemeController.scan()
+        }
     }
 
     val themes = ArtThemeController.installedThemes
@@ -430,6 +436,7 @@ private fun ThemeCardContent(
 
 @Composable
 private fun ThemeCardDetails(theme: ArtThemeController.LoadedTheme, horizontal: Boolean) {
+    val clipboard = LocalClipboardManager.current
     Text(theme.spec.theme.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
         maxLines = 1, overflow = TextOverflow.Ellipsis)
     val metadata = listOf(theme.spec.theme.author, theme.spec.theme.version.takeIf { it.isNotBlank() }?.let { "v$it" }.orEmpty())
@@ -446,6 +453,15 @@ private fun ThemeCardDetails(theme: ArtThemeController.LoadedTheme, horizontal: 
     if (theme.gameOverlayDir != null) {
         Text(readI18n("themes.hasGameArt"), style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.primary)
+    }
+    if (theme.personalizedCatalog != null) {
+        Text(readI18n("themes.personalizedHint"), style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary)
+        TextButton(onClick = {
+            ArtThemeController.platformCatalogJson(theme)?.let { clipboard.setText(AnnotatedString(it)) }
+        }, modifier = Modifier.testTag("theme-copy-catalog-${theme.id}")) {
+            Text(readI18n("themes.copyPlatformCatalog"))
+        }
     }
 }
 

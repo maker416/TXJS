@@ -1173,6 +1173,8 @@ addFriend = "加好友"
 sendMessage = "发私信"
 
 [themes]
+personalizedHint = "支持玩家专属外观；无法核验身份时使用默认外观。"
+copyPlatformCatalog = "复制平台发布目录"
 title = "美术包"
 manageEntry = "美术包管理"
 import = "导入美术包"

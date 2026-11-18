@@ -9,6 +9,7 @@ package io.github.rwpp.theme
 
 import kotlinx.serialization.Serializable
 import net.peanuuutz.tomlkt.Toml
+import net.peanuuutz.tomlkt.TomlLiteral
 import net.peanuuutz.tomlkt.TomlTable
 
 /**
@@ -25,6 +26,8 @@ data class ArtThemeSpec(
     val fonts: FontsSpec = FontsSpec(),
     /** 等待战斗室外观与可选玩家卡片；PC / Android 整体布局由客户端管理。 */
     val room: RoomThemeSpec = RoomThemeSpec(),
+    /** 开放平台可为已识别账号选择的包内预定义外观。 */
+    val personalization: PersonalizedThemeSpec = PersonalizedThemeSpec(),
     /** 导入时记录作者显式填写的布局字段；不属于包格式，也不参与序列化。 */
     @kotlinx.serialization.Transient
     val explicitMenuLayoutFields: Set<String> = emptySet(),
@@ -183,8 +186,26 @@ fun validateThemeToml(text: String): Pair<ArtThemeSpec?, ThemeValidation> {
     val errors = mutableListOf<String>()
     val warnings = mutableListOf<String>()
 
+    val document = runCatching { Toml.parseToTomlTable(text) }.getOrElse {
+        return null to ThemeValidation(errors = listOf("theme.toml 解析失败: ${it.message}"))
+    }
+    // 未来 schema 可以改变字段类型；先摘掉不支持的段，避免连旧版默认外观也无法导入。
+    val personalizationTable = document["personalization"] as? TomlTable
+    val schema = (personalizationTable?.get("schemaVersion") as? TomlLiteral)?.content?.toIntOrNull()
+    val supportedDocument = if (schema != null && schema != PERSONALIZED_THEME_SCHEMA_VERSION) {
+        warnings += "不支持的个性化 schemaVersion，已使用美术包默认外观: $schema"
+        TomlTable(document.filterKeys { it != "personalization" })
+    } else {
+        val slots = personalizationTable?.get("slots") as? TomlTable
+        if (slots != null) {
+            val unknown = slots.keys.filter { it !in PERSONALIZED_THEME_SLOT_IDS }
+            unknown.forEach { warnings += "未知个性化槽位已忽略: $it" }
+            TomlTable(document + ("personalization" to TomlTable(personalizationTable +
+                ("slots" to TomlTable(slots.filterKeys { it in PERSONALIZED_THEME_SLOT_IDS })))))
+        } else document
+    }
     val spec = runCatching {
-        themeToml.decodeFromString(ArtThemeSpec.serializer(), text)
+        themeToml.decodeFromTomlElement(ArtThemeSpec.serializer(), supportedDocument)
     }.getOrElse {
         return null to ThemeValidation(errors = listOf("theme.toml 解析失败: ${it.message}"))
     }
@@ -229,10 +250,12 @@ fun validateThemeToml(text: String): Pair<ArtThemeSpec?, ThemeValidation> {
     val roomValidation = validateRoomTheme(spec.room)
     errors += roomValidation.errors
     warnings += roomValidation.warnings
+    val personalizationValidation = validatePersonalizedTheme(spec.personalization)
+    errors += personalizationValidation.errors
+    warnings += personalizationValidation.warnings
 
     val validatedSpec = if (errors.isEmpty()) {
         // 仅比较数值无法区分“未填写”与“显式使用模型默认值”，例如圆角 20dp。
-        val document = Toml.parseToTomlTable(text)
         val menuTable = document["menu"] as? TomlTable
         val layoutTable = menuTable?.get("layout") as? TomlTable
         val roomTable = document["room"] as? TomlTable
@@ -252,6 +275,7 @@ fun validateThemeToml(text: String): Pair<ArtThemeSpec?, ThemeValidation> {
         }
         spec.copy(
             room = spec.room.sanitized(),
+            personalization = spec.personalization.sanitized(),
             explicitMenuLayoutFields = layoutTable?.keys?.toSet().orEmpty(),
         )
     } else null

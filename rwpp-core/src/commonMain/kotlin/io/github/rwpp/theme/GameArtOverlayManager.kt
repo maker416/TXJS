@@ -59,15 +59,23 @@ object GameArtOverlayManager {
 
     /** 启动早期控制器尚未加载时，按持久化选择探目录。 */
     fun currentThemeOverlayDir(): File? {
+        if (ArtThemeController.temporarySelectionActive) {
+            return ArtThemeController.activeTheme?.dir?.resolve("game")
+                ?.takeIf { it.isDirectory && it.walkTopDown().any { file -> file.isFile } }
+        }
         val id = ArtThemeController.activeTheme?.id
             ?: runCatching { appKoin.getOrNull<Settings>()?.selectedThemePack }.getOrNull()
             ?: return null
         return ArtThemeController.resolveGameOverlayDir(id)
     }
 
+    private fun currentSourceKey(): String? = currentThemeOverlayDir()?.let {
+        ArtThemeController.temporaryOverlayKey ?: it.parentFile.name
+    }
+
     /** 必须在引擎首次加载资产前调用；启动流程随后会完整加载全部图片。 */
     fun syncAtStartup() {
-        synchronizer.atStartup(currentThemeOverlayDir()?.parentFile?.name)
+        synchronizer.atStartup(currentSourceKey())
     }
 
     /** Main 上先置 busy，避免双击/切页；磁盘工作在 IO，贴图刷新由各平台分派到引擎线程。 */
@@ -84,10 +92,10 @@ object GameArtOverlayManager {
             try {
                 logger.info("[GAMEART] synchronizing selected game art source")
                 do {
-                    val expected = currentThemeOverlayDir()?.parentFile?.name
+                    val expected = currentSourceKey()
                     withContext(Dispatchers.IO) { synchronizer.sync(expected) }
                     // 组合外调用若在重载中更新了选择，继续收敛到最新来源。
-                } while (expected != currentThemeOverlayDir()?.parentFile?.name)
+                } while (expected != currentSourceKey())
                 logger.info("[GAMEART] disk overlay and engine textures synchronized")
             } catch (cancelled: CancellationException) {
                 throw cancelled

@@ -21,6 +21,7 @@ data class ThemeInstallResult(
     val warnings: List<String> = emptyList(),
     val themeId: String? = null,
     val themeName: String? = null,
+    val catalog: PersonalizedThemeCatalog? = null,
 )
 
 /**
@@ -80,11 +81,16 @@ object ThemePackInstaller {
             }
             target.mkdirs()
             zipFile.unzipTo(target)
+            val catalog = personalizedThemeCatalog(target, spec.personalization)
+            val personalizationWarnings = if (spec.personalization.slots.isNotEmpty() && catalog == null) {
+                listOf("个性化资源缺失、超限或不可读取，已使用美术包默认外观")
+            } else emptyList()
             return ThemeInstallResult(
                 true,
-                warnings = validation.warnings,
+                warnings = validation.warnings + personalizationWarnings,
                 themeId = spec.theme.id,
-                themeName = spec.theme.name
+                themeName = spec.theme.name,
+                catalog = catalog,
             )
         }
     }

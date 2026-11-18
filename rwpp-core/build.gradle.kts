@@ -45,6 +45,7 @@ kotlin {
                 val markdownVersion = findProperty("markdown.version") as String
                 api("net.peanuuutz.tomlkt:tomlkt:0.3.7")
                 implementation("com.eclipsesource.minimal-json:minimal-json:0.9.5")
+                api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
                 implementation("com.mikepenz:multiplatform-markdown-renderer:$markdownVersion")
                 implementation("com.mikepenz:multiplatform-markdown-renderer-m3:$markdownVersion")
                 implementation("party.iroiro.luajava:luajava:4.0.2")
@@ -96,6 +97,8 @@ kotlin {
                 implementation(compose.desktop.uiTestJUnit4)
                 implementation(kotlin("test"))
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${findProperty("kotlin.coroutines.version")}")
+                implementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
             }
         }
         val androidInstrumentedTest by getting {

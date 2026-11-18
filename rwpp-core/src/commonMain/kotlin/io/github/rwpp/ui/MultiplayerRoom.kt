@@ -3372,7 +3372,9 @@ internal fun RoomPlayerTableRow(
     val options = remember(update, isDetector) { if (isDetector) emptyList() else game.getStartingUnitOptions() }
     val rowPadding = if (compact) 2.dp else 5.dp
     val style = roomThemeSpec().player
-    val themed = style != RoomPlayerSpec()
+    val frame = io.github.rwpp.theme.PersonalizedAppearanceController.variantFor(player, "room.player.frame")
+    val personalizedBackground = io.github.rwpp.theme.PersonalizedAppearanceController.variantFor(player, "room.player.background")
+    val themed = style != RoomPlayerSpec() || frame != null || personalizedBackground != null
     val shape = if (themed) RoundedCornerShape(style.corner.dp) else rowShape
     val slot = player.spawnPoint + 1
     val columns = roomPlayerColumnWeights(compact, style)
@@ -3387,8 +3389,8 @@ internal fun RoomPlayerTableRow(
                     .then(if (themed) {
                         Modifier.roomThemePaint(roomPlayerBackground(style, player, room),
                             roomThemeColor(style.backgroundColor, Color.Transparent), shape, style.opacity)
-                            .roomThemeBorder(style.borderWidth,
-                                roomThemeColor(style.borderColor, MaterialTheme.colorScheme.primary), shape)
+                            .roomThemeBorder(frame?.borderWidth ?: style.borderWidth,
+                                roomThemeColor(frame?.borderColor ?: style.borderColor, MaterialTheme.colorScheme.primary), shape)
                     } else Modifier.border(BorderStroke(2.dp, MaterialTheme.colorScheme.primary), rowShape))
                     .fillMaxWidth(style.sizing.widthPercent / 100f)
                     .testTag("room-player-$slot")

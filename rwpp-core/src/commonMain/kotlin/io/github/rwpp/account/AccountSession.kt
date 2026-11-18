@@ -273,7 +273,10 @@ object AccountSession : KoinComponent {
             }
             updateCurrentSession(session) { presenceSettings = settings }
         }
-        if (updated) RoomIdentityController.onPresenceSettingsChanged()
+        if (updated) {
+            RoomIdentityController.onPresenceSettingsChanged()
+            io.github.rwpp.theme.PersonalizedAppearanceController.onAccountInvalidated()
+        }
     }
 
     suspend fun refreshPoints() {
@@ -335,6 +338,7 @@ object AccountSession : KoinComponent {
             // 登出开始就作废旧请求，迟到的登出响应也不能清掉随后登录的账号。
             sessionEpoch++
             RoomIdentityController.onAccountInvalidated()
+            io.github.rwpp.theme.PersonalizedAppearanceController.onAccountInvalidated()
             ModPlaytimeController.onAccountInvalidated()
             ForumSsoSession.onAccountInvalidated()
             authenticationEpoch = sessionEpoch
@@ -384,6 +388,7 @@ object AccountSession : KoinComponent {
     private fun beginAuthentication(): Long {
         ModSyncController.onAccountInvalidated()
         RoomIdentityController.onAccountInvalidated()
+        io.github.rwpp.theme.PersonalizedAppearanceController.onAccountInvalidated()
         sessionEpoch++
         ModPlaytimeController.onAccountInvalidated()
         ForumSsoSession.onAccountInvalidated()
@@ -431,6 +436,7 @@ object AccountSession : KoinComponent {
         if (token != newToken || user?.id != newUser.id) {
             ModSyncController.onAccountInvalidated()
             RoomIdentityController.onAccountInvalidated()
+            io.github.rwpp.theme.PersonalizedAppearanceController.onAccountInvalidated()
             ForumSsoSession.onAccountInvalidated()
             stopPresenceHeartbeat()
             FriendsSession.clear()
@@ -465,6 +471,7 @@ object AccountSession : KoinComponent {
     private fun clearSession(persist: Boolean) {
         ModSyncController.onAccountInvalidated()
         RoomIdentityController.onAccountInvalidated()
+        io.github.rwpp.theme.PersonalizedAppearanceController.onAccountInvalidated()
         ForumSsoSession.onAccountInvalidated()
         ModPlaytimeController.onAccountInvalidated()
         sessionEpoch++

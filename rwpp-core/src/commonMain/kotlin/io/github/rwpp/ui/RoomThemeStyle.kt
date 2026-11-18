@@ -251,6 +251,8 @@ internal fun roomPlayerNameFont(): FontFamily? {
 /** Slot images use birth position, independent of the team's current display order. */
 internal fun roomPlayerBackground(style: RoomPlayerSpec, player: Player, room: GameRoom): String =
     sequence {
+        io.github.rwpp.theme.PersonalizedAppearanceController.variantFor(player, "room.player.background")
+            ?.image?.takeIf { it.isNotBlank() }?.let { yield(it) }
         if (!player.isSpectator && player.spawnPoint >= 0) {
             style.slotImages[(player.spawnPoint + 1).toString()]?.let { yield(it) }
         }
