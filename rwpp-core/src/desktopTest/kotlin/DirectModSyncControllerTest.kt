@@ -441,6 +441,74 @@ class DirectModSyncControllerTest {
         assertEquals(1, transport.releaseCalls)
     }
 
+    @Test
+    fun requiredExpansionUsesAnExclusiveContentTransactionThenAcknowledgesReadiness() = runBlocking<Unit> {
+        val value = expansionManifest()
+        val environment = FakeEnvironment().also { it.checksum = 123 }
+        val transport = FakeTransport().also {
+            repeat(3) { _ -> it.manifestResults += { value } }
+            it.onReady = { assertTrue(environment.refreshed); assertEquals(1, environment.expansionLoads) }
+        }
+        val result = assertIs<DirectJoinSyncResult.Applied>(controller(environment, transport).preJoinSync("localhost", LoadingContext {}))
+        assertEquals(42L, result.expansionToken)
+        assertEquals(1, transport.readyCalls)
+        assertEquals(value.contentRevision, transport.reservedRevision)
+        assertTrue(environment.applied.isEmpty())
+        assertTrue(transport.downloads.isEmpty())
+        assertEquals(3, transport.manifestCalls)
+        result.reservation!!.close()
+        assertEquals(1, transport.releaseCalls)
+    }
+
+    @Test
+    fun expansionChecksumAndRevisionFailuresRestoreThePriorProfileAndReleaseTheSeat() = runBlocking<Unit> {
+        val value = expansionManifest()
+        for (changed in listOf(false, true)) {
+            val environment = FakeEnvironment().also { it.checksum = if (changed) 123 else 124 }
+            val transport = FakeTransport().also {
+                it.manifestResults += { value }
+                it.manifestResults += { if (changed) value.copy(contentRevision = "b".repeat(64), artifact = value.artifact!!.copy(sha256 = "b".repeat(64))) else value }
+            }
+            val result = assertIs<DirectJoinSyncResult.Failed>(controller(environment, transport).preJoinSync("localhost", LoadingContext {}))
+            assertEquals(if (changed) ConnectionFailureReason.MANIFEST_CHANGED else ConnectionFailureReason.CHECKSUM_MISMATCH, result.failure.reason)
+            assertEquals(listOf(42L), environment.cancelledExpansions)
+            assertEquals(1, transport.releaseCalls)
+            assertEquals(0, transport.readyCalls)
+        }
+    }
+
+    @Test
+    fun changedGameContentRequiresNewConsentInsteadOfSilentlyReplacingTheLegacyTheme() = runBlocking<Unit> {
+        val transport = FakeTransport().also { it.manifestResults += { expansionManifest() } }
+        val environment = FakeEnvironment()
+        val result = assertIs<DirectJoinSyncResult.Failed>(controller(environment, transport).preJoinSync("localhost", LoadingContext {},
+            expectedOnlineGameId = "11111111-1111-1111-1111-111111111111"))
+        assertEquals(ConnectionFailureReason.MANIFEST_CHANGED, result.failure.reason)
+        assertEquals(0, transport.reserveCalls)
+        assertEquals(0, environment.expansionLoads)
+    }
+
+    @Test
+    fun sameProcessRecoveryUsesCachedExpansionWithoutANewSeatOrOrdinaryModDownload() = runBlocking<Unit> {
+        val value = expansionManifest()
+        val endpoint = DirectJoinEndpoint("localhost", 5123)
+        DirectResumeSessions.store(endpoint, value, io.github.rwpp.net.sync.direct.DirectResumeGrant(value.serverInstance, ByteArray(32) { 7 }))
+        val inMatch = value.copy(lobby = false, phase = "match")
+        val transport = FakeTransport().also { repeat(2) { _ -> it.manifestResults += { inMatch } } }
+        val environment = FakeEnvironment().also { it.checksum = 123 }
+        val result = assertIs<DirectJoinSyncResult.Applied>(controller(environment, transport).preJoinSync("localhost", LoadingContext {}))
+        assertEquals(listOf(false), environment.expansionDownloadPermission)
+        assertEquals(0, transport.reserveCalls)
+        assertTrue(transport.downloads.isEmpty())
+        assertTrue(result.reservation == null)
+        assertTrue(result.resume != null)
+        result.resume!!.close()
+        DirectResumeSessions.clear()
+    }
+
+    private fun expansionManifest() = DirectModManifest(4, "176", "scope", "ready", true, 123, emptyList(), "server-instance", "lobby", 3,
+        "a".repeat(64), io.github.rwpp.net.sync.direct.DirectContentArtifact("Expansion", io.github.rwpp.expansion.EXPANSION_MEDIA_TYPE, "1.0", 123, "a".repeat(64)))
+
     private fun controller(environment: FakeEnvironment, transport: FakeTransport) = DirectModSyncController(environment) { _, _ -> transport }
 
     private fun manifest(mods: List<NetworkModDescriptor>) = DirectModManifest(1, "176", "scope", "ready", true, -1, mods)
@@ -454,6 +522,9 @@ class DirectModSyncControllerTest {
         var reserveCalls = 0
         var renewCalls = 0
         var releaseCalls = 0
+        var readyCalls = 0
+        var reservedRevision: String? = null
+        var onReady: () -> Unit = {}
         var onReserve: () -> DirectModLease = { DirectModLease("scope", 90_000, 30_000, "reserved", 1, 10, 1) }
         var onRenew: () -> DirectModLease = { DirectModLease("scope", 90_000, 30_000, "reserved", 1, 10, 1) }
         var onDownload: (NetworkModDescriptor) -> Unit = {}
@@ -472,6 +543,8 @@ class DirectModSyncControllerTest {
             progress.forEach { onProgress(it) }
         }
         override suspend fun reserve(scope: String, token: ByteArray): DirectModLease { reserveCalls++; return onReserve() }
+        override suspend fun reserveContent(scope: String, token: ByteArray, revision: String): DirectModLease { reservedRevision = revision; return reserve(scope, token) }
+        override suspend fun contentReady(scope: String, token: ByteArray, revision: String): DirectModLease { readyCalls++; onReady(); return onRenew() }
         override suspend fun renew(scope: String, token: ByteArray): DirectModLease { renewCalls++; return onRenew() }
         override suspend fun release(scope: String, token: ByteArray) { releaseCalls++ }
     }
@@ -483,6 +556,16 @@ class DirectModSyncControllerTest {
         var refreshed = false
         var loaded = false
         var onApply: () -> Unit = {}
+        var expansionLoads = 0
+        val expansionDownloadPermission = mutableListOf<Boolean>()
+        val cancelledExpansions = mutableListOf<Long>()
+        override suspend fun applyExpansion(artifact: io.github.rwpp.net.sync.direct.DirectContentArtifact,
+            transport: DirectModSyncTransport, expected: io.github.rwpp.content.ExpansionJoinExpectation?, allowDownload: Boolean,
+            progress: suspend (DirectModDownloadProgress) -> Unit): Long {
+            expansionLoads++; expansionDownloadPermission += allowDownload
+            return 42
+        }
+        override suspend fun cancelExpansion(token: Long) { cancelledExpansions += token }
         override fun getAllMods(): List<Mod> = emptyList()
         override suspend fun isLoadedModSetExact(descriptors: List<NetworkModDescriptor>) = loaded
         override suspend fun applyMods(descriptors: List<NetworkModDescriptor>) {

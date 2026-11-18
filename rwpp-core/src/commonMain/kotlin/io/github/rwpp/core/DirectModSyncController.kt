@@ -43,7 +43,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 sealed interface DirectJoinSyncResult {
-    data class Applied(val reservation: DirectJoinReservation? = null) : DirectJoinSyncResult
+    data class Applied(val reservation: DirectJoinReservation? = null, val expansionToken: Long? = null,
+        val pinnedAddress: String? = null, val resume: DirectResumeConnection? = null) : DirectJoinSyncResult
     data object Unsupported : DirectJoinSyncResult
     data class Failed(val failure: ConnectionFailure) : DirectJoinSyncResult
 }
@@ -58,6 +59,11 @@ interface DirectModSyncEnvironment {
     suspend fun applyMods(descriptors: List<NetworkModDescriptor>)
     fun getUnitsChecksum(): Int
     fun refreshHandshakeChecksumCache()
+    suspend fun applyExpansion(artifact: io.github.rwpp.net.sync.direct.DirectContentArtifact,
+        transport: DirectModSyncTransport, expected: io.github.rwpp.content.ExpansionJoinExpectation?,
+        allowDownload: Boolean, progress: suspend (DirectModDownloadProgress) -> Unit): Long =
+        throw java.io.IOException("Game expansion loading is unavailable")
+    suspend fun cancelExpansion(token: Long) {}
 }
 
 private class DirectSyncFailure(val failure: ConnectionFailure) : IllegalStateException(failure.details)
@@ -67,6 +73,11 @@ private object DefaultDirectModSyncEnvironment : DirectModSyncEnvironment {
     override fun getAllMods(): List<Mod> = appKoin.get<ModManager>().getAllMods()
     override fun getUnitsChecksum(): Int = appKoin.get<Game>().getUnitsChecksum()
     override fun refreshHandshakeChecksumCache() = appKoin.get<Game>().refreshHandshakeChecksumCache()
+    override suspend fun applyExpansion(artifact: io.github.rwpp.net.sync.direct.DirectContentArtifact,
+        transport: DirectModSyncTransport, expected: io.github.rwpp.content.ExpansionJoinExpectation?, allowDownload: Boolean,
+        progress: suspend (DirectModDownloadProgress) -> Unit): Long =
+        io.github.rwpp.content.ExpansionDirectSync.prepareAndActivate(artifact, transport, expected, allowDownload, progress)
+    override suspend fun cancelExpansion(token: Long) = io.github.rwpp.content.ExpansionContentController.cancel(token)
 
     override suspend fun isLoadedModSetExact(descriptors: List<NetworkModDescriptor>): Boolean {
         GameStartSafety.requireCanReload()
@@ -111,7 +122,9 @@ class DirectModSyncController(
     /** The existing join loader owns progress while Direct applies mods. */
     val isApplyingMods = applyingMods.asStateFlow()
 
-    suspend fun preJoinSync(address: String, loadingContext: LoadingContext): DirectJoinSyncResult {
+    suspend fun preJoinSync(address: String, loadingContext: LoadingContext,
+        expectedExpansion: io.github.rwpp.content.ExpansionJoinExpectation? = null,
+        expectedOnlineGameId: String? = expectedExpansion?.gameAppId): DirectJoinSyncResult {
         val endpoint = DirectJoinEndpoint.parseOrNull(address) ?: return DirectJoinSyncResult.Unsupported
         val transport = transportFactory(endpoint, environment.cache)
         val first = try {
@@ -127,16 +140,61 @@ class DirectModSyncController(
 
         var stage = ConnectionFailureStage.SYNC_MANIFEST
         var reservation: DirectJoinReservation? = null
+        var expansionToken: Long? = null
+        var resumed: DirectResumeConnection? = null
         var handedOff = false
         return try {
+            validateManifest(first)
+            if (first.gameVersion != environment.gameVersion) throw DirectSyncFailure(ConnectionFailure(
+                ConnectionFailureReason.DATA_MISMATCH, ConnectionFailureStage.SYNC_MANIFEST,
+                details = "Direct game protocol version mismatch (client ${environment.gameVersion} / server ${first.gameVersion})"))
+            if (expectedExpansion != null && first.artifact == null) throw java.io.IOException("Server no longer provides the required expansion")
+            if (expectedOnlineGameId != null && expectedExpansion == null && first.artifact != null) throw DirectSyncFailure(
+                ConnectionFailure(ConnectionFailureReason.MANIFEST_CHANGED, details = "The game now requires a new expansion; confirm its updated details before joining"))
+            val peer = transport.peerEndpoint?.let(DirectJoinEndpoint::parseOrNull) ?: endpoint
+            if (!first.lobby && first.phase == "match") {
+                resumed = DirectResumeSessions.open(peer, first, transport)
+                    ?: throw DirectModSyncServerException(DirectModSyncErrorCode.RESUME_INVALID)
+                val artifact = first.artifact
+                if (artifact != null) expansionToken = environment.applyExpansion(artifact, transport, expectedExpansion, false) { progress ->
+                    loadingContext.message(directDownloadMessage(1, 1, artifact.name, progress))
+                } else if (!environment.isLoadedModSetExact(first.mods)) throw java.io.IOException("Recovery content is not loaded")
+                if (first.hostUnitsChecksum != environment.getUnitsChecksum().toLong()) throw java.io.IOException("Recovery content checksum mismatch")
+                environment.refreshHandshakeChecksumCache()
+                val checked = transport.getManifest()
+                requireSameContent(first, checked)
+                handedOff = true
+                return DirectJoinSyncResult.Applied(expansionToken = expansionToken, pinnedAddress = transport.peerEndpoint, resume = resumed)
+            }
             prepare(first)
             if (first.protocolVersion >= 2) {
                 loadingContext.message(readI18n("modSync.directReserving", I18nType.RWPP))
-                reservation = DirectJoinReservation.acquire(endpoint, transport, first.scope)
+                reservation = DirectJoinReservation.acquire(peer, transport, first.scope, manifest = first)
             }
             suspend fun synchronize(): DirectJoinSyncResult {
                 currentCoroutineContext().ensureActive()
                 loadingContext.message(readI18n("modSync.directChecking", I18nType.RWPP))
+                val artifact = first.artifact
+                if (artifact != null) {
+                    stage = ConnectionFailureStage.SYNC_APPLY
+                    applyingMods.value = true
+                    try {
+                        expansionToken = environment.applyExpansion(artifact, transport, expectedExpansion, true) { progress ->
+                            loadingContext.message(directDownloadMessage(1, 1, artifact.name, progress))
+                        }
+                    } finally { applyingMods.value = false }
+                    val after = transport.getManifest()
+                    prepare(after); requireSameContent(first, after)
+                    if (after.hostUnitsChecksum == -1L || after.hostUnitsChecksum != environment.getUnitsChecksum().toLong()) {
+                        throw DirectSyncFailure(ConnectionFailure(ConnectionFailureReason.CHECKSUM_MISMATCH, stage, details = "Expansion unit checksum mismatch"))
+                    }
+                    environment.refreshHandshakeChecksumCache()
+                    reservation?.markContentReady()
+                    val last = transport.getManifest()
+                    prepare(last); requireSameContent(after, last)
+                    reservation?.renewNow()
+                    return DirectJoinSyncResult.Applied(reservation, expansionToken, transport.peerEndpoint)
+                }
                 val missing = first.mods.map { it.cacheKey() }.toSet() - findMatchingModSyncKeys(
                     environment.getAllMods(), first.mods, environment.cache,
                 )
@@ -189,7 +247,7 @@ class DirectModSyncController(
                 requireSameContent(second, finalManifest)
                 currentCoroutineContext().ensureActive()
                 reservation?.renewNow()
-                return DirectJoinSyncResult.Applied(reservation)
+                return DirectJoinSyncResult.Applied(reservation, pinnedAddress = transport.peerEndpoint)
             }
             val result = reservation?.protect { synchronize() } ?: synchronize()
             handedOff = result is DirectJoinSyncResult.Applied
@@ -206,7 +264,11 @@ class DirectModSyncController(
         } catch (error: Exception) {
             failed(error, stage)
         } finally {
-            if (!handedOff) reservation?.close()
+            if (!handedOff) {
+                reservation?.close()
+                resumed?.close()
+                expansionToken?.let { token -> kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { environment.cancelExpansion(token) } }
+            }
         }
     }
 

@@ -6,17 +6,33 @@
  */
 package io.github.rwpp.ui
 
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.Text
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.i18n.readI18n
 
-/** 扩展目前仅展示美术包管理；保留原有扩展面板关闭通知。 */
+/** Art and complete online-game packages have independent management and storage. */
 @Composable
 fun ExtensionView(onExit: () -> Unit) {
+    var selected by rememberSaveable { mutableIntStateOf(0) }
     DisposableEffect(Unit) {
         onDispose { CloseUIPanelEvent("extension").broadcastIn() }
     }
-    ThemesView(onExit = onExit, title = readI18n("extension.extension"))
+    Column(Modifier.fillMaxSize().testTag("extension-library")) {
+        TabRow(selectedTabIndex = selected) {
+            Tab(selected == 0, { selected = 0 }, text = { Text(readI18n("expansion.artTab")) }, modifier = Modifier.testTag("extension-art-tab"))
+            Tab(selected == 1, { selected = 1 }, text = { Text(readI18n("expansion.packagesTab")) }, modifier = Modifier.testTag("extension-packages-tab"))
+        }
+        Box(Modifier.weight(1f)) {
+            if (selected == 0) ThemesView(onExit = onExit, title = readI18n("expansion.artTab"))
+            else ExpansionPackagesView(onExit)
+        }
+    }
 }

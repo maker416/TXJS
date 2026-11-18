@@ -12,6 +12,8 @@ import com.corrodinggames.rts.gameFramework.i.b
 import io.github.rwpp.desktop.DesktopLoadedModSnapshot
 import io.github.rwpp.desktop.impl.DesktopModSourceCache
 import io.github.rwpp.game.mod.ModReloadSelection
+import io.github.rwpp.game.mod.ContentProfiles
+import io.github.rwpp.desktop.GameEngine
 import io.github.rwpp.inject.Inject
 import io.github.rwpp.inject.InjectClass
 import io.github.rwpp.inject.InjectMode
@@ -24,11 +26,31 @@ import io.github.rwpp.inject.InjectMode
 object ModManagerInject {
     @Inject("e", InjectMode.InsertBefore, "()V")
     fun preserveSelectionDuringRecovery(): Any =
-        if (io.github.rwpp.game.mod.ModLoadSafety.suppressSelectionSave) io.github.rwpp.inject.InterruptResult.Unit else Unit
+        if (io.github.rwpp.game.mod.ModLoadSafety.suppressSelectionSave || ContentProfiles.preserveSelection) io.github.rwpp.inject.InterruptResult.Unit else Unit
 
     @Inject("k", InjectMode.InsertBefore)
     fun a.invalidateChangedSourcesBeforeScan() {
+        ContentProfiles.recoverBeforeFirstScan { snapshot ->
+            GameEngine.B().bQ.apply {
+                modSettings = snapshot.modSettings; modSettingsVersion = snapshot.version
+                lastModCount = snapshot.lastModCount; check(save()) { "Cannot restore ordinary Mod settings" }
+            }
+        }
         DesktopModSourceCache.instance.beforeScan(this)
+        @Suppress("UNCHECKED_CAST")
+        val previous = a::class.java.getDeclaredField("e").run {
+            isAccessible = true
+            get(this@invalidateChangedSourcesBeforeScan) as List<b>
+        }
+        // Only the current profile may retain external records. Native scanning removes old
+        // versions normally after a switch/restore, rather than retaining every installed archive.
+        previous.filter { it.e?.startsWith("rwjs-expansion:") == true }.forEach { it.m = false }
+        ContentProfiles.expansionSources.forEach { source ->
+            val key = "rwjs-expansion:" + (ContentProfiles.current as io.github.rwpp.game.mod.ContentProfile.Expansion).revision + ":" + source.id
+            // Native registration replaces its list on insertion. Register before k() captures its
+            // return list, and retain sources that cannot be rediscovered under mods/units.
+            a(source.file.name, source.id, source.file.canonicalPath, key, true, false, false, 0).m = true
+        }
     }
 
     @Inject("k", InjectMode.InsertAfter)
@@ -46,10 +68,11 @@ object ModManagerInject {
                 mod.p?.let { add(it) }
                 mod.q?.let { add(it) }
             }
-            ModReloadSelection.resolve(candidates)?.let { enabled ->
+            (ContentProfiles.resolve(candidates) ?: ModReloadSelection.resolve(candidates))?.let { enabled ->
                 mod.f = !enabled
             }
         }
         DesktopLoadedModSnapshot.beforeLoad(mods)
+        ContentProfiles.completeStartupScan()
     }
 }

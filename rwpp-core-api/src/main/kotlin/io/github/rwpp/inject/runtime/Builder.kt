@@ -30,6 +30,11 @@ import java.util.zip.ZipOutputStream
 
 @Suppress("MemberVisibilityCanBePrivate")
 object Builder {
+    internal const val INJECTOR_ARTIFACT_REVISION = "2"
+    internal fun currentInjectorArtifact(directory: File): Boolean {
+        val marker = File(directory, "injector-revision.txt")
+        return marker.isFile && marker.length() in 1..32 && runCatching { marker.readText().trim() == INJECTOR_ARTIFACT_REVISION }.getOrDefault(false)
+    }
     var libDir = "lib"
     var outputDir = "output"
     val configFile
@@ -87,7 +92,9 @@ object Builder {
         }
         rootInfo = resourceConfig
         io.github.rwpp.logger.info("hasUnenabledExtensions: $hasUnenabledExtensions, extensionConfigNotEquals: $extensionConfigNotEquals, gameLibNotExists: $gameLibNotExists, resourceConfigNotEquals: $resourceConfigNotEquals")
-        return hasUnenabledExtensions || extensionConfigNotEquals || gameLibNotExists || resourceConfigNotEquals
+        val injectorRevisionChanged = !currentInjectorArtifact(File(outputDir))
+        io.github.rwpp.logger.info("injectorRevisionChanged: $injectorRevisionChanged")
+        return hasUnenabledExtensions || extensionConfigNotEquals || gameLibNotExists || resourceConfigNotEquals || injectorRevisionChanged
     }
 
     fun getConfigInputStream(file: File? = null): InputStream {
@@ -109,6 +116,7 @@ object Builder {
             val jarFile = File("$outputDir/${v.realName}.jar")
             buildJar(jarFile, v.classTree.allClasses, v.lib)
         }
+        File(outputDir, "injector-revision.txt").writeText(INJECTOR_ARTIFACT_REVISION)
     }
 
     /**

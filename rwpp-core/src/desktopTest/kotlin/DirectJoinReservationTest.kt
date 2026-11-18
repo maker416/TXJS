@@ -38,6 +38,28 @@ import kotlinx.coroutines.test.runTest
 @OptIn(ExperimentalCoroutinesApi::class)
 class DirectJoinReservationTest {
     @Test
+    fun cancellationWaitsForProtectedContentCleanupBeforeTheSeatCanBeReleased() = runTest(StandardTestDispatcher()) {
+        val transport = FakeTransport()
+        val reservation = acquire(transport)
+        var cleaned = false
+        val operation = launch {
+            reservation.protect {
+                try { awaitCancellation() }
+                finally { kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { delay(1_000); cleaned = true } }
+            }
+        }
+        runCurrent()
+        operation.cancel()
+        runCurrent()
+        assertFalse(operation.isCompleted)
+        assertFalse(cleaned)
+        advanceTimeBy(1_000); runCurrent(); operation.join()
+        assertTrue(cleaned)
+        reservation.close()
+        assertEquals(1, transport.releases.size)
+    }
+
+    @Test
     fun lostReserveResponseRetriesOriginalCredentialAndReleasesItAtTheEnd() = runTest(StandardTestDispatcher()) {
         val transport = FakeTransport().apply {
             reserveReply = { attempt ->

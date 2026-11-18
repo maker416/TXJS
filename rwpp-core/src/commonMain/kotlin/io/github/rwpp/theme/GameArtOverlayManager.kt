@@ -28,6 +28,9 @@ import java.io.File
 
 /** 美术包磁盘覆盖与引擎内存贴图的编排器；普通 modReload 会复用旧图，不能用于此处。 */
 object GameArtOverlayManager {
+    @Volatile private var stagedContent = false
+    @Volatile private var stagedTheme: ArtThemeController.LoadedTheme? = null
+    @Volatile private var stagedKey: String? = null
     private const val MARKER_FILE = ".rwpp_theme_overlay"
     private val scope by lazy { CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate) }
 
@@ -59,6 +62,8 @@ object GameArtOverlayManager {
 
     /** 启动早期控制器尚未加载时，按持久化选择探目录。 */
     fun currentThemeOverlayDir(): File? {
+        if (stagedContent) return stagedTheme?.dir?.resolve("game")
+            ?.takeIf { it.isDirectory && it.walkTopDown().any { file -> file.isFile } }
         if (ArtThemeController.temporarySelectionActive) {
             return ArtThemeController.activeTheme?.dir?.resolve("game")
                 ?.takeIf { it.isDirectory && it.walkTopDown().any { file -> file.isFile } }
@@ -70,7 +75,24 @@ object GameArtOverlayManager {
     }
 
     private fun currentSourceKey(): String? = currentThemeOverlayDir()?.let {
-        ArtThemeController.temporaryOverlayKey ?: it.parentFile.name
+        if (stagedContent) stagedKey else ArtThemeController.temporaryOverlayKey ?: it.parentFile.name
+    }
+
+    /** Stage disk art without changing visible UI, then perform one engine reload for art and Mod sources. */
+    internal suspend fun synchronizeContent(theme: ArtThemeController.LoadedTheme?, key: String?, reload: suspend () -> Unit) {
+        check(!applying) { "Game art is still being applied" }
+        applying = true
+        failure = null
+        stagedTheme = theme; stagedKey = key; stagedContent = true
+        try {
+            if (appKoin.getOrNull<ExternalHandler>() == null) reload()
+            else withContext(Dispatchers.IO) { synchronizer.sync(currentSourceKey(), forceReload = true, reloadOverride = reload) }
+        } catch (error: Throwable) {
+            failure = error.message ?: error.javaClass.simpleName
+            throw error
+        } finally {
+            stagedContent = false; stagedTheme = null; stagedKey = null; applying = false
+        }
     }
 
     /** 必须在引擎首次加载资产前调用；启动流程随后会完整加载全部图片。 */

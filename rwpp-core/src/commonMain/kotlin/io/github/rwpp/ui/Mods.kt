@@ -294,6 +294,13 @@ fun ModsView(
     /** 嵌入 [ModsAndMapsView] 共用外壳时为 true：不渲染 ExpandedCard / 关闭按钮。 */
     embedded: Boolean = false,
 ) {
+    if (io.github.rwpp.content.ExpansionPackages.activeSha != null) {
+        Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(readI18n("expansion.modManagementLocked"), style = MaterialTheme.typography.bodyLarge)
+        }
+        return
+    }
     val modManager = koinInject<ModManager>()
 
     var deletedMod by remember { mutableStateOf(false) }
@@ -351,7 +358,7 @@ fun ModsView(
 
     suspend fun loadModFiles(actualMods: List<Mod>): ModFiles? {
         // These getters belong to the engine adapters. Keep them on their original UI thread.
-        val inputs = actualMods.map { actual ->
+        val inputs = actualMods.filterNot { it.isExpansionMod }.map { actual ->
             val selected = SelectableMod(actual)
             ModFileInput(selected, selected.path, selected.errorMessage != null, selected.isEnabled)
         }

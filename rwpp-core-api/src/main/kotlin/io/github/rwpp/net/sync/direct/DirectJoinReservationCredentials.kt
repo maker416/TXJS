@@ -28,15 +28,19 @@ object DirectJoinReservationCredentials {
 
     private val current = AtomicReference<Active?>()
 
-    suspend fun open(endpoint: DirectJoinEndpoint, token: ByteArray): AutoCloseable =
-        open(endpoint, DirectModSyncProtocol.encodeSha256(token))
+    suspend fun open(endpoint: DirectJoinEndpoint, token: ByteArray, protocolVersion: Int = 2, resume: Boolean = false, attemptNonceHex: String? = null): AutoCloseable =
+        open(endpoint, DirectModSyncProtocol.encodeSha256(token), protocolVersion, resume, attemptNonceHex)
 
-    suspend fun open(endpoint: DirectJoinEndpoint, tokenHex: String): AutoCloseable {
+    suspend fun open(endpoint: DirectJoinEndpoint, tokenHex: String, protocolVersion: Int = 2, resume: Boolean = false, attemptNonceHex: String? = null): AutoCloseable {
         require(tokenHex.matches(Regex("[0-9a-f]{64}"))) { "Invalid direct reservation credential" }
         // DNS 只能在 IO 上解析，原版连接接点仅比较已经解析好的远端地址。
         val addresses = withContext(Dispatchers.IO) { InetAddress.getAllByName(endpoint.host).toSet() }
         currentCoroutineContext().ensureActive()
-        val active = Active(endpoint.port, addresses, DIRECT_JOIN_RESERVATION_QUERY_PREFIX + tokenHex)
+        require(protocolVersion in 2..4 && (!resume || protocolVersion >= 3))
+        val prefix = if (resume) { if (protocolVersion == 4) "txjsmd4r_" else "txjsmd3r_" }
+            else if (protocolVersion == 4) "txjsmd4_" else DIRECT_JOIN_RESERVATION_QUERY_PREFIX
+        if (resume && protocolVersion == 4) require(attemptNonceHex?.matches(Regex("[0-9a-f]{32}")) == true)
+        val active = Active(endpoint.port, addresses, prefix + tokenHex + if (resume && protocolVersion == 4) "_$attemptNonceHex" else "")
         current.set(active)
         return object : AutoCloseable {
             override fun close() {

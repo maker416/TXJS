@@ -23,6 +23,9 @@ import io.github.rwpp.game.mod.Mod
 import io.github.rwpp.game.mod.ModLoadSafety
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.game.mod.ModReloadSelection
+import io.github.rwpp.game.mod.ContentProfile
+import io.github.rwpp.game.mod.ContentProfiles
+import io.github.rwpp.game.mod.ModSettingsSnapshot
 import io.github.rwpp.game.mod.NetworkModCache
 import io.github.rwpp.game.mod.NetworkModDescriptor
 import io.github.rwpp.game.mod.ReloadAbortToVanilla
@@ -69,10 +72,34 @@ class ModManagerImpl : ModManager {
 
     override suspend fun reloadGameArt() = reloadLocal(false, null, refreshGameArt = true)
 
+    override fun captureModSettings(): ModSettingsSnapshot = GameEngine.B().bQ.let {
+        ModSettingsSnapshot(it.modSettings, it.modSettingsVersion, it.lastModCount)
+    }
+
+    override suspend fun restoreModSettings(snapshot: ModSettingsSnapshot) {
+        gameThreadDispatcher.run {
+            GameEngine.B().bQ.apply {
+                modSettings = snapshot.modSettings
+                modSettingsVersion = snapshot.version
+                lastModCount = snapshot.lastModCount
+                check(save()) { "Cannot persist ordinary Mod settings" }
+            }
+        }
+    }
+
+    override suspend fun applyContentProfile(profile: ContentProfile, refreshGameArt: Boolean) {
+        val selection = when (profile) {
+            is ContentProfile.Normal -> profile.selection
+            is ContentProfile.Expansion -> profile.sources.associate { it.file.canonicalPath to true }
+        }
+        reloadLocal(true, selection, refreshGameArt, profile)
+    }
+
     private suspend fun reloadLocal(
         forceImmediate: Boolean,
         enabledByFileName: Map<String, Boolean>?,
         refreshGameArt: Boolean,
+        contentProfile: ContentProfile? = null,
     ) {
         io.github.rwpp.game.GameStartSafety.requireCanReload()
         if (!isReloadingMods.compareAndSet(false, true)) {
@@ -87,7 +114,8 @@ class ModManagerImpl : ModManager {
             // PC 的 forceImmediate 也不能绕过 GL 所有权；已在游戏线程时直接执行，否则排队。
             gameThreadDispatcher.run {
                 DesktopReloadGlContext.requireOwnerContext()
-                runReloadCore(enabledByFileName, refreshGameArt)
+                if (contentProfile != null) ContentProfiles.stage(contentProfile)
+                runReloadCore(enabledByFileName, refreshGameArt, allowScenePreservation = contentProfile == null)
                 // 重载成功后才到这里：释放本轮未使用的贴图/音效缓存（需主 GL 上下文）。
                 DesktopModResourceCache.sweep()
                 appKoin.get<Game>().getAllMaps(true)
@@ -283,13 +311,13 @@ class ModManagerImpl : ModManager {
      * 重载内核：调用引擎扫描 mods 目录并重新加载。
      * 必须在持有主窗口 GL 上下文的游戏线程执行。
      */
-    private fun runReloadCore(enabledByFileName: Map<String, Boolean>?, refreshGameArt: Boolean) {
+    private fun runReloadCore(enabledByFileName: Map<String, Boolean>?, refreshGameArt: Boolean, allowScenePreservation: Boolean = true) {
         if (refreshGameArt) {
             check(!game.gameRoom.isConnecting && !game.gameRoom.isStartGame && !game.gameRoom.isStartingGame) { io.github.rwpp.i18n.readI18n("themes.gameArtSessionActive") }
         }
         ModLoadSafety.run("local-reload") {
             val engine = GameEngine.B()
-            val preserveScene = refreshGameArt && game.isGameCouldContinue()
+            val preserveScene = allowScenePreservation && refreshGameArt && game.isGameCouldContinue()
             saveModSelection(enabledByFileName)
             try {
                 engine.br = true
@@ -336,7 +364,8 @@ class ModManagerImpl : ModManager {
         // UI 的待应用开关不再直接修改引擎；停止/重载前先保存本次选择。
         if (enabledByFileName != null) {
             getAllMods().forEach { mod ->
-                mod.isEnabled = resolveModEnabledByFileName(listOf(mod.path), enabledByFileName)
+                mod.isEnabled = ContentProfiles.resolve(listOf(mod.path))
+                    ?: resolveModEnabledByFileName(listOf(mod.path), enabledByFileName)
             }
             logger.info("[MODSYNC] reload selection: {}", enabledByFileName)
         }
@@ -358,6 +387,7 @@ class ModManagerImpl : ModManager {
     }
 
     override suspend fun modSaveChange(enabledByFileName: Map<String, Boolean>?) {
+        check(!ContentProfiles.expansionActive) { "Leave the expansion game before changing ordinary Mods" }
         auxiliaryReload("save-reload") {
             val b = GameEngine.B()
             saveModSelection(enabledByFileName)

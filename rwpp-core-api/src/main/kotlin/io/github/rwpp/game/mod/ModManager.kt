@@ -10,6 +10,14 @@ package io.github.rwpp.game.mod
 import org.koin.core.component.KoinComponent
 
 interface ModManager : KoinComponent {
+    /** Snapshot the user's persisted ordinary mod selection before a session-only source change. */
+    fun captureModSettings(): ModSettingsSnapshot = error("Content profiles are unsupported")
+    suspend fun restoreModSettings(snapshot: ModSettingsSnapshot) { error("Content profiles are unsupported") }
+
+    /** One offline engine reload applies source isolation and refreshes art together. */
+    suspend fun applyContentProfile(profile: ContentProfile, refreshGameArt: Boolean = true) {
+        error("Content profiles are unsupported")
+    }
     /** 仅在成功加载的内容快照与清单、当前来源及启用状态均一致时返回 true。未实现的平台保守重载。 */
     suspend fun isLoadedModSetExact(
         descriptors: List<NetworkModDescriptor>,

@@ -197,6 +197,7 @@ fun App(
 
     LaunchedEffect(game) { io.github.rwpp.theme.PersonalizedAppearanceController.run(game) }
     LaunchedEffect(Unit) { io.github.rwpp.theme.OnlineGameThemeController.init() }
+    LaunchedEffect(Unit) { io.github.rwpp.content.ExpansionContentController.init() }
 
     // 房间状态快照的唯一采样入口：RefreshUIEvent 是引擎→UI 的既有刷新漏斗，
     // 在 Main 上重采样 RoomSnapshot，房间 UI 只采集不可变快照

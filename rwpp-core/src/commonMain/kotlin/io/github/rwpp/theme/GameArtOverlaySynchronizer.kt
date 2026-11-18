@@ -36,13 +36,13 @@ internal class GameArtOverlaySynchronizer(
         loadedKnown = true
     }
 
-    suspend fun sync(expected: String?) = mutex.withLock {
-        if (!dirty && loadedKnown && loadedId == expected && readMarker() == expected) return@withLock
+    suspend fun sync(expected: String?, forceReload: Boolean = false, reloadOverride: (suspend () -> Unit)? = null) = mutex.withLock {
+        if (!forceReload && !dirty && loadedKnown && loadedId == expected && readMarker() == expected) return@withLock
         beforeSync()
         // 即使重建、重载或标记提交失败，下一次也必须重做，而不是误认为已完成。
         dirty = true
         rebuild()
-        reload()
+        (reloadOverride ?: reload).invoke()
         commitMarker(expected)
         loadedId = expected
         loadedKnown = true

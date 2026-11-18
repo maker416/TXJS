@@ -155,10 +155,15 @@ private const val PERSONALIZED_ASSET_MAX_BYTES = 32L * 1024 * 1024
 private const val PERSONALIZED_ASSETS_MAX_BYTES = 128L * 1024 * 1024
 
 /** IO 阶段调用一次并缓存；资源缺失、越界、超限或 IO 失败只关闭个性化。 */
-fun personalizedThemeCatalog(dir: File, spec: PersonalizedThemeSpec): PersonalizedThemeCatalog? = runCatching {
+fun personalizedThemeCatalog(dir: File, spec: PersonalizedThemeSpec): PersonalizedThemeCatalog? =
+    personalizedThemeCatalog(dir, spec, allowEmptyVariants = false)
+
+internal fun personalizedThemeCatalog(
+    dir: File, spec: PersonalizedThemeSpec, allowEmptyVariants: Boolean,
+): PersonalizedThemeCatalog? = runCatching {
     if (!validatePersonalizedTheme(spec).isValid) return null
     val safe = spec.sanitized()
-    if (safe.platformPackId.isEmpty() || safe.slots.values.all { it.variants.isEmpty() }) return null
+    if (safe.platformPackId.isEmpty() || !allowEmptyVariants && safe.slots.values.all { it.variants.isEmpty() }) return null
     val root = dir.toPath().toRealPath()
     fun checkedPath(relative: String): Path {
         require(isSafePersonalizedThemeAssetPath(relative))

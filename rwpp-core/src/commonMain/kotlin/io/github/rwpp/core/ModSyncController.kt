@@ -1110,7 +1110,7 @@ object ModSyncController {
                 inRoomSyncPhase = null
                 resetReceivingStateOnMain()
                 // 取消同步退房是硬跳转：放弃返回栈直达多人列表
-                resetNavigation(LauncherPage.Multiplayer)
+                resetNavigation(GameSessionController.multiplayerReturnPage)
                 GameSessionController.onExternalSessionEnd()
             }
             scope.launch(Dispatchers.IO) {

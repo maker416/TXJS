@@ -78,7 +78,13 @@ fun connectionFailure(
         val reason = when (cause) {
             is DirectModSyncServerException -> when (cause.code) {
                 io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.LEASE_EXPIRED,
-                io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.LEASE_INVALID -> ConnectionFailureReason.SYNC_FAILED
+                io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.LEASE_INVALID,
+                io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.RESUME_INVALID,
+                io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.RESUME_UNSUPPORTED -> ConnectionFailureReason.SYNC_FAILED
+                io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.UPGRADE_REQUIRED -> ConnectionFailureReason.CLIENT_OUTDATED
+                io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.CONTENT_MISMATCH -> ConnectionFailureReason.MANIFEST_CHANGED
+                io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.NOT_READY,
+                io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.CONTENT_NOT_READY -> ConnectionFailureReason.PREPARING
                 else -> ConnectionFailureReason.valueOf(cause.code.name)
             }
             is SocketTimeoutException, is TimeoutException -> ConnectionFailureReason.TIMEOUT

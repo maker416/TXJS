@@ -267,6 +267,9 @@ fun MultiplayerView(
 
     var serverAddress by remember { mutableStateOf("") }
     var isConnecting by remember { mutableStateOf(false) }
+    var pendingOnlineGameThemeToken by remember { mutableStateOf<Long?>(null) }
+    var pendingExpansionExpectation by remember { mutableStateOf<io.github.rwpp.content.ExpansionJoinExpectation?>(null) }
+    var pendingOnlineGameAppId by remember { mutableStateOf<String?>(null) }
     /** 本次连接是否为开房（而非加入他人房间）；开房前需禁用网络缓存模组。 */
     var pendingHostSession by remember { mutableStateOf(false) }
     /** 本次开房是否勾选了「启动模组」；仅 T 原版房在 Loading 阶段清空客户端模组。 */
@@ -303,9 +306,28 @@ fun MultiplayerView(
 
     // 好友邀请卡片一键加入：消费 pendingInviteJoin，走下方既有 LoadingView 加入链路
     //（清除列表房描述，等价于直连 IP 加入，preJoinSync 按直连处理）
-    LaunchedEffect(UI.pendingInviteJoin) {
+    LaunchedEffect(UI.pendingOnlineGameJoin, UI.pendingInviteJoin) {
+        val online = UI.pendingOnlineGameJoin
+        if (online != null) {
+            UI.pendingOnlineGameJoin = null
+            UI.pendingInviteJoin = null
+            pendingOnlineGameThemeToken = online.themeToken
+            pendingExpansionExpectation = online.expansionBinding?.let { io.github.rwpp.content.ExpansionJoinExpectation(online.appId, it) }
+            pendingOnlineGameAppId = online.appId
+            roomJoinContext.beginConnection()
+            pendingHostSession = false
+            serverAddress = online.endpoint
+            isConnecting = true
+            return@LaunchedEffect
+        }
         val invite = UI.pendingInviteJoin ?: return@LaunchedEffect
         UI.pendingInviteJoin = null
+        pendingOnlineGameThemeToken?.let {
+            withContext(NonCancellable) { io.github.rwpp.theme.OnlineGameThemeController.cancelPrepared(it) }
+        }
+        pendingOnlineGameThemeToken = null
+        pendingExpansionExpectation = null
+        pendingOnlineGameAppId = null
         roomJoinContext.beginConnection()
         pendingHostSession = false
         serverAddress = invite.address
@@ -329,6 +351,9 @@ fun MultiplayerView(
     val hostSession = pendingHostSession
     val hostEnableMods = pendingHostEnableMods
     val hostTransferMods = pendingHostTransferMods
+    val onlineGameThemeToken = pendingOnlineGameThemeToken
+    val onlineGameExpansion = pendingExpansionExpectation
+    val onlineGameAppId = pendingOnlineGameAppId
     val failureAttempt = roomJoinContext.failureAttempt
     var releaseFailureCapture by remember { mutableStateOf<(() -> Unit)?>(null) }
     DisposableEffect(isConnecting, failureAttempt) {
@@ -370,162 +395,40 @@ fun MultiplayerView(
         showProtectedModHint = true,
         showMemoryUsage = true,
     ) {
-        var address = connectionRequest.address
-        val capturedRoomDescription = connectionRequest.room
-        // 新的加入/开房会话开始：等待可能挂起的退房清理完成，保证旧会话先拆后建（GameSessionController）
-        // 等待旧退房清理与预同步之前就申请保活；切回 IO 时取消也不能丢弃资源句柄。
-        val keepAlive = withContext(NonCancellable + Dispatchers.Main.immediate) {
-            game.acquireMultiplayerKeepAlive()
-        }
+        var opened = false
         try {
-            GameSessionController.beginSession {
-                var joined = false
-                var opened = false
-                var directReservation: io.github.rwpp.core.DirectJoinReservation? = null
-                logger.info("[JOIN] begin room entry")
+          joinNativeRoom(
+            request = NativeRoomEntry(connectionRequest.address, connectionRequest.room, userName,
+                hostSession, hostEnableMods, hostTransferMods,
+                onlineGameAppId?.let { OnlineGameJoinRequest(it, "", connectionRequest.address, onlineGameThemeToken, onlineGameExpansion?.binding) }),
+            game = game,
+            configIO = configIO,
+            isCurrent = { UI.showMultiplayerView && isConnecting && failureAttempt === roomJoinContext.failureAttempt },
+            currentFailure = { failureAttempt.failure },
+            onHostSyncFailure = { error ->
+                val prompt = HostModSyncFailurePrompt(ModSyncController.hostErrorText(error))
                 try {
-                    ModSyncController.awaitJoinEntryCleanup()
-                    if(address.isBlank()) {
-                        failure(ConnectionFailure(ConnectionFailureReason.NO_ROOM))
-                        return@beginSession false
-                    }
-                    if (!io.github.rwpp.net.isSingleLineJoinAddress(address)) {
-                        failure(ConnectionFailure(ConnectionFailureReason.INVALID_ADDRESS, details = address))
-                        return@beginSession false
-                    }
-                    address = roomJoinAddressForId(address)
-
-                    if (hostSession) {
-                        val shareMods = hostTransferMods && awaitHostModSyncService(
-                            prepare = {
-                                message(readI18n("modSync.hostCheckingService"))
-                                ModSyncController.prepareHostSession()
-                            },
-                            onFailure = { error ->
-                                val prompt = HostModSyncFailurePrompt(ModSyncController.hostErrorText(error))
-                                try {
-                                    withContext(Dispatchers.Main.immediate) { hostModSyncFailurePrompt = prompt }
-                                    prompt.decision.await()
-                                } finally {
-                                    withContext(NonCancellable + Dispatchers.Main.immediate) {
-                                        if (hostModSyncFailurePrompt === prompt) hostModSyncFailurePrompt = null
-                                    }
-                                }
-                            },
-                        )
-                        // 旧断线清理会清空 hostSyncRequested，必须在开始屏障之后提交本次选项。
-                        withContext(Dispatchers.Main.immediate) { ModSyncController.hostSyncRequested = shareMods }
-                        if (!hostEnableMods) {
-                            if (!quickHostAddressSkipsClientVanillaModClear(address)) {
-                                val cleared = Logic.disableAllModsBeforeHosting()
-                                if (cleared) {
-                                    message(readI18n("multiplayer.modsClearedForVanillaHost"))
-                                }
-                            }
-                        } else {
-                            val disabled = Logic.disableNetworkModsBeforeHosting()
-                            if (disabled) {
-                                message(readI18n("multiplayer.networkModDisabledOnHost"))
-                            }
-                        }
-                    } else {
-                        // Direct 在原版连接前完成下载、普通重载与校验；只有未识别协议才回落旧 relay。
-                        when (val direct = io.github.rwpp.core.DirectModSyncController.shared.preJoinSync(address, this)) {
-                            is io.github.rwpp.core.DirectJoinSyncResult.Applied -> {
-                                directReservation = direct.reservation
-                                // 本轮未创建 relay joining Presence，也清掉任何旧会话遗留上下文。
-                                ModSyncController.finishJoinerPresence()
-                            }
-                            io.github.rwpp.core.DirectJoinSyncResult.Unsupported -> {
-                                if (!ModSyncController.preJoinSync(capturedRoomDescription, address, this)) {
-                                    logger.info("[JOIN] relay pre-join sync did not allow connection")
-                                    return@beginSession false
-                                }
-                            }
-                            is io.github.rwpp.core.DirectJoinSyncResult.Failed -> {
-                                failure(direct.failure)
-                                return@beginSession false
-                            }
-                        }
-                    }
-
-                    message("connecting...")
-
-                    game.setUserName(userName)
-                    configIO.setGameConfig("lastNetworkIP", address)
-
-                    suspend fun connectAndConfirmAdmission(): Result<String> {
-                        val result = game.directJoinServer(address, capturedRoomDescription?.joinRelayUuid(), this)
-                        if (result.isSuccess) {
-                            joined = true
-                            directReservation?.let { reservation ->
-                                message(readI18n("modSync.directConfirmingSeat"))
-                                reservation.awaitAdmission()
-                            }
-                        }
-                        return result
-                    }
-                    val result = try {
-                        val reservation = directReservation
-                        if (reservation == null) connectAndConfirmAdmission()
-                        else reservation.protect {
-                            reservation.openCredentials().use { connectAndConfirmAdmission() }
-                        }
-                    } catch (error: kotlinx.coroutines.CancellationException) {
-                        throw error
-                    } catch (error: Exception) {
-                        val model = connectionFailure(error, io.github.rwpp.net.ConnectionFailureStage.SYNC_MANIFEST)
-                            ?: throw error
-                        failure(model)
-                        return@beginSession false
-                    }
-                    logger.info("[JOIN] engine connection returned; success={}", result.isSuccess)
-                    result.exceptionOrNull()?.let { logger.warn("[JOIN] connection failed", it) }
-                    if(result.isSuccess) {
-                        // 房间身份公示（带外机制）：暂存候选 key 与玩家名快照；
-                        // 房主走 quickHost 指令串产不出 key，靠进房后 roomDetails 短码补充
-                        joined = true
-                        val accepted = withContext(Dispatchers.Main.immediate) {
-                            if (!UI.showMultiplayerView || !isConnecting || failureAttempt !== roomJoinContext.failureAttempt) false else {
-                                failureAttempt.finish()
-                                releaseFailureCapture?.invoke()
-                                RoomIdentityController.onJoiningRoom(address, capturedRoomDescription)
-                                onOpenRoomView()
-                                opened = true
-                                true
-                            }
-                        }
-                        if (!accepted) return@beginSession false
-                        logger.info("[JOIN] room navigation committed")
-                        // 进房成功：joining Presence 转为 synced 并保活，驱动行内徽章（无同步记录时为空操作）
-                        ModSyncController.onJoinedRoom()
-                        JoinGameEvent(address).broadcastIn()
-                        true
-                    } else {
-                        val error = result.exceptionOrNull()
-                        val model = error?.let { connectionFailure(it) }
-                        if (error != null && model == null) throw kotlinx.coroutines.CancellationException("Connection attempt cancelled", error)
-                        if (model != null) failure(failureAttempt.failure ?: model)
-                        false
-                    }
+                    withContext(Dispatchers.Main.immediate) { hostModSyncFailurePrompt = prompt }
+                    prompt.decision.await()
                 } finally {
-                    logger.info("[JOIN] entry finished; joined={} roomOpened={}", joined, opened)
-                    try {
-                        if (joined && !opened) {
-                            withContext(NonCancellable + Dispatchers.Main.immediate) {
-                                game.gameRoom.disconnectAndWait()
-                            }
-                        }
-                    } finally {
-                        if (hostSession && !opened) ModSyncController.discardPreparedHostSession()
-                        directReservation?.close()
-                        // 成功时为空操作；被踢重试已排定时保留 Presence。
-                        ModSyncController.finishJoinerPresence()
+                    withContext(NonCancellable + Dispatchers.Main.immediate) {
+                        if (hostModSyncFailurePrompt === prompt) hostModSyncFailurePrompt = null
                     }
                 }
-            } ?: false
+            },
+            onOpenRoom = {
+                opened = true
+                failureAttempt.finish()
+                releaseFailureCapture?.invoke()
+                onOpenRoomView()
+            },
+        )
         } finally {
-            keepAlive.close()
+            if (!opened) withContext(NonCancellable + Dispatchers.Main.immediate) {
+                if (pendingExpansionExpectation == onlineGameExpansion) pendingExpansionExpectation = null
+                if (pendingOnlineGameAppId == onlineGameAppId) pendingOnlineGameAppId = null
+                if (pendingOnlineGameThemeToken == onlineGameThemeToken) pendingOnlineGameThemeToken = null
+            }
         }
     }
 

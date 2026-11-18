@@ -212,6 +212,10 @@ object ArtThemeController {
 
     /** 启用指定主题包；传 null 停用并回落内置外观。配色/标题/背景/音乐经 Compose 状态与播放器热生效。 */
     fun apply(id: String?): Boolean {
+        if (io.github.rwpp.game.mod.ContentProfiles.expansionActive || io.github.rwpp.content.ExpansionContentController.switching) {
+            UI.showWarning(readI18n("themes.gameArtSessionActive"))
+            return false
+        }
         val target = if (id == null) null else installedThemes.firstOrNull { it.id == id }
         if (!canApply(target)) return false
         temporaryToken = null
@@ -295,6 +299,11 @@ object ArtThemeController {
 
     /** 删除主题包；正在启用的先停用。拒绝删除主题根目录之外或不存在的路径。 */
     fun delete(id: String): Boolean {
+        // The ordinary selection is the session's restore target, so preserve it until the expansion leaves.
+        if (io.github.rwpp.game.mod.ContentProfiles.expansionActive || io.github.rwpp.content.ExpansionContentController.switching) {
+            UI.showWarning(readI18n("themes.gameArtSessionActive"))
+            return false
+        }
         val root = themesRoot.canonicalFile
         val dir = File(themesRoot, id)
         if (!dir.exists()) return false

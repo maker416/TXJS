@@ -113,12 +113,16 @@ class DirectModSyncClientTest {
         val manifest = DirectModManifest(2, "176", "instance-v2", "ready", true, 123, emptyList())
         val token = ByteArray(32) { (it * 7).toByte() }
         var requests = 0
-        withServer(connections = 4, handler = { socket ->
-            if (requests++ == 0) {
+        withServer(connections = 6, handler = { socket ->
+            if (requests < 2) {
+                val input = DataInputStream(socket.getInputStream())
+                assertContentEquals(if (requests++ == 0) DirectModSyncProtocol.MAGIC_V4 else DirectModSyncProtocol.MAGIC_V3, input.readNBytes(8))
+                DataOutputStream(socket.getOutputStream()).apply { writeInt(0); writeInt(106); flush() }
+            } else if (requests++ == 2) {
                 assertManifestRequest(socket, version = 2)
                 socket.getOutputStream().apply { write(DirectModSyncProtocol.encodeManifest(manifest)); flush() }
             } else {
-                val expectedKind = when (requests) { 2 -> DirectModSyncProtocol.RESERVE; 3 -> DirectModSyncProtocol.RENEW; else -> DirectModSyncProtocol.RELEASE }
+                val expectedKind = when (requests) { 4 -> DirectModSyncProtocol.RESERVE; 5 -> DirectModSyncProtocol.RENEW; else -> DirectModSyncProtocol.RELEASE }
                 val input = DataInputStream(socket.getInputStream())
                 assertContentEquals(DirectModSyncProtocol.MAGIC_V2, input.readNBytes(8))
                 assertEquals(4 + manifest.scope.toByteArray().size + 32, input.readInt())
@@ -140,12 +144,14 @@ class DirectModSyncClientTest {
     }
 
     @Test
-    fun autoNegotiationUsesV1OnlyAfterUnrecognizedV2Probe() = runBlocking {
+    fun autoNegotiationUsesV1OnlyAfterUnrecognizedNewerProbes() = runBlocking {
         val manifest = DirectModManifest(1, "176", "legacy", "ready", true, 0, emptyList())
         var requests = 0
-        withServer(connections = 2, handler = { socket ->
-            if (requests++ == 0) {
-                assertManifestRequest(socket, version = 2)
+        withServer(connections = 4, handler = { socket ->
+            val version = 4 - requests++
+            if (version > 1) {
+                val input = DataInputStream(socket.getInputStream())
+                assertContentEquals("TXJSMD$version\n".toByteArray(Charsets.US_ASCII), input.readNBytes(8))
                 DataOutputStream(socket.getOutputStream()).apply { writeInt(0); writeInt(106); flush() }
             } else {
                 assertManifestRequest(socket, version = 1)
@@ -160,9 +166,13 @@ class DirectModSyncClientTest {
 
     @Test
     fun authoritativeV2ErrorsNeverCauseAV1Probe() = runBlocking {
-        withServer(handler = { socket ->
-            assertManifestRequest(socket, version = 2)
-            socket.getOutputStream().apply { write(DirectModSyncProtocol.encodeError(DirectModSyncErrorCode.ROOM_FULL)); flush() }
+        var requests = 0
+        withServer(connections = 3, handler = { socket ->
+            val version = 4 - requests++
+            val input = DataInputStream(socket.getInputStream())
+            assertContentEquals("TXJSMD$version\n".toByteArray(Charsets.US_ASCII), input.readNBytes(8))
+            if (version == 2) socket.getOutputStream().apply { write(DirectModSyncProtocol.encodeError(DirectModSyncErrorCode.ROOM_FULL)); flush() }
+            else DataOutputStream(socket.getOutputStream()).apply { writeInt(0); writeInt(106); flush() }
         }) { port ->
             val error = assertFailsWith<DirectModSyncServerException> {
                 client(port, RecordingCache(), attempts = 1, version = null).getManifest()
@@ -178,8 +188,12 @@ class DirectModSyncClientTest {
         val manifest = DirectModManifest(2, "176", "instance-v2", "ready", true, 123, listOf(descriptor))
         val cache = RecordingCache()
         var requests = 0
-        withServer(connections = 2, handler = { socket ->
-            if (requests++ == 0) {
+        withServer(connections = 4, handler = { socket ->
+            if (requests < 2) {
+                val input = DataInputStream(socket.getInputStream())
+                assertContentEquals(if (requests++ == 0) DirectModSyncProtocol.MAGIC_V4 else DirectModSyncProtocol.MAGIC_V3, input.readNBytes(8))
+                DataOutputStream(socket.getOutputStream()).apply { writeInt(0); writeInt(106); flush() }
+            } else if (requests++ == 2) {
                 assertManifestRequest(socket, version = 2)
                 socket.getOutputStream().apply { write(DirectModSyncProtocol.encodeManifest(manifest)); flush() }
             } else {

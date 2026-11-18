@@ -81,11 +81,16 @@ object InjectApi {
         val returnCode = if (method.returnType != CtClass.voidType) "return (\$r)" else ""
 
         if (pathType == PathType.Path) {
-            val originalName = "__original__${method.name}"
+            val originalBase = "__original__${method.name}"
+            var originalName = originalBase
             val isNative = Modifier.isNative(method.modifiers)
-            if (!isNative && clazz.declaredMethods.none {
-                it.name == originalName && it.parameterTypes.contentEquals(method.parameterTypes)
-            }) {
+            if (!isNative) {
+                // Preserve the current complete body, including previous injections. Reusing the first
+                // original would silently discard a Before hook when an After hook targets the same method.
+                var generation = 0
+                while (clazz.declaredMethods.any { it.name == originalName && it.signature == method.signature }) {
+                    originalName = "${originalBase}__${++generation}"
+                }
                 val proceed = CtNewMethod.copy(method, originalName, clazz, null)
                 proceed.modifiers = Modifier.setProtected(method.modifiers)
                 clazz.addMethod(proceed)

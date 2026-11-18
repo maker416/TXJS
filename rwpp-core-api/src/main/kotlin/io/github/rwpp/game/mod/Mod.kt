@@ -84,6 +84,9 @@ interface Mod {
     val isNetworkMod: Boolean
         get() = path.contains(".network.rwmod")
 
+    val isExpansionMod: Boolean
+        get() = ContentProfiles.isExpansionPath(path)
+
     fun tryDelete(): Boolean {
         return deleteModFileSafely(File(path))
     }

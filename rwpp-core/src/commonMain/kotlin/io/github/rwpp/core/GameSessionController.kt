@@ -38,11 +38,24 @@ object GameSessionController {
     private val lifecycle = SessionLifecycle(Dispatchers.Main.immediate)
     private var roomViewDisposed: Deferred<Unit>? = null
     val sessionPhase: SessionPhase get() = lifecycle.sessionPhase
+    /** The approved portal is disposed on admission; online-game exits return to the hall. */
+    var multiplayerReturnPage: LauncherPage = LauncherPage.Multiplayer
+        internal set
 
     /** 返回 null 表示已有开始请求；action 只会在旧退房完整结束后执行。 */
-    suspend fun <T> beginSession(action: suspend () -> T): T? {
+    suspend fun <T> beginSession(allowExpansion: Boolean = false, action: suspend () -> T): T? {
         if (!MatchStartController.ensureCanStart()) return null
-        return lifecycle.beginSession(action)
+        suspend fun expansionBlocked(): Boolean = withContext(Dispatchers.Main.immediate) {
+            if (!allowExpansion && io.github.rwpp.game.mod.ContentProfiles.expansionActive) {
+                io.github.rwpp.ui.UI.showWarning(io.github.rwpp.i18n.readI18n("expansion.localGameUnavailable"))
+                true
+            } else false
+        }
+        // Do not replace IN_ROOM by STARTING when rejecting a local game. A real close still owns its barrier.
+        if (sessionPhase != SessionPhase.CLOSING && expansionBlocked()) return null
+        return lifecycle.beginSession {
+            if (expansionBlocked()) null else action()
+        }
     }
 
     fun attachRoomView(disposed: Deferred<Unit>) {
@@ -79,7 +92,7 @@ object GameSessionController {
                 onFinished()
             }
         }
-        resetNavigation(if (singlePlayer) LauncherPage.SinglePlayer else LauncherPage.Multiplayer)
+        resetNavigation(if (singlePlayer) LauncherPage.SinglePlayer else multiplayerReturnPage)
     }
 
     fun onRoomOpened() {

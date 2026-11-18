@@ -424,6 +424,12 @@ Windows 透明菜单优先由 `DesktopLauncherOverlay` 的原生 `ComposeDialog`
 
 ## 主题美术包（`.rwtheme`）
 
+网游扩展包将模组和美术作为Direct v4单一不可变ZIP，在应用内部`expansions/`独立存放，绝不复制到普通modDir或.network缓存。`ContentProfiles`供两端原生scan后的额外来源注册与精确排他选择，`ExpansionContentController`只允许STARTING网游加入阶段激活；一次受控离线重载同时应用模组与美术，成功后才提交可见状态和CONTENT_READY。退房恢复原选择及原生modSettings，异常journal在原生首扫前处理；资源重启保护不能被恢复重载绕过。本地/单人/自建会话默认不允许使用扩展。版本只是标签，原ZIP SHA、各模组可移植树摘要和美术catalog均须校验。v4准入/恢复仍用现有唯一账本，旧服务器普通同步不变。见`docs/网游扩展包制作与接入.md`、`docs/网游扩展内容事务.md`。
+
+同一方法的多个Path注入必须保留完整先前方法体链；不得让后来的After覆盖Before，否则原生首次扫描恢复会失效。`Builder`按注入器产物修订标记作废旧生成库；修改该机制须执行注入链实测、Android完整生产注入DEX测试及实际引擎扫描测试。
+
+网游上架由开放平台独立网游/区服审核提供，第二主界面 `GameplayHall` 读取公开 `/api/v1/games`，原 24 小时申请保留。`net/games/OnlineGameClient` 不携带账号或节点凭据。`OnlineGameThemeController` 在用户同意后准备指定包及不可变目录，使用独立版本缓存、不覆盖用户包；加入流程在旧清理屏障后临时切换并等待贴图同步完成，按 token 清理失败/取消，完整退房事件恢复旧主题且不修改持久选择。`GameArtOverlayManager` 必须按实际缓存目录及 pack/catalog 标记来源，不能按用户主题 ID 猜缓存路径。专属分配仍以实际 Socket 的平台登记 `game_app_id`、绑定包/版本/目录和真实槽位证明为准，旧服及核验失败回默认。详见 `docs/网游上架与玩法大厅.md`。
+
 玩家专属外观（`personalization` schema 1）只消费开放平台登记节点对真实游戏连接的核验结果，不复用 relaymod 的昵称公示。客户端先验证当前 Socket 原始包141的 `sourceConnection=0`、`sender=RWJS-ID` 与注册完成欢迎语，再开始短期票据交换；首份115不是注册完成 ACK。TServer 业务实现位于独立 `TS/uas-identity` 插件，使用冻结 API27，本体不识别 UAS/美术包。平台按全局字符串 `account_id` 分配包内变体，支持背景、描边、徽章和静态信息；目录摘要绑定原始清单与引用资源，未核验、冲突、过期、旧服、缺资源均回默认。客户端 IO 批量读取，迟到结果受 Socket、账号代次、包与玩家对象限制，独立时钟驱动到期，不能靠网络请求结束才清外观。完整协议、制作与接入见 `docs/玩家专属美术包.md`。
 
 美术包每次启用/停用都须进入幂等同步，核对磁盘标记和本进程已加载来源，不能仅靠扫描时缓存的 `LoadedTheme.gameOverlayDir` 判断是否刷新。存在可继续的单人对局时，专用贴图重载跳过清场/菜单重建（Android `f()/q()`，Desktop `e()/x()`），保留地图与单位，由原版单位重载重新绑定现有自定义单位；Android 在引擎 `ai` 锁内完成图片和单位刷新，Desktop 仍须持有游戏线程 GL 上下文。普通模组重载行为保持不变。

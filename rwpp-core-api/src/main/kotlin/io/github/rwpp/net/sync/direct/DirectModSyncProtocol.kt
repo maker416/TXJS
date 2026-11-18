@@ -23,6 +23,8 @@ import java.security.MessageDigest
 
 const val DIRECT_MOD_SYNC_PROTOCOL_VERSION = 1
 const val DIRECT_MOD_SYNC_RESERVATION_PROTOCOL_VERSION = 2
+const val DIRECT_MOD_SYNC_RESUME_PROTOCOL_VERSION = 3
+const val DIRECT_MOD_SYNC_CONTENT_PROTOCOL_VERSION = 4
 const val DIRECT_MOD_SYNC_MAX_MODS = 256
 const val DIRECT_MOD_SYNC_MAX_FILE_BYTES = 512L * 1024L * 1024L
 const val DIRECT_MOD_SYNC_MAX_TOTAL_BYTES = 2L * 1024L * 1024L * 1024L
@@ -36,6 +38,8 @@ object DirectModSyncProtocol {
     val MAGIC = byteArrayOf('T'.code.toByte(), 'X'.code.toByte(), 'J'.code.toByte(), 'S'.code.toByte(),
         'M'.code.toByte(), 'D'.code.toByte(), '1'.code.toByte(), '\n'.code.toByte())
     val MAGIC_V2 = "TXJSMD2\n".toByteArray(StandardCharsets.US_ASCII)
+    val MAGIC_V3 = "TXJSMD3\n".toByteArray(StandardCharsets.US_ASCII)
+    val MAGIC_V4 = "TXJSMD4\n".toByteArray(StandardCharsets.US_ASCII)
     const val GET_MANIFEST = 1
     const val MANIFEST = 2
     const val GET_FILE = 3
@@ -46,6 +50,19 @@ object DirectModSyncProtocol {
     const val RENEW = 8
     const val RELEASE = 9
     const val RELEASED = 10
+    const val ISSUE_RESUME = 11
+    const val RESUME_GRANT = 12
+    const val CONTENT_READY = 13
+    const val CHECK_RESUME = 14
+
+    fun writeResumeCheck(output: OutputStream, scope: String, secret: ByteArray, attemptNonce: ByteArray) {
+        require(secret.size == 32 && attemptNonce.size == 16 && scope.isNotBlank())
+        val bytes = ByteArrayOutputStream()
+        DataOutputStream(bytes).use { it.writeProtocolString(scope); it.write(secret); it.write(attemptNonce) }
+        output.write(MAGIC_V4)
+        output.write(frame(CHECK_RESUME, bytes.toByteArray()))
+        output.flush()
+    }
 
     @JvmOverloads
     fun writeGetManifest(output: OutputStream, protocolVersion: Int = DIRECT_MOD_SYNC_PROTOCOL_VERSION) {
@@ -68,13 +85,17 @@ object DirectModSyncProtocol {
         output.flush()
     }
 
-    fun writeLeaseRequest(output: OutputStream, kind: Int, scope: String, token: ByteArray) {
-        require(kind == RESERVE || kind == RENEW || kind == RELEASE) { "Invalid direct lease request kind" }
+    fun writeLeaseRequest(output: OutputStream, kind: Int, scope: String, token: ByteArray,
+        protocolVersion: Int = 2, contentRevision: String = "") {
+        require(kind in setOf(RESERVE, RENEW, RELEASE, ISSUE_RESUME, CONTENT_READY)) { "Invalid direct lease request kind" }
         require(scope.isNotBlank()) { "Missing direct room scope" }
         require(token.size == 32) { "Direct lease token must contain 32 bytes" }
         val payload = ByteArrayOutputStream()
-        DataOutputStream(payload).use { out -> out.writeProtocolString(scope); out.write(token) }
-        output.write(MAGIC_V2)
+        DataOutputStream(payload).use { out ->
+            out.writeProtocolString(scope); out.write(token)
+            if (protocolVersion == 4 && kind in setOf(RESERVE, CONTENT_READY)) out.writeProtocolString(contentRevision)
+        }
+        output.write(magic(protocolVersion))
         output.write(frame(kind, payload.toByteArray()))
         output.flush()
     }
@@ -114,6 +135,8 @@ object DirectModSyncProtocol {
     private fun magic(protocolVersion: Int): ByteArray = when (protocolVersion) {
         DIRECT_MOD_SYNC_PROTOCOL_VERSION -> MAGIC
         DIRECT_MOD_SYNC_RESERVATION_PROTOCOL_VERSION -> MAGIC_V2
+        DIRECT_MOD_SYNC_RESUME_PROTOCOL_VERSION -> MAGIC_V3
+        DIRECT_MOD_SYNC_CONTENT_PROTOCOL_VERSION -> MAGIC_V4
         else -> throw IllegalArgumentException("Unsupported direct protocol version")
     }
 
@@ -131,6 +154,21 @@ object DirectModSyncProtocol {
                 out.writeProtocolString(mod.name)
                 out.writeLong(mod.payloadSize)
                 out.write(decodeSha256(mod.normalizedSha256))
+            }
+            if (manifest.protocolVersion >= 3) {
+                out.writeProtocolString(manifest.serverInstance)
+                out.writeProtocolString(manifest.phase)
+                out.writeInt(manifest.capabilities)
+            }
+            if (manifest.protocolVersion >= 4) {
+                out.writeProtocolString(manifest.contentRevision)
+                manifest.artifact?.let { artifact ->
+                    out.writeProtocolString(artifact.name)
+                    out.writeProtocolString(artifact.mediaType)
+                    out.writeProtocolString(artifact.version)
+                    out.writeLong(artifact.size)
+                    out.write(decodeSha256(artifact.sha256))
+                }
             }
         }
         return frame(MANIFEST, payload.toByteArray())
@@ -158,7 +196,7 @@ object DirectModSyncProtocol {
         if (frame.kind != MANIFEST) throw IOException("Unexpected direct manifest response kind: ${frame.kind}")
         val data = DataInputStream(frame.payload.inputStream())
         val protocolVersion = data.readInt()
-        val manifest = DirectModManifest(
+        var manifest = DirectModManifest(
             protocolVersion = protocolVersion,
             gameVersion = data.readProtocolString(),
             scope = data.readProtocolString(),
@@ -184,9 +222,26 @@ object DirectModSyncProtocol {
                 }
             },
         )
+        if (protocolVersion >= 3) manifest = manifest.copy(serverInstance = data.readProtocolString(), phase = data.readProtocolString(), capabilities = data.readInt())
+        if (protocolVersion >= 4) {
+            val revision = data.readProtocolString()
+            manifest = manifest.copy(contentRevision = revision, artifact = if (revision.isEmpty()) null else
+                DirectContentArtifact(data.readProtocolString(), data.readProtocolString(), data.readProtocolString(), data.readLong(), encodeSha256(data.readNBytesStrict(32))))
+        }
         if (data.available() != 0) throw IOException("Trailing direct manifest bytes")
         validateManifest(manifest)
         return manifest
+    }
+
+    fun readResumeGrant(input: InputStream): DirectResumeGrant {
+        val frame = readBoundedFrame(input, MAX_LEASE_PAYLOAD)
+        if (frame.kind == ERROR) throw DirectModSyncServerException(readErrorPayload(frame.payload))
+        if (frame.kind != RESUME_GRANT) throw IOException("Unexpected Direct resume response")
+        val data = DataInputStream(frame.payload.inputStream())
+        val instance = data.readProtocolString()
+        val secret = data.readNBytesStrict(32)
+        if (instance.isBlank() || instance.toByteArray(Charsets.UTF_8).size > 512 || data.available() != 0) throw IOException("Invalid Direct resume grant")
+        return DirectResumeGrant(instance, secret)
     }
 
     fun readFileResponse(input: InputStream, expected: NetworkModDescriptor, requestedOffset: Long): DirectFileResponseHeader {
@@ -255,10 +310,25 @@ data class DirectModManifest(
     val lobby: Boolean,
     val hostUnitsChecksum: Long,
     val mods: List<NetworkModDescriptor>,
+    val serverInstance: String = "",
+    val phase: String = if (lobby) "lobby" else "unavailable",
+    val capabilities: Int = 0,
+    val contentRevision: String = "",
+    val artifact: DirectContentArtifact? = null,
 ) {
     fun sameRoomContent(other: DirectModManifest): Boolean =
         protocolVersion == other.protocolVersion && gameVersion == other.gameVersion &&
-            scope == other.scope && hostUnitsChecksum == other.hostUnitsChecksum && mods == other.mods
+            scope == other.scope && hostUnitsChecksum == other.hostUnitsChecksum && mods == other.mods &&
+            serverInstance == other.serverInstance && phase == other.phase && capabilities == other.capabilities &&
+            contentRevision == other.contentRevision && artifact == other.artifact
+}
+
+data class DirectContentArtifact(val name: String, val mediaType: String, val version: String, val size: Long, val sha256: String) {
+    fun descriptor() = NetworkModDescriptor(name, size, sha256)
+}
+
+class DirectResumeGrant(val serverInstance: String, val secret: ByteArray) {
+    override fun toString() = "DirectResumeGrant(<redacted>)"
 }
 
 data class DirectFileResponseHeader(val bodyBytes: Long)
@@ -277,6 +347,7 @@ data class DirectModLease(
 enum class DirectModSyncErrorCode {
     NO_ROOM, NOT_LOBBY, PREPARING, NOT_FOUND, BUSY, BAD_REQUEST, INTERNAL_ERROR,
     ROOM_FULL, LEASE_EXPIRED, LEASE_INVALID,
+    NOT_READY, RESUME_INVALID, RESUME_UNSUPPORTED, UPGRADE_REQUIRED, CONTENT_MISMATCH, CONTENT_NOT_READY,
 }
 
 open class DirectModSyncException(message: String, cause: Throwable? = null) : IOException(message, cause)
@@ -284,12 +355,20 @@ class DirectModSyncUnsupportedException(message: String, cause: Throwable? = nul
 class DirectModSyncServerException(val code: DirectModSyncErrorCode) : DirectModSyncException("Direct server error: $code")
 
 fun validateManifest(manifest: DirectModManifest) {
-    if (manifest.protocolVersion != DIRECT_MOD_SYNC_PROTOCOL_VERSION &&
-        manifest.protocolVersion != DIRECT_MOD_SYNC_RESERVATION_PROTOCOL_VERSION) throw IOException("Unsupported direct protocol version")
+    if (manifest.protocolVersion !in 1..4) throw IOException("Unsupported direct protocol version")
     if (manifest.gameVersion.isBlank()) throw IOException("Missing direct game version")
     if (manifest.scope.isBlank()) throw IOException("Missing direct room scope")
     if (manifest.status.isBlank()) throw IOException("Missing direct manifest status")
     if (manifest.mods.size > DIRECT_MOD_SYNC_MAX_MODS) throw IOException("Too many direct mods")
+    if (manifest.protocolVersion >= 3 && (manifest.phase !in setOf("lobby", "match", "unavailable") ||
+        manifest.serverInstance.toByteArray(Charsets.UTF_8).size > 512 || manifest.capabilities < 0)) throw IOException("Invalid Direct recovery metadata")
+    val artifact = manifest.artifact
+    if (manifest.contentRevision.isNotEmpty()) {
+        if (manifest.protocolVersion != 4 || !manifest.contentRevision.matches(Regex("[0-9a-f]{64}")) || artifact == null ||
+            artifact.sha256 != manifest.contentRevision || artifact.size !in 1..io.github.rwpp.expansion.EXPANSION_MAX_ARCHIVE_BYTES ||
+            artifact.name.isBlank() || artifact.name.length > 512 || artifact.mediaType != io.github.rwpp.expansion.EXPANSION_MEDIA_TYPE ||
+            !artifact.version.matches(Regex("[A-Za-z0-9][A-Za-z0-9._+\\-]{0,63}")) || manifest.mods.isNotEmpty()) throw IOException("Invalid required content artifact")
+    } else if (artifact != null) throw IOException("Unbound Direct content artifact")
     var total = 0L
     val identities = mutableSetOf<String>()
     val names = mutableSetOf<String>()

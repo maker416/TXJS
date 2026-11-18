@@ -26,11 +26,23 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 interface DirectModSyncTransport {
+    val protocolVersion: Int? get() = null
+    val peerEndpoint: String? get() = null
     suspend fun getManifest(): DirectModManifest
     suspend fun download(descriptor: NetworkModDescriptor, stagingDirectory: File? = null)
 
     suspend fun reserve(scope: String, token: ByteArray): DirectModLease =
         throw DirectModSyncUnsupportedException("Direct mod sync reservations are unavailable")
+    suspend fun reserveContent(scope: String, token: ByteArray, revision: String): DirectModLease = reserve(scope, token)
+    suspend fun contentReady(scope: String, token: ByteArray, revision: String): DirectModLease =
+        throw DirectModSyncUnsupportedException("Direct required content is unavailable")
+    suspend fun issueResume(scope: String, token: ByteArray): DirectResumeGrant =
+        throw DirectModSyncUnsupportedException("Direct session recovery is unavailable")
+    suspend fun checkResume(scope: String, secret: ByteArray, attemptNonce: ByteArray): DirectModLease =
+        throw DirectModSyncUnsupportedException("Direct recovery status is unavailable")
+    suspend fun downloadArtifact(artifact: DirectContentArtifact, stagingDirectory: File,
+        onProgress: suspend (DirectModDownloadProgress) -> Unit): File =
+        throw DirectModSyncUnsupportedException("Direct content transfer is unavailable")
     suspend fun renew(scope: String, token: ByteArray): DirectModLease =
         throw DirectModSyncUnsupportedException("Direct mod sync reservations are unavailable")
     suspend fun release(scope: String, token: ByteArray) {
@@ -101,29 +113,43 @@ class DirectModSyncClient @JvmOverloads constructor(
     private var recognizedProtocol = false
     @Volatile
     private var negotiatedProtocolVersion: Int? = preferredProtocolVersion
+    @Volatile private var pinnedAddress: java.net.InetAddress? = null
+    override val protocolVersion: Int? get() = negotiatedProtocolVersion
+    override val peerEndpoint: String? get() = pinnedAddress?.hostAddress?.let {
+        if (':' in it) "[$it]:${endpoint.port}" else "$it:${endpoint.port}"
+    }
 
     init {
         require(connectTimeoutMillis > 0 && probeReadTimeoutMillis > 0 && downloadReadTimeoutMillis > 0) {
             "Direct mod sync timeouts must be positive"
         }
         require(maxAttempts > 0) { "Direct mod sync attempts must be positive" }
-        require(preferredProtocolVersion == null || preferredProtocolVersion in 1..2) { "Unsupported direct protocol version" }
+        require(preferredProtocolVersion == null || preferredProtocolVersion in 1..4) { "Unsupported direct protocol version" }
     }
 
     override suspend fun getManifest(): DirectModManifest = withContext(Dispatchers.IO) {
         val selected = negotiatedProtocolVersion
         if (selected != null) return@withContext probeManifest(selected)
-        try {
-            probeManifest(DIRECT_MOD_SYNC_RESERVATION_PROTOCOL_VERSION)
-        } catch (_: DirectModSyncUnsupportedException) {
-            probeManifest(DIRECT_MOD_SYNC_PROTOCOL_VERSION)
+        for (version in 4 downTo 1) {
+            try { return@withContext probeManifest(version) }
+            catch (error: DirectModSyncUnsupportedException) { if (version == 1) throw error }
         }
+        throw DirectModSyncUnsupportedException("Direct mod sync is unavailable")
     }
 
     private suspend fun probeManifest(protocolVersion: Int): DirectModManifest {
         return try {
             withSocket(probeReadTimeoutMillis) { _, input, output ->
                 DirectModSyncProtocol.writeGetManifest(output, protocolVersion)
+                input.mark(8)
+                val header = java.io.DataInputStream(input)
+                header.readInt()
+                val responseKind = header.readInt()
+                input.reset()
+                if (responseKind == DirectModSyncProtocol.MANIFEST || responseKind == DirectModSyncProtocol.ERROR) {
+                    recognizedProtocol = true
+                    negotiatedProtocolVersion = protocolVersion
+                }
                 DirectModSyncProtocol.readManifest(input).also { manifest ->
                     recognizedProtocol = true
                     negotiatedProtocolVersion = protocolVersion
@@ -146,14 +172,16 @@ class DirectModSyncClient @JvmOverloads constructor(
     }
 
     override suspend fun reserve(scope: String, token: ByteArray): DirectModLease = leaseRequest(DirectModSyncProtocol.RESERVE, scope, token)
+    override suspend fun reserveContent(scope: String, token: ByteArray, revision: String): DirectModLease = leaseRequest(DirectModSyncProtocol.RESERVE, scope, token, revision)
+    override suspend fun contentReady(scope: String, token: ByteArray, revision: String): DirectModLease = leaseRequest(DirectModSyncProtocol.CONTENT_READY, scope, token, revision)
 
     override suspend fun renew(scope: String, token: ByteArray): DirectModLease = leaseRequest(DirectModSyncProtocol.RENEW, scope, token)
 
-    private suspend fun leaseRequest(kind: Int, scope: String, token: ByteArray): DirectModLease = withContext(Dispatchers.IO) {
+    private suspend fun leaseRequest(kind: Int, scope: String, token: ByteArray, revision: String = ""): DirectModLease = withContext(Dispatchers.IO) {
         requireReservations()
         val credential = token.copyOf()
         withSocket(probeReadTimeoutMillis) { _, input, output ->
-            DirectModSyncProtocol.writeLeaseRequest(output, kind, scope, credential)
+            DirectModSyncProtocol.writeLeaseRequest(output, kind, scope, credential, negotiatedProtocolVersion ?: 2, revision)
             DirectModSyncProtocol.readLease(input, scope).also {
                 if (input.read() != -1) throw IOException("Trailing bytes after direct lease response")
             }
@@ -164,15 +192,73 @@ class DirectModSyncClient @JvmOverloads constructor(
         requireReservations()
         val credential = token.copyOf()
         withSocket(probeReadTimeoutMillis) { _, input, output ->
-            DirectModSyncProtocol.writeLeaseRequest(output, DirectModSyncProtocol.RELEASE, scope, credential)
+            DirectModSyncProtocol.writeLeaseRequest(output, DirectModSyncProtocol.RELEASE, scope, credential, negotiatedProtocolVersion ?: 2)
             DirectModSyncProtocol.readReleased(input)
             if (input.read() != -1) throw IOException("Trailing bytes after direct release response")
         }
     }
 
     private fun requireReservations() {
-        if (!recognizedProtocol || negotiatedProtocolVersion != DIRECT_MOD_SYNC_RESERVATION_PROTOCOL_VERSION) {
+        if (!recognizedProtocol || (negotiatedProtocolVersion ?: 0) < DIRECT_MOD_SYNC_RESERVATION_PROTOCOL_VERSION) {
             throw DirectModSyncUnsupportedException("Direct mod sync reservations require protocol v2")
+        }
+    }
+
+    override suspend fun issueResume(scope: String, token: ByteArray): DirectResumeGrant = withContext(Dispatchers.IO) {
+        requireReservations()
+        if ((negotiatedProtocolVersion ?: 0) < 3) throw DirectModSyncUnsupportedException("Direct recovery requires protocol v3")
+        withSocket(probeReadTimeoutMillis) { _, input, output ->
+            DirectModSyncProtocol.writeLeaseRequest(output, DirectModSyncProtocol.ISSUE_RESUME, scope, token, negotiatedProtocolVersion!!)
+            DirectModSyncProtocol.readResumeGrant(input).also {
+                if (input.read() != -1) throw IOException("Trailing Direct resume grant")
+            }
+        }
+    }
+
+    override suspend fun checkResume(scope: String, secret: ByteArray, attemptNonce: ByteArray): DirectModLease = withContext(Dispatchers.IO) {
+        if (negotiatedProtocolVersion != 4) throw DirectModSyncUnsupportedException("Direct recovery status requires v4")
+        withSocket(probeReadTimeoutMillis) { _, input, output ->
+            DirectModSyncProtocol.writeResumeCheck(output, scope, secret, attemptNonce)
+            DirectModSyncProtocol.readLease(input, scope).also {
+                if (input.read() != -1) throw IOException("Trailing Direct recovery state")
+            }
+        }
+    }
+
+    override suspend fun downloadArtifact(artifact: DirectContentArtifact, stagingDirectory: File,
+        onProgress: suspend (DirectModDownloadProgress) -> Unit): File {
+        var pendingFile: File? = null
+        try { return withContext(Dispatchers.IO) {
+        if (negotiatedProtocolVersion != 4 || artifact.size !in 1..io.github.rwpp.expansion.EXPANSION_MAX_ARCHIVE_BYTES) {
+            throw IOException("Unsupported Direct content transfer")
+        }
+        stagingDirectory.mkdirs()
+        val staging = File.createTempFile("rwjs-content-", ".part", stagingDirectory).also { pendingFile = it }
+        val descriptor = artifact.descriptor()
+        val progress = DirectModDownloadProgressReporter(artifact.size, onProgress)
+        var retained = false
+        try {
+            repeat(maxAttempts) { attempt ->
+                currentCoroutineContext().ensureActive()
+                try {
+                    downloadAttempt(descriptor, staging, progress)
+                    currentCoroutineContext().ensureActive()
+                    if (!descriptor.matches(staging)) throw IOException("Direct content checksum mismatch")
+                    retained = true
+                    return@withContext staging
+                } catch (error: CancellationException) { throw error }
+                catch (error: DirectModProgressCallbackException) { throw error.callbackError }
+                catch (error: Exception) {
+                    currentCoroutineContext().ensureActive()
+                    if (staging.length() >= descriptor.payloadSize) staging.outputStream().use { }
+                    if (attempt + 1 == maxAttempts) throw DirectModSyncException("Direct content download failed", error)
+                }
+            }
+            throw IOException("Direct content download failed")
+        } finally { if (!retained) staging.delete() }
+        } } catch (error: Throwable) {
+            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { pendingFile?.delete() }
+            throw error
         }
     }
 
@@ -281,7 +367,9 @@ class DirectModSyncClient @JvmOverloads constructor(
                 }
             }
             try {
-                socket.connect(InetSocketAddress(endpoint.host, endpoint.port), connectTimeoutMillis)
+                val pinned = pinnedAddress
+                socket.connect(if (pinned == null) InetSocketAddress(endpoint.host, endpoint.port) else InetSocketAddress(pinned, endpoint.port), connectTimeoutMillis)
+                if (pinned == null) pinnedAddress = socket.inetAddress
                 socket.soTimeout = readTimeoutMillis
                 socket.tcpNoDelay = true
                 val input = BufferedInputStream(socket.getInputStream(), 64 * 1024)

@@ -18,6 +18,9 @@ import io.github.rwpp.game.mod.Mod
 import io.github.rwpp.game.mod.ModLoadSafety
 import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.game.mod.ModReloadSelection
+import io.github.rwpp.game.mod.ContentProfile
+import io.github.rwpp.game.mod.ContentProfiles
+import io.github.rwpp.game.mod.ModSettingsSnapshot
 import io.github.rwpp.game.mod.ReloadAbortToVanilla
 import io.github.rwpp.game.mod.deleteModFileSafely
 import io.github.rwpp.io.calculateSize
@@ -51,10 +54,35 @@ class ModManagerImpl : ModManager {
 
     override suspend fun reloadGameArt() = reloadLocal(false, null, refreshGameArt = true)
 
+    override fun captureModSettings(): ModSettingsSnapshot = GameEngine.t().bN.let {
+        ModSettingsSnapshot(it.modSettings, it.modSettingsVersion, it.lastModCount)
+    }
+
+    override suspend fun restoreModSettings(snapshot: ModSettingsSnapshot) {
+        withContext(Dispatchers.Main.immediate) {
+            GameEngine.t().bN.apply {
+                modSettings = snapshot.modSettings
+                modSettingsVersion = snapshot.version
+                lastModCount = snapshot.lastModCount
+                check(save()) { "Cannot persist ordinary Mod settings" }
+            }
+        }
+    }
+
+    override suspend fun applyContentProfile(profile: ContentProfile, refreshGameArt: Boolean) {
+        val selection = when (profile) {
+            is ContentProfile.Normal -> profile.selection
+            is ContentProfile.Expansion -> profile.sources.associate { it.file.canonicalPath to true }
+        }
+        // Preserve Android's UI-dependent native entry point; only the existing engine locks arbitrate parsing.
+        withContext(Dispatchers.Main.immediate) { reloadLocal(true, selection, refreshGameArt, profile) }
+    }
+
     private suspend fun reloadLocal(
         forceImmediate: Boolean,
         enabledByFileName: Map<String, Boolean>?,
         refreshGameArt: Boolean,
+        contentProfile: ContentProfile? = null,
     ) {
         io.github.rwpp.game.GameStartSafety.requireCanReload()
         check(isReloadingMods.compareAndSet(false, true)) { "模组仍在重载，请等待完成" }
@@ -63,7 +91,11 @@ class ModManagerImpl : ModManager {
             ReloadModEvent().broadcastIn()
             refreshProtectedModLoadHint(getAllMods(), enabledByFileName)
             // 重载成功后才执行清理；与解析同一线程，不触碰 GL。
-            val reload = { runReloadCore(enabledByFileName, refreshGameArt); AndroidModResourceCache.sweep() }
+            val reload = {
+                if (contentProfile != null) ContentProfiles.stage(contentProfile)
+                runReloadCore(enabledByFileName, refreshGameArt, allowScenePreservation = contentProfile == null)
+                AndroidModResourceCache.sweep()
+            }
             if (forceImmediate) reload()
             else runOnGameThread(reload)
             game.getAllMaps(true)
@@ -225,13 +257,13 @@ class ModManagerImpl : ModManager {
      * 重载内核：调用引擎扫描 mods 目录并重新加载。
      * 默认应在游戏主线程执行；forceImmediate 时为绕过主循环在调用线程直接执行。
      */
-    private fun runReloadCore(enabledByFileName: Map<String, Boolean>?, refreshGameArt: Boolean) {
+    private fun runReloadCore(enabledByFileName: Map<String, Boolean>?, refreshGameArt: Boolean, allowScenePreservation: Boolean = true) {
         if (refreshGameArt) {
             check(!game.gameRoom.isConnecting && !game.gameRoom.isStartGame && !game.gameRoom.isStartingGame) { io.github.rwpp.i18n.readI18n("themes.gameArtSessionActive") }
         }
         ModLoadSafety.run("local-reload") {
             val t = GameEngine.t()
-            val preserveScene = refreshGameArt && game.isGameCouldContinue()
+            val preserveScene = allowScenePreservation && refreshGameArt && game.isGameCouldContinue()
             t.bW.d()
             t.bN.save()
             t.bo = true
@@ -331,6 +363,7 @@ class ModManagerImpl : ModManager {
     }
 
     override suspend fun modSaveChange(enabledByFileName: Map<String, Boolean>?) {
+        check(!ContentProfiles.expansionActive) { "Leave the expansion game before changing ordinary Mods" }
         auxiliaryReload("save-reload") {
             val t = GameEngine.t()
             t.bW.d()

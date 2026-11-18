@@ -79,6 +79,11 @@ object UI : Initialization, IUserInterface {
      */
     var pendingInviteJoin by mutableStateOf<RoomInvite?>(null)
 
+    /** 已明确选择区服和外观方案的网游加入请求，仍由 MultiplayerView 走正常会话流程。 */
+    var pendingOnlineGameJoin by mutableStateOf<OnlineGameJoinRequest?>(null)
+    /** Installed expansion management opens the approved game's server selector, never an offline session. */
+    var pendingExpansionGameAppId by mutableStateOf<String?>(null)
+
     /**
      * 收到好友房间邀请时屏幕右侧弹出的悬浮卡片（10 秒倒计时自动忽略）。
      * 由 FriendsSession.refreshLists 检测未读邀请私信后置位；

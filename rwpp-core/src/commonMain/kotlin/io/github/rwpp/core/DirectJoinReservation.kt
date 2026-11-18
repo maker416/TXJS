@@ -46,6 +46,7 @@ class DirectJoinReservation private constructor(
     initialExpiresAt: Long,
     private val nowNanos: () -> Long,
     parentScope: CoroutineScope,
+    private val manifest: io.github.rwpp.net.sync.direct.DirectModManifest?,
 ) {
     private val closed = AtomicBoolean()
     private val terminalFailure = AtomicReference<Exception?>()
@@ -110,7 +111,7 @@ class DirectJoinReservation private constructor(
                 failed.onAwait { throw it }
             }
         } finally {
-            operation.cancelAndJoin()
+            withContext(NonCancellable) { operation.cancelAndJoin() }
         }
     }
 
@@ -127,7 +128,41 @@ class DirectJoinReservation private constructor(
     /** 凭证只供原版 preregistration 使用；调用方关闭句柄后不会残留到下一次加入。 */
     suspend fun openCredentials(): AutoCloseable {
         renewNow()
-        return io.github.rwpp.net.sync.direct.DirectJoinReservationCredentials.open(endpoint, token)
+        return io.github.rwpp.net.sync.direct.DirectJoinReservationCredentials.open(endpoint, token, manifest?.protocolVersion ?: transport.protocolVersion ?: 2)
+    }
+
+    suspend fun markContentReady() {
+        val revision = manifest?.contentRevision.orEmpty()
+        if (revision.isEmpty()) return
+        ensureValid()
+        val lease = transport.contentReady(scope, token, revision)
+        validateLease(lease, scope)
+        ensureValid()
+    }
+
+    /** Issued only after the same leased connection is authoritatively admitted. */
+    suspend fun captureResume() {
+        val value = manifest ?: return
+        if (value.protocolVersion < 3 || value.capabilities and 1 == 0 || value.serverInstance.isBlank()) return
+        try {
+            withTimeout(5_000) {
+                while (true) {
+                    try {
+                        val grant = transport.issueResume(scope, token)
+                        if (grant.serverInstance != value.serverInstance) throw IOException("Direct server instance changed")
+                        DirectResumeSessions.store(endpoint, value, grant)
+                        return@withTimeout
+                    } catch (error: DirectModSyncServerException) {
+                        if (error.code != io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.NOT_READY) throw error
+                        delay(250)
+                    }
+                }
+            }
+        } catch (error: CancellationException) {
+            currentCoroutineContext().ensureActive() // A missing optional grant must not undo an admitted connection.
+        } catch (_: Exception) {
+            org.slf4j.LoggerFactory.getLogger(DirectJoinReservation::class.java).info("[DIRECT] recovery grant is unavailable")
+        }
     }
 
     suspend fun awaitAdmission() {
@@ -163,6 +198,7 @@ class DirectJoinReservation private constructor(
             transport: DirectModSyncTransport,
             scope: String,
             nowNanos: () -> Long = System::nanoTime,
+            manifest: io.github.rwpp.net.sync.direct.DirectModManifest? = null,
         ): DirectJoinReservation {
             val token = ByteArray(32).also { SecureRandom().nextBytes(it) }
             var handedOff = false
@@ -173,7 +209,7 @@ class DirectJoinReservation private constructor(
                     if (grant == null) {
                         try {
                             requestedAt = nowNanos()
-                            grant = transport.reserve(scope, token)
+                            grant = if (manifest?.protocolVersion == 4) transport.reserveContent(scope, token, manifest.contentRevision) else transport.reserve(scope, token)
                         } catch (error: CancellationException) {
                             throw error
                         } catch (error: Exception) {
@@ -190,7 +226,7 @@ class DirectJoinReservation private constructor(
                 if (nowNanos() >= expiresAt) throw IOException("Direct slot reservation expired before receipt")
                 currentCoroutineContext().ensureActive()
                 return DirectJoinReservation(endpoint, transport, scope, token, initial, expiresAt, nowNanos,
-                    CoroutineScope(currentCoroutineContext())).also { handedOff = true }
+                    CoroutineScope(currentCoroutineContext()), manifest).also { handedOff = true }
             } finally {
                 if (!handedOff) withContext(NonCancellable) {
                     runCatching { withTimeout(2_000) { transport.release(scope, token) } }
