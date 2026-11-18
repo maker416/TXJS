@@ -13,6 +13,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.semantics.SemanticsActions
@@ -22,6 +25,9 @@ import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
 import io.github.rwpp.i18n.i18nTable
 import io.github.rwpp.i18n.reloadI18n
+import io.github.rwpp.net.games.OnlineGame
+import io.github.rwpp.net.games.OnlineGameArtBinding
+import io.github.rwpp.net.games.OnlineGameServer
 import io.github.rwpp.widget.UiMotionTheme
 import io.github.rwpp.widget.WindowManager
 import io.github.rwpp.widget.setUiAnimationsEnabled
@@ -37,6 +43,16 @@ import kotlin.test.*
 @OptIn(ExperimentalTestApi::class)
 class GameplayHallUiTest {
     private lateinit var settings: Settings
+    private val gameId = "11111111-1111-1111-1111-111111111111"
+    private val otherId = "22222222-2222-2222-2222-222222222222"
+    private val published = OnlineGame(gameId, "星际远征", "已审核的持续运营网游", available = true,
+        servers = listOf(OnlineGameServer("main", "主区服", "127.0.0.1:5123", available = true,
+            online = true, currentPlayers = 2, maxPlayers = 10),
+            OnlineGameServer("offline", "维护区服", "127.0.0.1:5124", closedMessage = "正在更新")),
+        artBinding = OnlineGameArtBinding("33333333-3333-3333-3333-333333333333", "1.0", "a".repeat(64)),
+        portalUrl = "https://game.example/portal", portalRevision = 1)
+    private val offline = OnlineGame(otherId, "边境探索", "暂停开放的区服仍可查看", servers =
+        listOf(OnlineGameServer("closed", "维护区服", "127.0.0.1:6000")), portalUrl = "https://offline.example/", portalRevision = 2)
 
     @BeforeTest
     fun setup() {
@@ -48,6 +64,8 @@ class GameplayHallUiTest {
         SwingUtilities.invokeAndWait {
             UI.showAccountView = false
             UI.showFriendsView = false
+            UI.pendingOnlineGameJoin = null
+            UI.pendingExpansionGameAppId = null
             resetNavigation(LauncherPage.MainMenu)
         }
     }
@@ -66,10 +84,10 @@ class GameplayHallUiTest {
         onNodeWithTag("hall-featured").assertIsDisplayed()
         save("desktop.png")
         onNodeWithTag("hall-category-extended").performClick()
-        onNodeWithTag("hall-favorite-royale").performClick()
+        onNodeWithTag("hall-favorite-game-$gameId").performClick()
         onNodeWithTag("hall-category-favorites").performClick()
-        onNodeWithTag("hall-card-royale").assertIsDisplayed()
-        onNodeWithTag("hall-card-pokemon").assertDoesNotExist()
+        onNodeWithTag("hall-card-game-$gameId").assertIsDisplayed()
+        onNodeWithTag("hall-card-game-$otherId").assertDoesNotExist()
         onNodeWithTag("hall-category-all").performClick()
         onNodeWithTag("hall-search").performTextInput("生存挑战")
         onNodeWithTag("hall-card-survival").assertIsDisplayed().performClick()
@@ -77,10 +95,11 @@ class GameplayHallUiTest {
         onNodeWithTag("hall-search").performTextReplacement("nothing-matches")
         onNodeWithText("没有找到匹配的玩法，试试其他关键词或筛选。").assertIsDisplayed()
         onNodeWithTag("hall-reset").performClick()
-        onNodeWithTag("hall-card-royale").assertIsDisplayed()
+        onNodeWithTag("hall-card-game-$gameId").assertIsDisplayed()
         onNodeWithTag("hall-filter-status").performClick()
         onNode(hasText("可进入") and hasAnyAncestor(isPopup())).performClick()
-        onNodeWithTag("hall-card-royale").assertDoesNotExist()
+        onNodeWithTag("hall-card-game-$otherId").assertDoesNotExist()
+        onNodeWithTag("hall-card-game-$gameId").assertIsDisplayed()
         onNodeWithTag("hall-card-multiplayer").assertIsDisplayed()
         onNodeWithTag("hall-filter-tag").performClick()
         onNode(hasText("PVE") and hasAnyAncestor(isPopup())).performClick()
@@ -91,14 +110,16 @@ class GameplayHallUiTest {
     @Test
     fun phoneLandscapeAndPreviewStayUsable() = runDesktopComposeUiTest(width = 960, height = 432) {
         var closed = 0
-        show(onExit = { closed++ })
+        var destination: LauncherPage? = null
+        show(onExit = { closed++ }, onOpen = { destination = it })
         onNodeWithTag("hall-back").assertIsDisplayed()
         onNodeWithTag("hall-featured-open").assertIsDisplayed()
         save("landscape.png")
         onNodeWithTag("hall-featured-1").performClick()
         onNodeWithTag("hall-featured-open").performClick()
-        onNodeWithTag("hall-detail").assertIsDisplayed()
-        onNodeWithText("知道了").performClick()
+        runOnIdle { assertEquals(LauncherPage.GamePortal(otherId), destination) }
+        onNodeWithTag("hall-detail").assertDoesNotExist()
+        onNodeWithTag("hall-server-closed").assertDoesNotExist()
         onNodeWithTag("hall-back").performClick()
         runOnIdle { assertEquals(1, closed) }
     }
@@ -124,7 +145,7 @@ class GameplayHallUiTest {
                 Box(Modifier.fillMaxSize()) {
                     if (launcherPage == LauncherPage.MainMenu) Text("home")
                     GameplayHallPageHost {
-                        GameplayHallView({ closePage(LauncherPage.GameplayHall) }, { navigateTo(it) })
+                        GameplayHallView({ closePage(LauncherPage.GameplayHall) }, { navigateTo(it) }, loadGames = { emptyList() })
                     }
                 }
             }
@@ -159,22 +180,80 @@ class GameplayHallUiTest {
         onNodeWithTag("gameplay-hall").assertDoesNotExist()
     }
 
+    @Test
+    fun approvedGameOpensItsWebsiteWithoutNativeServerSelection() = runDesktopComposeUiTest(width = 412, height = 844) {
+        var destination: LauncherPage? = null
+        show(onOpen = { destination = it })
+        onNodeWithTag("hall-featured-open").performClick()
+        runOnIdle { assertEquals(LauncherPage.GamePortal(gameId), destination) }
+        onNodeWithTag("hall-detail").assertDoesNotExist()
+        onNodeWithTag("hall-server-main").assertDoesNotExist()
+    }
+
+    @Test
+    fun portalRequiresLoginAndResumesIntoTheWebsiteAfterAuthentication() = runDesktopComposeUiTest(width = 960, height = 640) {
+        var destination: LauncherPage? = null
+        var loggedIn by mutableStateOf(false)
+        var login = 0
+        setContent {
+            UiMotionTheme(darkColorScheme(), Typography()) {
+                GameplayHallView({}, { destination = it }, loadGames = { listOf(published) }, loggedIn = loggedIn,
+                    onLogin = { login++; UI.showAccountView = true })
+            }
+        }
+        onNodeWithTag("hall-featured-open").performClick()
+        runOnIdle { assertEquals(1, login); assertNull(destination); loggedIn = true }
+        waitUntil { destination != null }
+        runOnIdle { assertEquals(LauncherPage.GamePortal(gameId), destination); assertFalse(UI.showAccountView) }
+        onNodeWithTag("hall-detail").assertDoesNotExist()
+    }
+
+    @Test
+    fun directoryFailureDoesNotInventOnlineGamesOrHideClassicModes() = runDesktopComposeUiTest(width = 1280, height = 720) {
+        show(load = { error("unavailable") })
+        onNodeWithTag("hall-directory-status").assertTextContains("暂时无法获取网游目录", substring = true)
+        onNodeWithTag("hall-category-extended").performClick()
+        onNodeWithTag("hall-card-game-$gameId").assertDoesNotExist()
+        onNodeWithTag("hall-card-royale").assertDoesNotExist()
+        onNodeWithTag("hall-category-original").performClick()
+        onNodeWithTag("hall-card-multiplayer").assertIsDisplayed()
+        save("directory-failure-desktop.png")
+    }
+
+    @Test
+    fun missingPortalKeepsPublicCardButCannotOpenNativeServerSelection() = runDesktopComposeUiTest(width = 960, height = 640) {
+        var destination: LauncherPage? = null
+        show(load = { listOf(published.copy(portalUrl = "", portalRevision = 0)) }, onOpen = { destination = it })
+        onNodeWithTag("hall-featured-open").assertIsNotEnabled()
+        runOnIdle { assertNull(destination) }
+        onNodeWithTag("hall-card-game-$gameId").assertIsDisplayed()
+        onNodeWithTag("hall-card-game-$gameId").assertIsNotEnabled()
+        onNodeWithTag("hall-detail").assertDoesNotExist()
+    }
+
     private fun language(code: String) {
         i18nTable = Toml.parseToTomlTable(File("src/commonMain/composeResources/files/bundle_$code.toml").readText())
     }
 
-    private fun ComposeUiTest.show(onExit: () -> Unit = {}, onOpen: (LauncherPage) -> Unit = {}) {
+    private fun ComposeUiTest.show(
+        onExit: () -> Unit = {}, onOpen: (LauncherPage) -> Unit = {},
+        load: suspend () -> List<OnlineGame> = { listOf(published, offline) },
+        refresh: suspend (String) -> OnlineGame? = { published },
+        loggedIn: Boolean = true,
+        onLogin: () -> Unit = {},
+    ) {
         setContent {
             UiMotionTheme(darkColorScheme(), Typography()) {
                 CompositionLocalProvider(LocalWindowManager provides WindowManager.Middle) {
-                    GameplayHallView(onExit, onOpen)
+                    GameplayHallView(onExit, onOpen, loadGames = load, refreshGame = refresh, loggedIn = loggedIn, onLogin = onLogin)
                 }
             }
         }
     }
 
-    private fun ComposeUiTest.save(name: String) {
+    private fun ComposeUiTest.save(name: String, tag: String? = null) {
         val file = File("build/reports/gameplay-hall/$name").apply { parentFile.mkdirs() }
-        ImageIO.write(onRoot().captureToImage().toAwtImage(), "png", file)
+        val target = tag?.let { onNodeWithTag(it) } ?: onRoot()
+        ImageIO.write(target.captureToImage().toAwtImage(), "png", file)
     }
 }

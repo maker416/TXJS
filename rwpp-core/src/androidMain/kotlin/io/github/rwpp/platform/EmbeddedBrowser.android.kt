@@ -50,7 +50,7 @@ import org.mozilla.geckoview.WebResponse
 import org.mozilla.geckoview.WebRequestError
 
 /** 每个进程只建一个 runtime；关闭资源站只关闭 session，不销毁整个 Gecko 内核。 */
-private object BrowserGeckoRuntime {
+internal object BrowserGeckoRuntime {
     private var instance: GeckoRuntime? = null
     private var preparation: GeckoResult<WebExtension>? = null
     fun get(context: Context): GeckoRuntime = instance
@@ -100,11 +100,14 @@ actual fun EmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifier) {
     if (browserKernelDownloadRequired) {
         val environment = rememberBrowserKernelEnvironment()
         if (BrowserKernelRuntime.directory(environment.requirement.id) == null) {
-            Box(modifier) { BrowserKernelGate(true, onReady = {}) { AndroidEmbeddedBrowser(state, Modifier.fillMaxSize()) } }
+            Box(modifier) { BrowserKernelGate(true, onReady = {}) {
+                if (state.gamePortalBridge != null) GamePortalEmbeddedBrowser(state, Modifier.fillMaxSize())
+                else AndroidEmbeddedBrowser(state, Modifier.fillMaxSize())
+            } }
             return
         }
     }
-    AndroidEmbeddedBrowser(state, modifier)
+    if (state.gamePortalBridge != null) GamePortalEmbeddedBrowser(state, modifier) else AndroidEmbeddedBrowser(state, modifier)
 }
 
 @Composable

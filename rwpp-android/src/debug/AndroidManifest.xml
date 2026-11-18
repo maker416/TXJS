@@ -7,6 +7,16 @@
   -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
+        <provider android:name="io.github.rwpp.android.GamePortalFixtureProvider"
+                  android:authorities="${applicationId}.portalfixture"
+                  android:enabled="${gamePortalFixtureEnabled}"
+                  android:exported="false" />
+        <!-- Compose resource context must be initialized in the isolated fixture process too. -->
+        <provider android:name="org.jetbrains.compose.resources.AndroidContextProvider"
+                  android:authorities="${applicationId}.resources.AndroidContextProvider"
+                  android:process="${resourcesProcess}"
+                  android:exported="false" />
+        <activity android:name="io.github.rwpp.android.LoadingScreen" android:label="${normalLauncherLabel}" />
         <!--
           Debug-only host: 假数据账号 UI 验收入口。
           不启动游戏引擎、不读 assets、不发 HTTP / BBS。

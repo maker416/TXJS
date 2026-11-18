@@ -17,7 +17,7 @@ import io.github.rwpp.net.browser.BrowserModDownload
 import com.eclipsesource.json.Json
 
 @Stable
-class EmbeddedBrowserState(val initialUrl: String, private val homeUrl: String = initialUrl) {
+class EmbeddedBrowserState(val initialUrl: String, private val homeUrl: String = initialUrl, val gamePortalBridge: GamePortalBridge? = null) {
     var url by mutableStateOf(initialUrl)
         internal set
     var canGoBack by mutableStateOf(false)
@@ -127,6 +127,11 @@ class EmbeddedBrowserState(val initialUrl: String, private val homeUrl: String =
 
     /** 不走论坛登录的页面：清除错误后重新加载（引擎未就绪时由平台层重新初始化）。 */
     internal fun retryLoad() { clientLoginError = null; error = null; controller?.reload() }
+
+    /** 仅事件数据跨入网页；身份与加入动作仍必须经受控请求入口。 */
+    fun emitPortalEvent(name: String, data: kotlinx.serialization.json.JsonObject) { controller?.emitPortalEvent(name, data) }
+
+    fun invalidatePortal() { controller?.invalidatePortal() }
 }
 
 internal interface EmbeddedBrowserController {
@@ -135,6 +140,8 @@ internal interface EmbeddedBrowserController {
     fun loadUrl(url: String)
     fun reload()
     fun submitForumHandoff(trustedUrl: String, handoff: String?)
+    fun emitPortalEvent(name: String, data: kotlinx.serialization.json.JsonObject) = Unit
+    fun invalidatePortal() = Unit
 }
 
 internal fun forumHandoffScript(trustedUrl: String, handoff: String?): String {

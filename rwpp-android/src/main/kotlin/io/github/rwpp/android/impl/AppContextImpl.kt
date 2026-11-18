@@ -72,6 +72,12 @@ class AppContextImpl : BaseAppContextImpl() {
     }
 
     override fun externalStoragePath(path: String): String {
+        // The isolated engine fixture must not clean generated maps or import content from the user's installation.
+        val context = get<Context>()
+        if (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0 &&
+            context.packageName == "io.github.rwjs.portaltest") {
+            return context.getExternalFilesDir(null)!!.resolve("portal-fixture/$path").absolutePath
+        }
         return Environment.getExternalStorageDirectory().absolutePath + "/rustedWarfare/$path"
     }
 

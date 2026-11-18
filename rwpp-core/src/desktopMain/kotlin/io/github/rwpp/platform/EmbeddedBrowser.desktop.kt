@@ -74,10 +74,13 @@ import io.github.rwpp.net.browser.BrowserModUploadCache
 actual fun EmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifier) {
     val environment = rememberBrowserKernelEnvironment()
     if (BrowserKernelRuntime.directory(environment.requirement.id) == null) {
-        Box(modifier) { BrowserKernelGate(true, onReady = {}) { DesktopEmbeddedBrowser(state, Modifier.fillMaxSize()) } }
+        Box(modifier) { BrowserKernelGate(true, onReady = {}) {
+            if (state.gamePortalBridge != null) GamePortalEmbeddedBrowser(state, Modifier.fillMaxSize())
+            else DesktopEmbeddedBrowser(state, Modifier.fillMaxSize())
+        } }
         return
     }
-    DesktopEmbeddedBrowser(state, modifier)
+    if (state.gamePortalBridge != null) GamePortalEmbeddedBrowser(state, modifier) else DesktopEmbeddedBrowser(state, modifier)
 }
 
 @Composable
@@ -111,7 +114,7 @@ private fun DesktopEmbeddedBrowser(state: EmbeddedBrowserState, modifier: Modifi
 }
 
 /** Chromium 的安装/初始化在后台执行；整个应用共用 runtime，每次打开页面创建独立 client。 */
-private object DesktopBrowserRuntime {
+internal object DesktopBrowserRuntime {
     private var app: CefApp? = null
 
     @Synchronized

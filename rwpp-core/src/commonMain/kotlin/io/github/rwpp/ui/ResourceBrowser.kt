@@ -89,10 +89,11 @@ fun EsportsBrowser(onExit: () -> Unit) {
  * [clientLogin] 为空时按普通网页加载，错误浮层只提供刷新。
  */
 @Composable
-private fun BrowserPage(
+internal fun BrowserPage(
     page: LauncherPage,
     browser: EmbeddedBrowserState,
     onExit: () -> Unit,
+    nativeBusy: Boolean = false,
     clientLogin: (suspend () -> Unit)?,
 ) {
     val settings = koinInject<Settings>()
@@ -112,7 +113,7 @@ private fun BrowserPage(
         )
     }
 
-    val overlaysAvailable = active && !UI.showFriendsView && !UI.showAccountView &&
+    val overlaysAvailable = active && !nativeBusy && !UI.showFriendsView && !UI.showAccountView &&
         browser.modDownload == null && browser.fileUpload == null
     var attempt by remember { mutableIntStateOf(0) }
     var kernelReady by remember(browser) { mutableStateOf(false) }
@@ -129,7 +130,7 @@ private fun BrowserPage(
             }
         }
     }
-    BackHandler(true) {
+    BackHandler(active && !nativeBusy) {
         if (!browser.goBack()) onExit()
     }
     DisposableEffect(browser) {

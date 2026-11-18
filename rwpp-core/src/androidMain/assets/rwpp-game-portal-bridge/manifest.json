@@ -1,0 +1,8 @@
+{
+  "manifest_version": 2,
+  "name": "RWJS Game Portal Bridge",
+  "version": "1.0",
+  "browser_specific_settings": { "gecko": { "id": "game-portal-bridge@rwpp" } },
+  "permissions": ["nativeMessaging", "nativeMessagingFromContent", "geckoViewAddons"],
+  "content_scripts": [{ "matches": ["https://*/*", "http://*/*"], "js": ["sdk.js", "bridge.js"], "all_frames": false, "run_at": "document_start" }]
+}

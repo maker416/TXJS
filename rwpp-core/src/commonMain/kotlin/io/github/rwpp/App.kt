@@ -436,6 +436,20 @@ fun App(
                     )
                 }
 
+                val portalRoute = launcherPage as? LauncherPage.GamePortal
+                if (portalRoute != null) {
+                    LauncherPageHost(portalRoute, EnterTransition.None, ExitTransition.None) {
+                        GamePortalView(portalRoute.appId,
+                            onExit = { resetNavigation(LauncherPage.GameplayHall) },
+                            onOpenRoom = {
+                                isSinglePlayerGame = false
+                                resetNavigation(LauncherPage.GameplayHall)
+                                navigateTo(LauncherPage.Room)
+                                GameSessionController.onRoomOpened()
+                            })
+                    }
+                }
+
                 LauncherPageHost(
                     LauncherPage.ResourceCenter,
                     enter = if (enableAnimations) fadeIn() + slideInHorizontally { it / 12 } else EnterTransition.None,
@@ -604,9 +618,10 @@ fun App(
                 LaunchedEffect(UI.warning) {
                     if (UI.warning != null) {
                         warningDialogVisible = true
-                        if (UI.warning?.isKicked == true && !ModSyncController.isInRoomSyncInProgress()) {
+                        if (UI.warning?.isKicked == true && !ModSyncController.isInRoomSyncInProgress() &&
+                            launcherPage !is LauncherPage.GamePortal) {
                             // 被踢是硬跳转：放弃返回栈直达多人列表
-                            resetNavigation(LauncherPage.Multiplayer)
+                            resetNavigation(GameSessionController.multiplayerReturnPage)
                             GameSessionController.onExternalSessionEnd()
                         }
                     }
@@ -664,7 +679,7 @@ fun App(
                         questionDialogVisible = false
                         UI.question?.callback?.invoke(null)
                         if (showRoomView && !ModSyncController.isInRoomSyncInProgress()) {
-                            resetNavigation(LauncherPage.Multiplayer)
+                            resetNavigation(GameSessionController.multiplayerReturnPage)
                             GameSessionController.onExternalSessionEnd()
                         }
 

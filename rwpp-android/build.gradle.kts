@@ -123,6 +123,14 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            // An isolated ADB fixture package keeps the user's signed installation and data untouched.
+            val portalTest = providers.gradleProperty("gamePortalUiTestPackage").orNull == "true"
+            manifestPlaceholders["gamePortalFixtureEnabled"] = portalTest.toString()
+            manifestPlaceholders["normalLauncherLabel"] = if (portalTest) "RWJS网页入口联调" else "铁锈战争RW"
+            manifestPlaceholders["resourcesProcess"] = if (portalTest) "io.github.rwjs.portaltest" else "io.github.rwjs"
+            if (portalTest) applicationIdSuffix = ".portaltest"
+        }
         release {
             isMinifyEnabled = false
             isShrinkResources = false

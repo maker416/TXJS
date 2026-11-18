@@ -42,6 +42,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -50,11 +51,24 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.app.LauncherVisibility
+import io.github.rwpp.app.pollWhileVisible
+import io.github.rwpp.config.resolveOpenPlatformUrl
+import io.github.rwpp.net.games.OnlineGame
+import io.github.rwpp.net.games.OnlineGameClient
 import io.github.rwpp.platform.BackHandler
+import io.github.rwpp.account.AccountSession
+import io.github.rwpp.net.games.isOnlineGamePortalUrl
 import io.github.rwpp.rwpp_core.generated.resources.*
 import io.github.rwpp.widget.AnimatedAlertDialog
 import io.github.rwpp.widget.uiAnimationsEnabled
 import org.jetbrains.compose.resources.painterResource
+import coil3.compose.AsyncImage
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -65,11 +79,12 @@ private val HallBorder = Color(0xFF375440)
 private val HallShape = RoundedCornerShape(18.dp)
 
 private enum class HallCategory(val key: String) { Recommended("recommended"), All("all"), Extended("extended"), Original("original"), Favorites("favorites") }
-private data class HallEntry(val id: String, val tags: List<String>, val scene: Int, val destination: LauncherPage? = null)
+private data class HallEntry(val id: String, val tags: List<String>, val scene: Int,
+    val destination: LauncherPage? = null, val game: OnlineGame? = null) {
+    val available: Boolean get() = destination != null || game?.available == true
+    val canOpen: Boolean get() = destination != null || game?.let { isOnlineGamePortalUrl(it.portalUrl) && it.portalRevision > 0 } == true
+}
 private val hallEntries = listOf(
-    HallEntry("royale", listOf("pvp", "strategy"), 0),
-    HallEntry("pokemon", listOf("pve", "explore"), 1),
-    HallEntry("extraction", listOf("pvp", "explore"), 2),
     HallEntry("multiplayer", listOf("pvp", "strategy"), 0, LauncherPage.Multiplayer),
     HallEntry("missions", listOf("pve", "strategy"), 2, LauncherPage.Mission),
     HallEntry("survival", listOf("pve", "strategy"), 1, LauncherPage.Survival),
@@ -95,30 +110,94 @@ internal fun GameplayHallPageHost(content: @Composable () -> Unit) {
 }
 
 @Composable
-internal fun GameplayHallView(onExit: () -> Unit, onOpenPage: (LauncherPage) -> Unit) {
+internal fun GameplayHallView(
+    onExit: () -> Unit,
+    onOpenPage: (LauncherPage) -> Unit,
+    loadGames: suspend () -> List<OnlineGame> = {
+        withContext(Dispatchers.IO) { OnlineGameClient(resolveOpenPlatformUrl()).games() }
+    },
+    refreshGame: suspend (String) -> OnlineGame? = {
+        withContext(Dispatchers.IO) { OnlineGameClient(resolveOpenPlatformUrl()).game(it) }
+    },
+    loggedIn: Boolean = AccountSession.loggedIn,
+    onLogin: () -> Unit = { UI.showAccountView = true },
+) {
     var category by rememberSaveable { mutableStateOf(HallCategory.Recommended) }
     var query by rememberSaveable { mutableStateOf("") }
     var tag by rememberSaveable { mutableStateOf("") }
     var availableOnly by rememberSaveable { mutableStateOf(false) }
     var favorites by rememberSaveable { mutableStateOf(listOf<String>()) }
     var featuredIndex by rememberSaveable { mutableIntStateOf(0) }
-    var detail by remember { mutableStateOf<HallEntry?>(null) }
+    var pendingPortal by remember { mutableStateOf<String?>(null) }
+    var games by remember { mutableStateOf(emptyList<OnlineGame>()) }
+    var loading by remember { mutableStateOf(true) }
+    var loadFailed by remember { mutableStateOf(false) }
+    var retry by remember { mutableIntStateOf(0) }
+    val latestLoad by rememberUpdatedState(loadGames)
+    LaunchedEffect(retry) {
+        LauncherVisibility.visible.pollWhileVisible(30_000) {
+            try {
+                games = latestLoad()
+                loadFailed = false
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                games = emptyList()
+                loadFailed = true
+            } finally { loading = false }
+        }
+    }
+    val allEntries = games.mapIndexed { index, game ->
+        HallEntry("game-${game.appId}", emptyList(), index % 3, game = game)
+    } + hallEntries
+    val expansionUnavailableText = hallText("expansionUnavailable")
+    LaunchedEffect(UI.pendingExpansionGameAppId) {
+        val appId = UI.pendingExpansionGameAppId ?: return@LaunchedEffect
+        try {
+            val approved = refreshGame(appId)
+            if (UI.pendingExpansionGameAppId != appId) return@LaunchedEffect
+            if (approved?.expansionBinding == null || !isOnlineGamePortalUrl(approved.portalUrl)) UI.showWarning(expansionUnavailableText)
+            else if (loggedIn) onOpenPage(LauncherPage.GamePortal(approved.appId))
+            else { pendingPortal = approved.appId; onLogin() }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            UI.showWarning(expansionUnavailableText)
+        } finally {
+            if (UI.pendingExpansionGameAppId == appId) UI.pendingExpansionGameAppId = null
+        }
+    }
+    val featuredEntries = allEntries.take(3)
+    val selectedFeatured = featuredIndex.coerceIn(featuredEntries.indices)
     BackHandler(true, onExit)
+    val portalUnavailable = readI18n("gamePortal.unavailable")
+    LaunchedEffect(loggedIn, UI.showAccountView) {
+        val pending = pendingPortal ?: return@LaunchedEffect
+        if (loggedIn) {
+            pendingPortal = null
+            UI.showAccountView = false
+            onOpenPage(LauncherPage.GamePortal(pending))
+        } else if (!UI.showAccountView) pendingPortal = null
+    }
     val open: (HallEntry) -> Unit = { entry ->
-        entry.destination?.let(onOpenPage) ?: run { detail = entry }
+        entry.destination?.let(onOpenPage) ?: entry.game?.let { game ->
+            if (!isOnlineGamePortalUrl(game.portalUrl) || game.portalRevision <= 0) UI.showWarning(portalUnavailable)
+            else if (loggedIn) onOpenPage(LauncherPage.GamePortal(game.appId))
+            else { pendingPortal = game.appId; onLogin() }
+        }
     }
     val favorite: (HallEntry) -> Unit = { entry ->
         favorites = if (entry.id in favorites) favorites - entry.id else favorites + entry.id
     }
-    val entries = hallEntries.filter { entry ->
+    val entries = allEntries.filter { entry ->
         val matchesCategory = when (category) {
             HallCategory.Extended -> entry.destination == null
             HallCategory.Original -> entry.destination != null
             HallCategory.Favorites -> entry.id in favorites
             else -> true
         }
-        matchesCategory && (tag.isEmpty() || tag in entry.tags) && (!availableOnly || entry.destination != null) &&
-            (query.isBlank() || (hallText("games.${entry.id}.title") + hallText("games.${entry.id}.description") +
+        matchesCategory && (tag.isEmpty() || tag in entry.tags) && (!availableOnly || entry.available) &&
+            (query.isBlank() || (entry.title() + entry.description() +
                 entry.tags.map { hallText("tags.$it") }.joinToString()).contains(query.trim(), ignoreCase = true))
     }
     BoxWithConstraints(Modifier.fillMaxSize().testTag("gameplay-hall")) {
@@ -171,8 +250,8 @@ internal fun GameplayHallView(onExit: () -> Unit, onOpenPage: (LauncherPage) -> 
                         contentPadding = PaddingValues(bottom = 24.dp)) {
                         if (category == HallCategory.Recommended && query.isBlank() && tag.isEmpty() && !availableOnly) {
                             item("featured") {
-                                HallFeatured(hallEntries[featuredIndex], featuredIndex, compact, narrow,
-                                    { featuredIndex = it }, { open(hallEntries[featuredIndex]) })
+                                HallFeatured(featuredEntries, selectedFeatured, compact, narrow,
+                                    { featuredIndex = it }, { open(featuredEntries[selectedFeatured]) })
                             }
                         }
                         item("filters") {
@@ -197,6 +276,16 @@ internal fun GameplayHallView(onExit: () -> Unit, onOpenPage: (LauncherPage) -> 
                                 Text("${entries.size} " + hallText("entries"), color = HallMuted, fontSize = 12.sp)
                             }
                         }
+                        item("directory-status") {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text(hallText(when { loading -> "directoryLoading"; loadFailed -> "directoryFailed"
+                                    games.isEmpty() -> "directoryEmpty"; else -> "directoryReady" }),
+                                    color = HallMuted, fontSize = 12.sp, modifier = Modifier.weight(1f).testTag("hall-directory-status"))
+                                TextButton(onClick = { loading = true; retry++ }, modifier = Modifier.testTag("hall-refresh")) {
+                                    Text(hallText("refresh"), color = HallGreen)
+                                }
+                            }
+                        }
                         if (entries.isEmpty()) item("empty") {
                             Column(Modifier.fillMaxWidth().padding(vertical = 44.dp), horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -216,20 +305,10 @@ internal fun GameplayHallView(onExit: () -> Unit, onOpenPage: (LauncherPage) -> 
             }
         }
     }
-    AnimatedAlertDialog(visible = detail != null, onDismissRequest = { detail = null }) { dismiss ->
-        val entry = detail
-        if (entry != null) Surface(color = Color(0xFF14251A), shape = RoundedCornerShape(24.dp), border = BorderStroke(1.dp, HallBorder),
-            modifier = Modifier.widthIn(max = 460.dp).fillMaxWidth(0.9f).testTag("hall-detail")) {
-            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                HallBadge(hallText("comingSoon"), HallGreen)
-                Text(hallText("games.${entry.id}.title"), fontSize = 26.sp, fontWeight = FontWeight.Bold, color = HallWhite)
-                Text(hallText("games.${entry.id}.description"), color = HallMuted)
-                Text(hallText("comingSoonDescription"), color = HallMuted, fontSize = 13.sp)
-                TextButton(onClick = { dismiss() }, modifier = Modifier.align(Alignment.End)) { Text(hallText("gotIt"), color = HallGreen) }
-            }
-        }
-    }
 }
+
+@Composable private fun HallEntry.title(): String = game?.name ?: hallText("games.$id.title")
+@Composable private fun HallEntry.description(): String = game?.description ?: hallText("games.$id.description")
 
 @Composable
 private fun hallText(key: String): String = readI18n("gameplayHall.$key")
@@ -293,27 +372,28 @@ private fun <T> HallFilter(label: String, value: String, id: String, options: Li
 }
 
 @Composable
-private fun HallFeatured(entry: HallEntry, index: Int, compact: Boolean, narrow: Boolean, onSelect: (Int) -> Unit, onOpen: () -> Unit) {
+private fun HallFeatured(entries: List<HallEntry>, index: Int, compact: Boolean, narrow: Boolean, onSelect: (Int) -> Unit, onOpen: () -> Unit) {
+    val entry = entries[index]
     Box(Modifier.fillMaxWidth().heightIn(min = if (narrow) 284.dp else if (compact) 206.dp else 244.dp)
         .clip(HallShape).border(1.dp, Color(0xFF527D4F), HallShape).testTag("hall-featured")) {
-        HallBattlefield(entry.scene, Modifier.matchParentSize())
+        HallCover(entry, Modifier.matchParentSize())
         Box(Modifier.matchParentSize().background(Brush.horizontalGradient(listOf(Color(0xFA102317), Color(0xD9102317), Color(0x22102317)))))
         Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xB309160D)))))
         Column(Modifier.fillMaxWidth().padding(if (compact) 16.dp else 26.dp), verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp)) {
             HallBadge(hallText("featured"), HallGreen)
-            Text(hallText("games.${entry.id}.title"), color = HallWhite, fontWeight = FontWeight.Bold,
+            Text(entry.title(), color = HallWhite, fontWeight = FontWeight.Bold,
                 fontSize = if (compact) 30.sp else 36.sp, lineHeight = if (compact) 36.sp else 44.sp,
-                modifier = Modifier.fillMaxWidth(if (narrow) 1f else 0.75f))
-            Text(hallText("games.${entry.id}.description"), color = HallMuted, fontSize = 13.sp, lineHeight = 18.sp,
+                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(if (narrow) 1f else 0.75f))
+            Text(entry.description(), color = HallMuted, fontSize = 13.sp, lineHeight = 18.sp,
                 maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(if (narrow) 1f else 0.72f))
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                HallBadge(hallText("categories.extended"), HallGreen)
+                HallBadge(hallText(if (entry.game != null) "categories.extended" else "categories.original"), HallGreen)
                 entry.tags.forEach { HallBadge(hallText("tags.$it"), Color(0xFFBDD5DC)) }
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    repeat(3) { dot ->
-                        val description = hallText("games.${hallEntries[dot].id}.title")
+                    repeat(entries.size) { dot ->
+                        val description = entries[dot].title()
                         Surface(onClick = { onSelect(dot) }, color = Color.Transparent, shape = CircleShape,
                             modifier = Modifier.size(48.dp).testTag("hall-featured-$dot").semantics { contentDescription = description }) {
                             Box(contentAlignment = Alignment.Center) {
@@ -323,14 +403,26 @@ private fun HallFeatured(entry: HallEntry, index: Int, compact: Boolean, narrow:
                         }
                     }
                 }
-                Surface(onClick = onOpen, color = Color(0xFF3BBA54), shape = CircleShape, modifier = Modifier.testTag("hall-featured-open")) {
+                Surface(onClick = onOpen, enabled = entry.canOpen, color = if (entry.canOpen) Color(0xFF3BBA54) else HallBorder,
+                    shape = CircleShape, modifier = Modifier.testTag("hall-featured-open")) {
                     Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 22.dp), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text(hallText("preview"), color = Color(0xFF061B0B), fontWeight = FontWeight.Bold)
+                        Text(if (entry.canOpen) hallText("enter") else readI18n("gamePortal.maintenance"),
+                            color = if (entry.canOpen) Color(0xFF061B0B) else HallMuted, fontWeight = FontWeight.Bold)
                         Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.size(20.dp), tint = Color(0xFF061B0B))
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun HallCover(entry: HallEntry, modifier: Modifier) {
+    Box(modifier) {
+        HallBattlefield(entry.scene, Modifier.matchParentSize())
+        entry.game?.coverUrl?.takeIf(String::isNotBlank)?.let { url ->
+            AsyncImage(url, null, modifier = Modifier.matchParentSize(), contentScale = ContentScale.Crop)
         }
     }
 }
@@ -344,15 +436,15 @@ private fun HallBadge(text: String, color: Color) {
 
 @Composable
 private fun HallGameCard(entry: HallEntry, favorite: Boolean, onFavorite: () -> Unit, onOpen: () -> Unit, modifier: Modifier, compact: Boolean) {
-    Surface(onClick = onOpen, color = Color(0xE6192A1F), shape = HallShape, border = BorderStroke(1.dp, HallBorder),
+    Surface(onClick = onOpen, enabled = entry.canOpen, color = Color(0xE6192A1F), shape = HallShape, border = BorderStroke(1.dp, HallBorder),
         modifier = modifier.testTag("hall-card-${entry.id}")) {
         Column {
             Box(Modifier.fillMaxWidth().height(if (compact) 90.dp else 118.dp).clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))) {
-                HallBattlefield(entry.scene, Modifier.matchParentSize())
+                HallCover(entry, Modifier.matchParentSize())
                 Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0x88304427)))))
                 Box(Modifier.align(Alignment.TopStart).padding(10.dp)) {
-                    HallBadge(hallText(if (entry.destination == null) "comingSoon" else "available"),
-                        if (entry.destination == null) Color(0xFFEDCF8D) else HallGreen)
+                    HallBadge(if (!entry.canOpen) readI18n("gamePortal.maintenance") else hallText(if (entry.available) "available" else "maintenance"),
+                        if (entry.available) HallGreen else Color(0xFFEDCF8D))
                 }
                 IconButton(onClick = onFavorite, modifier = Modifier.align(Alignment.TopEnd).size(48.dp).testTag("hall-favorite-${entry.id}")) {
                     HallStar(favorite, hallText(if (favorite) "unfavorite" else "favorite"),
@@ -360,13 +452,14 @@ private fun HallGameCard(entry: HallEntry, favorite: Boolean, onFavorite: () -> 
                 }
             }
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(hallText("games.${entry.id}.title"), color = HallWhite, fontSize = 19.sp, fontWeight = FontWeight.SemiBold,
+                Text(entry.title(), color = HallWhite, fontSize = 19.sp, fontWeight = FontWeight.SemiBold,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { entry.tags.forEach { HallBadge(hallText("tags.$it"), HallGreen) } }
-                Text(hallText("games.${entry.id}.description"), color = HallMuted, fontSize = 12.sp, lineHeight = 18.sp, maxLines = 2,
+                Text(entry.description(), color = HallMuted, fontSize = 12.sp, lineHeight = 18.sp, maxLines = 2,
                     overflow = TextOverflow.Ellipsis, modifier = Modifier.heightIn(min = 36.dp))
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(hallText(if (entry.destination == null) "preview" else "enter"), color = HallGreen, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    Text(if (entry.canOpen) hallText("enter") else readI18n("gamePortal.maintenance"),
+                        color = if (entry.canOpen) HallGreen else HallMuted, fontSize = 13.sp, modifier = Modifier.weight(1f))
                     Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.size(18.dp), tint = HallGreen)
                 }
             }
