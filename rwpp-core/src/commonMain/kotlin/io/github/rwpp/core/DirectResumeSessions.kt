@@ -14,6 +14,8 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeout
 import java.io.IOException
 import java.security.SecureRandom
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /** Process-only credentials; no account identity, address history or configuration persistence. */
 object DirectResumeSessions {
@@ -31,7 +33,7 @@ object DirectResumeSessions {
 
     @Synchronized fun open(endpoint: DirectJoinEndpoint, manifest: DirectModManifest, transport: DirectModSyncTransport): DirectResumeConnection? {
         val value = sessions[key(endpoint)] ?: return null
-        if (value.manifest.serverInstance != manifest.serverInstance || value.manifest.scope != manifest.scope ||
+        if (value.manifest.serverInstance != manifest.serverInstance || !sameRecoveryScope(value.manifest, manifest) ||
             value.manifest.contentRevision != manifest.contentRevision || value.manifest.artifact != manifest.artifact ||
             value.manifest.mods != manifest.mods || value.manifest.hostUnitsChecksum != manifest.hostUnitsChecksum) {
             sessions.remove(key(endpoint))?.secret?.fill(0)
@@ -39,6 +41,17 @@ object DirectResumeSessions {
         }
         if (manifest.protocolVersion != 4 || manifest.capabilities and 3 != 3 || manifest.phase != "match") return null
         return DirectResumeConnection(endpoint, manifest, transport, value.secret.copyOf())
+    }
+
+    private fun sameRecoveryScope(issued: DirectModManifest, match: DirectModManifest): Boolean {
+        if (issued.scope == match.scope) return true
+        if (!issued.lobby || match.phase != "match") return false
+        // TServer keeps the room session ID and advances the generation when the match starts.
+        val separator = issued.scope.lastIndexOf(':')
+        if (separator <= 0) return false
+        val lobbyGeneration = issued.scope.substring(separator + 1).toLongOrNull() ?: return false
+        if (lobbyGeneration !in 0L until Long.MAX_VALUE) return false
+        return match.scope == "${issued.scope.substring(0, separator)}:${lobbyGeneration + 1}"
     }
 
     @Synchronized fun clear() { sessions.values.forEach { it.secret.fill(0) }; sessions.clear() }
@@ -58,16 +71,31 @@ class DirectResumeConnection internal constructor(
     }
 
     suspend fun awaitAdmission() {
-        try { withTimeout(30_000) { while (true) {
-            currentCoroutineContext().ensureActive()
-            check(!closed)
-            try {
-                if (transport.checkResume(manifest.scope, secret, nonce).state == "admitted") return@withTimeout
-            } catch (error: DirectModSyncServerException) {
-                if (error.code != DirectModSyncErrorCode.NOT_READY) throw error
+        val handshakeStarted = TimeSource.Monotonic.markNow()
+        var nonceClaimed = false
+        try {
+            withTimeout(30_000) {
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    check(!closed)
+                    try {
+                        when (transport.checkResume(manifest.scope, secret, nonce).state) {
+                            "admitted" -> return@withTimeout
+                            "claimed" -> nonceClaimed = true
+                        }
+                    } catch (error: DirectModSyncServerException) {
+                        // Until native registration claims the nonce, TServer may report it as invalid.
+                        val awaitingClaim = !nonceClaimed && handshakeStarted.elapsedNow() < 5.seconds
+                        when (error.code) {
+                            DirectModSyncErrorCode.NOT_READY -> Unit
+                            DirectModSyncErrorCode.RESUME_INVALID -> if (!awaitingClaim) throw error
+                            else -> throw error
+                        }
+                    }
+                    delay(300)
+                }
             }
-            delay(300)
-        } } } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
+        } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
             currentCoroutineContext().ensureActive()
             throw java.net.SocketTimeoutException("Server did not confirm the recovered connection")
         }

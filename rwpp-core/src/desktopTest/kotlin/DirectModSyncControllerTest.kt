@@ -490,20 +490,50 @@ class DirectModSyncControllerTest {
 
     @Test
     fun sameProcessRecoveryUsesCachedExpansionWithoutANewSeatOrOrdinaryModDownload() = runBlocking<Unit> {
-        val value = expansionManifest()
+        val value = expansionManifest().copy(scope = "official-room:8")
         val endpoint = DirectJoinEndpoint("localhost", 5123)
         DirectResumeSessions.store(endpoint, value, io.github.rwpp.net.sync.direct.DirectResumeGrant(value.serverInstance, ByteArray(32) { 7 }))
-        val inMatch = value.copy(lobby = false, phase = "match")
-        val transport = FakeTransport().also { repeat(2) { _ -> it.manifestResults += { inMatch } } }
+        val inMatch = value.copy(scope = "official-room:9", lobby = false, phase = "match")
+        val transport = FakeTransport().also { fake ->
+            repeat(2) { fake.manifestResults += { inMatch } }
+            fake.onResumeCheck = { scope ->
+                assertEquals(inMatch.scope, scope)
+                if (fake.resumeChecks == 1) throw DirectModSyncServerException(DirectModSyncErrorCode.RESUME_INVALID)
+                lease().copy(scope = scope, state = "admitted")
+            }
+        }
         val environment = FakeEnvironment().also { it.checksum = 123 }
         val result = assertIs<DirectJoinSyncResult.Applied>(controller(environment, transport).preJoinSync("localhost", LoadingContext {}))
         assertEquals(listOf(false), environment.expansionDownloadPermission)
         assertEquals(0, transport.reserveCalls)
         assertTrue(transport.downloads.isEmpty())
         assertTrue(result.reservation == null)
-        assertTrue(result.resume != null)
-        result.resume!!.close()
-        DirectResumeSessions.clear()
+        try {
+            checkNotNull(result.resume).use { it.awaitAdmission() }
+            assertEquals(2, transport.resumeChecks)
+        } finally {
+            DirectResumeSessions.clear()
+        }
+    }
+
+    @Test
+    fun recoveryRejectsAnotherRoomOrALaterMatchOfTheSameRoom() = runBlocking<Unit> {
+        val lobby = expansionManifest().copy(scope = "official-room:8")
+        val endpoint = DirectJoinEndpoint("localhost", 5123)
+        try {
+            for (scope in listOf("other-room:9", "official-room:10")) {
+                DirectResumeSessions.store(endpoint, lobby,
+                    io.github.rwpp.net.sync.direct.DirectResumeGrant(lobby.serverInstance, ByteArray(32) { 7 }))
+                val match = lobby.copy(scope = scope, lobby = false, phase = "match")
+                val transport = FakeTransport().also { it.manifestResults += { match } }
+                val environment = FakeEnvironment()
+                assertIs<DirectJoinSyncResult.Failed>(controller(environment, transport).preJoinSync("localhost", LoadingContext {}))
+                assertEquals(0, environment.expansionLoads)
+                assertEquals(0, transport.reserveCalls)
+            }
+        } finally {
+            DirectResumeSessions.clear()
+        }
     }
 
     private fun expansionManifest() = DirectModManifest(4, "176", "scope", "ready", true, 123, emptyList(), "server-instance", "lobby", 3,
@@ -523,11 +553,13 @@ class DirectModSyncControllerTest {
         var renewCalls = 0
         var releaseCalls = 0
         var readyCalls = 0
+        var resumeChecks = 0
         var reservedRevision: String? = null
         var onReady: () -> Unit = {}
         var onReserve: () -> DirectModLease = { DirectModLease("scope", 90_000, 30_000, "reserved", 1, 10, 1) }
         var onRenew: () -> DirectModLease = { DirectModLease("scope", 90_000, 30_000, "reserved", 1, 10, 1) }
         var onDownload: (NetworkModDescriptor) -> Unit = {}
+        var onResumeCheck: (String) -> DirectModLease = { error("Unexpected recovery check") }
         val progress = mutableListOf<DirectModDownloadProgress>()
         override suspend fun getManifest(): DirectModManifest = manifestResults[manifestCalls++].invoke()
         override suspend fun download(descriptor: NetworkModDescriptor, stagingDirectory: File?) {
@@ -547,6 +579,10 @@ class DirectModSyncControllerTest {
         override suspend fun contentReady(scope: String, token: ByteArray, revision: String): DirectModLease { readyCalls++; onReady(); return onRenew() }
         override suspend fun renew(scope: String, token: ByteArray): DirectModLease { renewCalls++; return onRenew() }
         override suspend fun release(scope: String, token: ByteArray) { releaseCalls++ }
+        override suspend fun checkResume(scope: String, secret: ByteArray, attemptNonce: ByteArray): DirectModLease {
+            resumeChecks++
+            return onResumeCheck(scope)
+        }
     }
 
     private class FakeEnvironment : DirectModSyncEnvironment {
