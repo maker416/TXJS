@@ -150,7 +150,7 @@ internal fun BrowserPage(
         BoxWithConstraints(Modifier.fillMaxSize()) {
             // 选择完成后才创建原生浏览器，让首次弹窗拥有完整的输入焦点。
             if (orientation != null) {
-                BrowserKernelGate(active, onReady = { kernelReady = it }) {
+                BrowserKernelGate(active, showNotice = overlaysAvailable, onReady = { kernelReady = it }) {
                     key(browser) { EmbeddedBrowser(browser, Modifier.fillMaxSize()) }
                 }
             }

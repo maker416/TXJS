@@ -11,6 +11,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.test.*
 import com.sun.net.httpserver.HttpServer
+import io.github.rwpp.app.UpdateDownloadCancelledException
 import io.github.rwpp.app.UpdateDownloadSession
 import io.github.rwpp.i18n.i18nTable
 import io.github.rwpp.net.browser.*
@@ -23,6 +24,8 @@ import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.nio.file.AccessDeniedException
 import java.security.MessageDigest
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -290,6 +293,95 @@ class BrowserKernelGateTest {
             runOnIdle { available.set(newer); active = true }
             waitUntil(timeoutMillis = 5000) { onAllNodesWithText("下载升级").fetchSemanticsNodes().isNotEmpty() }
             assertEquals(2, checks.get()); assertFalse(ready.get())
+        }
+    }
+    @Test fun eachEntryShowsCheckingThenBrieflyShowsReadyAlongsideTheBrowser(): Unit = Fixture().use { f ->
+        val local = f.component("1.0.0")
+        BrowserKernelManager(f.root, f.client).install(local, f.source, UpdateDownloadSession())
+        val checks = AtomicInteger()
+        val releaseChecks = List(2) { CountDownLatch(1) }
+        val checkingText = "正在检查浏览器组件和最新发行版…"
+        val readyText = "浏览器组件已就绪"
+        runDesktopComposeUiTest {
+            var active by mutableStateOf(true)
+            val ready = AtomicBoolean(false)
+            setContent {
+                MaterialTheme {
+                    BrowserKernelGateContent(f.environment.copy(requirement = local), f.client, f.source, active, ready::set,
+                        discover = {
+                            val currentCheck = checks.getAndIncrement()
+                            check(releaseChecks[currentCheck].await(10, TimeUnit.SECONDS))
+                            BrowserKernelDiscovery(BrowserKernelUpdate(local), f.source)
+                        }) { Text("Open browser") }
+                }
+            }
+            try {
+                for ((index, releaseCheck) in releaseChecks.withIndex()) {
+                    waitUntil(timeoutMillis = 5000) { checks.get() == index + 1 }
+                    onNodeWithText(checkingText).assertIsDisplayed()
+                    onNodeWithText(readyText).assertDoesNotExist()
+                    onNodeWithText("Open browser").assertDoesNotExist()
+
+                    releaseCheck.countDown()
+                    waitUntil(timeoutMillis = 5000) { ready.get() }
+                    onNodeWithText("Open browser").assertIsDisplayed()
+                    onNodeWithText(readyText).assertIsDisplayed()
+                    onNodeWithText(checkingText).assertDoesNotExist()
+
+                    if (index < releaseChecks.lastIndex) {
+                        runOnIdle { active = false }
+                        runOnIdle { active = true }
+                    }
+                }
+                waitUntil(timeoutMillis = 5000) { onAllNodesWithText(readyText).fetchSemanticsNodes().isEmpty() }
+                onNodeWithText("Open browser").assertIsDisplayed()
+            } finally {
+                releaseChecks.forEach { it.countDown() }
+            }
+        }
+    }
+    @Test fun usingTheVerifiedVersionOpensTheBrowserAndCancelsAnInFlightCheck(): Unit = Fixture().use { f ->
+        val local = f.component("1.0.0")
+        val newer = f.component("1.1.0")
+        BrowserKernelManager(f.root, f.client).install(local, f.source, UpdateDownloadSession())
+        f.calls.set(0)
+        val remoteSession = AtomicReference<UpdateDownloadSession>()
+        val releaseCheck = CountDownLatch(1)
+        val checkCancelled = AtomicBoolean(false)
+        runDesktopComposeUiTest {
+            val ready = AtomicBoolean(false)
+            setContent {
+                MaterialTheme {
+                    BrowserKernelGateContent(f.environment.copy(requirement = local), f.client, f.source, true, ready::set,
+                        discover = { session ->
+                            remoteSession.set(session)
+                            check(releaseCheck.await(10, TimeUnit.SECONDS))
+                            try {
+                                session.checkActive()
+                                BrowserKernelDiscovery(BrowserKernelUpdate(newer), f.source)
+                            } catch (error: UpdateDownloadCancelledException) {
+                                checkCancelled.set(true)
+                                throw error
+                            }
+                        }) { Text("Open browser with local version") }
+                }
+            }
+            try {
+                waitUntil(timeoutMillis = 5000) { remoteSession.get() != null }
+                onNodeWithText("正在检查浏览器组件和最新发行版…").assertIsDisplayed()
+                onNodeWithText("继续使用当前版本").assertIsDisplayed().performClick()
+                waitUntil(timeoutMillis = 5000) { ready.get() }
+                assertTrue(remoteSession.get().isCancelled)
+                onNodeWithText("Open browser with local version").assertIsDisplayed()
+            } finally {
+                releaseCheck.countDown()
+            }
+            waitUntil(timeoutMillis = 5000) { checkCancelled.get() }
+            onNodeWithText("Open browser with local version").assertIsDisplayed()
+            onNodeWithText("下载升级").assertDoesNotExist()
+            onNodeWithTag("browser-kernel-failure-details").assertDoesNotExist()
+            assertEquals(local, BrowserKernelRuntime.binding(local.id)?.requirement)
+            assertEquals(0, f.calls.get())
         }
     }
     @Test fun changedContentsWithTheSameVersionNeverReplaceLocalComponent(): Unit = Fixture().use { f ->

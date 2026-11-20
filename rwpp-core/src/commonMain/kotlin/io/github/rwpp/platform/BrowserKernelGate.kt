@@ -8,19 +8,15 @@
 package io.github.rwpp.platform
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.app.UpdateDownloadSession
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.net.Net
 import io.github.rwpp.net.browser.*
+import io.github.rwpp.widget.LocalDialogInteractive
 import kotlinx.coroutines.*
 import org.koin.compose.koinInject
 import java.io.File
@@ -31,7 +27,7 @@ data class BrowserKernelEnvironment(val requirement: BrowserKernelRequirement, v
 @Composable internal expect fun rememberBrowserKernelEnvironment(): BrowserKernelEnvironment
 internal expect val browserKernelDownloadRequired: Boolean
 
-/** Native runtimes bind to one verified directory for this process; reopening a page is offline. */
+/** Native runtimes bind to one verified directory for the lifetime of the process. */
 internal object BrowserKernelRuntime {
     data class Binding(val directory: File, val requirement: BrowserKernelRequirement?)
     private val verified = ConcurrentHashMap<String, Binding>()
@@ -48,7 +44,7 @@ internal object BrowserKernelRuntime {
 internal data class BrowserKernelDiscovery(val update: BrowserKernelUpdate, val source: BrowserKernelSource)
 
 @Composable
-internal fun BrowserKernelGate(active: Boolean, onReady: (Boolean) -> Unit, content: @Composable () -> Unit) {
+internal fun BrowserKernelGate(active: Boolean, showNotice: Boolean = true, onReady: (Boolean) -> Unit, content: @Composable () -> Unit) {
     if (!browserKernelDownloadRequired) { SideEffect { onReady(true) }; content(); return }
     val environment = rememberBrowserKernelEnvironment()
     val net = koinInject<Net>()
@@ -58,40 +54,51 @@ internal fun BrowserKernelGate(active: Boolean, onReady: (Boolean) -> Unit, cont
     BrowserKernelGateContent(environment, client, source, active, onReady, discover = { session ->
         val release = source.latest(session)
         BrowserKernelDiscovery(BrowserKernelUpdateResolver(metadataClient).resolve(environment.requirement, release, session), release.source())
-    }, content = content)
+    }, showNotice = showNotice, content = content)
 }
 
 @Composable
 internal fun BrowserKernelGateContent(environment: BrowserKernelEnvironment, client: okhttp3.OkHttpClient,
     source: BrowserKernelSource, active: Boolean, onReady: (Boolean) -> Unit,
-    discover: ((UpdateDownloadSession) -> BrowserKernelDiscovery)? = null, content: @Composable () -> Unit) {
+    discover: ((UpdateDownloadSession) -> BrowserKernelDiscovery)? = null,
+    showNotice: Boolean = true, content: @Composable () -> Unit) {
     val manager = remember(environment) { BrowserKernelManager(environment.root, client) }
     var ready by remember(environment) { mutableStateOf(false) }
-    var checking by remember(environment) { mutableStateOf(true) }
-    var running by remember { mutableStateOf(false) }
-    var failure by remember(environment) { mutableStateOf<BrowserKernelException?>(null) }
-    var restartNeeded by remember { mutableStateOf(false) }
-    var clientUpdateRequired by remember { mutableStateOf(false) }
-    var local by remember(environment) { mutableStateOf<BrowserKernelRequirement?>(null) }
-    var target by remember(environment) { mutableStateOf<BrowserKernelRequirement?>(null) }
+    var checking by remember(environment, active) { mutableStateOf(true) }
+    var running by remember(environment, active) { mutableStateOf(false) }
+    var failure by remember(environment, active) { mutableStateOf<BrowserKernelException?>(null) }
+    var restartNeeded by remember(environment, active) { mutableStateOf(false) }
+    var clientUpdateRequired by remember(environment, active) { mutableStateOf(false) }
+    var local by remember(environment, active) { mutableStateOf<BrowserKernelRequirement?>(null) }
+    var target by remember(environment, active) { mutableStateOf<BrowserKernelRequirement?>(null) }
     var downloadSource by remember(environment) { mutableStateOf(source) }
     var recheck by remember { mutableIntStateOf(0) }
-    var progress by remember { mutableStateOf<BrowserKernelProgress?>(null) }
+    var progress by remember(environment, active) { mutableStateOf<BrowserKernelProgress?>(null) }
+    var currentChoice by remember(environment, active) { mutableStateOf<BrowserKernelRequirement?>(null) }
     val scope = rememberCoroutineScope()
     var cancellation by remember { mutableStateOf<UpdateDownloadSession?>(null) }
 
-    suspend fun enable(requirement: BrowserKernelRequirement, directory: File = File(environment.root, requirement.id)) {
+    suspend fun enable(session: UpdateDownloadSession, requirement: BrowserKernelRequirement, directory: File = File(environment.root, requirement.id)) {
+        session.checkActive()
         val binding = withContext(Dispatchers.IO) { BrowserKernelRuntime.bindVerified(environment.requirement.id, requirement, directory, manager) }
+        session.checkActive()
         local = binding.requirement ?: environment.requirement
         ready = true
     }
-    LaunchedEffect(environment, active, recheck) {
+    LaunchedEffect(environment, active, recheck, currentChoice) {
         if (!active) { cancellation?.cancel(); return@LaunchedEffect }
         cancellation?.cancel()
         running = false; progress = null
-        checking = true; ready = false; failure = null; restartNeeded = false; clientUpdateRequired = false; target = null
+        checking = true; ready = false; failure = null; restartNeeded = false; target = null
         val session = UpdateDownloadSession().also { cancellation = it }
         try {
+            val chosen = currentChoice
+            if (chosen != null) {
+                enable(session, chosen)
+                return@LaunchedEffect
+            }
+            clientUpdateRequired = false
+            local = null
             val cached = withContext(Dispatchers.IO) {
                 manager.newestInstalled(environment.requirement) ?: environment.legacyDirectory?.let {
                     manager.adoptLegacy(environment.requirement, it)?.let { environment.requirement }
@@ -106,6 +113,7 @@ internal fun BrowserKernelGateContent(environment: BrowserKernelEnvironment, cli
                 if (local == null) throw error
                 null
             }
+            session.checkActive()
             clientUpdateRequired = discovery?.update?.newerClientRequired == true
             downloadSource = discovery?.source ?: source
             val remote = discovery?.update?.requirement
@@ -117,10 +125,12 @@ internal fun BrowserKernelGateContent(environment: BrowserKernelEnvironment, cli
                     fallback = BrowserKernelFailureKind.VERIFICATION)
             }
             target = selected
-            val installed = withContext(Dispatchers.IO) { manager.installed(selected) }
+            val installed = if (selected == cached) File(environment.root, selected.id)
+                else withContext(Dispatchers.IO) { manager.installed(selected) }
+            session.checkActive()
             if (installed != null) {
                 if (bound != null && selected.id != local?.id) restartNeeded = true
-                else enable(selected, installed)
+                else enable(session, selected, installed)
             }
         } catch (error: Exception) {
             if (error is CancellationException) throw error
@@ -129,81 +139,47 @@ internal fun BrowserKernelGateContent(environment: BrowserKernelEnvironment, cli
                 org.slf4j.LoggerFactory.getLogger("browser-kernel").warn("Cannot prepare browser component", error)
             }
         } finally {
-            checking = false
-            if (cancellation === session) cancellation = null
+            if (cancellation === session) {
+                checking = false
+                cancellation = null
+            }
         }
     }
     // Account changes replace the caller's browser state while the verified runtime stays ready.
     // Notify the current callback on every composition, including that replacement.
-    SideEffect { onReady(ready) }
+    val browserReady = ready && !checking
+    SideEffect { onReady(active && browserReady) }
     val currentOnReady by rememberUpdatedState(onReady)
     DisposableEffect(environment) { onDispose { cancellation?.cancel(); currentOnReady(false) } }
-    if (ready) {
-        if (clientUpdateRequired) Column(Modifier.fillMaxSize()) {
-            Text(readI18n("browser.kernelClientUpdate"), modifier = Modifier.padding(12.dp))
-            Box(Modifier.weight(1f)) { content() }
-        } else content()
-        return
-    }
-    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        Column(Modifier.weight(1f, fill = false).widthIn(max = 640.dp).fillMaxWidth()
-            .verticalScroll(rememberScrollState()).testTag("browser-kernel-body"),
-            horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(readI18n("browser.kernelTitle"), style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(12.dp))
-            val currentFailure = failure
-            val retryProgress = progress?.takeIf { running && it.stage == BrowserKernelStage.RETRYING }
-            val statusText = when {
-                retryProgress != null -> readI18n("browser.kernelAutoRetrying", arg = arrayOf(
-                    retryProgress.retryAttempt.toString(), retryProgress.maxRetries.toString()))
-                else -> readI18n(when {
-                    checking -> "browser.kernelChecking"
-                    restartNeeded -> "browser.kernelRestart"
-                    currentFailure != null -> when (currentFailure.kind) {
-                        BrowserKernelFailureKind.NETWORK -> "browser.kernelNetworkFailed"
-                        BrowserKernelFailureKind.VERIFICATION -> "browser.kernelVerificationFailed"
-                        BrowserKernelFailureKind.FILE_ACCESS -> "browser.kernelFileAccessFailed"
-                        BrowserKernelFailureKind.INSTALLATION -> "browser.kernelFailed"
-                    }
-                    running -> "browser.kernelPreparing"
-                    local != null -> "browser.kernelUpdateRequired"
-                    else -> "browser.kernelRequired"
-                })
-            }
-            Text(statusText, modifier = Modifier.testTag("browser-kernel-status"))
-            if (currentFailure != null) {
-                val details = buildList {
-                    currentFailure.path?.takeIf { it.isNotBlank() }?.let { add(readI18n("browser.kernelFilePath") + " " + it) }
-                    val reason = currentFailure.systemReason?.takeIf { it.isNotBlank() }
-                        ?: currentFailure.cause?.message?.takeIf { it.isNotBlank() }
-                        ?: currentFailure.message.orEmpty()
-                    if (reason.isNotBlank()) add(readI18n("browser.kernelFailureReason") + " " + reason)
-                }.joinToString("\n")
-                if (details.isNotBlank()) SelectionContainer {
-                    Text(details, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
-                        .testTag("browser-kernel-failure-details"), style = MaterialTheme.typography.bodySmall)
-                }
-                Text(readI18n("browser.kernelRetryCached"), modifier = Modifier.padding(top = 12.dp),
-                    style = MaterialTheme.typography.bodySmall)
-            }
-            if (clientUpdateRequired) Text(readI18n("browser.kernelClientUpdate"))
-            val desired = target ?: environment.requirement
-            Text(readI18n("browser.kernelVersion") + " " + (local?.manifest?.componentVersion?.let { "$it → " } ?: "") + desired.manifest.componentVersion)
-            if (!restartNeeded) Text("${desired.manifest.parts.sumOf { it.size } / (1024 * 1024)} MiB")
-            if (running) {
-                val update = progress
-                Spacer(Modifier.height(12.dp))
-                if (update != null && update.total > 0 && update.stage == BrowserKernelStage.DOWNLOADING) {
-                    LinearProgressIndicator(progress = { (update.bytes.toFloat() / update.total).coerceIn(0f, 1f) }, modifier = Modifier.width(280.dp))
-                    Text("${update.bytes / (1024 * 1024)} / ${update.total / (1024 * 1024)} MiB")
-                }
-            }
+    Box(Modifier.fillMaxSize()) {
+        if (browserReady || (!active && ready)) {
+            if (clientUpdateRequired) Column(Modifier.fillMaxSize()) {
+                Text(readI18n("browser.kernelClientUpdate"), modifier = Modifier.padding(12.dp))
+                Box(Modifier.weight(1f)) { content() }
+            } else content()
         }
-        if (!checking && !restartNeeded) {
-            TextButton(onClick = {
-                if (running) { cancellation?.cancel(); return@TextButton }
+        if (active) BrowserKernelPanel(
+            visible = !browserReady,
+            checking = checking,
+            running = running,
+            failure = failure,
+            restartNeeded = restartNeeded,
+            clientUpdateRequired = clientUpdateRequired,
+            local = local,
+            target = target,
+            progress = progress,
+            onContinue = if (!browserReady && !running && local != null && currentChoice == null) {
+                {
+                    // Stop a slow metadata request before activating the verified local component.
+                    cancellation?.cancel()
+                    currentChoice = local
+                }
+            } else null,
+            onPrimaryAction = action@{
+                if (ready) return@action
+                if (running) { cancellation?.cancel(); return@action }
                 val requirement = target
-                if (requirement == null) { recheck++; return@TextButton }
+                if (requirement == null) { currentChoice = null; recheck++; return@action }
                 val session = UpdateDownloadSession().also { cancellation = it }
                 running = true; failure = null
                 scope.launch {
@@ -213,9 +189,10 @@ internal fun BrowserKernelGateContent(environment: BrowserKernelEnvironment, cli
                                 scope.launch { if (cancellation === session) progress = update }
                             }
                         }
+                        session.checkActive()
                         val bound = BrowserKernelRuntime.binding(environment.requirement.id)
                         if (bound != null && (bound.requirement ?: environment.requirement).id != requirement.id) restartNeeded = true
-                        else enable(requirement, installed)
+                        else enable(session, requirement, installed)
                     } catch (error: Exception) {
                         if (!session.isCancelled && error !is CancellationException) {
                             org.slf4j.LoggerFactory.getLogger("browser-kernel").error("Cannot prepare browser kernel ${environment.requirement.id}", error)
@@ -223,11 +200,10 @@ internal fun BrowserKernelGateContent(environment: BrowserKernelEnvironment, cli
                         }
                     } finally { if (cancellation === session) { running = false; cancellation = null; progress = null } }
                 }
-            }) { Text(readI18n(if (running) "browser.kernelCancel" else if (failure != null) "browser.kernelRetry" else if (local != null) "browser.kernelUpgrade" else "browser.kernelDownload")) }
+            },
+        )
+        if (active && browserReady) {
+            BrowserKernelReadyNotice(local?.manifest?.componentVersion, showNotice && LocalDialogInteractive.current)
         }
-        if (!checking && !running && local != null) TextButton(onClick = {
-            val current = local ?: return@TextButton
-            scope.launch { enable(current) }
-        }) { Text(readI18n("browser.kernelUseCurrent")) }
     }
 }

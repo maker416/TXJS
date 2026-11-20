@@ -5,6 +5,7 @@
  * https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
  */
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -21,12 +22,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.use
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
+import io.github.rwpp.i18n.i18nTable
+import io.github.rwpp.platform.BrowserKernelPanel
 import io.github.rwpp.ui.rememberAnimatedMultiplayerListTopInset
 import io.github.rwpp.ui.rememberMultiplayerContentPadding
 import io.github.rwpp.widget.*
 import io.github.rwpp.widget.v2.LineSpinFadeLoaderIndicator
 import java.io.File
 import kotlin.test.*
+import net.peanuuutz.tomlkt.Toml
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
 import org.koin.dsl.module
@@ -75,6 +79,52 @@ class UiMotionTest {
             val stopped = scene.png(1600)
             assertFalse(scene.hasInvalidations(), "Switching off must dispose infinite animation jobs")
             assertContentEquals(stopped, scene.png(2500))
+        }
+    }
+
+    @Test
+    fun browserKernelCheckAnimatesOnlyWhenMotionIsEnabled() {
+        val previousTable = i18nTable
+        i18nTable = Toml.parseToTomlTable(File("src/commonMain/composeResources/files/bundle_zh.toml").readText())
+        try {
+            ImageComposeScene(width = 530, height = 220) {
+                UiMotionTheme(defaultRWPPColorScheme, Typography()) {
+                    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                        BrowserKernelPanel(
+                            visible = true,
+                            checking = true,
+                            running = false,
+                            failure = null,
+                            restartNeeded = false,
+                            clientUpdateRequired = false,
+                            local = null,
+                            target = null,
+                            progress = null,
+                            onContinue = null,
+                            onPrimaryAction = {},
+                        )
+                    }
+                }
+            }.use { scene ->
+                scene.frames(0)
+                val still = scene.png(100)
+                assertFalse(scene.hasInvalidations())
+                assertContentEquals(still, scene.png(900))
+
+                settings.setUiAnimationsEnabled(true)
+                Snapshot.sendApplyNotifications()
+                scene.frames(1000)
+                assertFalse(scene.png(1100).contentEquals(scene.png(1450)))
+
+                settings.setUiAnimationsEnabled(false)
+                Snapshot.sendApplyNotifications()
+                scene.frames(1500)
+                assertFalse(scene.hasInvalidations())
+                assertContentEquals(still, scene.png(1800))
+                File("build/reports/ui-motion/browser-kernel.png").apply { parentFile.mkdirs(); writeBytes(still) }
+            }
+        } finally {
+            i18nTable = previousTable
         }
     }
 
