@@ -50,7 +50,6 @@ import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
@@ -796,7 +795,6 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
             var roomDetailsDialogVisible by remember { mutableStateOf(false) }
             var isLocked by remember(update) { mutableStateOf(room.lockedRoom) }
             val mapType = snapshot.mapType
-            val compactRowShape = RoundedCornerShape(6.dp)
             val scrollState = rememberScrollState()
             val enableAnimations = uiAnimationsEnabled()
 
@@ -860,7 +858,6 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                         game = game,
                                         update = update,
                                         playerListState = playerListState,
-                                        rowShape = compactRowShape,
                                         onPlayerClick = onPlayerClick,
                                         enableAnimations = enableAnimations,
                                         expandVertically = false,
@@ -917,7 +914,6 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                         game = game,
                                         update = update,
                                         playerListState = playerListState,
-                                        rowShape = compactRowShape,
                                         onPlayerClick = onPlayerClick,
                                         enableAnimations = enableAnimations,
                                         expandVertically = true,
@@ -2541,7 +2537,6 @@ internal fun CompactPlayerPanel(
     game: Game,
     update: Boolean,
     playerListState: LazyListState,
-    rowShape: Shape,
     onPlayerClick: (Player) -> Unit,
     enableAnimations: Boolean,
     expandVertically: Boolean,
@@ -2563,7 +2558,6 @@ internal fun CompactPlayerPanel(
     ) {
         RoomPlayerTableHeader(
             compact = true,
-            rowShape = rowShape,
             modifier = Modifier.padding(end = CompactScrollbarReservedWidth),
         )
         LazyColumnScrollbar(
@@ -2603,7 +2597,6 @@ internal fun CompactPlayerPanel(
                         update = update,
                         onPlayerClick = onPlayerClick,
                         compact = true,
-                        rowShape = rowShape,
                         onViewProfile = onViewProfile,
                         modifier = if (enableAnimations) {
                             Modifier.animateItem()
@@ -2621,7 +2614,6 @@ internal fun CompactPlayerPanel(
                         RoomInviteSlotRow(
                             onClick = onInvite,
                             compact = true,
-                            rowShape = rowShape,
                         )
                     }
                 }
@@ -3272,11 +3264,10 @@ private fun RoomToggleChip(
 private fun RoomInviteSlotRow(
     onClick: () -> Unit,
     compact: Boolean = false,
-    rowShape: Shape = CircleShape,
 ) {
     val style = roomThemeSpec().player
     val themed = style != RoomPlayerSpec()
-    val shape = if (themed) RoundedCornerShape(style.corner.dp) else rowShape
+    val shape = RoundedCornerShape(style.corner.dp)
     Box(
         modifier = Modifier
             .padding(if (compact) 2.dp else 5.dp)
@@ -3287,8 +3278,8 @@ private fun RoomInviteSlotRow(
                     .roomThemeBorder(style.borderWidth,
                         roomThemeColor(style.borderColor, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), shape)
             } else {
-                Modifier.border(BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), rowShape)
-                    .clip(rowShape)
+                Modifier.border(BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), shape)
+                    .clip(shape)
             })
             .bounceClick(onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -3317,11 +3308,10 @@ private fun RoomInviteSlotRow(
 private fun RoomPlayerTableHeader(
     modifier: Modifier = Modifier,
     compact: Boolean = false,
-    rowShape: Shape = CircleShape,
 ) {
     val style = roomThemeSpec().player
     val themed = style != RoomPlayerSpec()
-    val shape = if (themed) RoundedCornerShape(style.corner.dp) else rowShape
+    val shape = RoundedCornerShape(style.corner.dp)
     val strokeColor = MaterialTheme.colorScheme.secondaryContainer
     val columns = roomPlayerColumnWeights(compact, style)
     Row(
@@ -3330,7 +3320,7 @@ private fun RoomPlayerTableHeader(
             .then(if (themed) {
                 Modifier.roomThemeBorder(style.borderWidth,
                     roomThemeColor(style.borderColor, MaterialTheme.colorScheme.secondary), shape)
-            } else Modifier.border(BorderStroke(2.dp, MaterialTheme.colorScheme.secondary), rowShape))
+            } else Modifier.border(BorderStroke(2.dp, MaterialTheme.colorScheme.secondary), shape))
             .fillMaxWidth(style.sizing.widthPercent / 100f),
     ) {
         Spacer(Modifier.width(style.card.avatarCellWidth(compact, style.sizing.minHeight)))
@@ -3364,7 +3354,6 @@ internal fun RoomPlayerTableRow(
     onPlayerClick: (Player) -> Unit,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
-    rowShape: Shape = CircleShape,
     onViewProfile: ((Player) -> Unit)? = null,
 ) {
     // 跟随房间刷新重建，避免模组预设变化后玩家初始单位后缀显示 Unknown
@@ -3375,7 +3364,7 @@ internal fun RoomPlayerTableRow(
     val frame = io.github.rwpp.theme.PersonalizedAppearanceController.variantFor(player, "room.player.frame")
     val personalizedBackground = io.github.rwpp.theme.PersonalizedAppearanceController.variantFor(player, "room.player.background")
     val themed = style != RoomPlayerSpec() || frame != null || personalizedBackground != null
-    val shape = if (themed) RoundedCornerShape(style.corner.dp) else rowShape
+    val shape = RoundedCornerShape(style.corner.dp)
     val slot = player.spawnPoint + 1
     val columns = roomPlayerColumnWeights(compact, style)
     Box(modifier.testTag("room-player-background-$slot")) {
@@ -3391,7 +3380,7 @@ internal fun RoomPlayerTableRow(
                             roomThemeColor(style.backgroundColor, Color.Transparent), shape, style.opacity)
                             .roomThemeBorder(frame?.borderWidth ?: style.borderWidth,
                                 roomThemeColor(frame?.borderColor ?: style.borderColor, MaterialTheme.colorScheme.primary), shape)
-                    } else Modifier.border(BorderStroke(2.dp, MaterialTheme.colorScheme.primary), rowShape))
+                    } else Modifier.border(BorderStroke(2.dp, MaterialTheme.colorScheme.primary), shape))
                     .fillMaxWidth(style.sizing.widthPercent / 100f)
                     .testTag("room-player-$slot")
                     // 任意真人玩家可点（个人名片）；房主/主机/点自己沿用玩家配置弹窗；AI 仅房主可点
@@ -3402,11 +3391,7 @@ internal fun RoomPlayerTableRow(
                         onPlayerClick(player)
                     },
             ) {
-                RoomPlayerCardBody(style.card, player, room, compact,
-                    // A capsule row needs a round avatar; rectangular rows retain the pack's corner.
-                    avatarShape = if (!themed && shape == CircleShape) CircleShape else null,
-                    sizing = style.sizing,
-                ) {
+                RoomPlayerCardBody(style.card, player, room, compact, sizing = style.sizing) {
                     val baseName = player.name + if (!isDetector && player.startingUnit != -1) {
                         " - ${options.firstOrNull { it.first == player.startingUnit }?.second ?: "Unknown"}"
                     } else ""

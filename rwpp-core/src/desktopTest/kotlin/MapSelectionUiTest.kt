@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
@@ -188,7 +187,7 @@ class MapSelectionUiTest {
                         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                             CompactPlayerPanel(
                                 players = emptyList(), room = room, game = game, update = false,
-                                playerListState = rememberLazyListState(), rowShape = RoundedCornerShape(6.dp),
+                                playerListState = rememberLazyListState(),
                                 onPlayerClick = {}, enableAnimations = false, expandVertically = false,
                             )
                         }

@@ -21,7 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathFillType
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
@@ -111,7 +110,6 @@ internal fun RowScope.RoomPlayerCardBody(
     player: Player,
     room: GameRoom,
     compact: Boolean,
-    avatarShape: Shape? = null,
     sizing: RoomPlayerSizingSpec = RoomPlayerSizingSpec(),
     cells: @Composable RowScope.() -> Unit,
 ) {
@@ -135,7 +133,7 @@ internal fun RowScope.RoomPlayerCardBody(
         } else {
             val avatar = card.avatar
             val size = metrics.avatarSize(content.copy(rows = rows))
-            val shape = avatarShape ?: RoundedCornerShape(avatar.corner.dp)
+            val shape = RoundedCornerShape(avatar.corner.dp)
             val tint = roomThemeColor(avatar.tint, MaterialTheme.colorScheme.primary)
             Box(
                 Modifier.width(metrics.avatarWidth).fillMaxHeight().padding(metrics.avatarPadding),

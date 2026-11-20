@@ -17,8 +17,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -28,7 +26,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.testTag
@@ -778,18 +775,17 @@ class RoomArtThemeUiTest {
         savePlayerCards(if (compact) "vanilla-compact-52dp-40dp.png" else "vanilla-desktop-64dp-48dp.png")
     }
 
-    @Test fun desktopCapsuleClipsAccountAvatarsToCircleAndRestoresAfterThemeRemoval() =
-        runDesktopComposeUiTest(width = 700, height = 320) {
+    @Test fun desktopWaitingRoomUsesRoundedSlotsAndRestoresRoundedSquareAvatarsAfterThemeRemoval() =
+        runDesktopComposeUiTest(width = 1280, height = 1000) {
             val marker = 0xFFEC21C2.toInt()
             fakeAccountAvatars { png(marker) }
             runOnIdle { AccountSession.applyPreview(previewAvatarUser(hasAvatar = true)) }
-            show { PlayerRows() }
+            showRoom(WindowManager.Large)
             waitForColor("room-player-avatar-1", marker)
             val originalBounds = onNodeWithTag("room-player-avatar-1", useUnmergedTree = true).getUnclippedBoundsInRoot()
             val originalName = onNodeWithTag("room-cell-name-1", useUnmergedTree = true).getUnclippedBoundsInRoot()
-            val original = playerAvatarPixels(1)
-            assertCircleAvatar(original, marker)
-            savePlayerCards("desktop-capsule-circle-account-avatar.png")
+            val original = assertDefaultPlayerSlotShape(marker)
+            savePlayerCards("desktop-rounded-player-slot.png")
 
             val id = install("square-avatar-roundrect-row", """
                 [room.player]
@@ -800,54 +796,24 @@ class RoomArtThemeUiTest {
             """.trimIndent())
             runOnIdle { assertTrue(ArtThemeController.apply(id)) }
             waitForColor("room-player-avatar-1", marker)
-            val square = playerAvatarPixels(1)
+            val square = playerNodePixels("room-player-avatar-1")
             assertEquals(marker, square.getRGB(square.width / 2, square.height / 2))
             cornerPixels(square, 2).forEach { pixel ->
                 assertEquals(marker, pixel, "An explicit square avatar must retain its corners inside the roundrect row")
             }
             assertTrue(countColor(square, marker) > countColor(original, marker),
-                "A square theme avatar must preserve more image area than the vanilla circle")
+                "A zero-radius avatar must preserve more image area than the default rounded square")
             assertEquals(originalBounds, onNodeWithTag("room-player-avatar-1", useUnmergedTree = true).getUnclippedBoundsInRoot())
             assertEquals(originalName, onNodeWithTag("room-cell-name-1", useUnmergedTree = true).getUnclippedBoundsInRoot())
             savePlayerCards("theme-square-account-avatar-roundrect-row.png")
 
             runOnIdle { assertTrue(ArtThemeController.apply(null)) }
             waitForColor("room-player-avatar-1", marker)
-            val restored = playerAvatarPixels(1)
-            assertCircleAvatar(restored, marker)
+            val restored = assertDefaultPlayerSlotShape(marker)
             assertEquals(countColor(original, marker), countColor(restored, marker),
-                "Removing the theme must restore the original circle clipping")
+                "Removing the theme must restore the default rounded-square clipping")
             assertEquals(originalBounds, onNodeWithTag("room-player-avatar-1", useUnmergedTree = true).getUnclippedBoundsInRoot())
             assertEquals(originalName, onNodeWithTag("room-cell-name-1", useUnmergedTree = true).getUnclippedBoundsInRoot())
-        }
-
-    @Test fun androidRoundedPlayerRowsKeepRoundedSquareAccountAvatars() =
-        runDesktopComposeUiTest(width = 700, height = 320) {
-            val marker = 0xFFEC21C2.toInt()
-            var rowShape by mutableStateOf<Shape>(CircleShape)
-            fakeAccountAvatars { png(marker) }
-            runOnIdle { AccountSession.applyPreview(previewAvatarUser(hasAvatar = true)) }
-            show { PlayerRows(compact = true, rowShape = rowShape) }
-            waitForColor("room-player-avatar-1", marker)
-            val bounds = onNodeWithTag("room-player-avatar-1", useUnmergedTree = true).getUnclippedBoundsInRoot()
-            val name = onNodeWithTag("room-cell-name-1", useUnmergedTree = true).getUnclippedBoundsInRoot()
-            val circle = playerAvatarPixels(1)
-            assertCircleAvatar(circle, marker)
-
-            runOnIdle { rowShape = RoundedCornerShape(8.dp) }
-            val rounded = playerAvatarPixels(1)
-            assertEquals(marker, rounded.getRGB(rounded.width / 2, rounded.height / 2))
-            cornerPixels(rounded, 0).forEach { pixel ->
-                assertNotEquals(marker, pixel, "Android avatars must keep their rounded corners")
-            }
-            cornerPixels(rounded, rounded.width / 8).forEach { pixel ->
-                assertEquals(marker, pixel, "An 8dp corner must retain image pixels removed by a circle")
-            }
-            assertTrue(countColor(rounded, marker) > countColor(circle, marker) + rounded.width * rounded.height / 10,
-                "The Android rounded square must keep more source image than the PC circle")
-            assertEquals(bounds, onNodeWithTag("room-player-avatar-1", useUnmergedTree = true).getUnclippedBoundsInRoot())
-            assertEquals(name, onNodeWithTag("room-cell-name-1", useUnmergedTree = true).getUnclippedBoundsInRoot())
-            savePlayerCards("android-roundrect-account-avatar.png")
         }
 
     @Test fun playerRowClipsSquareAccountImagesAtItsOuterArc() =
@@ -866,7 +832,7 @@ class RoomArtThemeUiTest {
             runOnIdle { assertTrue(ArtThemeController.apply(id)) }
             show { PlayerRows() }
             waitForColor("room-player-avatar-1", marker)
-            val image = playerAvatarPixels(1)
+            val image = playerNodePixels("room-player-avatar-1")
             assertEquals(marker, image.getRGB(image.width / 2, image.height / 2))
             assertNotEquals(marker, image.getRGB(1, 1), "The parent row must clip pixels beyond its top-left arc")
             assertNotEquals(marker, image.getRGB(1, image.height - 2), "The parent row must clip pixels beyond its bottom-left arc")
@@ -883,6 +849,7 @@ class RoomArtThemeUiTest {
             showRoom(WindowManager.Middle)
             assertNull(ArtThemeController.activeTheme)
             waitForColor("room-player-avatar-1", accountColor)
+            assertDefaultPlayerSlotShape(accountColor)
             onNodeWithTag("room-player-account-avatar-1", useUnmergedTree = true).assertIsDisplayed()
             onNodeWithTag("room-player-avatar-fallback-3", useUnmergedTree = true).assertIsDisplayed()
             val avatar = onNodeWithTag("room-player-avatar-1", useUnmergedTree = true).getUnclippedBoundsInRoot()
@@ -1364,10 +1331,9 @@ class RoomArtThemeUiTest {
         onRow: (Player) -> Unit = {},
         onProfile: (Player) -> Unit = {},
         compact: Boolean = false,
-        rowShape: Shape = CircleShape,
     ) {
         Column { players.forEach { player -> RoomPlayerTableRow(player, room, game, update = false,
-            onPlayerClick = onRow, onViewProfile = onProfile, compact = compact, rowShape = rowShape) } }
+            onPlayerClick = onRow, onViewProfile = onProfile, compact = compact) } }
     }
 
     private fun ComposeUiTest.showRoom(mode: WindowManager) {
@@ -1405,16 +1371,16 @@ class RoomArtThemeUiTest {
     }
 
     /** Capture the whole scene first so these pixels include ancestor row clipping. */
-    private fun ComposeUiTest.playerAvatarPixels(slot: Int): BufferedImage {
+    private fun ComposeUiTest.playerNodePixels(tag: String): BufferedImage {
         val root = onNodeWithTag("room-art-test-root")
         val rootBounds = root.getUnclippedBoundsInRoot()
-        val avatarBounds = onNodeWithTag("room-player-avatar-$slot", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val bounds = onNodeWithTag(tag, useUnmergedTree = true).getUnclippedBoundsInRoot()
         val screenshot = root.captureToImage().toAwtImage()
         val scale = screenshot.width / (rootBounds.right - rootBounds.left).value
-        val left = kotlin.math.round((avatarBounds.left - rootBounds.left).value * scale).toInt()
-        val top = kotlin.math.round((avatarBounds.top - rootBounds.top).value * scale).toInt()
-        val width = kotlin.math.round((avatarBounds.right - avatarBounds.left).value * scale).toInt()
-        val height = kotlin.math.round((avatarBounds.bottom - avatarBounds.top).value * scale).toInt()
+        val left = kotlin.math.round((bounds.left - rootBounds.left).value * scale).toInt()
+        val top = kotlin.math.round((bounds.top - rootBounds.top).value * scale).toInt()
+        val width = kotlin.math.round((bounds.right - bounds.left).value * scale).toInt()
+        val height = kotlin.math.round((bounds.bottom - bounds.top).value * scale).toInt()
         return screenshot.getSubimage(left, top, width, height)
     }
 
@@ -1423,12 +1389,20 @@ class RoomArtThemeUiTest {
         image.getRGB(inset, image.height - inset - 1), image.getRGB(image.width - inset - 1, image.height - inset - 1),
     )
 
-    private fun assertCircleAvatar(image: BufferedImage, marker: Int) {
-        assertEquals(marker, image.getRGB(image.width / 2, image.height / 2), "The account image center must remain visible")
-        cornerPixels(image, 0).forEach { assertNotEquals(marker, it, "A circular avatar must clip all four corners") }
-        cornerPixels(image, image.width / 8).forEach {
-            assertNotEquals(marker, it, "Circle clipping must remove diagonal pixels retained by an 8dp rounded square")
+    private fun ComposeUiTest.assertDefaultPlayerSlotShape(avatarColor: Int): BufferedImage {
+        val row = playerNodePixels("room-player-1")
+        val border = row.getRGB(0, row.height / 2)
+        assertEquals(border, row.getRGB(0, row.height / 6), "The slot's straight side must extend past the capsule arc")
+        assertNotEquals(border, row.getRGB(0, 0), "The outer corner of the slot must be rounded")
+
+        val avatar = playerNodePixels("room-player-avatar-1")
+        assertEquals(avatar.width, avatar.height)
+        assertEquals(avatarColor, avatar.getRGB(avatar.width / 2, avatar.height / 2))
+        cornerPixels(avatar, 0).forEach { assertNotEquals(avatarColor, it, "The avatar's outer corners must be rounded") }
+        cornerPixels(avatar, avatar.width / 8).forEach {
+            assertEquals(avatarColor, it, "The rounded square must retain image pixels removed by a circle")
         }
+        return avatar
     }
 
     private fun ComposeUiTest.save(name: String) {
