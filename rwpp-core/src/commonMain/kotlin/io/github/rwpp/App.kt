@@ -438,7 +438,7 @@ fun App(
 
                 val portalRoute = launcherPage as? LauncherPage.GamePortal
                 if (portalRoute != null) {
-                    LauncherPageHost(portalRoute, EnterTransition.None, ExitTransition.None) {
+                    LauncherBrowserPageHost(portalRoute, EnterTransition.None, ExitTransition.None) {
                         GamePortalView(portalRoute.appId,
                             onExit = { resetNavigation(LauncherPage.GameplayHall) },
                             onOpenRoom = {
@@ -464,7 +464,7 @@ fun App(
                     )
                 }
 
-                LauncherPageHost(
+                LauncherBrowserPageHost(
                     LauncherPage.ResourceBrowser,
                     enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
                     exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
@@ -472,7 +472,7 @@ fun App(
                     ResourceBrowser { showResourceBrowser = false }
                 }
 
-                LauncherPageHost(
+                LauncherBrowserPageHost(
                     LauncherPage.Esports,
                     enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
                     exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,

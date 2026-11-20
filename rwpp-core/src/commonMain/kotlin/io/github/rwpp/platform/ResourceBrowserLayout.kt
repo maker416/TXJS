@@ -18,3 +18,6 @@ expect fun ResourceBrowserLayout(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 )
+
+@Composable
+internal expect fun BrowserPageWindow(visible: Boolean, content: @Composable () -> Unit)

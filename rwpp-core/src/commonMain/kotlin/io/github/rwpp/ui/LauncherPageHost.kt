@@ -18,6 +18,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.zIndex
 import io.github.rwpp.platform.BackHandlerScope
+import io.github.rwpp.platform.BrowserPageWindow
 import io.github.rwpp.widget.LocalDialogInteractive
 
 @Composable
@@ -34,6 +35,18 @@ internal fun LauncherPageHost(
         exit = exit,
         content = content,
     )
+}
+
+@Composable
+internal fun LauncherBrowserPageHost(
+    page: LauncherPage,
+    enter: EnterTransition,
+    exit: ExitTransition,
+    content: @Composable () -> Unit,
+) {
+    LauncherPageHost(page, enter, exit) {
+        BrowserPageWindow(visible = LocalDialogInteractive.current, content = content)
+    }
 }
 
 /** 逻辑可见性立即决定交互资格，退出动画只保留绘制。 */

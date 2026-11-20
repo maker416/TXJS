@@ -12,13 +12,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposePanel
+import androidx.compose.ui.awt.ComposeDialog
 import androidx.compose.ui.graphics.Color
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import io.github.rwpp.ui.ResourceBrowserFloatingExit
 import io.github.rwpp.widget.LocalDialogInteractive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -27,6 +30,9 @@ import org.cef.CefApp
 import org.junit.Assume.assumeFalse
 import org.junit.Assume.assumeTrue
 import java.awt.GraphicsEnvironment
+import java.awt.Dialog
+import java.awt.Component
+import java.awt.Point
 import java.awt.Rectangle
 import java.awt.Robot
 import java.awt.event.InputEvent
@@ -131,11 +137,15 @@ class BrowserStartupNativeTest {
         }
         val selected = mutableStateOf<EmbeddedBrowserState?>(initial)
         val interactive = mutableStateOf(true)
+        val pageVisible = mutableStateOf(true)
+        val exitVisible = mutableStateOf(false)
         val reports = File("build/reports/browser-startup-native").apply { mkdirs() }
         val placeholder = 0x1b2638
-        val robot = Robot()
-        lateinit var panel: ComposePanel
+        val gameBackground = 0x982943
+        val robot = Robot().apply { autoDelay = 30 }
+        lateinit var panel: Component
         var frame: JFrame? = null
+        var transparentMenu: ComposeDialog? = null
 
         fun screenshot(): BufferedImage {
             val viewport = onEdt {
@@ -197,14 +207,17 @@ class BrowserStartupNativeTest {
 
         try {
             onEdt {
-                panel = ComposePanel().apply {
-                    background = java.awt.Color(placeholder)
-                    setContent {
-                        MaterialTheme(colorScheme = darkColorScheme(surface = Color(0xff1b2638))) {
-                            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-                                CompositionLocalProvider(LocalDialogInteractive provides interactive.value) {
-                                    selected.value?.let { browser ->
-                                        key(browser) { EmbeddedBrowser(browser, Modifier.fillMaxSize()) }
+                val content: @Composable () -> Unit = {
+                    MaterialTheme(colorScheme = darkColorScheme(surface = Color(0xff1b2638))) {
+                        CompositionLocalProvider(LocalDialogInteractive provides interactive.value) {
+                            val browser = selected.value
+                            if (browser == null) {
+                                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {}
+                            } else {
+                                BrowserPageWindow(pageVisible.value) {
+                                    key(browser) { EmbeddedBrowser(browser, Modifier.fillMaxSize()) }
+                                    if (exitVisible.value) {
+                                        ResourceBrowserFloatingExit { selected.value = null }
                                     }
                                 }
                             }
@@ -214,14 +227,30 @@ class BrowserStartupNativeTest {
                 frame = JFrame("Browser startup native regression").apply {
                     // 启动器原生菜单与全屏窗口使用无边框宿主，遮罩会完全覆盖浏览器视口。
                     isUndecorated = true
-                    contentPane.background = java.awt.Color(placeholder)
-                    contentPane.add(panel)
+                    contentPane.background = java.awt.Color(gameBackground)
                     setSize(720, 520)
                     setLocationRelativeTo(null)
                     // Robot 读取真实屏幕，测试窗口须稳定置前以免截到其它正在使用的应用。
                     isAlwaysOnTop = true
                     isVisible = true
                     toFront()
+                }.also { owner ->
+                    if (System.getProperty("os.name").startsWith("Windows")) {
+                        transparentMenu = ComposeDialog(owner, Dialog.ModalityType.MODELESS, owner.graphicsConfiguration).apply {
+                            isUndecorated = true
+                            isTransparent = true
+                            setContent {
+                                CompositionLocalProvider(LocalDesktopBrowserPageOwner provides this@apply) { content() }
+                            }
+                            bounds = owner.bounds
+                            isVisible = true
+                        }
+                        panel = checkNotNull(transparentMenu).contentPane
+                    } else {
+                        panel = ComposePanel().apply { setContent(content) }
+                        owner.contentPane.add(panel)
+                        owner.validate()
+                    }
                 }
             }
             runBlocking {
@@ -261,6 +290,24 @@ class BrowserStartupNativeTest {
                 awaitCondition("native page click") { clicked.isDone }
                 awaitColor("interactive-home", 0x3158be)
 
+                transparentMenu?.let { menu ->
+                    onEdt { pageVisible.value = false }
+                    awaitColor("browser-host-hidden", gameBackground)
+                    assertTrue(onEdt { initial.controller != null })
+                    onEdt {
+                        val resized = Rectangle(menu.bounds).apply {
+                            translate(24, 18)
+                            grow(30, 20)
+                        }
+                        frame?.bounds = resized
+                        menu.bounds = resized
+                        pageVisible.value = true
+                    }
+                    awaitColor("resized-browser-host", 0x3158be) {
+                        onEdt { menu.ownedWindows.any { it.isShowing && it.bounds == menu.bounds } }
+                    }
+                }
+
                 onEdt { initial.controller!!.loadUrl("$base/next") }
                 awaitCondition("subsequent navigation waiting") {
                     nextRequested.isDone && onEdt { initial.isLoading }
@@ -274,8 +321,22 @@ class BrowserStartupNativeTest {
                 onEdt { initial.controller!!.loadUrl("$base/plain") }
                 assertPlainPage("plain-after-navigation", initial)
 
-                onEdt { selected.value = null }
+                // A non-focusable native Popup must remain clickable after Chromium receives focus.
+                onEdt { exitVisible.value = true }
+                val exitOffset = onEdt { Point(panel.width - 28, ((panel.height - 56) * 0.35).toInt() + 28) }
+                awaitCondition("native exit button") {
+                    val image = screenshot()
+                    val pixel = image.getRGB(exitOffset.x, exitOffset.y)
+                    val buttonVisible = listOf(0, 8, 16).any { shift -> (pixel shr shift and 255) < 240 }
+                    if (buttonVisible) save("floating-exit", image)
+                    buttonVisible
+                }
+                val exitAt = onEdt { panel.locationOnScreen.apply { translate(exitOffset.x, exitOffset.y) } }
+                robot.mouseMove(exitAt.x, exitAt.y)
+                robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
+                robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
                 awaitCondition("previous browser disposal") { onEdt { initial.controller == null } }
+                onEdt { exitVisible.value = false }
                 awaitColor("closed-browser-host", placeholder)
                 val reopened = EmbeddedBrowserState("$base/failure")
                 onEdt { selected.value = reopened }
@@ -306,7 +367,7 @@ class BrowserStartupNativeTest {
             releaseBootstrap.countDown()
             releaseNext.countDown()
             releaseRecovery.countDown()
-            onEdt { selected.value = null; frame?.dispose() }
+            onEdt { selected.value = null; transparentMenu?.dispose(); frame?.dispose() }
             if (CefApp.getState() == CefApp.CefAppState.INITIALIZED) CefApp.getInstance().dispose()
             server.stop(0)
             executor.shutdownNow()

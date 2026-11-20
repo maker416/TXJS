@@ -43,3 +43,6 @@ private tailrec fun Context.findBrowserActivity(): Activity? = when (this) {
     is ContextWrapper -> baseContext.findBrowserActivity()
     else -> null
 }
+
+@Composable
+internal actual fun BrowserPageWindow(visible: Boolean, content: @Composable () -> Unit) = content()

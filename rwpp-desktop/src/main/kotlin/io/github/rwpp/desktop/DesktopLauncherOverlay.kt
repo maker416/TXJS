@@ -8,10 +8,12 @@
 package io.github.rwpp.desktop
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.awt.ComposeDialog
 import androidx.compose.ui.awt.ComposePanel
 import androidx.compose.ui.awt.RenderSettings
+import io.github.rwpp.platform.LocalDesktopBrowserPageOwner
 import org.jetbrains.skiko.ExperimentalSkikoApi
 import org.jetbrains.skiko.GraphicsApi
 import org.jetbrains.skiko.SkiaLayer
@@ -314,7 +316,9 @@ class DesktopLauncherOverlay(
                 }
             }
             dialog.isTransparent = true
-            dialog.setContent { nativeContent.invoke() }
+            dialog.setContent {
+                CompositionLocalProvider(LocalDesktopBrowserPageOwner provides dialog) { nativeContent.invoke() }
+            }
             selectingInitialRenderer = true
             try {
                 dialog.pack()
