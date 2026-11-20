@@ -58,6 +58,7 @@ data class PersonalizedThemeSpec(
     fun referencedAssetPaths(): Set<String> = buildSet {
         sanitized().slots.values.forEach { slot -> slot.variants.values.forEach { variant ->
             if (variant.image.isNotEmpty()) add(variant.image)
+            if (variant.avatarFrameImage.isNotEmpty()) add(variant.avatarFrameImage)
             variant.content.rows.forEach { row -> row.cells.forEach { cell ->
                 if (cell.iconImage.isNotEmpty()) add(cell.iconImage)
             } }
@@ -75,12 +76,17 @@ data class PersonalizedVariantSpec(
     val borderColor: String = "",
     val borderWidth: Int = 1,
     val content: RoomPlayerCardContentSpec = RoomPlayerCardContentSpec(),
+    val avatarFrameImage: String = "",
+    val displayName: String = "",
 ) {
     fun sanitized(slot: String): PersonalizedVariantSpec = when (slot) {
         "room.player.background" -> PersonalizedVariantSpec(
             image = image.takeIf(::isSafePersonalizedThemeAssetPath).orEmpty(),
+            displayName = displayName.trim().filterNot(Char::isISOControl).take(48),
         )
         "room.player.frame" -> PersonalizedVariantSpec(
+            avatarFrameImage = avatarFrameImage.takeIf(::isSafePersonalizedThemeAssetPath).orEmpty(),
+            displayName = displayName.trim().filterNot(Char::isISOControl).take(48),
             borderColor = borderColor.takeIf { parseColorHex(it) != null }?.trim()?.uppercase().orEmpty(),
             borderWidth = borderWidth.coerceIn(0, 6),
         )
@@ -120,6 +126,7 @@ fun validatePersonalizedTheme(spec: PersonalizedThemeSpec): ThemeValidation {
             if (!personalizedVariantId.matches(id)) warnings += "非法个性化 variant id 已忽略: $slot/$id"
             val key = "personalization.slots.$slot.variants.$id"
             path("$key.image", variant.image)
+            path("$key.avatarFrameImage", variant.avatarFrameImage)
             color("$key.borderColor", variant.borderColor)
             path("$key.content.avatarImage", variant.content.avatarImage)
             if (variant.borderWidth !in 0..6) warnings += "个性化描边宽度已限制为 0..6: $key"

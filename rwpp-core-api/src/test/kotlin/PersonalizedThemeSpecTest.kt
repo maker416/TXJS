@@ -41,12 +41,16 @@ class PersonalizedThemeSpecTest {
             [personalization.slots."room.player.background".variants.supporter]
             image = "art/supporter.png"
             [personalization.slots."room.player.frame".variants.gold]
+            image = "old/unused.png"
+            avatarFrameImage = "art/frame.png"
+            displayName = " 棱镜之冠 "
             borderColor = "#aabbcc"
             borderWidth = 20
         """.trimIndent())
         assertTrue(validation.isValid, validation.errors.toString())
         val personalization = assertNotNull(theme).personalization
-        assertEquals(setOf("art/supporter.png"), personalization.referencedAssetPaths())
+        assertEquals(setOf("art/supporter.png", "art/frame.png"), personalization.referencedAssetPaths())
+        assertEquals("棱镜之冠", personalization.slots.getValue("room.player.frame").variants.getValue("gold").displayName)
         assertEquals("#AABBCC", personalization.slots.getValue("room.player.frame").variants.getValue("gold").borderColor)
         assertEquals(6, personalization.slots.getValue("room.player.frame").variants.getValue("gold").borderWidth)
         assertTrue(validation.warnings.any { it.contains("描边") })

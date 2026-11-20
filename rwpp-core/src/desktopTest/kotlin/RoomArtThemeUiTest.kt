@@ -81,6 +81,7 @@ import io.github.rwpp.logger
 import io.github.rwpp.net.Net
 import io.github.rwpp.net.account.AccountApiClient
 import io.github.rwpp.net.account.AccountUser
+import io.github.rwpp.net.account.FriendItem
 import io.github.rwpp.net.roomid.RoomIdentityClient
 import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.theme.RoomPlayerCardSpec
@@ -615,6 +616,7 @@ class RoomArtThemeUiTest {
                         """{"user":{"id":84,"username":"verified-guest","nickname":"Ready guest","has_avatar":true}}"""
                     }
                     "/api/v1/roomid/publish" -> """{"ok":true}"""
+                    "/api/v1/users/84/presence" -> """{"presence":{"user_id":84,"online":true}}"""
                     else -> error("Unexpected identity request: ${request.url.encodedPath}")
                 }
                 Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("OK")
@@ -638,7 +640,11 @@ class RoomArtThemeUiTest {
             """.trimIndent()
             val id = install("verified-remote-avatar", config, mapOf("room/default.png" to png(defaultColor)))
             runOnIdle { assertTrue(ArtThemeController.apply(id)) }
-            show { PlayerRows() }
+            var profile by mutableStateOf(false)
+            show {
+                if (profile) PlayerCardContent(remote, room) { profile = false }
+                else PlayerRows()
+            }
             waitForColor("room-player-avatar-2", remoteColor)
             onNodeWithTag("room-player-account-avatar-2", useUnmergedTree = true).assertIsDisplayed()
             waitForColor("room-player-avatar-1", defaultColor)
@@ -648,6 +654,15 @@ class RoomArtThemeUiTest {
             assertTrue(avatarRequests.all { it.userId == 84L }, "Only the verified guest has an account avatar")
             assertTrue("/api/v1/users/lookup" in identityRequests)
             savePlayerCards("verified-remote-account-avatar.png")
+
+            runOnIdle { profile = true }
+            waitUntil { onAllNodesWithText(readI18n("playerCard.addFriend")).fetchSemanticsNodes().isNotEmpty() }
+            onNodeWithText("@verified-guest", substring = true).assertIsDisplayed()
+            onNodeWithText(readI18n("friends.online")).assertIsDisplayed()
+            onNodeWithText(readI18n("playerCard.preview")).assertDoesNotExist()
+            runOnIdle { FriendsSession.friends.add(FriendItem(RoomIdentityController.playerAccountFor(remote, room)!!)) }
+            onNodeWithText(readI18n("playerCard.sendMessage")).performClick()
+            waitUntil { UI.showFriendsView && FriendsSession.activePeer?.id == 84L }
 
             SwingUtilities.invokeAndWait {
                 players = players + player(remote.name, 4, 0)
@@ -1441,6 +1456,45 @@ class RoomArtThemeUiTest {
         val output = File("../build/artifacts/room-player-cards/previews").apply { mkdirs() }
         ImageIO.write(onNodeWithTag("room-art-test-root").captureToImage().toAwtImage(), "png", File(output, name))
         File(output, "README.txt").writeText("Real Compose waiting-room UI with offline engine test data. Player card text is static theme content. These are logical viewport captures, not Android device or multiplayer-game validation.\n")
+    }
+
+    @Test fun playerCardTryOnRestoresTheEquippedAppearance() = runDesktopComposeUiTest(width = 720, height = 520) {
+        localPlayer = player("Northstar", 0, 0, host = true)
+        val portrait = File("../examples/themes/pelagic-atlas/icon.png").readBytes()
+        val requests = fakeAccountAvatars { portrait }
+        runOnIdle { AccountSession.applyPreview(previewAvatarUser(true).copy(username = "northstar")) }
+        show { PlayerCardContent(localPlayer, room) {} }
+        waitUntil { requests.isNotEmpty() }
+        onNodeWithText("@northstar").assertIsDisplayed()
+        onNodeWithText(readI18n("playerCard.hostBadge")).assertIsDisplayed()
+        val card = onNodeWithTag("player-card")
+        val directory = File("../build/artifacts/player-card").apply { mkdirs() }
+        ImageIO.write(card.captureToImage().toAwtImage(), "png", File(directory, "outpost.png"))
+        onNodeWithText(readI18n("playerCard.preview")).performClick()
+        onNodeWithText(readI18n("playerCard.aurora")).performClick()
+        onNodeWithText(readI18n("playerCard.prism")).performClick()
+        onNodeWithText(readI18n("playerCard.aurora")).assertIsSelected()
+        onNodeWithText(readI18n("playerCard.prism")).assertIsSelected()
+        ImageIO.write(card.captureToImage().toAwtImage(), "png", File(directory, "try-on.png"))
+        onNodeWithText(readI18n("playerCard.endPreview")).performClick()
+        onNodeWithText(readI18n("playerCard.preview")).performClick()
+        onNodeWithText(readI18n("playerCard.outpost")).assertIsSelected()
+        onNodeWithText(readI18n("playerCard.alloy")).assertIsSelected()
+        runOnIdle { AccountSession.applyLoggedOutPreview() }
+        onNodeWithText(readI18n("friends.goLogin")).assertIsDisplayed()
+        onNodeWithText(readI18n("playerCard.previewTitle")).assertDoesNotExist()
+        onNodeWithText("@northstar").assertDoesNotExist()
+    }
+
+    @Test fun compactPlayerCardKeepsLongIdentityAndFrameControlsReachable() = runDesktopComposeUiTest(width = 320, height = 300) {
+        localPlayer = player("Northstar · Expedition Squadron", 0, 0, host = true)
+        runOnIdle { AccountSession.applyPreview(previewAvatarUser(false)) }
+        show { PlayerCardContent(localPlayer, room) {} }
+        onNodeWithText(localPlayer.name).assertIsDisplayed()
+        onNodeWithText(readI18n("playerCard.preview")).performClick()
+        onNodeWithTag("player-card").performTouchInput { swipeUp() }
+        onNodeWithText(readI18n("playerCard.prism")).assertIsDisplayed().performClick().assertIsSelected()
+        onNodeWithContentDescription(readI18n("common.close")).performScrollTo().assertIsDisplayed()
     }
 
     private fun previewAvatarUser(hasAvatar: Boolean) = AccountUser(

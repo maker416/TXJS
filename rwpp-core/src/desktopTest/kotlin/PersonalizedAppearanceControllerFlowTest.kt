@@ -436,6 +436,8 @@ class PersonalizedAppearanceControllerFlowTest {
         onNodeWithText("Target", useUnmergedTree = true).assertIsDisplayed()
         onNodeWithText("Other", useUnmergedTree = true).assertIsDisplayed()
         waitUntil(timeoutMillis = 15_000) { onAllNodesWithText("Supporter", useUnmergedTree = true).fetchSemanticsNodes().size == 1 }
+        // Let this assignment expire. A later resolve must not renew it between the fallback pixel checks.
+        resolutionLifetime = 0
         onNodeWithText("Supporter", useUnmergedTree = true).assertIsDisplayed()
         val layouts = mutableListOf<TextLayoutResult>()
         onNodeWithText("Supporter", useUnmergedTree = true).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
