@@ -3,10 +3,15 @@
 多人页的“申请24小时列表位”打开独立的开放平台。默认地址为
 `https://listup.xn--rhqr8xvr4ahqsgka.com`，上线前应将该域名通过 HTTPS 代理到开放平台服务。
 
-构建时可使用 `-PopenPlatformUrl=https://你的平台域名` 覆盖默认入口，值写入
-`rwpp-core-api` 的 `BuildConfig.OPEN_PLATFORM_URL`。运行时也可通过 JVM 系统属性
-`rwjs.openPlatform.url` 或环境变量 `RWJS_OPEN_PLATFORM_URL` 覆盖；系统属性优先于环境变量，
-运行时覆盖优先于构建参数。不新增玩家设置项，也不向网址附带账号 Token 或应用 Key。
+开发联调可在客户端的「设置 → 开发人员／调试 → 管理员调试」填写「开放平台 API 地址」。
+填写平台根地址，保存后重启客户端，玩法大厅、网页入服和专属美术会使用该地址。
+清空地址并保存、重启可以恢复默认地址。
+
+客户端按 JVM 系统属性 `rwjs.openPlatform.url`、环境变量 `RWJS_OPEN_PLATFORM_URL`、
+客户端保存的地址、构建时默认地址的顺序取值。修改
+`build/client-api-official.json` 或 `build/client-api-test.json` 的 `openPlatformUrl` 可改变打包默认值。单次构建也可用
+`-PopenPlatformUrl=https://你的平台域名` 临时覆盖。调试时应填写可信的开放平台，
+玩家身份核验会通过 API 请求头发送登录凭据。
 
 入口必须使用 HTTPS；本机调试允许 `http://localhost`、`http://127.0.0.1` 和 `http://[::1]`
 及其端口。网址不得包含用户名、密码、query 或 fragment。非法构建参数会使构建失败，

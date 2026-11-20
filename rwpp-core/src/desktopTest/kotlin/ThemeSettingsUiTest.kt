@@ -63,6 +63,9 @@ class ThemeSettingsUiTest {
                 single { settings }
                 single { AccountPreferences() }
                 single { ModPlaytimePreferences(apiUrl = "") }
+                single { MultiplayerPreferences() }
+                single { OnlinePresencePreferences() }
+                single { FeedbackPreferences() }
                 single<AppContext> { stub(AppContext::class.java) }
                 single<GameI18nResolver> { stub(GameI18nResolver::class.java) }
                 single<ConfigIO> {
@@ -245,6 +248,38 @@ class ThemeSettingsUiTest {
         onNodeWithText("开发者").performScrollTo().performClick()
         onNodeWithText(readI18n("settings.adminApi")).assertIsDisplayed().performClick()
         onNodeWithText(readI18n("settings.adminPassword")).assertIsDisplayed()
+    }
+
+    @Test
+    fun openPlatformDebugAddressRequiresUnlockAndValidatesBeforeSaving() = runDesktopComposeUiTest(width = 1100, height = 1200) {
+        setContent {
+            KoinContext(appKoin) {
+                RWPPTheme(default = true) {
+                    CompositionLocalProvider(LocalWindowManager provides WindowManager.Middle) {
+                        SettingsView({}, "RWPP", {}, {}, {})
+                    }
+                }
+            }
+        }
+        onNodeWithText("开发者").performClick()
+        val address = onNodeWithText(readI18n("settings.adminOpenPlatformApi"))
+        address.assertDoesNotExist()
+        onNodeWithText(readI18n("settings.adminApi")).performClick()
+        onNodeWithText(readI18n("settings.adminPassword")).performTextInput("114514")
+        onNodeWithText(readI18n("settings.adminConfirm")).performClick()
+        address.performScrollTo().performTextReplacement("http://stage.example.com")
+        onNodeWithText(readI18n("settings.adminOpenPlatformApiInvalid")).assertExists()
+        val save = onNodeWithContentDescription(readI18n("settings.saveChanges"))
+        save.assertIsNotEnabled()
+
+        address.performTextReplacement("https://stage.example.com/platform/")
+        runOnIdle { assertEquals("", settings.openPlatformApiUrl) }
+        save.assertIsEnabled().performClick()
+        runOnIdle { assertEquals("https://stage.example.com/platform", assertNotNull(saved).openPlatformApiUrl) }
+
+        address.performTextClearance()
+        save.performClick()
+        runOnIdle { assertEquals("", assertNotNull(saved).openPlatformApiUrl) }
     }
 
     private fun ComposeUiTest.saveScreenshot(name: String) {

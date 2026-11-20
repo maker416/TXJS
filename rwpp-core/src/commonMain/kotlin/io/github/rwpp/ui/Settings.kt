@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import io.github.rwpp.AppContext
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.Settings
+import io.github.rwpp.config.normalizeOpenPlatformUrl
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.CloseUIPanelEvent
 import io.github.rwpp.external.ExternalHandler
@@ -70,6 +71,9 @@ fun SettingsView(
     var backgroundImagePath by remember { mutableStateOf(settings.backgroundImagePath ?: "") }
     var backgroundImageEnabled by remember { mutableStateOf(settings.backgroundImageEnabled) }
     var adminApiUnlocked by remember { mutableStateOf(false) }
+    var openPlatformApiUrl by remember { mutableStateOf(normalizeOpenPlatformUrl(settings.openPlatformApiUrl).orEmpty()) }
+    val normalizedOpenPlatformUrl = normalizeOpenPlatformUrl(openPlatformApiUrl)
+    val invalidOpenPlatformUrl = openPlatformApiUrl.isNotBlank() && normalizedOpenPlatformUrl == null
     var showRestartHint by remember { mutableStateOf(false) }
 
     ExpandedCard(Modifier.autoClearFocus()) {
@@ -86,9 +90,11 @@ fun SettingsView(
             selectedIndex = selectedItem,
             onSelect = { selectedItem = it },
             onExit = onExit,
+            saveEnabled = !invalidOpenPlatformUrl,
             onSave = {
                 settings.backgroundImagePath = backgroundImagePath.takeIf { it.isNotBlank() }
                 settings.backgroundImageEnabled = backgroundImageEnabled
+                settings.openPlatformApiUrl = normalizedOpenPlatformUrl.orEmpty()
                 configIO.saveAllConfig()
                 onChangeBackgroundImage(backgroundImagePath)
                 onExit()
@@ -282,7 +288,13 @@ fun SettingsView(
 
                             "developer" -> SettingsGroup("developer") {
                                 SettingsSwitchComp("showFps")
-                                AdminApiSettings(adminApiUnlocked) { adminApiUnlocked = true }
+                                AdminApiSettings(
+                                    unlocked = adminApiUnlocked,
+                                    openPlatformApiUrl = openPlatformApiUrl,
+                                    onOpenPlatformApiUrlChange = { openPlatformApiUrl = it },
+                                    invalidOpenPlatformUrl = invalidOpenPlatformUrl,
+                                    onUnlock = { adminApiUnlocked = true },
+                                )
                             }
 
                             "networking" -> SettingsGroup("networking") {

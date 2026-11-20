@@ -10,6 +10,14 @@ package io.github.rwpp.config
 import io.github.rwpp.rwpp_core_api.BuildConfig
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
+@Volatile
+private var savedOpenPlatformUrl: String? = null
+
+/** 启动时读取已保存地址，使本次运行的开放平台会话使用同一个入口。 */
+fun initializeOpenPlatformUrl(stored: String) {
+    savedOpenPlatformUrl = normalizeOpenPlatformUrl(stored)
+}
+
 /** 开放平台入口只接受公网 HTTPS 或本机 HTTP；非法运行时覆盖回落到构建时的入口。 */
 fun normalizeOpenPlatformUrl(raw: String): String? {
     val value = raw.trim().trimEnd('/')
@@ -21,5 +29,5 @@ fun normalizeOpenPlatformUrl(raw: String): String? {
 
 fun resolveOpenPlatformUrl(): String =
     normalizeOpenPlatformUrl(System.getProperty("rwjs.openPlatform.url")
-        ?: System.getenv("RWJS_OPEN_PLATFORM_URL") ?: BuildConfig.OPEN_PLATFORM_URL)
+        ?: System.getenv("RWJS_OPEN_PLATFORM_URL") ?: savedOpenPlatformUrl ?: BuildConfig.OPEN_PLATFORM_URL)
         ?: BuildConfig.OPEN_PLATFORM_URL

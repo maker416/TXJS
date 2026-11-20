@@ -30,6 +30,8 @@ import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.core.StartupTiming
 import io.github.rwpp.CoreImplModule
 import io.github.rwpp.config.ConfigModule
+import io.github.rwpp.config.Settings
+import io.github.rwpp.config.initializeOpenPlatformUrl
 import io.github.rwpp.game.audio.GameSoundPool
 import io.github.rwpp.generatedLibDir
 import io.github.rwpp.inject.runtime.Builder
@@ -141,7 +143,10 @@ class MainApplication : Application() {
 
     fun onInit() {
         if (!init) {
-            StartupTiming.measure("android.config") { appKoin.get<ConfigIO>().readAllConfig() }
+            StartupTiming.measure("android.config") {
+                appKoin.get<ConfigIO>().readAllConfig()
+                initializeOpenPlatformUrl(appKoin.get<Settings>().openPlatformApiUrl)
+            }
             val permissionHelper = appKoin.get<PermissionHelper>()
             val hasPermission = permissionHelper.hasManageFilePermission()
             Builder.outputDir = generatedLibDir

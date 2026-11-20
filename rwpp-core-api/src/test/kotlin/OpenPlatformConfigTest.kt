@@ -8,6 +8,7 @@
 package io.github.rwpp.config
 
 import io.github.rwpp.rwpp_core_api.BuildConfig
+import net.peanuuutz.tomlkt.Toml
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -38,6 +39,35 @@ class OpenPlatformConfigTest {
             assertEquals(BuildConfig.OPEN_PLATFORM_URL, resolveOpenPlatformUrl())
         } finally {
             if (before == null) System.clearProperty("rwjs.openPlatform.url") else System.setProperty("rwjs.openPlatform.url", before)
+        }
+    }
+
+    @Test
+    fun savedAddressLoadsAtStartupAndClearingItRestoresTheDefault() {
+        val property = "rwjs.openPlatform.url"
+        val before = System.getProperty(property)
+        try {
+            System.clearProperty(property)
+            val environment = System.getenv("RWJS_OPEN_PLATFORM_URL")
+            val environmentUrl = environment?.let { normalizeOpenPlatformUrl(it) ?: BuildConfig.OPEN_PLATFORM_URL }
+            val settings = Settings(openPlatformApiUrl = "https://stage.example.com/platform/")
+            val persisted = Toml.encodeToString(Settings.serializer(), settings)
+            initializeOpenPlatformUrl(Toml.decodeFromString(Settings.serializer(), persisted).openPlatformApiUrl)
+            assertEquals(environmentUrl ?: "https://stage.example.com/platform", resolveOpenPlatformUrl())
+
+            System.setProperty(property, "http://127.0.0.1:8092")
+            assertEquals("http://127.0.0.1:8092", resolveOpenPlatformUrl())
+            System.clearProperty(property)
+
+            initializeOpenPlatformUrl("http://stage.example.com")
+            assertEquals(environmentUrl ?: BuildConfig.OPEN_PLATFORM_URL, resolveOpenPlatformUrl())
+
+            val oldSettings = Toml.decodeFromString(Settings.serializer(), "language = \"zh\"")
+            initializeOpenPlatformUrl(oldSettings.openPlatformApiUrl)
+            assertEquals(environmentUrl ?: BuildConfig.OPEN_PLATFORM_URL, resolveOpenPlatformUrl())
+        } finally {
+            initializeOpenPlatformUrl("")
+            if (before == null) System.clearProperty(property) else System.setProperty(property, before)
         }
     }
 }

@@ -18,7 +18,13 @@ import io.github.rwpp.i18n.readI18n
 import org.koin.compose.koinInject
 
 @Composable
-internal fun AdminApiSettings(unlocked: Boolean, onUnlock: () -> Unit) {
+internal fun AdminApiSettings(
+    unlocked: Boolean,
+    openPlatformApiUrl: String,
+    onOpenPlatformApiUrlChange: (String) -> Unit,
+    invalidOpenPlatformUrl: Boolean,
+    onUnlock: () -> Unit,
+) {
     var showPassword by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
     var incorrect by remember { mutableStateOf(false) }
@@ -66,6 +72,18 @@ internal fun AdminApiSettings(unlocked: Boolean, onUnlock: () -> Unit) {
         ApiAddressField(readI18n("settings.adminAccountApi"), account.apiUrl) { account.apiUrl = it }
         ApiAddressField(readI18n("settings.adminForumUrl"), account.forumUrl) { account.forumUrl = it }
         ApiAddressField(readI18n("settings.adminRoomListApi"), multiplayer.roomListApiUrls) { multiplayer.roomListApiUrls = it }
+        OutlinedTextField(
+            value = openPlatformApiUrl,
+            onValueChange = onOpenPlatformApiUrlChange,
+            label = { Text(readI18n("settings.adminOpenPlatformApi")) },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            isError = invalidOpenPlatformUrl,
+            supportingText = {
+                val key = if (invalidOpenPlatformUrl) "settings.adminOpenPlatformApiInvalid" else "settings.adminOpenPlatformApiHint"
+                Text(readI18n(key))
+            },
+        )
         ApiAddressField(readI18n("settings.adminModSyncApi"), multiplayer.modSyncApiUrls) { multiplayer.modSyncApiUrls = it }
         ApiAddressField(readI18n("settings.adminPlaytimeApi"), playtime.apiUrl) { playtime.apiUrl = it }
         ApiAddressField(readI18n("settings.adminOnlinePresenceApi"), onlinePresence.apiUrl) { onlinePresence.apiUrl = it }

@@ -72,7 +72,8 @@ data class Settings(
     /**
      * 配置版本号，用于迁移旧配置。null 表示旧版本配置（迁移前）。
      */
-    var configVersion: Int? = null
+    var configVersion: Int? = null,
+    var openPlatformApiUrl: String = "",
 ) : Config {
     companion object {
         val unitAttackRangeTypes = listOf("Never", "Land", "Air", "All")

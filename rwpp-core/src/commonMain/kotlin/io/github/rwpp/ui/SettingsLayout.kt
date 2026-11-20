@@ -31,6 +31,7 @@ internal fun SettingsLayout(
     onSelect: (Int) -> Unit,
     onExit: () -> Unit,
     onSave: () -> Unit,
+    saveEnabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -43,7 +44,7 @@ internal fun SettingsLayout(
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(onClick = onSave, modifier = Modifier.heightIn(min = 48.dp)) {
+                    TextButton(onClick = onSave, enabled = saveEnabled, modifier = Modifier.heightIn(min = 48.dp)) {
                         Icon(Icons.Default.Done, contentDescription = readI18n("settings.saveChanges"))
                         Spacer(Modifier.width(8.dp))
                         Text(readI18n("settings.saveChanges"))
