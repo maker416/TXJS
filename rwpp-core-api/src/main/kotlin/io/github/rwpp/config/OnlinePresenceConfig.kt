@@ -16,7 +16,7 @@ import org.koin.core.annotation.Single
  *
  * 注意子域是 **`oline`**（不是 `online`）：线上即按此主机名部署，属有意拼写，勿「纠正」为 online。
  */
-const val DEFAULT_ONLINE_PRESENCE_API_URL = "http://oline.xn--rhqr8xvr4ahqsgka.com:11451"
+const val DEFAULT_ONLINE_PRESENCE_API_URL = BuildConfig.ONLINE_PRESENCE_API_URL
 
 @Single
 @Serializable

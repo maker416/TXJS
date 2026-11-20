@@ -8,6 +8,7 @@
 package io.github.rwpp.net.browser
 
 import io.github.rwpp.app.UpdateDownloadSession
+import io.github.rwpp.rwpp_core_api.BuildConfig
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
@@ -87,11 +88,11 @@ enum class BrowserKernelStage { CHECKING, DOWNLOADING, VERIFYING, INSTALLING, RE
 data class BrowserKernelProgress(val stage: BrowserKernelStage, val bytes: Long = 0, val total: Long = 0,
     val retryAttempt: Int = 0, val maxRetries: Int = 0, val retryDelayMillis: Long = 0)
 
-/** 可替换的附件定位；生产只访问最新 Gitee Release，测试使用本地 HTTP 服务。 */
+/** 可替换的附件定位，默认使用配置的 Gitee Release 兼容接口。 */
 fun interface BrowserKernelSource { fun asset(tag: String, name: String, session: UpdateDownloadSession): String }
 
 class GiteeBrowserKernelSource(client: OkHttpClient,
-    private val latestUrl: String = "https://gitee.com/api/v5/repos/maker416/TXJS/releases/latest") : BrowserKernelSource {
+    private val latestUrl: String = BuildConfig.BROWSER_KERNEL_API_URL) : BrowserKernelSource {
     private val client = client.newBuilder().callTimeout(10, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).build()
     @Volatile private var release: BrowserKernelRelease? = null
     fun latest(session: UpdateDownloadSession): BrowserKernelRelease {

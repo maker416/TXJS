@@ -79,7 +79,7 @@ import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.RoomIdentityController
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.ConfigIO
-import io.github.rwpp.config.DEFAULT_ROOM_LIST_API_URLS
+import io.github.rwpp.config.DEFAULT_ROOM_LIST_API_URL
 import io.github.rwpp.config.PublishedRoomInfo
 import io.github.rwpp.config.Settings
 import io.github.rwpp.core.ListDetectorGuard
@@ -497,7 +497,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
         val startMs = System.currentTimeMillis()
         val result = with(net) {
             publishServerToPublicList(
-                DEFAULT_ROOM_LIST_API_URLS,
+                DEFAULT_ROOM_LIST_API_URL,
                 effectiveName,
                 roomListPublishAddress(roomId),
                 roomType
@@ -519,7 +519,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                     publishedRoomInfo.serverId = serverId
                     publishedRoomInfo.secretKey = secretKey
                     publishedRoomInfo.roomType = roomType
-                    publishedRoomInfo.baseUrl = DEFAULT_ROOM_LIST_API_URLS
+                    publishedRoomInfo.baseUrl = DEFAULT_ROOM_LIST_API_URL
                     configIO.saveConfig(publishedRoomInfo)
                     hasPublishedInfo = true
                     remainingSeconds = 0
@@ -555,12 +555,12 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
         val (types, health) = coroutineScope {
             val typesDeferred = async {
                 with(net) {
-                    fetchRoomTypes(DEFAULT_ROOM_LIST_API_URLS)
+                    fetchRoomTypes(DEFAULT_ROOM_LIST_API_URL)
                 }
             }
             val healthDeferred = async {
                 with(net) {
-                    fetchRwListHealth(DEFAULT_ROOM_LIST_API_URLS)
+                    fetchRwListHealth(DEFAULT_ROOM_LIST_API_URL)
                 }
             }
             typesDeferred.await() to healthDeferred.await()

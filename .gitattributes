@@ -1,5 +1,7 @@
-# 构建产物目录仅本地保留（build/ 已由 .gitignore 完全排除）
-build/ export-ignore
+# 源码归档保留打包需要的客户端 API 模板
+/build/* export-ignore
+/build/client-api-official.json -export-ignore
+/build/client-api-test.json -export-ignore
 
 # Linux 入口必须使用 LF；Windows checkout 不应把 shebang 转成 CRLF。
 gradlew text eol=lf

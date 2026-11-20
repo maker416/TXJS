@@ -39,6 +39,7 @@ import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.ForumSsoSession
 import io.github.rwpp.config.AccountPreferences
 import io.github.rwpp.config.ConfigIO
+import io.github.rwpp.config.ResourceEndpoints
 import io.github.rwpp.config.Settings
 import io.github.rwpp.config.resolveForumUrl
 import io.github.rwpp.event.broadcastIn
@@ -56,7 +57,7 @@ import kotlinx.coroutines.CancellationException
 import org.koin.compose.koinInject
 
 /** 赛事资讯站地址：普通网页，不做论坛单点登录。 */
-internal const val ESPORTS_SITE_URL = "https://rwesports.xn--rhqr8xvr4ahqsgka.com/"
+internal const val ESPORTS_SITE_URL = ResourceEndpoints.ESPORTS_SITE_URL
 
 /** 极速论坛：先经统一账号单点登录，再进入论坛首页。 */
 @Composable

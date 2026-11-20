@@ -16,8 +16,10 @@ CLAUDE.md
 .codegraph/daemon.pid
 .codegraph/*.pid
 
-# 项目根 build/（构建脚本、产物、密钥等全部仅本地保留）
-/build/
+# 项目根 build/ 除客户端 API 模板外仅本地保留
+/build/*
+!/build/client-api-official.json
+!/build/client-api-test.json
 
 # 子模块 Gradle 构建输出
 rwpp-android/build/

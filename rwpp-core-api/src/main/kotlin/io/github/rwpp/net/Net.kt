@@ -12,6 +12,7 @@ import io.github.rwpp.config.CoreData
 import io.github.rwpp.core.Initialization
 import io.github.rwpp.io.GameInputStream
 import io.github.rwpp.logger
+import io.github.rwpp.rwpp_core_api.BuildConfig
 import kotlinx.coroutines.*
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -105,7 +106,7 @@ interface Net : KoinComponent, Initialization {
     fun getLatestVersionProfile(): LatestVersionProfile? {
         return runCatching {
             val request = Request.Builder().url(
-                "https://gitee.com/api/v5/repos/maker416/TXJS/releases/latest"
+                BuildConfig.UPDATE_API_URL
             ).build()
             client.newBuilder().callTimeout(12, java.util.concurrent.TimeUnit.SECONDS).build()
                 .newCall(request).execute().use { response ->
@@ -167,7 +168,7 @@ interface Net : KoinComponent, Initialization {
             .build()
         // 构建请求对象
         val request = Request.Builder()
-            .url("https://www.rtsbox.cn/api/login/api.php")
+            .url(BuildConfig.RTS_BOX_LOGIN_API_URL)
             .post(requestBody)
             .build()
 

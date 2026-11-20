@@ -22,6 +22,9 @@ https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
     -PonlineChannel 注入 BuildConfig，随在线上报传给统计服务器。
     省略时默认为 official；交互式菜单中每次构建前会询问。
 
+.PARAMETER ApiProfile
+    客户端默认 API 配置，official 或 test。Android Debug 默认 test，其他目标默认 official。
+
 .PARAMETER GameArchive
     指定原版资源；默认优先查找 build/build.ps1 同级的 Rusted-Warfare-win.zip。
 
@@ -56,6 +59,9 @@ param(
 
     [string]$Channel,
 
+    [ValidateSet('official', 'test')]
+    [string]$ApiProfile,
+
     [string]$GameArchive,
 
     [switch]$Check,
@@ -79,6 +85,7 @@ if ($env:OS -ne 'Windows_NT') {
     $linuxArgs = @((Join-Path $PSScriptRoot 'build.sh'))
     if ($Target) { $linuxArgs += $Target }
     if ($Channel) { $linuxArgs += @('--channel', $Channel) }
+    if ($ApiProfile) { $linuxArgs += @('--api-profile', $ApiProfile.ToLowerInvariant()) }
     if ($GameArchive) { $linuxArgs += @('--game-archive', $GameArchive) }
     if ($Check) {
         if (-not $Target) { $linuxArgs += 'linux' }
@@ -219,6 +226,16 @@ function Test-ChannelName ([string]$Name) {
     return $Name -match $Script:ChannelPattern
 }
 
+function Get-DefaultApiProfile ([string]$Key) {
+    if ($Key -eq 'android-debug') { return 'test' }
+    return 'official'
+}
+
+function Get-ApiProfile ([string]$Key) {
+    if ($ApiProfile) { return $ApiProfile.ToLowerInvariant() }
+    return Get-DefaultApiProfile $Key
+}
+
 # 确定本次构建使用的渠道：CLI 已通过 -Channel 指定时直接使用；
 # 交互模式每次构建前询问，回车沿用上次值（默认为 official）。
 function Read-Channel ([string]$Key) {
@@ -242,7 +259,9 @@ function Get-OutputSubdir ([string]$Key) {
     $subdir = $Targets[$Key].Subdir
     if ([string]::IsNullOrWhiteSpace($subdir)) { return $null }
     if ($NoChannelTargets -contains $Key) { return $subdir }
-    return "$subdir-$($Script:Channel)"
+    $profile = Get-ApiProfile $Key
+    $suffix = if ($profile -ne (Get-DefaultApiProfile $Key)) { "-api-$profile" } else { '' }
+    return "$subdir-$($Script:Channel)$suffix"
 }
 
 # ---------------------------------------------------------------------------
@@ -327,6 +346,7 @@ function Show-Usage {
     Write-Host ''
     Write-Host 'Channel（打包渠道，test/clean/browser-kernels 无需指定）:'
     Write-Host '  build.ps1 android-release -Channel tt_ad   构建 tt_ad 渠道包'
+    Write-Host '  build.ps1 installer -ApiProfile test      使用测试 API 的 PC 安装包'
     Write-Host '  - 渠道标识只允许字母、数字、下划线、连字符（1-64 字符），默认 official'
     Write-Host '  - 交互式菜单中每次构建前会询问渠道，回车沿用上次值'
     Write-Host '  - 不同渠道产物分别放在 build\artifacts\<目标>-<渠道>\ 下，互不覆盖'
@@ -438,8 +458,8 @@ function Test-CleanProtection {
 # ---------------------------------------------------------------------------
 # 执行 Gradle
 # ---------------------------------------------------------------------------
-function Invoke-Gradle ([string[]]$Tasks) {
-    $allArgs = $GradleArgs + "-PonlineChannel=$($Script:Channel)" + $Tasks
+function Invoke-Gradle ([string[]]$Tasks, [string]$Profile) {
+    $allArgs = $GradleArgs + "-PonlineChannel=$($Script:Channel)" + "-PclientApiProfile=$Profile" + $Tasks
     if ($KernelReleaseTag) { Write-Info 'KernelReleaseTag 已停用；浏览器组件始终从最新 Release 查找。' }
     if ($GeckoComponentVersion) { $allArgs += "-PgeckoComponentVersion=$GeckoComponentVersion" }
     if ($JcefComponentVersion) { $allArgs += "-PjcefComponentVersion=$JcefComponentVersion" }
@@ -455,12 +475,14 @@ function Invoke-Target ([string]$Key) {
 
     if (-not (Read-Channel $Key)) { return 1 }
     if (-not (Test-Preflight $Key)) { return 1 }
+    $profile = Get-ApiProfile $Key
 
     Write-Host ''
     Write-Host '------------------------------------------------------------'
     Write-Host "  Target:  $($def.Name)"
     Write-Host "  Version: $Version"
     if ($NoChannelTargets -notcontains $Key) { Write-Host "  Channel: $($Script:Channel)" }
+    Write-Host "  API profile: $profile"
     Write-Host "  Tasks:   $($def.Tasks -join ' ')"
     $outputTargets = if ($def.Members) { $def.Members } else { @($Key) }
     foreach ($outputTarget in $outputTargets) {
@@ -476,13 +498,13 @@ function Invoke-Target ([string]$Key) {
     }
     Write-Host ''
 
-    $code = Invoke-Gradle $def.Tasks
+    $code = Invoke-Gradle $def.Tasks $profile
 
     if ($code -ne 0) {
         Write-Host ''
         Write-Warn '构建失败，停止 Gradle Daemon 后重试一次...'
         & $GradlewBat '--stop' 2>&1 | Out-Null
-        $code = Invoke-Gradle $def.Tasks
+        $code = Invoke-Gradle $def.Tasks $profile
     }
 
     Write-Host ''
@@ -535,6 +557,7 @@ function Write-BuildInfo ([string]$Dest, [string]$Key) {
         '===================='
         "Version: $Version"
         "Channel: $($Script:Channel)"
+        "API profile: $(Get-ApiProfile $Key)"
         "Target:  $Key"
         "Name:    $($def.Name)"
         "Task:    $($def.Tasks -join ' ')"

@@ -18,6 +18,38 @@ Windows 产物分别收集到 `build/artifacts/installer-<渠道>/` 和 `build/a
 
 Linux 同样支持 `./packaging/build.sh release-all --channel official` 或菜单 8，生成 Linux x64 完整包和 Android Release APK，分别位于 `build/artifacts/linux-<渠道>/` 和 `build/artifacts/android-release-<渠道>/`。
 
+## 客户端默认 API
+
+直接编辑 `build/client-api-official.json` 或 `build/client-api-test.json`。Gradle 在打包时读取所选 JSON，生成 Android 和桌面共用的客户端默认值。两份 JSON 会随源码保留，`clean` 会跳过它们。
+
+| 打包目标 | 自动读取 |
+| --- | --- |
+| Android Debug | `build/client-api-test.json` |
+| Android Release、PC JAR、Windows 安装器、Linux 完整包、`release-all` | `build/client-api-official.json` |
+
+可以独立选择 API 配置和安装包渠道。下面的 PC 安装包将使用测试 API。
+
+```powershell
+.\build\build.ps1 installer -ApiProfile test
+```
+
+```bash
+./packaging/build.sh linux --api-profile test
+```
+
+直接调用 Gradle 时，用 `-PclientApiProfile=test` 或 `-PclientApiProfile=official` 指定。单独打 Android Debug 时会自动选 `test`，其余默认 `official`。同一次 Gradle 调用共用一份配置，如需同时生成不同默认 API 的包，请分开构建。使用与目标默认不同的配置时，发布脚本将产物收集到带 `-api-test` 或 `-api-official` 后缀的目录，并在 `build-info.txt` 记下所用配置。
+
+| JSON 字段 | 用途 |
+| --- | --- |
+| `accountApiUrl`、`accountAppKey`、`forumUrl` | UAS API、客户端 AppKey、论坛入口。AppKey 留空沿用出厂值。 |
+| `openPlatformUrl` | 网游大厅、网页授权、扩展校验、专属外观和支付共用的开放平台根地址。 |
+| `roomListApiUrls`、`modSyncApiUrls` | 房间列表和模组同步的 URL 数组。房间发布及续租使用房间列表数组中的首项。 |
+| `modPlaytimeApiUrl`、`onlinePresenceApiUrl`、`feedbackApiUrl` | 模组时长、在线上报和反馈地址。模组时长地址留空可关闭云端统计。 |
+| `updateApiUrl`、`browserKernelApiUrl` | 客户端更新和浏览器组件的 Release 元数据接口。接口应返回对应的 Gitee Release 结构。 |
+| `esportsSiteUrl`、`rtsBoxSiteUrl`、`rtsBoxSearchApiUrl`、`rtsBoxLoginApiUrl`、`rtsBoxHotListUrl` | 赛事站与铁锈盒子的网页和接口地址。 |
+
+测试配置沿用 K30 的联调地址，开放平台指向 `topenapi`，共用服务保留当前地址。修改 JSON 后重新打包即可更新出厂默认；客户端已有的手动地址配置及运行参数仍沿用原有优先级。区服、下载地址等由服务端响应下发。原 `-PopenPlatformUrl`、`-PfeedbackApiUrl` 继续支持临时覆盖对应 JSON 字段。JSON 会用于客户端编译，只填写客户端可用的地址和标识。
+
 ## 打包自动递增版本
 
 每次启动打包脚本，立即将根 `build.gradle.kts` 的 `version` 补丁号加一并保存，例如 `1.20.62` → `1.20.63`，`1.20.99` → `1.20.100`，不等待选择目标或通过环境预检。桌面端、Windows 安装器、Linux 完整包及 Android Debug/Release 都使用递增后的版本，产物名称及 `build-info.txt` 同步使用该版本。
@@ -62,7 +94,7 @@ ZIP 可直接包含 `game-lib.jar`、非空 `assets/`，也可带 `Rusted Warfar
 ./packaging/build.sh linux --game-archive '/path/to/Rusted-Warfare-linux.zip'
 ```
 
-Linux 原版 ZIP 优先级：`--game-archive` → **`build/Rusted-Warfare-linux.zip`** → `RW_GAME_ARCHIVE` → `packaging/game-archive.local.txt`。同级 ZIP 优先于从其他机器复制来的旧环境/路径文件，显式参数始终优先。相对路径以仓库根目录为基准；同级 ZIP 不存在时，也可复制 `packaging/game-archive.local.txt.example` 为本机配置文件以指定自定义路径。整个 `build/` 被 Git 忽略，根 `clean` 会保留同级 ZIP。PowerShell 7 在 Linux 调用 `packaging/build.ps1` 时也转到同一 Bash 入口，支持 `-Check` / `-NoInstall`。
+Linux 原版 ZIP 优先级：`--game-archive` → **`build/Rusted-Warfare-linux.zip`** → `RW_GAME_ARCHIVE` → `packaging/game-archive.local.txt`。同级 ZIP 优先于从其他机器复制来的旧环境/路径文件，显式参数始终优先。相对路径以仓库根目录为基准；同级 ZIP 不存在时，也可复制 `packaging/game-archive.local.txt.example` 为本机配置文件以指定自定义路径。原版 ZIP 由 Git 忽略，根 `clean` 会保留它。PowerShell 7 在 Linux 调用 `packaging/build.ps1` 时也转到同一 Bash 入口，支持 `-Check` / `-NoInstall`。
 
 Linux 产物位于 `build/artifacts/linux-<渠道>/`：`RWJS/` 可直接运行，`RWJS-Linux-x64-<版本>.tar.gz` 和 `.sha256` 用于分发。解压到可写目录，运行 `./RWJS/RWJS.sh`；包内已包含 Java 21。启动脚本自动切换工作目录、设置原生库路径，并支持首次注入后的自动重启。运行需要 Linux x64 图形桌面、OpenGL/OpenAL 等系统依赖。Linux 包当前采用手动更新，客户端原有 EXE 自动更新流程仍针对 Windows。
 

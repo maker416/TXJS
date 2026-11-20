@@ -10,6 +10,7 @@ package io.github.rwpp.impl
 import com.eclipsesource.json.Json
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.MultiplayerPreferences
+import io.github.rwpp.config.ResourceEndpoints
 import io.github.rwpp.config.ServerType
 import io.github.rwpp.logger
 import io.github.rwpp.net.*
@@ -112,7 +113,7 @@ abstract class BaseNetImpl : Net {
 
 
 val RTSBoxProtocol = BBSProtocol(
-    "https://www.rtsbox.cn/api/search_bbs.php",
+    ResourceEndpoints.RTS_BOX_SEARCH_API_URL,
     "铁锈盒子",
     { page, keyword, type ->
         MultipartBody.Builder()
@@ -155,7 +156,7 @@ val RTSBoxProtocol = BBSProtocol(
  * 公开侧无 JSON，需解析移动端模块 HTML。
  */
 val RTSBoxHotProtocol = BBSProtocol(
-    "https://www.rtsbox.cn/wp-content/module/mobile/page/lt_download_list/0_index_html.php?password=echo_html",
+    ResourceEndpoints.RTS_BOX_HOT_LIST_URL,
     "铁锈盒子 热门资源",
     { page, _, _ ->
         MultipartBody.Builder()
@@ -217,12 +218,14 @@ internal fun parseRtsBoxHotResources(html: String): Array<NetResourceInfo> {
     val authorPattern = Regex("""author/\d+"[^>]*>([^<]+)""")
     val badgePattern = Regex("""(?:独家|精选)[^<]{0,40}""")
     val nextCardPattern = Regex("""jinsom-post-\d+""")
+    val siteUrl = ResourceEndpoints.RTS_BOX_SITE_URL
 
     return ids.mapNotNull { id ->
+        val postUrl = "$siteUrl/$id.html"
         val pos = listOf(
-            Regex("""post_id=$id&url=https://www\.rtsbox\.cn/$id\.html"""),
+            Regex("post_id=$id&url=${Regex.escape(postUrl)}"),
             Regex("""jinsom-post-$id"""),
-            Regex("""www\.rtsbox\.cn/$id\.html""")
+            Regex(Regex.escape(postUrl.substringAfter("://"))),
         ).firstNotNullOfOrNull { pat -> pat.find(block)?.range?.first } ?: return@mapNotNull null
 
         val nextPos = nextCardPattern.find(block, startIndex = pos + 10)?.range?.first
@@ -252,7 +255,7 @@ internal fun parseRtsBoxHotResources(html: String): Array<NetResourceInfo> {
             title = title,
             description = badge,
             author = author,
-            bbsUrl = "https://www.rtsbox.cn/$id.html",
+            bbsUrl = postUrl,
             imageUrl = imageUrl,
             downloadNum = parseRtsBoxHeat(heatRaw)
         )

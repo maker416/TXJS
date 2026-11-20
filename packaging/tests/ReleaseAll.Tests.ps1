@@ -70,8 +70,8 @@ try {
         $Script:PromptCount++
         return 'test_cn'
     }
-    function Invoke-Gradle([string[]]$Tasks) {
-        $Script:GradleCalls.Add(@{ Tasks = $Tasks; Version = $Script:Version; Channel = $Script:Channel })
+    function Invoke-Gradle([string[]]$Tasks, [string]$Profile) {
+        $Script:GradleCalls.Add(@{ Tasks = $Tasks; Version = $Script:Version; Channel = $Script:Channel; ApiProfile = $Profile })
         if ($Script:FailuresLeft -gt 0) { $Script:FailuresLeft--; return 7 }
         Write-Fixture 'build/installer/RWJS-Setup.exe' 'PC installer fixture'
         if (-not $Script:OmitApk) { Write-Fixture 'rwpp-android/build/outputs/apk/release/app-release.apk' 'signed APK fixture' }
@@ -87,6 +87,10 @@ try {
     $call = $Script:GradleCalls[0]
     Assert-True (($call.Tasks -join ' ') -eq ':rwpp-desktop:packageInnoDistribution :rwpp-android:assembleRelease') 'Wrong Gradle tasks'
     Assert-True ($call.Channel -eq 'test_cn') 'Channel was not shared'
+    Assert-True ($call.ApiProfile -eq 'official' -and (Get-ApiProfile 'android-debug') -eq 'test') 'Incorrect default API profile'
+    $ApiProfile = 'test'
+    Assert-True ((Get-OutputSubdir 'installer') -eq 'installer-test_cn-api-test') 'Custom profile can overwrite the default package'
+    $ApiProfile = $null
     Assert-True (($Script:EnvironmentChecks.Target -join ',') -eq 'installer,android-release') 'Both targets were not checked before build'
     Assert-True (@($Script:EnvironmentChecks | Where-Object { $_.AllowInstall }).Count -eq 0) 'NoInstall was ignored'
     foreach ($member in @('installer', 'android-release')) {

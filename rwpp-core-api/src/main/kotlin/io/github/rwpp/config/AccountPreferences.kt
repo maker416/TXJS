@@ -10,11 +10,12 @@ package io.github.rwpp.config
 import kotlinx.serialization.Serializable
 import org.koin.core.annotation.Single
 import io.github.rwpp.net.account.ForumClientRevocation
+import io.github.rwpp.rwpp_core_api.BuildConfig
 
-const val DEFAULT_FORUM_URL = "https://zyz.xn--rhqr8xvr4ahqsgka.com/"
+const val DEFAULT_FORUM_URL = BuildConfig.FORUM_URL
 
 /** 统一账号 JSON API 默认基址（不含路径）。可用 [AccountPreferences.apiUrl] 或环境变量 `RWJS_ACCOUNT_API_URL` 覆盖。 */
-const val DEFAULT_ACCOUNT_API_URL = "http://210.16.170.71:11455"
+const val DEFAULT_ACCOUNT_API_URL = BuildConfig.ACCOUNT_API_URL
 
 /**
  * 统一账号客户端配置与会话持久化。
@@ -64,6 +65,6 @@ fun resolveAccountAppKey(stored: String): String {
         ?: System.getenv("RWJS_ACCOUNT_APP_KEY")
     if (!override.isNullOrBlank()) return override.trim()
     val raw = stored.trim()
-    if (raw.isBlank() || raw == LEGACY_ACCOUNT_APP_KEY) return DEFAULT_ACCOUNT_APP_KEY
+    if (raw.isBlank() || raw == LEGACY_ACCOUNT_APP_KEY) return BuildConfig.ACCOUNT_APP_KEY.ifBlank { DEFAULT_ACCOUNT_APP_KEY }
     return raw
 }

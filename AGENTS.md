@@ -177,7 +177,7 @@ Gradle JVM 参数在根目录 `gradle.properties` 中定义（`-Xmx2048M`）。
 3. Android Release 签名：`build/key/release.keystore` + `build/key/keystore.properties`（`gradlew clean` 不会删除 `build/key/`）。
 4. Windows 安装包需要 JDK 21 和 Inno Setup 6.5+（`ISCC.exe`）。`build/build.ps1` / `packaging/build.ps1` 自动检测并配置本次打包环境，缺少工具时优先通过 WinGet 安装，无 WinGet 或安装后仍不可用时下载并校验官方固定版本，配置到 `%LOCALAPPDATA%\RWJS\BuildTools`（JDK ZIP、Inno 当前用户便携模式）。Inno 版本须读取真实编译引擎，不能依赖可能为 0.0.0.0 的 EXE 文件版本；WinGet“无可用升级”应重新检测工具。`-NoInstall` 禁止安装，`-Check` 只检查。Windows 原版 ZIP 默认放在 `build/build.ps1` 同级，命名为 `Rusted-Warfare-win.zip`；可用 `-GameArchive` 覆盖。根 `clean` 必须保留同级 ZIP。
 5. 若首次运行或注入配置变更，`rwpp-desktop` 会在启动时进入「应用注入配置」模式，完成后自动重启。
-6. Linux 入口自动检测 Python 3.9+ 和完整 JDK 21，缺失时使用 apt-get / dnf 安装并配置当前进程环境；`--check` / `--no-install` 不安装软件。默认将 `Rusted-Warfare-linux.zip` 放到 `build/build.sh` 同级，显式 `--game-archive` 优先。Windows 与 Linux 同级 ZIP 都必须由根 `clean` 保留，整个 `build/` 不进 Git。
+6. Linux 入口自动检测 Python 3.9+ 和完整 JDK 21，缺失时使用 apt-get / dnf 安装并配置当前进程环境；`--check` / `--no-install` 不安装软件。默认将 `Rusted-Warfare-linux.zip` 放到 `build/build.sh` 同级，显式 `--game-archive` 优先。根 `clean` 保留 Windows 与 Linux 同级 ZIP 和两份 `build/client-api-*.json`。根 `build/` 只纳入这两份 API 配置。
 
 ### Git 工作树（worktree）使用指引
 

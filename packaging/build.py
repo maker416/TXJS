@@ -42,6 +42,9 @@ ALIASES = {
     "8": "release-all", "all-release": "release-all",
 }
 
+def default_api_profile(target):
+    return "test" if target == "android-debug" else "official"
+
 
 def bump_project_version(root):
     """只更新根客户端补丁版本；原子替换并保留 UTF-8 BOM 和换行。"""
@@ -302,6 +305,8 @@ def collect(root, target, args, jdk, source):
     subdir = {"desktop": "desktop-jar", "linux": "linux", "test": "test-reports"}.get(target, target)
     if target not in {"test", "browser-kernels"}:
         subdir += "-" + args.channel
+        if args.api_profile != default_api_profile(target):
+            subdir += "-api-" + args.api_profile
     artifacts = root / "build/artifacts"
     artifacts.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".collect-", dir=artifacts) as temp:
@@ -357,7 +362,8 @@ def collect(root, target, args, jdk, source):
                         copied = True
             if not copied:
                 raise ValueError("测试报告未生成")
-        (stage / "build-info.txt").write_text(f"Version: {version}\nChannel: {args.channel}\nTarget: {target}\n"
+        (stage / "build-info.txt").write_text(f"Version: {version}\nChannel: {args.channel}\n"
+            f"API profile: {args.api_profile}\nTarget: {target}\n"
             f"BuiltAt: {datetime.now().astimezone().isoformat()}\nPlatform: {platform.platform()}\n", encoding="utf-8")
         dest = artifacts / subdir
         if dest.is_symlink():
@@ -385,6 +391,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="RWJS Linux 打包工具（Python 3.9+、JDK 21）；每次启动脚本版本号立即 +0.0.1")
     parser.add_argument("target", nargs="?", help="linux / desktop / release-all / android-debug / android-release / test / browser-kernels / clean")
     parser.add_argument("--channel", "-Channel", default="official", help="渠道，默认 official")
+    parser.add_argument("--api-profile", "-ApiProfile", choices=("official", "test"),
+                        help="客户端默认 API。Android Debug 默认 test，其他目标默认 official")
     parser.add_argument("--game-archive", "-GameArchive", help="原版 ZIP，默认读取 build/Rusted-Warfare-linux.zip")
     parser.add_argument("--check", "-Check", action="store_true", help="只检查依赖和资源，不安装、不构建；默认检查 linux")
     parser.add_argument("--no-install", "-NoInstall", action="store_true", help="禁止自动安装 Python / JDK")
@@ -406,6 +414,7 @@ def main(argv=None):
         parser.error("未知目标: " + target + "；Windows 安装包请在 Windows 使用 packaging/build.ps1 installer。")
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", args.channel):
         parser.error("渠道仅允许 1-64 个字母、数字、下划线、连字符")
+    args.api_profile = args.api_profile or default_api_profile(target)
     try:
         jdk, source = preflight(ROOT, target, args)
         configure_java_environment(jdk)
@@ -413,7 +422,8 @@ def main(argv=None):
             print("[DONE] 环境检查通过")
             return 0
         env = dict(os.environ, JAVA_HOME=str(jdk))
-        command = ["sh", ROOT / "gradlew", "--no-daemon", "--parallel", "--build-cache", "--configure-on-demand", f"-PonlineChannel={args.channel}"]
+        command = ["sh", ROOT / "gradlew", "--no-daemon", "--parallel", "--build-cache", "--configure-on-demand",
+                   f"-PonlineChannel={args.channel}", f"-PclientApiProfile={args.api_profile}"]
         for key in ("gecko", "jcef"):
             value = getattr(args, key + "_component_version")
             if value:

@@ -7,14 +7,18 @@
 
 package io.github.rwpp.config
 
+import io.github.rwpp.rwpp_core_api.BuildConfig
 import kotlinx.serialization.Serializable
 import org.koin.core.annotation.Single
 
 /** Default RWList service base URLs (no path); multiple mirrors separated by `;`. */
-const val DEFAULT_ROOM_LIST_API_URLS = "http://list.xn--rhqr8xvr4ahqsgka.com:11450"
+const val DEFAULT_ROOM_LIST_API_URLS = BuildConfig.ROOM_LIST_API_URLS
+
+/** 发布房间和续租使用同一个 RWList，镜像用于读取列表。 */
+val DEFAULT_ROOM_LIST_API_URL = DEFAULT_ROOM_LIST_API_URLS.substringBefore(';')
 
 /** 默认模组同步服务器 base URL（不含路径）；多个镜像用 `;` 分隔。 */
-const val DEFAULT_MOD_SYNC_API_URLS = "http://modsync.铁壳锈世纪.com:11453"
+const val DEFAULT_MOD_SYNC_API_URLS = BuildConfig.MOD_SYNC_API_URLS
 
 /**
  * Multiplayer player preferences

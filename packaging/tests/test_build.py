@@ -158,11 +158,27 @@ class ReleaseAllTests(unittest.TestCase):
                 command = run.call_args.args[0]
                 self.assertEqual(command[-2:], [":rwpp-desktop:packageReleaseUberJarForCurrentOS", ":rwpp-android:assembleRelease"])
                 self.assertIn("-PonlineChannel=test_cn", command)
+                self.assertIn("-PclientApiProfile=official", command)
                 self.assertEqual([call.args[1] for call in collect.call_args_list], ["linux", "android-release"])
                 for call in collect.call_args_list:
                     self.assertEqual(call.args[2].channel, "test_cn")
                     self.assertEqual(call.args[3:], (self.jdk, self.source))
         self.assertEqual(build.ALIASES["release"], "android-release")
+
+    def test_api_profile_can_follow_debug_or_override_desktop_independently_of_channel(self):
+        cases = [
+            (["android-debug", "--channel", "official"], "test"),
+            (["linux", "--api-profile", "test", "--channel", "official"], "test"),
+            (["android-debug", "--api-profile", "official"], "official"),
+        ]
+        for arguments, profile in cases:
+            with self.subTest(arguments=arguments), patch.object(build, "ROOT", self.root), \
+                    patch.object(build, "preflight", return_value=(self.jdk, self.source)), \
+                    patch.object(build, "configure_java_environment"), \
+                    patch.object(build, "run") as run, patch.object(build, "collect") as collect:
+                self.assertEqual(build.main(arguments), 0)
+                self.assertIn(f"-PclientApiProfile={profile}", run.call_args.args[0])
+                self.assertEqual(collect.call_args.args[2].api_profile, profile)
 
     def test_check_and_failures_do_not_report_partial_success(self):
         for scenario in ("check", "preflight", "build", "collect"):

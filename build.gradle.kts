@@ -41,7 +41,10 @@ tasks.named<Delete>("clean").configure {
     delete.clear()
     delete(
         fileTree(layout.buildDirectory) {
-            exclude("key/**", "artifacts/**", "*.bat", "*.cmd", "*.ps1", "*.sh", "*.py", "*.zip", "*.ZIP")
+            exclude(
+                "key/**", "artifacts/**", "*.bat", "*.cmd", "*.ps1", "*.sh", "*.py", "*.zip", "*.ZIP",
+                "client-api-official.json", "client-api-test.json",
+            )
         },
     )
 }

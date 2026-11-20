@@ -1,0 +1,18 @@
+{
+  "accountApiUrl": "http://210.16.170.71:11455",
+  "accountAppKey": "",
+  "forumUrl": "https://zyz.xn--rhqr8xvr4ahqsgka.com/",
+  "openPlatformUrl": "https://topenapi.xn--rhqr8xvr4ahqsgka.com",
+  "roomListApiUrls": ["http://list.xn--rhqr8xvr4ahqsgka.com:11450"],
+  "modSyncApiUrls": ["http://modsync.铁壳锈世纪.com:11453"],
+  "modPlaytimeApiUrl": "http://210.16.170.71:11456",
+  "onlinePresenceApiUrl": "http://oline.xn--rhqr8xvr4ahqsgka.com:11451",
+  "feedbackApiUrl": "https://fk.xn--rhqr8xvr4ahqsgka.com",
+  "updateApiUrl": "https://gitee.com/api/v5/repos/maker416/TXJS/releases/latest",
+  "browserKernelApiUrl": "https://gitee.com/api/v5/repos/maker416/TXJS/releases/latest",
+  "esportsSiteUrl": "https://rwesports.xn--rhqr8xvr4ahqsgka.com/",
+  "rtsBoxSiteUrl": "https://www.rtsbox.cn",
+  "rtsBoxSearchApiUrl": "https://www.rtsbox.cn/api/search_bbs.php",
+  "rtsBoxLoginApiUrl": "https://www.rtsbox.cn/api/login/api.php",
+  "rtsBoxHotListUrl": "https://www.rtsbox.cn/wp-content/module/mobile/page/lt_download_list/0_index_html.php?password=echo_html"
+}

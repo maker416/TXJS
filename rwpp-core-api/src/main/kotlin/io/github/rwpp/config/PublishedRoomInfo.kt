@@ -26,7 +26,7 @@ data class PublishedRoomInfo(
     /** 房间类型 (roomtype)；RWList v2.14.0 多标签时为竖线分隔的 wire 串，如 `公益|PVP|模组同步`。 */
     var roomType: String = "",
     /** 使用的列表服务基础 URL */
-    var baseUrl: String = DEFAULT_ROOM_LIST_API_URLS,
+    var baseUrl: String = DEFAULT_ROOM_LIST_API_URL,
 ) : Config {
     /** 是否有有效的已发布信息 */
     val isPublished: Boolean get() = serverId.isNotBlank() && secretKey.isNotBlank()
