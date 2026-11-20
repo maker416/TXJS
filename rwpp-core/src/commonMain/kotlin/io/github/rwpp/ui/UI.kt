@@ -36,6 +36,7 @@ import io.github.rwpp.ui.UI.showQuestion
 import io.github.rwpp.ui.UI.showWarning
 import io.github.rwpp.ui.color.getTeamColor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 object UI : Initialization, IUserInterface {
     internal var backgroundTransparency by mutableStateOf(appKoin.get<Settings>().backgroundTransparency)
@@ -123,6 +124,7 @@ object UI : Initialization, IUserInterface {
     var UiProvider: UIProvider = UIProvider()
 
     private val relayRegex = Regex("""R\d+""")
+    private var lastPaymentPromptAt = 0L
 
     override fun showWarning(reason: String, isKicked: Boolean) {
         synchronized(UI) {
@@ -166,6 +168,22 @@ object UI : Initialization, IUserInterface {
                 appKoin.get<Game>().gameRoom.getPlayers().count { it.name == sender } == 1
             }.getOrDefault(false)
         if (trustedHostControl && RoomInvitePolicy.handleControlMessage(message)) return
+        // Chat can only request an official order preview. It never authorizes payment or supplies amounts.
+        val paymentId = io.github.rwpp.net.payment.PaymentRules.chatPayment(message)
+        if (paymentId != null && (trustedHostControl || sender.isBlank())) {
+            val now = System.currentTimeMillis()
+            synchronized(UI) {
+                if (now - lastPaymentPromptAt >= 15_000 &&
+                    !io.github.rwpp.account.PaymentController.state.value.visible) {
+                    lastPaymentPromptAt = now
+                    kotlinx.coroutines.CoroutineScope(Dispatchers.Main.immediate).launch {
+                        showAccountView = true
+                        io.github.rwpp.account.PaymentController.open(paymentId)
+                    }
+                }
+            }
+            return
+        }
         val configIO = appKoin.get<ConfigIO>()
         synchronized(UI) {
             chatMessages =

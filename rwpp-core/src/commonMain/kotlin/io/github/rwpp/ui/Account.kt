@@ -43,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
@@ -64,6 +65,7 @@ import io.github.rwpp.app.LauncherVisibility
 import io.github.rwpp.app.whileVisible
 import io.github.rwpp.AppContext
 import io.github.rwpp.account.AccountSession
+import io.github.rwpp.account.PaymentController
 import io.github.rwpp.account.FriendsSession
 import io.github.rwpp.account.accountErrorText
 import io.github.rwpp.account.accountLoginUnauthorizedText
@@ -116,6 +118,7 @@ fun AccountView(onExit: () -> Unit) {
     val user = AccountSession.user
     val displayName = AccountSession.displayName
     val restoring = AccountSession.restoring
+    val paymentState by PaymentController.state.collectAsState()
 
     var authKind by remember { mutableStateOf<AccountAuthKind?>(null) }
     var draftUsername by remember { mutableStateOf(AccountSession.lastUsername) }
@@ -129,6 +132,9 @@ fun AccountView(onExit: () -> Unit) {
     var profileBanner by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) { AccountSession.restoreIfNeeded() }
+    LaunchedEffect(loggedIn, user?.accountId) {
+        if (loggedIn) PaymentController.resumeForCurrentAccount()
+    }
 
     LaunchedEffect(loggedIn) {
         if (!loggedIn) showLedgers = false
@@ -153,7 +159,7 @@ fun AccountView(onExit: () -> Unit) {
     )
     val appContext = koinInject<AppContext>()
     val accountModalOpen = showNicknameDialog || showAvatarDialog || showChangeEmail ||
-        showLogoutConfirm || showLedgers || authKind != null
+        showLogoutConfirm || showLedgers || authKind != null || paymentState.visible
     val pageFocusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         pageFocusRequester.requestFocus()
@@ -265,6 +271,7 @@ fun AccountView(onExit: () -> Unit) {
         }
 
     PointLedgersDialog(visible = showLedgers, onDismiss = { showLedgers = false })
+    PaymentDialog(onBindEmail = { PaymentController.prepareEmailBinding(); showChangeEmail = true })
 
     AccountLoginDialog(
         inlineDesktop = appContext.isDesktop(),
@@ -474,6 +481,8 @@ private fun AccountLoggedInState(
                 AccountMessageBanner(readI18n("account.multiplayerNameBound", I18nType.RWPP), icon = Icons.Default.Info)
             }
             AccountCenterPage.Points -> {
+                AccountActionTile(Icons.Default.Star, paymentText("title"),
+                    { PaymentController.open() }, modifier = Modifier.fillMaxWidth())
                 BorderCard(
                     modifier = Modifier.fillMaxWidth(),
                     backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
@@ -594,6 +603,8 @@ private fun AccountLoggedInState(
 
             }
             AccountCenterPage.Security -> {
+                AccountActionTile(Icons.Default.Lock, paymentText("managePin"),
+                    { PaymentController.open(passwordOnly = true) }, modifier = Modifier.fillMaxWidth())
                 BorderCard(modifier = Modifier.fillMaxWidth(),
                     backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)) {
                     AccountInfoRow(Icons.Default.Email, readI18n("account.email", I18nType.RWPP),
@@ -1760,6 +1771,15 @@ private fun ChangeEmailDialog(
     var sendingCode by remember(visible) { mutableStateOf(false) }
     var cooldown by remember(visible) { mutableIntStateOf(0) }
     var done by remember(visible) { mutableStateOf(false) }
+    var oldEmailCode by remember(visible) { mutableStateOf("") }
+    var paymentPin by remember(visible) { mutableStateOf("") }
+    var usePaymentPin by remember(visible) { mutableStateOf(false) }
+    var oldCooldown by remember(visible) { mutableIntStateOf(0) }
+    val needsOldProof = !AccountSession.user?.email.isNullOrBlank()
+
+    LaunchedEffect(oldCooldown) {
+        if (oldCooldown > 0) { delay(1000); oldCooldown -= 1 }
+    }
 
     LaunchedEffect(cooldown) {
         if (cooldown > 0) {
@@ -1846,6 +1866,42 @@ private fun ChangeEmailDialog(
                         },
                     )
                 }
+                if (needsOldProof) {
+                    AccountMessageBanner(paymentText("emailProofHint"))
+                    if (usePaymentPin) {
+                        AccountAccessField(paymentText("pin"), paymentPin, Modifier.fillMaxWidth(), enabled = !submitting,
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword,
+                            onValueChange = { paymentPin = it.filter { ch -> ch in '0'..'9' }.take(6) })
+                    } else {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            AccountAccessField(paymentText("oldEmailCode"), oldEmailCode, Modifier.weight(1f), enabled = !submitting,
+                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
+                                onValueChange = { oldEmailCode = it.filter { ch -> ch in '0'..'9' }.take(6) })
+                            AccountCompactButton(if (oldCooldown > 0) paymentText("resend", oldCooldown.toString()) else paymentText("sendOldEmailCode"),
+                                enabled = !submitting && !sendingCode && oldCooldown == 0, onClick = {
+                                    sendingCode = true
+                                    scope.launch {
+                                        try {
+                                            AccountSession.sendOldChangeEmailCode()
+                                            oldCooldown = 60
+                                            info = paymentText("codeSent")
+                                            error = ""
+                                        } catch (cancel: kotlinx.coroutines.CancellationException) {
+                                            throw cancel
+                                        } catch (e: Exception) {
+                                            error = (e as? io.github.rwpp.net.payment.PaymentApiException)?.let { paymentError(it.code) }
+                                                ?: (e as? AccountApiException)?.let { accountErrorText(it) }
+                                                ?: paymentText("unavailable")
+                                        } finally { sendingCode = false }
+                                    }
+                                })
+                        }
+                    }
+                    TextButton(onClick = { usePaymentPin = !usePaymentPin; paymentPin = ""; oldEmailCode = "" }, enabled = !submitting) {
+                        Text(paymentText(if (usePaymentPin) "useEmailProof" else "usePinProof"))
+                    }
+                }
                 if (info.isNotBlank() && error.isBlank()) {
                     AccountMessageBanner(info)
                 }
@@ -1863,19 +1919,27 @@ private fun ChangeEmailDialog(
                                 readI18n("account.emailInvalid", I18nType.RWPP)
                             !AccountFieldRules.isValidCode(code) ->
                                 readI18n("account.codeInvalid", I18nType.RWPP)
+                            needsOldProof && usePaymentPin && !io.github.rwpp.net.payment.PaymentRules.validPin(paymentPin) ->
+                                paymentText("wrongPassword")
+                            needsOldProof && !usePaymentPin && !AccountFieldRules.isValidCode(oldEmailCode) ->
+                                paymentText("invalidCode")
                             else -> ""
                         }
                         if (error.isNotBlank()) return@AccountAuthActions
                         submitting = true
                         scope.launch {
                             runCatching {
-                                AccountSession.changeEmail(mail, code.trim())
+                                val pin = paymentPin.takeIf { needsOldProof && usePaymentPin }
+                                val oldCode = oldEmailCode.takeIf { needsOldProof && !usePaymentPin }
+                                paymentPin = ""; oldEmailCode = ""
+                                AccountSession.changeEmail(mail, code.trim(), pin, oldCode)
                             }.onSuccess {
                                 submitting = false
                                 done = true
                             }.onFailure { e ->
-                                error = (e as? AccountApiException)?.let { accountErrorText(it) }
-                                    ?: e.message.orEmpty()
+                                error = (e as? io.github.rwpp.net.payment.PaymentApiException)?.let { paymentError(it.code) }
+                                    ?: (e as? AccountApiException)?.let { accountErrorText(it) }
+                                    ?: paymentText("unavailable")
                                 submitting = false
                             }
                         }

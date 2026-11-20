@@ -252,6 +252,8 @@ data class ChangeEmailSendCodeRequest(
 data class ChangeEmailRequest(
     val email: String,
     val code: String,
+    @SerialName("payment_password") val paymentPassword: String? = null,
+    @SerialName("old_email_code") val oldEmailCode: String? = null,
 )
 
 /** 积分余额（文档 6.9）。 */

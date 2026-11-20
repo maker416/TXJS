@@ -208,12 +208,25 @@ class AccountApiClient(
     suspend fun sendChangeEmailCode(token: String, email: String): OkResponse =
         postJson("/users/change-email/send-code", ChangeEmailSendCodeRequest(email), token)
 
-    suspend fun changeEmail(token: String, email: String, code: String): AccountUser =
-        postJson<ChangeEmailRequest, UserResponse>(
+    suspend fun changeEmail(token: String, email: String, code: String, paymentPassword: String? = null, oldEmailCode: String? = null): AccountUser {
+        if (paymentPassword != null || oldEmailCode != null) {
+            if (io.github.rwpp.config.normalizeOpenPlatformUrl(baseUrl) == null) {
+                throw io.github.rwpp.net.payment.PaymentApiException("payment_https_required")
+            }
+        }
+        return postJson<ChangeEmailRequest, UserResponse>(
             "/users/change-email",
-            ChangeEmailRequest(email, code),
+            ChangeEmailRequest(email, code, paymentPassword, oldEmailCode),
             token,
         ).user
+    }
+
+    suspend fun sendOldChangeEmailCode(token: String): OkResponse {
+        if (io.github.rwpp.config.normalizeOpenPlatformUrl(baseUrl) == null) {
+            throw io.github.rwpp.net.payment.PaymentApiException("payment_https_required")
+        }
+        return postEmpty("/users/change-email/send-old-code", token)
+    }
 
     suspend fun listPoints(token: String): List<PointBalance> =
         getJson<PointsResponse>("/points", token).points
@@ -333,7 +346,7 @@ class AccountApiClient(
         }
         val request = builder.build()
         try {
-            val transport = if (path == "/sso/forum/tickets") http.newBuilder().followRedirects(false).followSslRedirects(false).build() else http
+            val transport = if (path == "/sso/forum/tickets" || path.startsWith("/users/change-email")) http.newBuilder().followRedirects(false).followSslRedirects(false).build() else http
             transport.useCancellable(request) { response ->
                 val text = response.body?.string().orEmpty()
                 if (!response.isSuccessful || (expectedCode != null && response.code != expectedCode)) {

@@ -125,11 +125,23 @@ android {
     buildTypes {
         getByName("debug") {
             // An isolated ADB fixture package keeps the user's signed installation and data untouched.
+            val paymentTest = providers.gradleProperty("paymentUiTestPackage").orNull == "true"
             val portalTest = providers.gradleProperty("gamePortalUiTestPackage").orNull == "true"
+            require(!(paymentTest && portalTest)) { "Choose one isolated UI fixture package" }
+            manifestPlaceholders["paymentUiHostEnabled"] = paymentTest.toString()
             manifestPlaceholders["gamePortalFixtureEnabled"] = portalTest.toString()
             manifestPlaceholders["normalLauncherLabel"] = if (portalTest) "RWJS网页入口联调" else "铁锈战争RW"
-            manifestPlaceholders["resourcesProcess"] = if (portalTest) "io.github.rwjs.portaltest" else "io.github.rwjs"
-            if (portalTest) applicationIdSuffix = ".portaltest"
+            manifestPlaceholders["normalLauncherEnabled"] = (!paymentTest).toString()
+            manifestPlaceholders["paymentResourcesProcess"] = when {
+                paymentTest -> ":payment_ui"
+                portalTest -> "io.github.rwjs.portaltest"
+                else -> "io.github.rwjs"
+            }
+            if (paymentTest) {
+                applicationIdSuffix = ".paymenttest"
+            } else if (portalTest) {
+                applicationIdSuffix = ".portaltest"
+            }
         }
         release {
             isMinifyEnabled = false

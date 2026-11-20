@@ -304,10 +304,15 @@ object AccountSession : KoinComponent {
      * 确认更换绑定邮箱。成功后服务端使该身份所有 Token 立即失效（文档 6.7），
      * 本地同步清会话，调用方应引导重新登录。
      */
-    suspend fun changeEmail(email: String, code: String) {
+    suspend fun sendOldChangeEmailCode() {
+        val session = requireSessionSnapshot()
+        client().sendOldChangeEmailCode(session.token)
+    }
+
+    suspend fun changeEmail(email: String, code: String, paymentPassword: String? = null, oldEmailCode: String? = null) {
         val session = requireSessionSnapshot()
         withContext(Dispatchers.IO) {
-            client().changeEmail(session.token, email, code)
+            client().changeEmail(session.token, email, code, paymentPassword, oldEmailCode)
         }
         updateCurrentSession(session) { clearSession(persist = true) }
     }
@@ -386,6 +391,7 @@ object AccountSession : KoinComponent {
 
     @Synchronized
     private fun beginAuthentication(): Long {
+        PaymentController.onAccountInvalidated()
         ModSyncController.onAccountInvalidated()
         RoomIdentityController.onAccountInvalidated()
         io.github.rwpp.theme.PersonalizedAppearanceController.onAccountInvalidated()
@@ -434,6 +440,7 @@ object AccountSession : KoinComponent {
 
     private fun applySession(newToken: String, newUser: AccountUser, persist: Boolean) {
         if (token != newToken || user?.id != newUser.id) {
+            PaymentController.onAccountInvalidated()
             ModSyncController.onAccountInvalidated()
             RoomIdentityController.onAccountInvalidated()
             io.github.rwpp.theme.PersonalizedAppearanceController.onAccountInvalidated()
@@ -469,6 +476,7 @@ object AccountSession : KoinComponent {
 
     @Synchronized
     private fun clearSession(persist: Boolean) {
+        PaymentController.onAccountInvalidated()
         ModSyncController.onAccountInvalidated()
         RoomIdentityController.onAccountInvalidated()
         io.github.rwpp.theme.PersonalizedAppearanceController.onAccountInvalidated()

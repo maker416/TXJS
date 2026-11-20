@@ -14,9 +14,24 @@
         <!-- Compose resource context must be initialized in the isolated fixture process too. -->
         <provider android:name="org.jetbrains.compose.resources.AndroidContextProvider"
                   android:authorities="${applicationId}.resources.AndroidContextProvider"
-                  android:process="${resourcesProcess}"
+                  android:process="${paymentResourcesProcess}"
                   android:exported="false" />
-        <activity android:name="io.github.rwpp.android.LoadingScreen" android:label="${normalLauncherLabel}" />
+        <activity android:name="io.github.rwpp.android.LoadingScreen" android:enabled="${normalLauncherEnabled}" android:label="${normalLauncherLabel}" />
+        <activity
+                android:name="io.github.rwpp.android.PaymentUiHostActivity"
+                android:label="RWJS支付联调"
+                android:enabled="${paymentUiHostEnabled}"
+                android:exported="true"
+                android:process=":payment_ui"
+                android:screenOrientation="unspecified"
+                android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden"
+                android:windowSoftInputMode="adjustResize|stateHidden"
+                android:theme="@style/app_theme">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
         <!--
           Debug-only host: 假数据账号 UI 验收入口。
           不启动游戏引擎、不读 assets、不发 HTTP / BBS。
