@@ -38,7 +38,7 @@ def main():
 id = "personalized-player"
 name = "玩家专属外观示例"
 author = "RWJS contributors"
-version = "1.0.0"
+version = "1.1.0"
 description = "平台分配的背景、边框和支持者装饰；未核验玩家保持默认。"
 
 [room.player]
@@ -52,13 +52,26 @@ platformPackId = "{args.pack_id}"
 
 [personalization.slots."room.player.background".variants.gold]
 image = "players/gold.png"
+displayName = "琥珀条纹"
 
 [personalization.slots."room.player.background".variants.blue]
 image = "players/blue.png"
+displayName = "深海条纹"
+
+[personalization.slots."room.player.background".variants.aurora]
+image = "players/aurora.jpg"
+displayName = "极光中继"
 
 [personalization.slots."room.player.frame".variants.gold]
 borderColor = "#FFD166"
 borderWidth = 3
+displayName = "金色合金"
+
+[personalization.slots."room.player.frame".variants.prism]
+avatarFrameImage = "players/prism.png"
+displayName = "棱镜之冠"
+borderColor = "#84E0D2"
+borderWidth = 2
 
 [[personalization.slots."room.player.badges".variants.supporter.content.rows]]
 cells = [{{ text = "美术包支持者", contentColor = "#FFD166", backgroundColor = "#332B18" }}]
@@ -71,6 +84,9 @@ cells = [{{ text = "此美术包的作者", contentColor = "#B8D8FF" }}]
         archive.writestr("theme.toml", manifest.encode("utf-8"))
         archive.writestr("players/gold.png", background((255, 209, 102)))
         archive.writestr("players/blue.png", background((110, 175, 255)))
+        artwork = root / "rwpp-core/src/commonMain/composeResources/drawable"
+        archive.write(artwork / "player_card_aurora.jpg", "players/aurora.jpg")
+        archive.write(artwork / "player_frame_prism.png", "players/prism.png")
     print(target)
 
 

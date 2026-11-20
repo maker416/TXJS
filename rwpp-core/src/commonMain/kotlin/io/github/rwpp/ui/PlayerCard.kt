@@ -7,60 +7,68 @@
 
 package io.github.rwpp.ui
 
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.getValue
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import io.github.rwpp.LocalWindowManager
+import io.github.rwpp.AppContext
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.account.FriendsSession
 import io.github.rwpp.account.RoomIdentityController
 import io.github.rwpp.account.RoomIdentityResult
 import io.github.rwpp.account.accountErrorText
 import io.github.rwpp.coil.AccountAvatar
+import io.github.rwpp.core.RoomSnapshotStore
 import io.github.rwpp.game.GameRoom
 import io.github.rwpp.game.Player
-import io.github.rwpp.game.teamAlias
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.net.account.AccountApiException
 import io.github.rwpp.net.account.AccountFieldRules
 import io.github.rwpp.net.account.FriendRequestStatus
 import io.github.rwpp.net.account.PublicUser
+import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.widget.AnimatedAlertDialog
+import io.github.rwpp.widget.LocalAccountAuthDialogEscape
 import io.github.rwpp.widget.RWSingleOutlinedTextField
 import io.github.rwpp.widget.UiCircularProgressIndicator
-import io.github.rwpp.widget.WindowManager
+import io.github.rwpp.widget.autoClearFocus
 import kotlinx.coroutines.launch
+import org.koin.compose.koinInject
 
-/**
- * 房间内成员个人名片弹窗：上半为游戏信息（玩家名/队伍/延迟/房主标记），
- * 下半按 [RoomIdentityResult] 渲染账号区（头像/昵称/在线状态/加好友/发私信）。
- * 账号数据由 [RoomIdentityController.resolvePlayer] 带外查询（relaymod 房间身份公示 + UAS 公开接口），
- * 不涉及游戏联机协议。
- */
+/** Room identity supplies account actions. Cosmetic ownership comes from the verified game connection. */
 @Composable
 fun PlayerCardDialog(
     visible: Boolean,
@@ -69,88 +77,72 @@ fun PlayerCardDialog(
     onDismiss: () -> Unit,
 ) {
     AnimatedAlertDialog(visible, onDismissRequest = onDismiss) { dismiss ->
-        val isSmall = LocalWindowManager.current == WindowManager.Small
-        AccountAuthCard(scrollable = isSmall) {
-            AccountDialogHeader(
-                title = readI18n("playerCard.title", I18nType.RWPP),
-                icon = {
-                    Icon(
-                        Icons.Default.Person,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(26.dp),
-                    )
-                },
-            )
-
-            // —— 游戏区 ——
-            PlayerCardGameSection(player)
-
-            HorizontalDivider(
-                thickness = 1.dp,
-                color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.6f),
-            )
-
-            // —— 账号区 ——
-            PlayerCardAccountSection(player, room, dismiss)
-        }
+        PlayerCardContent(player, room, dismiss)
     }
 }
 
-/** 游戏区：玩家名（含房主标记）、队伍、延迟。 */
 @Composable
-private fun PlayerCardGameSection(player: Player) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(
-            player.name,
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        if (player.isRoomHost) {
-            AccountStatusPill(readI18n("playerCard.hostBadge", I18nType.RWPP))
-        }
-    }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Text(
-            readI18n("playerCard.team", I18nType.RWPP, player.teamAlias()),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
-        )
-        Text(
-            readI18n("playerCard.ping", I18nType.RWPP, player.ping),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
-        )
-    }
-}
-
-/** 账号区：按 [RoomIdentityResult] 分派渲染。 */
-@Composable
-private fun PlayerCardAccountSection(
-    player: Player,
-    room: GameRoom,
-    dismiss: () -> Unit,
-) {
-    var result by remember(player) { mutableStateOf<RoomIdentityResult?>(null) }
-    var retryNonce by remember(player) { mutableIntStateOf(0) }
-    // 登录态变化（弹窗开着时完成了登录）也触发重新解析
+internal fun PlayerCardContent(player: Player, room: GameRoom, dismiss: () -> Unit) {
+    val desktop = koinInject<AppContext>().isDesktop()
+    val local = AccountSession.user
     val loggedIn = AccountSession.loggedIn
-    LaunchedEffect(player, retryNonce, loggedIn) {
-        result = null
-        result = RoomIdentityController.resolvePlayer(player, room)
-    }
+    val ownCard = player == room.localPlayer
+    key(room, player, player.name, ownCard, local?.id, loggedIn) {
+        var retryNonce by remember { mutableIntStateOf(0) }
+        var result by remember { mutableStateOf<RoomIdentityResult?>(if (ownCard) RoomIdentityResult.Self else null) }
+        LaunchedEffect(retryNonce, ownCard) {
+            if (!ownCard) result = RoomIdentityController.resolvePlayer(player, room)
+        }
+        val resolved = result
+        val identity = if (resolved is RoomIdentityResult.Found) {
+            val snapshot by RoomSnapshotStore.snapshot.collectAsState()
+            val matches = snapshot.players.filter { it.name.trim() == player.name.trim() }
+            when {
+                matches.none { it === player } -> RoomIdentityResult.NotFound
+                matches.size > 1 -> RoomIdentityResult.Ambiguous(listOf(resolved.user))
+                else -> resolved
+            }
+        } else resolved
+        val found = identity as? RoomIdentityResult.Found
+        val account = if (ownCard && loggedIn && local != null) {
+            PublicUser(local.id, local.username, local.nickname, hasAvatar = local.hasAvatar)
+        } else found?.user
+        val avatar = account?.takeIf { it.hasAvatar }?.let {
+            val version = if (ownCard) AccountSession.avatarVersion else RoomIdentityController.playerAvatarVersionFor(player, room)
+            AccountAvatar(it.id, true, version)
+        }
+        val theme = ArtThemeController.activeTheme
+        val canPreview = ownCard && account != null
 
+        CompositionLocalProvider(LocalAccountAuthDialogEscape provides desktop) {
+            Surface(
+                modifier = Modifier.then(if (desktop) Modifier else Modifier.imePadding().navigationBarsPadding())
+                    .padding(12.dp).widthIn(max = 600.dp).fillMaxWidth().testTag("player-card"),
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+                    .then(if (desktop) Modifier else Modifier.autoClearFocus())) {
+                    key(theme) {
+                        PlayerCardShowcase(player, account, avatar, found?.online, ownCard, dismiss)
+                    }
+                    if (!canPreview) {
+                        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                            PlayerCardActions(identity, dismiss) {
+                                result = null
+                                retryNonce++
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayerCardActions(result: RoomIdentityResult?, dismiss: () -> Unit, retry: () -> Unit) {
     when (val r = result) {
         null -> Row(
             modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
@@ -180,9 +172,9 @@ private fun PlayerCardAccountSection(
             readI18n("playerCard.featureUnavailable", I18nType.RWPP),
         )
 
-        RoomIdentityResult.Self -> SelfSection(dismiss)
+        RoomIdentityResult.Self -> NotLoggedInSection(dismiss)
 
-        is RoomIdentityResult.Found -> FoundSection(r.user, r.online, dismiss)
+        is RoomIdentityResult.Found -> FoundSection(r.user, dismiss)
 
         RoomIdentityResult.NotFound -> NotFoundSection()
 
@@ -194,7 +186,7 @@ private fun PlayerCardAccountSection(
             AccountMessageBanner(r.message.ifBlank { "error" }, isError = true)
             AccountPrimaryButton(
                 label = readI18n("playerCard.retry", I18nType.RWPP),
-                onClick = { retryNonce++ },
+                onClick = retry,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -217,31 +209,13 @@ private fun NotLoggedInSection(dismiss: () -> Unit) {
     }
 }
 
-/** 点的是自己：展示自己的账号卡（未登录时按未登录处理）。 */
-@Composable
-private fun SelfSection(dismiss: () -> Unit) {
-    val user = AccountSession.user
-    if (!AccountSession.loggedIn || user == null) {
-        NotLoggedInSection(dismiss)
-        return
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        PlayerCardUserRow(
-            user = PublicUser(user.id, user.username, user.nickname, hasAvatar = user.hasAvatar),
-            online = null,
-        )
-        AccountMessageBanner(readI18n("playerCard.self", I18nType.RWPP))
-    }
-}
-
 /** 命中唯一账号：名片 + 加好友 / 已是好友则发私信。 */
 @Composable
-private fun FoundSection(user: PublicUser, online: Boolean, dismiss: () -> Unit) {
+private fun FoundSection(user: PublicUser, dismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
     val isFriend = FriendsSession.friends.any { it.user.id == user.id }
     val isSelf = AccountSession.username.equals(user.username, ignoreCase = true)
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        PlayerCardUserRow(user, online)
         when {
             isSelf -> AccountMessageBanner(readI18n("playerCard.self", I18nType.RWPP))
             isFriend -> AccountPrimaryButton(
@@ -325,52 +299,6 @@ private fun AmbiguousSection(users: List<PublicUser>) {
                 }
                 AddFriendButton(username = user.username, compact = true)
             }
-        }
-    }
-}
-
-/** 名片行：头像 + 昵称 + @username + 在线状态胶囊。 */
-@Composable
-private fun PlayerCardUserRow(user: PublicUser, online: Boolean?) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        AccountAvatarBox(
-            user.nickname.ifBlank { user.username },
-            size = 52.dp,
-            avatar = AccountAvatar(user.id, user.hasAvatar, AccountSession.avatarVersion),
-            online = online,
-        )
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(
-                user.nickname.ifBlank { user.username },
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                "@${user.username}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (online != null) {
-            AccountStatusPill(
-                text = readI18n(
-                    if (online) "friends.online" else "friends.offline",
-                    I18nType.RWPP,
-                ),
-                dotColor = if (online) Color(95, 190, 95) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
-            )
         }
     }
 }
