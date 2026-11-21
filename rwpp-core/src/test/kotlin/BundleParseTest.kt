@@ -551,4 +551,24 @@ class BundleParseTest {
         }
     }
 
+    @Test
+    fun gameplayHallDevNoticeKeysExistInAllBundles() {
+        bundleNames.forEach { name ->
+            val table = Toml.parseToTomlTable(File(bundleDir, name).readText())
+            val hall = assertNotNull(table["gameplayHall"] as? TomlTable, "[gameplayHall] table missing in $name")
+            listOf(
+                "devBadge", "devTag", "devTitle", "devSubtitle", "devCompactSubtitle", "devDismiss", "devExpand",
+                "premiereBadge", "onlineSection", "classicSection", "artPackTag", "expansionTag",
+                "serverOnlineSingle", "serversOnline", "playersOnline", "moreModesTitle", "moreModesSubtitle",
+                "intelStatusTitle", "intelContentTitle", "intelEcosystemTitle", "intelPlayersCapacity",
+                "intelServersTotal", "intelServerReady", "intelServerOffline", "intelServerOfflineHint",
+                "intelPortalReady", "intelPortalReadyHint", "intelPortalMaintenanceHint",
+                "intelExpansionDesc", "intelArtPackDesc", "intelPlatformVerified", "intelPlatformVerifiedDesc",
+                "intelEcosystemDesc", "emptyDirectoryTitle", "failedDirectoryTitle", "loadingDirectoryTitle", "retry",
+            ).forEach { key ->
+                assertTrue((hall[key] as? TomlLiteral)?.content?.isNotBlank() == true, "gameplayHall.$key missing in $name")
+            }
+        }
+    }
+
 }
