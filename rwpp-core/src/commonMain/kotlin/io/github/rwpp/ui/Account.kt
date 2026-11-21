@@ -211,7 +211,7 @@ fun AccountView(onExit: () -> Unit) {
             ExpandedCard(
                 modifier = Modifier.autoClearFocus(
                     restoreFocus = if (appContext.isDesktop()) pageFocusRequester else null,
-                ),
+                ).tacticalSheetContentMotion(),
                 backgroundColor = pageBackground,
             ) {
                 val refreshProfile: () -> Unit = refresh@{

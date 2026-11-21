@@ -7,8 +7,20 @@
 
 package io.github.rwpp.ui
 
+import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.Transition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,6 +35,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,6 +46,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -46,6 +63,9 @@ import io.github.rwpp.theme.MenuLayoutSpec
 import io.github.rwpp.theme.MenuButtonSpec
 import coil3.compose.AsyncImage
 import io.github.rwpp.rwpp_core.generated.resources.*
+import io.github.rwpp.widget.LocalDialogInteractive
+import io.github.rwpp.widget.animateUiFloatAsState
+import io.github.rwpp.widget.uiAnimationsEnabled
 import org.jetbrains.compose.resources.painterResource
 
 private val ResourceText: Color
@@ -67,6 +87,157 @@ private data class ResourceCardEntry(
     val onClick: () -> Unit,
 )
 
+@Composable
+internal fun ResourceCenterPageHost(content: @Composable () -> Unit) {
+    val animated = uiAnimationsEnabled()
+    val memory = remember { ResourceCenterTransitionMemory() }
+    val visible = launcherPage == LauncherPage.ResourceCenter
+    val enterForward =
+        if (visible && !memory.lastVisible) {
+            val from = launcherNavigationTransition.from
+            from == LauncherPage.MainMenu || from == LauncherPage.ResourceCenter
+        } else {
+            memory.enterForward
+        }
+    val exitToChild =
+        if (!visible && memory.lastVisible) {
+            launcherPage != LauncherPage.MainMenu
+        } else {
+            memory.exitToChild
+        }
+    SideEffect {
+        memory.lastVisible = visible
+        memory.enterForward = enterForward
+        memory.exitToChild = exitToChild
+    }
+    CompositionLocalProvider(
+        LocalResourceCenterMotionConfig provides ResourceCenterMotionConfig(
+            animated = animated,
+            enterForward = enterForward,
+            exitToChild = exitToChild,
+        ),
+    ) {
+        LauncherPageHost(
+            LauncherPage.ResourceCenter,
+            enter = if (animated) fadeIn(tween(RESOURCE_CENTER_BACKDROP_ENTER_MS, easing = StandardDecelerateEasing)) else EnterTransition.None,
+            exit = if (animated) fadeOut(tween(RESOURCE_CENTER_EXIT_MS, easing = EmphasizedAccelerateEasing)) else ExitTransition.None,
+            content = content,
+        )
+    }
+}
+
+private class ResourceCenterMotionStates(
+    val headerOffsetY: State<Float>?,
+    val contentOffsetY: State<Float>?,
+    val contentScale: State<Float>?,
+    val foregroundAlpha: State<Float>?,
+)
+
+@Composable
+private fun rememberResourceCenterMotionStates(
+    transition: Transition<EnterExitState>?,
+    motionConfig: ResourceCenterMotionConfig,
+): ResourceCenterMotionStates {
+    if (transition == null || !motionConfig.animated) {
+        return ResourceCenterMotionStates(null, null, null, null)
+    }
+    val headerOffsetY = transition.animateFloat(
+        transitionSpec = {
+            if (EnterExitState.PreEnter isTransitioningTo EnterExitState.Visible) {
+                tween(270, easing = EmphasizedDecelerateEasing)
+            } else {
+                tween(175, easing = EmphasizedAccelerateEasing)
+            }
+        },
+        label = "ResourceHeaderOffsetY",
+    ) { state ->
+        when (state) {
+            EnterExitState.PreEnter -> if (motionConfig.enterForward) 1f else -0.6f
+            EnterExitState.Visible -> 0f
+            EnterExitState.PostExit -> if (motionConfig.exitToChild) -0.6f else 0.7f
+        }
+    }
+    val contentEnterMs = if (motionConfig.enterForward) 330 else 280
+    val contentEnterDelay = if (motionConfig.enterForward) 30 else 0
+    val contentOffsetY = transition.animateFloat(
+        transitionSpec = {
+            if (EnterExitState.PreEnter isTransitioningTo EnterExitState.Visible) {
+                tween(contentEnterMs, delayMillis = contentEnterDelay, easing = EmphasizedDecelerateEasing)
+            } else {
+                tween(185, easing = EmphasizedAccelerateEasing)
+            }
+        },
+        label = "ResourceContentOffsetY",
+    ) { state ->
+        when (state) {
+            EnterExitState.PreEnter -> if (motionConfig.enterForward) 1f else -0.45f
+            EnterExitState.Visible -> 0f
+            EnterExitState.PostExit -> if (motionConfig.exitToChild) -0.45f else 0.75f
+        }
+    }
+    val contentScale = transition.animateFloat(
+        transitionSpec = {
+            if (EnterExitState.PreEnter isTransitioningTo EnterExitState.Visible) {
+                tween(contentEnterMs, delayMillis = contentEnterDelay, easing = EmphasizedDecelerateEasing)
+            } else {
+                tween(185, easing = EmphasizedAccelerateEasing)
+            }
+        },
+        label = "ResourceContentScale",
+    ) { state ->
+        when (state) {
+            EnterExitState.PreEnter -> 0.972f
+            EnterExitState.Visible -> 1f
+            EnterExitState.PostExit -> 0.972f
+        }
+    }
+    val foregroundAlpha = transition.animateFloat(
+        transitionSpec = {
+            if (EnterExitState.PreEnter isTransitioningTo EnterExitState.Visible) {
+                tween(220, delayMillis = 30, easing = StandardDecelerateEasing)
+            } else {
+                tween(150, easing = FastOutLinearInEasing)
+            }
+        },
+        label = "ResourceForegroundAlpha",
+    ) { state ->
+        when (state) {
+            EnterExitState.PreEnter -> 0f
+            EnterExitState.Visible -> 1f
+            EnterExitState.PostExit -> 0f
+        }
+    }
+    return ResourceCenterMotionStates(
+        headerOffsetY = headerOffsetY,
+        contentOffsetY = contentOffsetY,
+        contentScale = contentScale,
+        foregroundAlpha = foregroundAlpha,
+    )
+}
+
+private fun Modifier.resourceHeaderMotion(motion: ResourceCenterMotionStates): Modifier {
+    val offsetY = motion.headerOffsetY ?: return this
+    val alphaState = motion.foregroundAlpha ?: return this
+    return graphicsLayer {
+        translationY = offsetY.value * 14.dp.toPx()
+        alpha = alphaState.value
+    }
+}
+
+private fun Modifier.resourceContentMotion(motion: ResourceCenterMotionStates): Modifier {
+    val offsetY = motion.contentOffsetY ?: return this
+    val scaleState = motion.contentScale ?: return this
+    val alphaState = motion.foregroundAlpha ?: return this
+    return graphicsLayer {
+        translationY = offsetY.value * 26.dp.toPx()
+        val s = scaleState.value
+        scaleX = s
+        scaleY = s
+        transformOrigin = TransformOrigin(0.5f, 0.42f)
+        alpha = alphaState.value
+    }
+}
+
 /** 普通页面参与返回栈，子页关闭后回到这里；不创建原生弹窗或提前启动网页。 */
 @Composable
 internal fun ResourceCenterView(
@@ -77,6 +248,14 @@ internal fun ResourceCenterView(
     extraMenus: List<UIProvider.Menu> = emptyList(),
 ) {
     BackHandler(true, onExit)
+    val animated = uiAnimationsEnabled()
+    val pageScope = LocalPageAnimatedVisibilityScope.current
+    val motionConfig = LocalResourceCenterMotionConfig.current ?: ResourceCenterMotionConfig(
+        animated = animated,
+        enterForward = true,
+        exitToChild = false,
+    )
+    val motion = rememberResourceCenterMotionStates(pageScope?.transition, motionConfig)
     BoxWithConstraints(Modifier.fillMaxSize().testTag("resource-center")) {
         val compact = maxHeight < 480.dp
         val narrow = maxWidth < 600.dp
@@ -97,25 +276,30 @@ internal fun ResourceCenterView(
         Box(Modifier.matchParentSize().background(Brush.verticalGradient(
             listOf(launcherThemeColor("primaryContainer", Color(0x292C5540)), Color.Transparent, Color(0x33000000)),
         )))
+        Box(Modifier.matchParentSize().background(Brush.radialGradient(
+            listOf(ResourceAccent.copy(alpha = 0.08f), Color.Transparent),
+        )))
         Column(Modifier.fillMaxSize()) {
-            Row(
-                Modifier.fillMaxWidth().height(headerHeight).padding(start = gutter - 12.dp, end = gutter),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                IconButton(onClick = onExit, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, readI18n("resources.back"), tint = ResourceText)
+            Column(Modifier.fillMaxWidth().resourceHeaderMotion(motion)) {
+                Row(
+                    Modifier.fillMaxWidth().height(headerHeight).padding(start = gutter - 12.dp, end = gutter),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    IconButton(onClick = onExit, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, readI18n("resources.back"), tint = ResourceText)
+                    }
+                    Text(readI18n("resources.title"), color = ResourceText, fontSize = 18.sp, fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f))
+                    Text("RWJS", color = ResourceMuted.copy(alpha = 0.55f), fontSize = 12.sp, letterSpacing = 3.sp)
+                    // 管理入口不参与主题槽位隐藏，确保任何主题都能被停用或替换。
+                    IconButton(onClick = onExtensions, modifier = Modifier.size(48.dp).testTag("resource-theme-management")) {
+                        Icon(painterResource(Res.drawable.extension_30), readI18n("menu.extension"), tint = ResourceText)
+                    }
                 }
-                Text(readI18n("resources.title"), color = ResourceText, fontSize = 18.sp, fontWeight = FontWeight.Medium,
-                    modifier = Modifier.weight(1f))
-                Text("RWJS", color = ResourceMuted.copy(alpha = 0.55f), fontSize = 12.sp, letterSpacing = 3.sp)
-                // 管理入口不参与主题槽位隐藏，确保任何主题都能被停用或替换。
-                IconButton(onClick = onExtensions, modifier = Modifier.size(48.dp).testTag("resource-theme-management")) {
-                    Icon(painterResource(Res.drawable.extension_30), readI18n("menu.extension"), tint = ResourceText)
-                }
+                HorizontalDivider(color = launcherThemeColor("surfaceContainer", Color.White.copy(alpha = 0.07f)))
             }
-            HorizontalDivider(color = launcherThemeColor("surfaceContainer", Color.White.copy(alpha = 0.07f)))
-            Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = gutter), contentAlignment = Alignment.Center) {
+            Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = gutter).resourceContentMotion(motion), contentAlignment = Alignment.Center) {
                 Column(
                     Modifier.widthIn(max = 1080.dp).fillMaxWidth().fillMaxHeight()
                         .verticalScroll(rememberScrollState())
@@ -258,8 +442,39 @@ private fun BoxScope.ResourceCardImage(id: String) {
 
 @Composable
 private fun ForumResourceCard(onClick: () -> Unit, modifier: Modifier, compact: Boolean) {
+    val animated = uiAnimationsEnabled()
+    val interactive = LocalDialogInteractive.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
+    val pressed by interactionSource.collectIsPressedAsState()
+    val cardScale = animateUiFloatAsState(
+        targetValue = when {
+            !animated || !interactive -> 1f
+            pressed -> 0.985f
+            hovered -> 1.008f
+            else -> 1f
+        },
+        animationSpec = tween(if (animated) 150 else 0, easing = StandardDecelerateEasing),
+        label = "ForumResourceCardScale",
+    )
+    val arrowOffset = animateUiFloatAsState(
+        targetValue = if (animated && interactive && hovered) 1f else 0f,
+        animationSpec = tween(if (animated) 160 else 0, easing = StandardDecelerateEasing),
+        label = "ForumResourceCardArrow",
+    )
     Surface(
-        onClick = onClick, modifier = resourceCardModifier(modifier, "resourceBrowser"), shape = RoundedCornerShape(resourceCardCorner(20.dp)),
+        onClick = onClick,
+        interactionSource = interactionSource,
+        modifier = resourceCardModifier(modifier, "resourceBrowser").let {
+            if (animated) {
+                it.graphicsLayer {
+                    val s = cardScale.value
+                    scaleX = s
+                    scaleY = s
+                }
+            } else it
+        },
+        shape = RoundedCornerShape(resourceCardCorner(20.dp)),
         color = launcherThemeColor("surface", Color(0xFF1B3025)),
         border = resourceCardBorder("resourceBrowser", launcherThemeColor("surfaceContainer", ResourceAccent.copy(alpha = 0.24f))),
     ) {
@@ -288,7 +503,14 @@ private fun ForumResourceCard(onClick: () -> Unit, modifier: Modifier, compact: 
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Text(readI18n("resources.openForum"), color = launcherThemeColor("onPrimary", Color(0xFF14261C)), fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                    Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.size(16.dp), tint = launcherThemeColor("onPrimary", Color(0xFF14261C)))
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowForward,
+                        null,
+                        Modifier.size(16.dp).let {
+                            if (animated) it.graphicsLayer { translationX = arrowOffset.value * 3.dp.toPx() } else it
+                        },
+                        tint = launcherThemeColor("onPrimary", Color(0xFF14261C)),
+                    )
                 }
             }
         }
@@ -306,7 +528,38 @@ private fun SecondaryResourceCard(
     compact: Boolean = false,
     id: String,
 ) {
-    Surface(onClick = onClick, modifier = resourceCardModifier(modifier, id),
+    val animated = uiAnimationsEnabled()
+    val interactive = LocalDialogInteractive.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
+    val pressed by interactionSource.collectIsPressedAsState()
+    val cardScale = animateUiFloatAsState(
+        targetValue = when {
+            !animated || !interactive -> 1f
+            pressed -> 0.985f
+            hovered -> 1.008f
+            else -> 1f
+        },
+        animationSpec = tween(if (animated) 150 else 0, easing = StandardDecelerateEasing),
+        label = "SecondaryResourceCardScale",
+    )
+    val arrowOffset = animateUiFloatAsState(
+        targetValue = if (animated && interactive && hovered) 1f else 0f,
+        animationSpec = tween(if (animated) 160 else 0, easing = StandardDecelerateEasing),
+        label = "SecondaryResourceCardArrow",
+    )
+    Surface(
+        onClick = onClick,
+        interactionSource = interactionSource,
+        modifier = resourceCardModifier(modifier, id).let {
+            if (animated) {
+                it.graphicsLayer {
+                    val s = cardScale.value
+                    scaleX = s
+                    scaleY = s
+                }
+            } else it
+        },
         color = launcherThemeColor("surface", Color(0xF51B2520)), shape = RoundedCornerShape(resourceCardCorner(18.dp)),
         border = resourceCardBorder(id, launcherThemeColor("surfaceContainer", Color.White.copy(alpha = 0.07f)))) {
         Box {
@@ -326,7 +579,14 @@ private fun SecondaryResourceCard(
                     Text(description, color = ResourceMuted, fontSize = if (compact) 11.sp else 12.sp, maxLines = if (compact) 2 else 3,
                         overflow = TextOverflow.Ellipsis)
                 }
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(20.dp), tint = ResourceMuted)
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    null,
+                    Modifier.size(20.dp).let {
+                        if (animated) it.graphicsLayer { translationX = arrowOffset.value * 3.dp.toPx() } else it
+                    },
+                    tint = ResourceMuted,
+                )
             }
         }
     }

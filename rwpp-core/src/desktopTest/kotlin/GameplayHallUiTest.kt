@@ -13,13 +13,20 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.toAwtImage
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
+import androidx.compose.ui.use
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
@@ -31,6 +38,7 @@ import io.github.rwpp.net.games.OnlineGameServer
 import io.github.rwpp.widget.UiMotionTheme
 import io.github.rwpp.widget.WindowManager
 import io.github.rwpp.widget.setUiAnimationsEnabled
+import kotlinx.coroutines.CompletableDeferred
 import net.peanuuutz.tomlkt.Toml
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
@@ -229,6 +237,153 @@ class GameplayHallUiTest {
         onNodeWithTag("hall-card-game-$gameId").assertIsDisplayed()
         onNodeWithTag("hall-card-game-$gameId").assertIsNotEnabled()
         onNodeWithTag("hall-detail").assertDoesNotExist()
+    }
+
+    @OptIn(ExperimentalComposeUiApi::class)
+    @Test
+    fun hallTransitionAnimatesWithoutPerFrameRecompositionAndStopsCleanlyWhenDisabled() {
+        var featuredDotPos = Offset.Zero
+        var categoryOriginalPos = Offset.Zero
+        var favoriteMultiplayerPos = Offset.Zero
+        runDesktopComposeUiTest(width = 960, height = 720) {
+            setContent {
+                UiMotionTheme(darkColorScheme(), Typography()) {
+                    GameplayHallView({}, {}, loadGames = { emptyList() })
+                }
+            }
+            waitForIdle()
+            featuredDotPos = onNodeWithTag("hall-featured-1").fetchSemanticsNode().boundsInRoot.center
+            categoryOriginalPos = onNodeWithTag("hall-category-original").fetchSemanticsNode().boundsInRoot.center
+            onNodeWithTag("hall-category-original").performClick()
+            waitForIdle()
+            favoriteMultiplayerPos = onNodeWithTag("hall-favorite-multiplayer").fetchSemanticsNode().boundsInRoot.center
+        }
+
+        SwingUtilities.invokeAndWait { resetNavigation(LauncherPage.MainMenu) }
+        settings.setUiAnimationsEnabled(true)
+        var hallCompositions = 0
+        ImageComposeScene(width = 960, height = 720) {
+            UiMotionTheme(darkColorScheme(), Typography()) {
+                Box(Modifier.fillMaxSize()) {
+                    GameplayHallPageHost {
+                        SideEffect { hallCompositions++ }
+                        GameplayHallView({ closePage(LauncherPage.GameplayHall) }, { navigateTo(it) }, loadGames = { emptyList() })
+                    }
+                }
+            }
+        }.use { scene ->
+            scene.render(0L).close()
+            SwingUtilities.invokeAndWait { navigateTo(LauncherPage.GameplayHall) }
+            Snapshot.sendApplyNotifications()
+            scene.render(16_000_000L).close()
+            scene.render(32_000_000L).close()
+            val earlyPng = scene.render(48_000_000L).use { it.encodeToData()!!.bytes }
+            val startCompositions = hallCompositions
+            for (frame in 4..14) {
+                scene.render(frame * 16_000_000L).close()
+            }
+            val midPng = scene.render(240_000_000L).use { it.encodeToData()!!.bytes }
+            assertFalse(earlyPng.contentEquals(midPng), "开启动画时入场应随时间推进")
+            assertEquals(startCompositions, hallCompositions, "转场动画数值应只在 graphicsLayer 读取，不能逐帧触发重组")
+
+            for (frame in 16..45) {
+                scene.render(frame * 16_000_000L).close()
+            }
+            assertFalse(scene.hasInvalidations(), "转场完成后不得残留持续动画调度")
+
+            fun settleFrames(startMs: Long) {
+                repeat(5) { step ->
+                    Snapshot.sendApplyNotifications()
+                    scene.render((startMs + step * 16L) * 1_000_000L).close()
+                }
+            }
+
+            settings.setUiAnimationsEnabled(false)
+            settleFrames(750L)
+            assertFalse(scene.hasInvalidations(), "关闭动画后不得残留待渲染帧")
+
+            fun clickAt(pos: Offset, startMs: Long) {
+                scene.sendPointerEvent(PointerEventType.Press, pos)
+                Snapshot.sendApplyNotifications()
+                scene.render(startMs * 1_000_000L).close()
+                scene.sendPointerEvent(PointerEventType.Release, pos)
+                settleFrames(startMs + 16L)
+            }
+
+            clickAt(featuredDotPos, 850L)
+            assertFalse(scene.hasInvalidations(), "关闭动画时切换精选不得请求动画帧")
+            clickAt(categoryOriginalPos, 950L)
+            assertFalse(scene.hasInvalidations(), "关闭动画时切换分类不得请求动画帧")
+            clickAt(favoriteMultiplayerPos, 1050L)
+            assertFalse(scene.hasInvalidations(), "关闭动画时点击收藏不得请求动画帧")
+        }
+    }
+
+    @Test
+    fun hallDirectoryCacheReusesSnapshotAcrossReentryAndClearsOnFailure() = runDesktopComposeUiTest(width = 960, height = 640) {
+        var failLoad = false
+        var pendingGate: CompletableDeferred<List<OnlineGame>>? = null
+        var loads = 0
+        setContent {
+            UiMotionTheme(darkColorScheme(), Typography()) {
+                Box(Modifier.fillMaxSize()) {
+                    GameplayHallPageHost {
+                        GameplayHallView(
+                            onExit = { closePage(LauncherPage.GameplayHall) },
+                            onOpenPage = { navigateTo(it) },
+                            loadGames = {
+                                loads++
+                                pendingGate?.let { return@GameplayHallView it.await() }
+                                if (failLoad) error("directory down")
+                                listOf(published)
+                            },
+                        )
+                    }
+                }
+            }
+        }
+
+        runOnIdle { navigateTo(LauncherPage.GameplayHall) }
+        waitUntil(timeoutMillis = 5_000) { loads == 1 }
+        onNodeWithTag("hall-card-game-$gameId").assertIsDisplayed()
+
+        runOnIdle { closePage(LauncherPage.GameplayHall) }
+        waitForIdle()
+        onNodeWithTag("gameplay-hall").assertDoesNotExist()
+
+        val refreshGate = CompletableDeferred<List<OnlineGame>>()
+        pendingGate = refreshGate
+        runOnIdle { navigateTo(LauncherPage.GameplayHall) }
+        waitUntil(timeoutMillis = 5_000) { loads == 2 }
+        // 新刷新仍在挂起时，二次进大厅已立即可见上次目录快照，不会中途闪烁空态。
+        onNodeWithTag("hall-card-game-$gameId").assertIsDisplayed()
+        onNodeWithTag("hall-directory-status").assertTextContains("开放平台", substring = true)
+
+        refreshGate.complete(listOf(published, offline))
+        waitForIdle()
+        onNodeWithTag("hall-card-game-$otherId").assertIsDisplayed()
+
+        runOnIdle { closePage(LauncherPage.GameplayHall) }
+        waitForIdle()
+        pendingGate = null
+        failLoad = true
+        runOnIdle { navigateTo(LauncherPage.GameplayHall) }
+        waitUntil(timeoutMillis = 5_000) { loads == 3 }
+        waitForIdle()
+        onNodeWithTag("hall-directory-status").assertTextContains("暂时无法获取网游目录", substring = true)
+        onNodeWithTag("hall-card-game-$gameId").assertDoesNotExist()
+
+        // 失败后缓存必须同步清空，再次进入时不得回放过期网游。
+        runOnIdle { closePage(LauncherPage.GameplayHall) }
+        waitForIdle()
+        val postFailureGate = CompletableDeferred<List<OnlineGame>>()
+        pendingGate = postFailureGate
+        failLoad = false
+        runOnIdle { navigateTo(LauncherPage.GameplayHall) }
+        waitUntil(timeoutMillis = 5_000) { loads == 4 }
+        onNodeWithTag("hall-card-game-$gameId").assertDoesNotExist()
+        postFailureGate.complete(emptyList())
+        waitForIdle()
     }
 
     private fun language(code: String) {

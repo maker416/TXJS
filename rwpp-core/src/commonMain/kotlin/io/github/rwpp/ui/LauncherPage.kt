@@ -66,11 +66,27 @@ sealed interface LauncherPage {
     data object Themes : LauncherPage
 }
 
+/** 页面导航方向。 */
+enum class NavigationDirection { Forward, Backward, Reset }
+
+/** 最近一次页面导航的起点、终点与方向。 */
+data class LauncherNavigationTransition(
+    val from: LauncherPage,
+    val to: LauncherPage,
+    val direction: NavigationDirection,
+)
+
 /**
  * 当前页面级页面（返回栈栈顶）。
  * 写入请走 [navigateTo] / [navigateBack] / [resetNavigation]，或经 [pageBinding] 代理的旧布尔量。
  */
 var launcherPage: LauncherPage by mutableStateOf(LauncherPage.MainMenu)
+    private set
+
+/** 最近一次页面切换记录（供双向联动与方向感知动画读取）。 */
+var launcherNavigationTransition: LauncherNavigationTransition by mutableStateOf(
+    LauncherNavigationTransition(LauncherPage.MainMenu, LauncherPage.MainMenu, NavigationDirection.Reset),
+)
     private set
 
 /**
@@ -83,16 +99,23 @@ private val pageStack = ArrayDeque<LauncherPage>()
 fun navigateTo(page: LauncherPage) {
     checkUiThread()
     if (launcherPage == page) return
-    pageStack.addLast(launcherPage)
+    val previous = launcherPage
+    pageStack.addLast(previous)
+    launcherNavigationTransition = LauncherNavigationTransition(previous, page, NavigationDirection.Forward)
     launcherPage = page
 }
 
 /** 返回上一级：弹出栈顶；栈空（或栈顶即主菜单）时回主菜单。 */
 fun navigateBack() {
     checkUiThread()
-    launcherPage =
+    val previous = launcherPage
+    val target =
         if (pageStack.isEmpty()) LauncherPage.MainMenu
         else pageStack.removeLast()
+    if (previous != target) {
+        launcherNavigationTransition = LauncherNavigationTransition(previous, target, NavigationDirection.Backward)
+    }
+    launcherPage = target
 }
 
 /**
@@ -101,7 +124,9 @@ fun navigateBack() {
  */
 fun resetNavigation(page: LauncherPage) {
     checkUiThread()
+    val previous = launcherPage
     pageStack.clear()
+    launcherNavigationTransition = LauncherNavigationTransition(previous, page, NavigationDirection.Reset)
     launcherPage = page
 }
 

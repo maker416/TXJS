@@ -66,4 +66,67 @@ class LauncherPageTest {
         assertFailsWith<IllegalStateException> { resetNavigation(LauncherPage.Room) }
         assertFailsWith<IllegalStateException> { closePage(LauncherPage.Room) }
     }
+
+    @Test
+    fun tracksNavigationOriginAndDirection() {
+        SwingUtilities.invokeAndWait {
+            resetNavigation(LauncherPage.MainMenu)
+            assertEquals(
+                LauncherNavigationTransition(LauncherPage.MainMenu, LauncherPage.MainMenu, NavigationDirection.Reset),
+                launcherNavigationTransition,
+            )
+
+            navigateTo(LauncherPage.GameplayHall)
+            assertEquals(
+                LauncherNavigationTransition(LauncherPage.MainMenu, LauncherPage.GameplayHall, NavigationDirection.Forward),
+                launcherNavigationTransition,
+            )
+
+            // 重复压入当前页不改变导航记录。
+            navigateTo(LauncherPage.GameplayHall)
+            assertEquals(
+                LauncherNavigationTransition(LauncherPage.MainMenu, LauncherPage.GameplayHall, NavigationDirection.Forward),
+                launcherNavigationTransition,
+            )
+
+            navigateTo(LauncherPage.Multiplayer)
+            assertEquals(
+                LauncherNavigationTransition(LauncherPage.GameplayHall, LauncherPage.Multiplayer, NavigationDirection.Forward),
+                launcherNavigationTransition,
+            )
+
+            // 不匹配当前页的 closePage 不改变导航记录。
+            closePage(LauncherPage.GameplayHall)
+            assertEquals(
+                LauncherNavigationTransition(LauncherPage.GameplayHall, LauncherPage.Multiplayer, NavigationDirection.Forward),
+                launcherNavigationTransition,
+            )
+
+            navigateBack()
+            assertEquals(
+                LauncherNavigationTransition(LauncherPage.Multiplayer, LauncherPage.GameplayHall, NavigationDirection.Backward),
+                launcherNavigationTransition,
+            )
+
+            closePage(LauncherPage.GameplayHall)
+            assertEquals(
+                LauncherNavigationTransition(LauncherPage.GameplayHall, LauncherPage.MainMenu, NavigationDirection.Backward),
+                launcherNavigationTransition,
+            )
+
+            // 已在主菜单时再次返回保持最后一次有效转场，不产生自跳。
+            navigateBack()
+            assertEquals(
+                LauncherNavigationTransition(LauncherPage.GameplayHall, LauncherPage.MainMenu, NavigationDirection.Backward),
+                launcherNavigationTransition,
+            )
+
+            navigateTo(LauncherPage.Settings)
+            resetNavigation(LauncherPage.GameplayHall)
+            assertEquals(
+                LauncherNavigationTransition(LauncherPage.Settings, LauncherPage.GameplayHall, NavigationDirection.Reset),
+                launcherNavigationTransition,
+            )
+        }
+    }
 }

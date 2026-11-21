@@ -61,7 +61,8 @@ internal fun AccountWelcomeView(onLogin: () -> Unit, onRegister: () -> Unit, onE
         val wide = maxWidth >= 600.dp
         Surface(
             modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(16.dp)
-                .heightIn(max = (maxHeight - 32.dp).coerceAtLeast(120.dp)),
+                .heightIn(max = (maxHeight - 32.dp).coerceAtLeast(120.dp))
+                .tacticalSheetContentMotion(),
             shape = RoundedCornerShape(24.dp),
             color = card,
             border = BorderStroke(1.dp, colors.onSurface.copy(alpha = 0.09f)),

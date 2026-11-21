@@ -10,6 +10,7 @@
 package io.github.rwpp
 
 import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -190,6 +191,9 @@ fun App(
         LauncherMusicController.init()
         withContext(Dispatchers.IO) { ArtThemeController.ensureInitialized() }
     }
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.Default) { prewarmLauncherUiClassesAndCaches() }
+    }
 
     val game = koinInject<Game>()
 
@@ -263,69 +267,99 @@ fun App(
                     },
                     floatingActionButtonPosition = FabPosition.End
                 ) {
-                    LauncherOverlayHost(
-                        visible = showMainMenu,
-                        isInteractive = { launcherPage == LauncherPage.MainMenu && !showAccountView && !showFriendsView },
-                        enter = if(enableAnimations) fadeIn() else EnterTransition.None,
-                        exit = if(enableAnimations) fadeOut() else ExitTransition.None,
-                    ) {
-                        UI.UiProvider.MainMenu(
-                            multiplayer = {
-                                isSinglePlayerGame = false
-                                showMultiplayerView = true
-                            },
-                            singlePlayer = {
-                                showSinglePlayerView = true
-                            },
-                            settings = {
-                                showSettingsView = true
-                            },
-                            mods = {
-                                showModsView = true
-                            },
-                            extension = {
-                                showExtensionView = true
-                            },
-                            resourceBrowser = {
-                                showResourceBrowser = true
-                            },
-                            esports = {
-                                navigateTo(LauncherPage.Esports)
-                            },
-                            openSourceInfo = {
-                                showOpenSourceInfoView = true
-                            },
-                            account = {
-                                showAccountView = true
-                            },
-                            friends = {
-                                showFriendsView = true
-                            },
-                        )
+                    val overlayOpen = showAccountView || showFriendsView
+                    val mainMenuTransition = remember { MainMenuTransitionMemory() }
+                    val enterStyle =
+                        if (showMainMenu && !mainMenuTransition.lastShowMainMenu) {
+                            if (!mainMenuTransition.lastOverlayOpen &&
+                                mainMenuTransition.lastPage == LauncherPage.GameplayHall &&
+                                launcherPage == LauncherPage.MainMenu
+                            ) {
+                                MainMenuTransitionStyle.HorizontalHub
+                            } else {
+                                MainMenuTransitionStyle.DepthZoom
+                            }
+                        } else {
+                            mainMenuTransition.enterStyle
+                        }
+                    val exitStyle = when {
+                        !showMainMenu && mainMenuTransition.lastShowMainMenu -> {
+                            if (!overlayOpen && launcherPage == LauncherPage.GameplayHall) {
+                                MainMenuTransitionStyle.HorizontalHub
+                            } else {
+                                MainMenuTransitionStyle.DepthZoom
+                            }
+                        }
+                        !showMainMenu && !overlayOpen && launcherPage == LauncherPage.GameplayHall -> {
+                            MainMenuTransitionStyle.HorizontalHub
+                        }
+                        else -> mainMenuTransition.exitStyle
                     }
+                    SideEffect {
+                        mainMenuTransition.lastShowMainMenu = showMainMenu
+                        mainMenuTransition.lastPage = launcherPage
+                        mainMenuTransition.lastOverlayOpen = overlayOpen
+                        mainMenuTransition.enterStyle = enterStyle
+                        mainMenuTransition.exitStyle = exitStyle
+                    }
+                    val mainMenuInteractive = remember {
+                        { launcherPage == LauncherPage.MainMenu && !showAccountView && !showFriendsView }
+                    }
+                    val mainMenuContent = remember<@Composable () -> Unit> {
+                        {
+                            UI.UiProvider.MainMenu(
+                                multiplayer = {
+                                    isSinglePlayerGame = false
+                                    showMultiplayerView = true
+                                },
+                                singlePlayer = {
+                                    showSinglePlayerView = true
+                                },
+                                settings = {
+                                    showSettingsView = true
+                                },
+                                mods = {
+                                    showModsView = true
+                                },
+                                extension = {
+                                    showExtensionView = true
+                                },
+                                resourceBrowser = {
+                                    showResourceBrowser = true
+                                },
+                                esports = {
+                                    navigateTo(LauncherPage.Esports)
+                                },
+                                openSourceInfo = {
+                                    showOpenSourceInfoView = true
+                                },
+                                account = {
+                                    showAccountView = true
+                                },
+                                friends = {
+                                    showFriendsView = true
+                                },
+                            )
+                        }
+                    }
+                    MainMenuOverlayHost(
+                        visible = showMainMenu,
+                        isInteractive = mainMenuInteractive,
+                        enterStyle = enterStyle,
+                        exitStyle = exitStyle,
+                        content = mainMenuContent,
+                    )
 
-                    LauncherPageHost(
-                        LauncherPage.Mission,
-                        enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
-                        exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
-                    ) {
+                    TacticalPanelPageHost(LauncherPage.Mission) {
                         MissionView { showMissionView = false }
                     }
 
-                    LauncherPageHost(
-                        LauncherPage.Survival,
-                        enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
-                        exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
-                    ) {
+                    TacticalPanelPageHost(LauncherPage.Survival) {
                         MissionView(fixedType = MissionType.Survival) { showSurvivalView = false }
                     }
                 }
 
-                LauncherPageHost(
-                    LauncherPage.SinglePlayer,
-                    enter = if(enableAnimations) fadeIn() + slideInVertically() else EnterTransition.None,
-                    exit = if(enableAnimations) fadeOut() + slideOutVertically() else ExitTransition.None,
-                ) {
+                TacticalPanelPageHost(LauncherPage.SinglePlayer) {
                     SinglePlayerView(
                         onExit = { showSinglePlayerView = false },
                         onMission = {
@@ -363,11 +397,7 @@ fun App(
                     )
                 }
 
-                LauncherPageHost(
-                    LauncherPage.Multiplayer,
-                    enter = if(enableAnimations) fadeIn() + slideInVertically() else EnterTransition.None,
-                    exit = if(enableAnimations) fadeOut() + slideOutVertically() else ExitTransition.None,
-                ) {
+                TacticalPanelPageHost(LauncherPage.Multiplayer) {
                     MultiplayerView(
                         { showMultiplayerView = false },
                         {
@@ -378,11 +408,7 @@ fun App(
                     )
                 }
 
-                LauncherPageHost(
-                    LauncherPage.Settings,
-                    enter = if (enableAnimations) fadeIn() + slideInVertically() else EnterTransition.None,
-                    exit = if (enableAnimations) fadeOut() + slideOutVertically() else ExitTransition.None,
-                ) {
+                TacticalPanelPageHost(LauncherPage.Settings) {
                     SettingsView(
                         {
                             if (compareVersions(it.version, projectVersion) <= 0) return@SettingsView
@@ -398,11 +424,7 @@ fun App(
                     ) { showSettingsView = false }
                 }
 
-                LauncherPageHost(
-                    LauncherPage.Mods,
-                    enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
-                    exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
-                ) {
+                TacticalPanelPageHost(LauncherPage.Mods) {
                     ModsAndMapsView(
                         onLoadSavedGame = { map ->
                             try {
@@ -450,11 +472,7 @@ fun App(
                     }
                 }
 
-                LauncherPageHost(
-                    LauncherPage.ResourceCenter,
-                    enter = if (enableAnimations) fadeIn() + slideInHorizontally { it / 12 } else EnterTransition.None,
-                    exit = if (enableAnimations) fadeOut() else ExitTransition.None,
-                ) {
+                ResourceCenterPageHost {
                     ResourceCenterView(
                         onExit = { closePage(LauncherPage.ResourceCenter) },
                         onForum = { navigateTo(LauncherPage.ResourceBrowser) },
@@ -466,65 +484,45 @@ fun App(
 
                 LauncherBrowserPageHost(
                     LauncherPage.ResourceBrowser,
-                    enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
-                    exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
+                    enter = browserPageEnter(enableAnimations),
+                    exit = browserPageExit(enableAnimations),
                 ) {
                     ResourceBrowser { showResourceBrowser = false }
                 }
 
                 LauncherBrowserPageHost(
                     LauncherPage.Esports,
-                    enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
-                    exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
+                    enter = browserPageEnter(enableAnimations),
+                    exit = browserPageExit(enableAnimations),
                 ) {
                     EsportsBrowser { closePage(LauncherPage.Esports) }
                 }
 
-                LauncherPageHost(
-                    LauncherPage.Extensions,
-                    enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
-                    exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
-                ) {
+                TacticalPanelPageHost(LauncherPage.Extensions) {
                     ExtensionView {
                         showExtensionView = false
                     }
                 }
 
-                LauncherPageHost(
-                    LauncherPage.Themes,
-                    enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
-                    exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
-                ) {
+                TacticalPanelPageHost(LauncherPage.Themes) {
                     ThemesView {
                         showThemesView = false
                     }
                 }
 
-                LauncherPageHost(
-                    LauncherPage.Replay,
-                    enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
-                    exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
-                ) {
+                TacticalPanelPageHost(LauncherPage.Replay) {
                     ReplaysViewDialog {
                         showReplayView = false
                     }
                 }
 
-                LauncherPageHost(
-                    LauncherPage.OpenSourceInfo,
-                    enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
-                    exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
-                ) {
+                TacticalPanelPageHost(LauncherPage.OpenSourceInfo) {
                     OpenSourceInfoView {
                         showOpenSourceInfoView = false
                     }
                 }
 
-                LauncherPageHost(
-                    LauncherPage.Room,
-                    enter = if (enableAnimations) fadeIn() + expandIn() else EnterTransition.None,
-                    exit = if (enableAnimations) shrinkOut() + fadeOut() else ExitTransition.None,
-                ) {
+                TacticalPanelPageHost(LauncherPage.Room) {
                     val roomDisposed = remember { CompletableDeferred<Unit>() }
                     DisposableEffect(Unit) {
                         GameSessionController.attachRoomView(roomDisposed)
@@ -578,8 +576,8 @@ fun App(
                 LauncherOverlayHost(
                     showFriendsView,
                     isInteractive = { showFriendsView && !showAccountView },
-                    enter = if (enableAnimations) fadeIn() + slideInVertically() else EnterTransition.None,
-                    exit = if (enableAnimations) fadeOut() + slideOutVertically() else ExitTransition.None,
+                    enter = tacticalSheetEnter(enableAnimations),
+                    exit = tacticalSheetExit(enableAnimations),
                 ) {
                     FriendsView(
                         onExit = {
@@ -599,8 +597,12 @@ fun App(
                 LauncherOverlayHost(
                     showAccountView,
                     isInteractive = { showAccountView },
-                    enter = if (enableAnimations) fadeIn() + slideInVertically() else EnterTransition.None,
-                    exit = if (enableAnimations) fadeOut() + slideOutVertically() else ExitTransition.None,
+                    enter = if (enableAnimations) fadeIn(
+                        tween(SHEET_ENTER_FADE_MS, easing = StandardDecelerateEasing),
+                    ) else EnterTransition.None,
+                    exit = if (enableAnimations) fadeOut(
+                        tween(SHEET_EXIT_MS, easing = EmphasizedAccelerateEasing),
+                    ) else ExitTransition.None,
                 ) {
                     AccountView(onExit = {
                         showAccountView = false

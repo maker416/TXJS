@@ -7,10 +7,17 @@
 
 package io.github.rwpp.ui
 
+import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.core.Transition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -29,6 +36,8 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.layout.ContentScale
@@ -52,6 +61,9 @@ import io.github.rwpp.theme.MenuLayoutSpec
 import io.github.rwpp.theme.parseColorHex
 import coil3.compose.AsyncImage
 import io.github.rwpp.rwpp_core.generated.resources.*
+import io.github.rwpp.widget.LocalDialogInteractive
+import io.github.rwpp.widget.animateUiFloatAsState
+import io.github.rwpp.widget.uiAnimationsEnabled
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
 
@@ -110,7 +122,8 @@ internal fun LauncherMainMenu(
             1f to launcherThemeColor("background", Color(0xFF090D0C)).copy(alpha = 0.76f),
         )))
 
-        Box(
+        Box(Modifier.fillMaxSize().mainMenuForegroundMotion()) {
+            Box(
             Modifier.fillMaxSize().padding(top = headerHeight, bottom = footerHeight),
             contentAlignment = Alignment.Center,
         ) {
@@ -176,21 +189,25 @@ internal fun LauncherMainMenu(
                     )
                 } else {
                     val primaryHeight = if (minimalHeight) 74.dp else if (compactLandscape) 82.dp else if (short) 94.dp else 122.dp
+                    val primaryCellWidth = (contentWidth - gap * 2) / 3f
                     val primaryCards: @Composable RowScope.() -> Unit = {
                         LauncherMenuCard(
                             readI18n("menu.singlePlayerGame"), readI18n("menu.home.singleDescription"),
                             singlePlayer, Modifier.weight(1f), primaryHeight, primaryAccent,
                             prominent = true, compact = true, slotId = "singlePlayer",
+                            estimatedCellWidth = primaryCellWidth,
                         ) { Icon(Icons.Default.Person, null, Modifier.size(if (compactLandscape) 24.dp else 32.dp), tint = MenuWhite) }
                         LauncherMenuCard(
                             readI18n("menu.multiplayer"), readI18n("menu.home.multiDescription"),
                             multiplayer, Modifier.weight(1f), primaryHeight, launcherThemeColor("secondaryContainer", launcherThemeColor("secondary", Color(0xFF365D78))),
                             prominent = true, compact = true, slotId = "multiplayer",
+                            estimatedCellWidth = primaryCellWidth,
                         ) { Icon(painterResource(Res.drawable.group_30), null, Modifier.size(if (compactLandscape) 24.dp else 32.dp), tint = MenuWhite) }
                         LauncherMenuCard(
                             readI18n("gameplayHall.title"), readI18n("gameplayHall.menuDescription"),
                             gameplayHall, Modifier.weight(1f), primaryHeight, launcherThemeColor("tertiaryContainer", Color(0xFF566538)),
                             prominent = true, compact = true, slotId = "gameplayHall",
+                            estimatedCellWidth = primaryCellWidth,
                         ) { Icon(painterResource(Res.drawable.swords_30), null, Modifier.size(if (compactLandscape) 24.dp else 32.dp), tint = MenuWhite) }
                     }
                     if (narrow || (!compactLandscape && contentWidth < 650.dp)) {
@@ -199,15 +216,17 @@ internal fun LauncherMainMenu(
                             LauncherMenuCard(
                                 readI18n("menu.singlePlayerGame"), readI18n("menu.home.singleDescription"),
                                 singlePlayer, Modifier.fillMaxWidth(), 94.dp, primaryAccent, true, slotId = "singlePlayer",
+                                estimatedCellWidth = contentWidth,
                             ) { Icon(Icons.Default.Person, null, Modifier.size(40.dp), tint = MenuWhite) }
                             LauncherMenuCard(
                                 readI18n("menu.multiplayer"), readI18n("menu.home.multiDescription"),
                                 multiplayer, Modifier.fillMaxWidth(), 94.dp, launcherThemeColor("secondaryContainer", launcherThemeColor("secondary", Color(0xFF365D78))), true, slotId = "multiplayer",
+                                estimatedCellWidth = contentWidth,
                             ) { Icon(painterResource(Res.drawable.group_30), null, Modifier.size(44.dp), tint = MenuWhite) }
                             LauncherMenuCard(
                                 readI18n("gameplayHall.title"), readI18n("gameplayHall.menuDescription"),
                                 gameplayHall, Modifier.fillMaxWidth(), 94.dp, launcherThemeColor("tertiaryContainer", Color(0xFF566538)),
-                                true, slotId = "gameplayHall",
+                                true, slotId = "gameplayHall", estimatedCellWidth = contentWidth,
                             ) { Icon(painterResource(Res.drawable.swords_30), null, Modifier.size(40.dp), tint = MenuWhite) }
                         }
                     } else {
@@ -221,14 +240,17 @@ internal fun LauncherMainMenu(
                         LauncherCardItem("settings", "menu.settings", "menu.home.settingsDescription", settings),
                         LauncherCardItem("openSourceInfo", "menu.openSourceInfo", "menu.home.infoDescription", openSourceInfo),
                     )
-                    tools.indices.chunked(if (!compactLandscape && (narrow || contentWidth < 720.dp)) 2 else 4).forEachIndexed { row, indices ->
+                    val toolColumns = if (!compactLandscape && (narrow || contentWidth < 720.dp)) 2 else 4
+                    val toolCellWidth = (contentWidth - gap * (toolColumns - 1)) / toolColumns.toFloat()
+                    tools.indices.chunked(toolColumns).forEachIndexed { row, indices ->
                         if (row > 0) Spacer(Modifier.height(gap))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
                             indices.forEach { index ->
                                 val item = tools[index]
                                 Box(Modifier.weight(1f)) {
                                     LauncherMenuCard(readI18n(item.titleKey), readI18n(item.descriptionKey), item.onClick, Modifier.fillMaxWidth(),
-                                        if (compactLandscape) 60.dp else if (short) 72.dp else 84.dp, compact = compactLandscape, slotId = item.id) {
+                                        if (compactLandscape) 60.dp else if (short) 72.dp else 84.dp, compact = compactLandscape, slotId = item.id,
+                                        estimatedCellWidth = toolCellWidth) {
                                         val iconSize = if (compactLandscape) 22.dp else 30.dp
                                         when (index) {
                                             0 -> Icon(painterResource(Res.drawable.launcher_resources), null, Modifier.size(iconSize), tint = MenuMuted)
@@ -286,12 +308,213 @@ internal fun LauncherMainMenu(
                     Text(launcherThemeText("menu.home.exit", "menu.exit"), color = MenuMuted, fontSize = 13.sp)
                 }
             }
-            if (!narrow) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Text(readI18n("menu.home.footer"), color = MenuMuted.copy(alpha = 0.65f), fontSize = 12.sp, letterSpacing = 1.sp)
-                    Box(Modifier.width(28.dp).height(1.dp).background(MenuMuted.copy(alpha = 0.5f)))
+                if (!narrow) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Text(readI18n("menu.home.footer"), color = MenuMuted.copy(alpha = 0.65f), fontSize = 12.sp, letterSpacing = 1.sp)
+                        Box(Modifier.width(28.dp).height(1.dp).background(MenuMuted.copy(alpha = 0.5f)))
+                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun Modifier.mainMenuForegroundMotion(): Modifier {
+    val holder = LocalMainMenuForegroundMotion.current
+    if (holder != null) {
+        if (!uiAnimationsEnabled()) return this
+        return this.graphicsLayer {
+            if (!holder.enabled) return@graphicsLayer
+            val maxShiftX = minOf(size.width * 0.045f, 36.dp.toPx())
+            val maxShiftY = minOf(size.height * 0.02f, 10.dp.toPx())
+            translationX = (holder.offsetXFraction?.value ?: 0f) * maxShiftX
+            translationY = (holder.offsetYFraction?.value ?: 0f) * maxShiftY
+            val s = holder.scaleState?.value ?: 1f
+            scaleX = s
+            scaleY = s
+            transformOrigin = if (holder.hiddenStyle == MainMenuTransitionStyle.HorizontalHub) {
+                TransformOrigin(0.45f, 0.5f)
+            } else {
+                TransformOrigin(0.5f, 0.48f)
+            }
+        }
+    }
+    val menuTransition: Transition<Boolean>? = LocalMainMenuVisibilityTransition.current
+    val fallbackScope = LocalPageAnimatedVisibilityScope.current
+    val config = LocalMainMenuMotionConfig.current ?: return this
+    if (!config.animated || (config.enterStyle == MainMenuTransitionStyle.None && config.exitStyle == MainMenuTransitionStyle.None)) {
+        return this
+    }
+    if (menuTransition != null) {
+        val hiddenStyle = if (menuTransition.targetState) config.enterStyle else config.exitStyle
+        val offsetXFraction = menuTransition.animateFloat(
+            transitionSpec = {
+                if (targetState) {
+                    tween(
+                        if (config.enterStyle == MainMenuTransitionStyle.HorizontalHub) MAIN_MENU_PAIR_ENTER_MS else MAIN_MENU_DEPTH_ENTER_MS,
+                        easing = EmphasizedDecelerateEasing,
+                    )
+                } else {
+                    tween(
+                        if (config.exitStyle == MainMenuTransitionStyle.HorizontalHub) MAIN_MENU_PAIR_EXIT_MS else MAIN_MENU_DEPTH_EXIT_MS,
+                        easing = EmphasizedAccelerateEasing,
+                    )
+                }
+            },
+            label = "MainMenuOffsetXFraction",
+        ) { shown ->
+            if (shown) 0f else if (hiddenStyle == MainMenuTransitionStyle.HorizontalHub) -1f else 0f
+        }
+        val offsetYFraction = menuTransition.animateFloat(
+            transitionSpec = {
+                if (targetState) {
+                    tween(
+                        if (config.enterStyle == MainMenuTransitionStyle.HorizontalHub) MAIN_MENU_PAIR_ENTER_MS else MAIN_MENU_DEPTH_ENTER_MS,
+                        easing = EmphasizedDecelerateEasing,
+                    )
+                } else {
+                    tween(
+                        if (config.exitStyle == MainMenuTransitionStyle.HorizontalHub) MAIN_MENU_PAIR_EXIT_MS else MAIN_MENU_DEPTH_EXIT_MS,
+                        easing = EmphasizedAccelerateEasing,
+                    )
+                }
+            },
+            label = "MainMenuOffsetYFraction",
+        ) { shown ->
+            if (shown) 0f else if (hiddenStyle == MainMenuTransitionStyle.DepthZoom) -1f else 0f
+        }
+        val scaleState = menuTransition.animateFloat(
+            transitionSpec = {
+                if (targetState) {
+                    tween(
+                        if (config.enterStyle == MainMenuTransitionStyle.HorizontalHub) MAIN_MENU_PAIR_ENTER_MS else MAIN_MENU_DEPTH_ENTER_MS,
+                        easing = EmphasizedDecelerateEasing,
+                    )
+                } else {
+                    tween(
+                        if (config.exitStyle == MainMenuTransitionStyle.HorizontalHub) MAIN_MENU_PAIR_EXIT_MS else MAIN_MENU_DEPTH_EXIT_MS,
+                        easing = EmphasizedAccelerateEasing,
+                    )
+                }
+            },
+            label = "MainMenuScale",
+        ) { shown ->
+            if (shown) {
+                1f
+            } else {
+                when (hiddenStyle) {
+                    MainMenuTransitionStyle.HorizontalHub -> 0.968f
+                    MainMenuTransitionStyle.DepthZoom -> 0.958f
+                    MainMenuTransitionStyle.None -> 1f
+                }
+            }
+        }
+        return this.graphicsLayer {
+            val maxShiftX = minOf(size.width * 0.045f, 36.dp.toPx())
+            val maxShiftY = minOf(size.height * 0.02f, 10.dp.toPx())
+            translationX = offsetXFraction.value * maxShiftX
+            translationY = offsetYFraction.value * maxShiftY
+            val s = scaleState.value
+            scaleX = s
+            scaleY = s
+            transformOrigin = if (hiddenStyle == MainMenuTransitionStyle.HorizontalHub) {
+                TransformOrigin(0.45f, 0.5f)
+            } else {
+                TransformOrigin(0.5f, 0.48f)
+            }
+        }
+    }
+    val scope = fallbackScope ?: return this
+    val offsetXFraction = scope.transition.animateFloat(
+        transitionSpec = {
+            if (EnterExitState.PreEnter isTransitioningTo EnterExitState.Visible) {
+                tween(
+                    if (config.enterStyle == MainMenuTransitionStyle.HorizontalHub) MAIN_MENU_PAIR_ENTER_MS else MAIN_MENU_DEPTH_ENTER_MS,
+                    easing = EmphasizedDecelerateEasing,
+                )
+            } else {
+                tween(
+                    if (config.exitStyle == MainMenuTransitionStyle.HorizontalHub) MAIN_MENU_PAIR_EXIT_MS else MAIN_MENU_DEPTH_EXIT_MS,
+                    easing = EmphasizedAccelerateEasing,
+                )
+            }
+        },
+        label = "MainMenuOffsetXFraction",
+    ) { state ->
+        when (state) {
+            EnterExitState.PreEnter -> if (config.enterStyle == MainMenuTransitionStyle.HorizontalHub) -1f else 0f
+            EnterExitState.Visible -> 0f
+            EnterExitState.PostExit -> if (config.exitStyle == MainMenuTransitionStyle.HorizontalHub) -1f else 0f
+        }
+    }
+    val offsetYFraction = scope.transition.animateFloat(
+        transitionSpec = {
+            if (EnterExitState.PreEnter isTransitioningTo EnterExitState.Visible) {
+                tween(
+                    if (config.enterStyle == MainMenuTransitionStyle.HorizontalHub) MAIN_MENU_PAIR_ENTER_MS else MAIN_MENU_DEPTH_ENTER_MS,
+                    easing = EmphasizedDecelerateEasing,
+                )
+            } else {
+                tween(
+                    if (config.exitStyle == MainMenuTransitionStyle.HorizontalHub) MAIN_MENU_PAIR_EXIT_MS else MAIN_MENU_DEPTH_EXIT_MS,
+                    easing = EmphasizedAccelerateEasing,
+                )
+            }
+        },
+        label = "MainMenuOffsetYFraction",
+    ) { state ->
+        when (state) {
+            EnterExitState.PreEnter -> if (config.enterStyle == MainMenuTransitionStyle.DepthZoom) -1f else 0f
+            EnterExitState.Visible -> 0f
+            EnterExitState.PostExit -> if (config.exitStyle == MainMenuTransitionStyle.DepthZoom) -1f else 0f
+        }
+    }
+    val scaleState = scope.transition.animateFloat(
+        transitionSpec = {
+            if (EnterExitState.PreEnter isTransitioningTo EnterExitState.Visible) {
+                tween(
+                    if (config.enterStyle == MainMenuTransitionStyle.HorizontalHub) MAIN_MENU_PAIR_ENTER_MS else MAIN_MENU_DEPTH_ENTER_MS,
+                    easing = EmphasizedDecelerateEasing,
+                )
+            } else {
+                tween(
+                    if (config.exitStyle == MainMenuTransitionStyle.HorizontalHub) MAIN_MENU_PAIR_EXIT_MS else MAIN_MENU_DEPTH_EXIT_MS,
+                    easing = EmphasizedAccelerateEasing,
+                )
+            }
+        },
+        label = "MainMenuScale",
+    ) { state ->
+        when (state) {
+            EnterExitState.PreEnter -> when (config.enterStyle) {
+                MainMenuTransitionStyle.HorizontalHub -> 0.968f
+                MainMenuTransitionStyle.DepthZoom -> 0.958f
+                MainMenuTransitionStyle.None -> 1f
+            }
+            EnterExitState.Visible -> 1f
+            EnterExitState.PostExit -> when (config.exitStyle) {
+                MainMenuTransitionStyle.HorizontalHub -> 0.968f
+                MainMenuTransitionStyle.DepthZoom -> 0.958f
+                MainMenuTransitionStyle.None -> 1f
+            }
+        }
+    }
+    return this.graphicsLayer {
+        val maxShiftX = minOf(size.width * 0.045f, 36.dp.toPx())
+        val maxShiftY = minOf(size.height * 0.02f, 10.dp.toPx())
+        translationX = offsetXFraction.value * maxShiftX
+        translationY = offsetYFraction.value * maxShiftY
+        val s = scaleState.value
+        scaleX = s
+        scaleY = s
+        transformOrigin = if (
+            config.enterStyle == MainMenuTransitionStyle.HorizontalHub ||
+            config.exitStyle == MainMenuTransitionStyle.HorizontalHub
+        ) {
+            TransformOrigin(0.45f, 0.5f)
+        } else {
+            TransformOrigin(0.5f, 0.48f)
         }
     }
 }
@@ -398,10 +621,12 @@ private fun ThemedLauncherGrid(
                         "multiplayer" -> launcherThemeColor("secondaryContainer", launcherThemeColor("secondary", Color(0xFF365D78)))
                         else -> launcherThemeColor("surfaceContainer", Color(0xFF343F3C))
                     }
+                    val estimatedWidth = (width - layout.spacing.dp * (columns - 1)) * span / columns.toFloat()
                     LauncherMenuCard(
                         readI18n(item.titleKey), readI18n(item.descriptionKey), item.onClick,
                         Modifier.weight(span.toFloat()), layout.buttonHeight.coerceAtLeast(48).dp,
                         accent, item.prominent, compact = true, slotId = item.id,
+                        estimatedCellWidth = estimatedWidth,
                     ) { LauncherCardIcon(item.id, item.prominent) }
                 }
                 val remaining = columns - entries.sumOf { it.second }
@@ -449,6 +674,7 @@ private fun LauncherMenuCard(
     prominent: Boolean = false,
     compact: Boolean = false,
     slotId: String,
+    estimatedCellWidth: Dp = 240.dp,
     icon: @Composable () -> Unit,
 ) {
     val theme = ArtThemeController.activeTheme
@@ -468,11 +694,42 @@ private fun LauncherMenuCard(
         maxOf(height, layout.buttonHeight.dp) else height
     val borderColor = if (slot?.showBorder == true) launcherThemeColor("surfaceContainer", Color.White.copy(alpha = 0.55f))
         else if (prominent) accent.copy(alpha = 0.95f) else launcherThemeColor("surfaceContainer", Color.White.copy(alpha = 0.14f))
-    BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
-        val tight = maxWidth < 220.dp
-        val cardWidth = (maxWidth * (slot?.widthPercent ?: 100) / 100f).coerceIn(minOf(48.dp, maxWidth), maxWidth)
+    val animated = uiAnimationsEnabled()
+    val interactive = LocalDialogInteractive.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
+    val pressed by interactionSource.collectIsPressedAsState()
+    val cardScale = animateUiFloatAsState(
+        targetValue = when {
+            !animated || !interactive -> 1f
+            pressed -> 0.982f
+            hovered -> 1.012f
+            else -> 1f
+        },
+        animationSpec = tween(if (animated) 150 else 0, easing = StandardDecelerateEasing),
+        label = "MainMenuCardScale",
+    )
+    val arrowOffset = animateUiFloatAsState(
+        targetValue = if (animated && interactive && hovered) 1f else 0f,
+        animationSpec = tween(if (animated) 160 else 0, easing = StandardDecelerateEasing),
+        label = "MainMenuCardArrow",
+    )
+    val widthPercent = slot?.widthPercent ?: 100
+    @Composable
+    fun CardSurface(surfaceModifier: Modifier, tight: Boolean) {
         Surface(
-            onClick = onClick, modifier = Modifier.width(cardWidth).testTag("launcher-card-$slotId"), shape = shape,
+            onClick = onClick,
+            interactionSource = interactionSource,
+            modifier = surfaceModifier.let {
+                if (animated) {
+                    it.graphicsLayer {
+                        val s = cardScale.value
+                        scaleX = s
+                        scaleY = s
+                    }
+                } else it
+            }.testTag("launcher-card-$slotId"),
+            shape = shape,
             color = Color.Transparent, contentColor = textColor,
             border = if (showBorder) BorderStroke(if (prominent) 1.5.dp else 1.dp, borderColor) else null,
         ) {
@@ -502,11 +759,27 @@ private fun LauncherMenuCard(
                     }
                     if (prominent) {
                         Box(Modifier.size(if (compact) 24.dp else 38.dp).border(1.dp, Color.White.copy(alpha = 0.13f), CircleShape), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Default.KeyboardArrowRight, null, tint = textColor, modifier = Modifier.size(if (compact) 20.dp else 28.dp))
+                            Icon(
+                                Icons.Default.KeyboardArrowRight,
+                                null,
+                                tint = textColor,
+                                modifier = Modifier.size(if (compact) 20.dp else 28.dp).let {
+                                    if (animated) it.graphicsLayer { translationX = arrowOffset.value * 2.5.dp.toPx() } else it
+                                },
+                            )
                         }
                     }
                 }
             }
+        }
+    }
+    if (widthPercent == 100) {
+        CardSurface(modifier.fillMaxWidth(), tight = estimatedCellWidth < 220.dp)
+    } else {
+        BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
+            val tight = maxWidth < 220.dp
+            val cardWidth = (maxWidth * widthPercent / 100f).coerceIn(minOf(48.dp, maxWidth), maxWidth)
+            CardSurface(Modifier.width(cardWidth), tight = tight)
         }
     }
 }

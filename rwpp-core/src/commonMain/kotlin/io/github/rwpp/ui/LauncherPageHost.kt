@@ -8,10 +8,12 @@
 package io.github.rwpp.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -20,6 +22,9 @@ import androidx.compose.ui.zIndex
 import io.github.rwpp.platform.BackHandlerScope
 import io.github.rwpp.platform.BrowserPageWindow
 import io.github.rwpp.widget.LocalDialogInteractive
+
+internal val LocalPageAnimatedVisibilityScope =
+    compositionLocalOf<AnimatedVisibilityScope?> { null }
 
 @Composable
 internal fun LauncherPageHost(
@@ -75,7 +80,10 @@ internal fun LauncherOverlayHost(
         enter = enter,
         exit = exit,
     ) {
-        CompositionLocalProvider(LocalDialogInteractive provides currentInteractive.value()) {
+        CompositionLocalProvider(
+            LocalDialogInteractive provides currentInteractive.value(),
+            LocalPageAnimatedVisibilityScope provides this,
+        ) {
             BackHandlerScope(enabled = { currentInteractive.value() }, content = content)
         }
     }
