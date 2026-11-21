@@ -31,7 +31,7 @@ allprojects {
     }
 }
 
-version = "1.20.97"
+version = "1.20.101"
 
 apply(from = "packaging/browser-kernels.gradle.kts")
 
