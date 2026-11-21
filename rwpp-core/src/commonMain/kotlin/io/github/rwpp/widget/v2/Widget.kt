@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -57,7 +58,7 @@ fun ExpandedCard(
     backgroundColor: Color = MaterialTheme.colorScheme.background.copy((UI.backgroundTransparency + 0.2f).coerceAtMost(1f)),
     content: @Composable ColumnScope.() -> Unit
 ) {
-    BoxWithConstraints(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Card(
             shape = RectangleShape,
             elevation =  CardDefaults.cardElevation(defaultElevation = 10.dp),
@@ -68,7 +69,20 @@ fun ExpandedCard(
             modifier = Modifier
                 .fillMaxHeight()
                 // 连续响应窗口宽度；跨过尺寸档位时不再突然从 95% 收缩到 75%。
-                .width((maxWidth * 0.95f).coerceAtMost(1440.dp))
+                .layout { measurable, constraints ->
+                    val maxW = constraints.maxWidth
+                    val targetWidth = if (constraints.hasBoundedWidth && maxW > 0) {
+                        (maxW.toDp() * 0.95f).coerceAtMost(1440.dp).roundToPx().coerceIn(constraints.minWidth, maxW)
+                    } else {
+                        1440.dp.roundToPx().coerceAtLeast(constraints.minWidth)
+                    }
+                    val placeable = measurable.measure(
+                        constraints.copy(minWidth = targetWidth, maxWidth = targetWidth),
+                    )
+                    layout(placeable.width, placeable.height) {
+                        placeable.placeRelative(0, 0)
+                    }
+                }
                 .then(modifier),
             content = content
         )

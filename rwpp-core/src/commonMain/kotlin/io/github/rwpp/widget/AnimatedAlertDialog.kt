@@ -35,7 +35,7 @@ import io.github.rwpp.platform.BackHandlerScope
 
 internal const val ANIMATION_TIME = 200L
 // 页面/弹窗的退出动画只保留绘制，其弹窗与下拉层不能继续抢占输入。
-internal val LocalDialogInteractive = staticCompositionLocalOf { true }
+internal val LocalDialogInteractive = compositionLocalOf { true }
 
 private const val DESKTOP_INLINE_DIALOG_Z_INDEX = 32f
 

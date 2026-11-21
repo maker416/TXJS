@@ -7,8 +7,11 @@
 
 package io.github.rwpp.desktop
 
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
@@ -35,6 +39,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.widget.UiLinearProgressIndicator
+import io.github.rwpp.widget.animateUiFloatAsState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
@@ -127,11 +132,12 @@ internal fun DesktopMenuInputWarmup(
                     held = presses.receive()
                     // 等实际内容绘制回调，不能用固定 sleep、零尺寸或 alpha=0 代替波纹首绘。
                     repeat(3) { awaitDraw() }
-                    enabled = false
-                    awaitDraw()
                     interactions.emit(PressInteraction.Cancel(held))
+                    held = null
                     releaseOutside()
                     repeat(2) { awaitDraw() }
+                    enabled = false
+                    awaitDraw()
                     focusManager.clearFocus(force = true)
                     awaitDraw()
                 }
@@ -157,11 +163,28 @@ internal fun DesktopMenuInputWarmup(
         }
     }
 
+    val hovered by interactions.collectIsHoveredAsState()
+    val pressed by interactions.collectIsPressedAsState()
+    val scale = animateUiFloatAsState(
+        targetValue = when {
+            pressed -> 0.982f
+            hovered -> 1.012f
+            else -> 1f
+        },
+        animationSpec = tween(150),
+        label = "MenuInputWarmupScale",
+    )
+
     DesktopStartupView(message, progressContent = {
         Surface(
             onClick = {}, enabled = enabled, interactionSource = interactions,
             color = Color.Transparent,
             modifier = Modifier.fillMaxWidth().height(48.dp)
+                .graphicsLayer {
+                    val s = scale.value
+                    scaleX = s
+                    scaleY = s
+                }
                 .pointerInput(Unit) {
                     // 正式页面也有 awaitPointerEventScope；一并预热其首次鼠标进入路径。
                     awaitPointerEventScope { while (true) awaitPointerEvent(PointerEventPass.Initial) }

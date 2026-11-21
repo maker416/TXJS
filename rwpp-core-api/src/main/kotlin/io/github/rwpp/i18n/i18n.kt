@@ -27,6 +27,7 @@ var i18nOverrideTable: TomlTable? = null
     private set
 
 private val cacheMap = mutableMapOf<String, String>()
+private val noArgCacheMap = mutableMapOf<String, String>()
 
 /**
  * 设置/清除文本覆盖表，并清空结果缓存使覆盖立即生效。
@@ -34,7 +35,15 @@ private val cacheMap = mutableMapOf<String, String>()
 fun setI18nOverride(table: TomlTable?) {
     i18nOverrideTable = table
     cacheMap.clear()
+    noArgCacheMap.clear()
 }
+
+private fun formatI18n(path: String, template: String, arg: Array<out String>): String =
+    if (arg.isEmpty()) {
+        noArgCacheMap.getOrPut(path) { MessageFormat.format(template) }
+    } else {
+        MessageFormat.format(template, *arg)
+    }
 
 /** 在覆盖表中沿点分路径安全导航，命中字符串则返回，否则 null。 */
 private fun TomlTable.resolveLiteralOrNull(path: String): String? {
@@ -52,6 +61,7 @@ private fun TomlTable.resolveLiteralOrNull(path: String): String? {
 
 fun reloadI18n() {
     cacheMap.clear()
+    noArgCacheMap.clear()
     i18nTable = TomlTable()
 }
 
@@ -68,10 +78,11 @@ fun readI18n(path: String, i18nType: I18nType = I18nType.RWPP, vararg arg: Strin
             }
         }
 
-        cacheMap[path]?.let { return MessageFormat.format(it, *arg) }
+        if (arg.isEmpty()) noArgCacheMap[path]?.let { return it }
+        cacheMap[path]?.let { return formatI18n(path, it, arg) }
         i18nOverrideTable?.resolveLiteralOrNull(path)?.let {
             cacheMap[path] = it
-            return MessageFormat.format(it, *arg)
+            return formatI18n(path, it, arg)
         }
         val strArray = path.split(".")
         val iterator = strArray.iterator()
@@ -81,7 +92,7 @@ fun readI18n(path: String, i18nType: I18nType = I18nType.RWPP, vararg arg: Strin
             if(!iterator.hasNext()) {
                 return table[next]!!.asTomlLiteral().content.let {
                     cacheMap[path] = it
-                    MessageFormat.format(it, *arg)
+                    formatI18n(path, it, arg)
                 }
             } else table = table[next]!!.asTomlTable()
         }

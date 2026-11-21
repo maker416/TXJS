@@ -7,20 +7,21 @@
 
 package io.github.rwpp.widget.v2
 
-import androidx.compose.runtime.getValue
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.PressInteraction
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
-import io.github.rwpp.widget.animateUiFloatAsState
 import io.github.rwpp.widget.uiAnimationsEnabled
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class)
 fun Modifier.bounceClick(
@@ -28,18 +29,39 @@ fun Modifier.bounceClick(
     onClick: () -> Unit
 ) = composed {
     val interactionSource = remember { MutableInteractionSource() }
-    val pressed by interactionSource.collectIsPressedAsState()
     val animationsEnabled = uiAnimationsEnabled()
-    // 使用点击组件自己的按压状态，避免状态作为 pointerInput key 时取消当前手势。
-    val scale by animateUiFloatAsState(
-        targetValue = if (animationsEnabled && pressed) 0.97f else 1f,
-        animationSpec = tween(if (animationsEnabled) 120 else 0),
-        label = "button press scale",
-    )
+    val scale = remember { Animatable(1f) }
+    LaunchedEffect(interactionSource, animationsEnabled) {
+        if (!animationsEnabled) {
+            if (scale.value != 1f) scale.snapTo(1f)
+            return@LaunchedEffect
+        }
+        val activePresses = mutableSetOf<PressInteraction.Press>()
+        interactionSource.interactions.collect { interaction ->
+            when (interaction) {
+                is PressInteraction.Press -> activePresses.add(interaction)
+                is PressInteraction.Release -> activePresses.remove(interaction.press)
+                is PressInteraction.Cancel -> activePresses.remove(interaction.press)
+            }
+            val target = if (activePresses.isNotEmpty()) 0.97f else 1f
+            if (scale.targetValue != target) {
+                launch {
+                    scale.animateTo(target, tween(120))
+                }
+            }
+        }
+    }
     this
-        .graphicsLayer {
-            scaleX = scale
-            scaleY = scale
+        .let {
+            if (animationsEnabled) {
+                it.graphicsLayer {
+                    val s = scale.value
+                    scaleX = s
+                    scaleY = s
+                }
+            } else {
+                it
+            }
         }
         .combinedClickable(
             interactionSource = interactionSource,
