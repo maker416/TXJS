@@ -1432,6 +1432,59 @@ class RoomArtThemeUiTest {
         File(output, "README.txt").writeText("Real Compose waiting-room UI with offline engine test data. Player card text is static theme content. These are logical viewport captures, not Android device or multiplayer-game validation.\n")
     }
 
+    @Test fun localRoomPackLayersSlotArtAndOffersItsEquippedCardCosmetics() = runDesktopComposeUiTest(width = 720, height = 520) {
+        val panelColor = 0xFF29A04B.toInt()
+        val frameColor = 0xFFFF4095.toInt()
+        fun framePng(width: Int, height: Int, thickness: Int): ByteArray {
+            val frame = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
+            for (y in 0 until height) for (x in 0 until width) {
+                if (minOf(x, y, width - 1 - x, height - 1 - y) < thickness) frame.setRGB(x, y, frameColor)
+            }
+            return ByteArrayOutputStream().also { ImageIO.write(frame, "png", it) }.toByteArray()
+        }
+        val id = install("local-cosmetics", """
+            [room.player]
+            backgroundImage = "room/panel.png"
+            backgroundScale = "fill"
+            borderImage = "room/slot-border.png"
+            borderWidth = 0
+            [room.player.card]
+            coverImage = "room/panel.png"
+            [room.player.card.avatar]
+            frameImage = "room/avatar-frame.png"
+        """.trimIndent(), mapOf(
+            "room/panel.png" to png(panelColor),
+            "room/slot-border.png" to framePng(120, 40, 2),
+            "room/avatar-frame.png" to framePng(24, 24, 3),
+        ))
+        val accountColor = 0xFF367CE9.toInt()
+        val requests = fakeAccountAvatars { png(accountColor) }
+        var showCard by mutableStateOf(false)
+        runOnIdle {
+            assertTrue(ArtThemeController.apply(id))
+            AccountSession.applyPreview(previewAvatarUser(true))
+        }
+        show { if (showCard) PlayerCardContent(localPlayer, room) {} else PlayerRows() }
+        waitForColor("room-player-1", panelColor)
+        waitForColor("room-player-1", frameColor)
+        waitForColor("room-player-avatar-1", frameColor)
+        onNodeWithTag("room-player-account-avatar-1", useUnmergedTree = true).assertIsDisplayed()
+        waitUntil { requests.isNotEmpty() }
+        waitUntil(timeoutMillis = 10_000) {
+            val portrait = playerNodePixels("room-player-avatar-1")
+            portrait.getRGB(portrait.width / 2, portrait.height / 2) == accountColor
+        }
+
+        runOnIdle { showCard = true }
+        waitForColor("player-card", frameColor)
+        onNodeWithText(readI18n("playerCard.preview")).performClick()
+        waitUntil { onAllNodes(hasText(id) and isSelected()).fetchSemanticsNodes().size == 2 }
+        onNodeWithText(readI18n("playerCard.outpost")).performClick().assertIsSelected()
+        onNodeWithText(readI18n("playerCard.endPreview")).performClick()
+        onNodeWithText(readI18n("playerCard.preview")).performClick()
+        waitUntil { onAllNodes(hasText(id) and isSelected()).fetchSemanticsNodes().size == 2 }
+    }
+
     @Test fun playerCardTryOnRestoresTheEquippedAppearance() = runDesktopComposeUiTest(width = 720, height = 520) {
         localPlayer = player("Northstar", 0, 0, host = true)
         val portrait = File("../examples/themes/pelagic-atlas/icon.png").readBytes()

@@ -51,6 +51,8 @@ class RoomThemeSpecTest {
             opacity = 90
             [room.player]
             backgroundImage = "room/row.png"
+            backgroundScale = "fill"
+            borderImage = "room/row-frame.png"
             localImage = "room/local.png"
             hostImage = "room/host.png"
             aiImage = "room/ai.png"
@@ -71,6 +73,10 @@ class RoomThemeSpecTest {
             unavailableImage = "room/profile-unavailable.png"
             iconImage = "room/profile-icon.png"
             tint = "#345678"
+            [room.player.card]
+            coverImage = "room/cover.png"
+            [room.player.card.avatar]
+            frameImage = "room/avatar-frame.png"
             [room.buttons.start]
             backgroundImage = "room/start.png"
             backgroundColor = "#993322"
@@ -87,6 +93,10 @@ class RoomThemeSpecTest {
         assertEquals(70, spec.room.background.alpha)
         assertEquals("room/players.png", spec.room.panels.getValue("players").backgroundImage)
         assertEquals(90, spec.room.panels.getValue("players").opacity)
+        assertEquals("fill", spec.room.player.backgroundScale)
+        assertEquals("room/row-frame.png", spec.room.player.borderImage)
+        assertEquals("room/cover.png", spec.room.player.card.coverImage)
+        assertEquals("room/avatar-frame.png", spec.room.player.card.avatar.frameImage)
         assertEquals("room/slot-8.png", spec.room.player.slotImages["8"])
         assertEquals("fonts/name-bold.ttf", spec.room.player.nameFontBold)
         assertEquals(700, spec.room.player.nameWeight)

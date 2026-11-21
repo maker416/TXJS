@@ -3274,7 +3274,8 @@ private fun RoomInviteSlotRow(
             .fillMaxWidth(style.sizing.widthPercent / 100f)
             .heightIn(min = style.sizing.minHeight.dp)
             .then(if (themed) {
-                Modifier.roomThemePaint(style.emptyImage, roomThemeColor(style.backgroundColor, Color.Transparent), shape, style.opacity)
+                Modifier.roomThemePaint(style.emptyImage, roomThemeColor(style.backgroundColor, Color.Transparent), shape, style.opacity,
+                    scale = roomThemeImageScale(style.backgroundScale), borderImage = style.borderImage)
                     .roomThemeBorder(style.borderWidth,
                         roomThemeColor(style.borderColor, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)), shape)
             } else {
@@ -3377,7 +3378,8 @@ internal fun RoomPlayerTableRow(
                     .clip(shape)
                     .then(if (themed) {
                         Modifier.roomThemePaint(roomPlayerBackground(style, player, room),
-                            roomThemeColor(style.backgroundColor, Color.Transparent), shape, style.opacity)
+                            roomThemeColor(style.backgroundColor, Color.Transparent), shape, style.opacity,
+                            scale = roomThemeImageScale(style.backgroundScale), borderImage = style.borderImage)
                             .roomThemeBorder(frame?.borderWidth ?: style.borderWidth,
                                 roomThemeColor(frame?.borderColor ?: style.borderColor, MaterialTheme.colorScheme.primary), shape)
                     } else Modifier.border(BorderStroke(2.dp, MaterialTheme.colorScheme.primary), shape))

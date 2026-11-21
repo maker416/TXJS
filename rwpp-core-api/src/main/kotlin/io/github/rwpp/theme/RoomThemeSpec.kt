@@ -165,6 +165,8 @@ data class RoomPlayerSpec(
     val card: RoomPlayerCardSpec = RoomPlayerCardSpec(),
     /** 玩家槽位内部尺寸；不会改变房间面板布局或操作权限。 */
     val sizing: RoomPlayerSizingSpec = RoomPlayerSizingSpec(),
+    val backgroundScale: String = "crop",
+    val borderImage: String = "",
 ) {
     fun sanitized(): RoomPlayerSpec = copy(
         backgroundImage = backgroundImage.safeAssetPath(),
@@ -174,6 +176,8 @@ data class RoomPlayerSpec(
         readyImage = readyImage.safeAssetPath(),
         notReadyImage = notReadyImage.safeAssetPath(),
         emptyImage = emptyImage.safeAssetPath(),
+        backgroundScale = backgroundScale.takeIf { it in ROOM_IMAGE_SCALES } ?: "crop",
+        borderImage = borderImage.safeAssetPath(),
         slotImages = slotImages.filterKeys { it.validSlotKey() }.mapValues { it.value.safeAssetPath() },
         backgroundColor = backgroundColor.validColor(),
         borderColor = borderColor.validColor(),
@@ -246,11 +250,14 @@ data class RoomPlayerCardSpec(
     val columns: Int = 4,
     val rowSpacing: Int = 6,
     val cellSpacing: Int = 6,
+    /** 名片弹窗的默认卡面。 */
+    val coverImage: String = "",
 ) {
     fun sanitized(): RoomPlayerCardSpec = copy(
         columns = columns.coerceIn(1, 12),
         rowSpacing = rowSpacing.coerceIn(0, 24),
         cellSpacing = cellSpacing.coerceIn(0, 24),
+        coverImage = coverImage.safeAssetPath(),
         avatar = avatar.sanitized(),
         content = content.sanitized(),
         local = local?.sanitized(),
@@ -290,6 +297,7 @@ data class RoomPlayerAvatarSpec(
     val borderColor: String = "",
     val backgroundColor: String = "",
     val tint: String = "",
+    val frameImage: String = "",
 ) {
     fun sanitized(): RoomPlayerAvatarSpec = copy(
         size = size.coerceIn(32, 64),
@@ -298,6 +306,7 @@ data class RoomPlayerAvatarSpec(
         borderColor = borderColor.validColor(),
         backgroundColor = backgroundColor.validColor(),
         tint = tint.validColor(),
+        frameImage = frameImage.safeAssetPath(),
     )
 }
 
@@ -482,7 +491,11 @@ fun validateRoomTheme(room: RoomThemeSpec): ThemeValidation {
             "backgroundImage" to backgroundImage, "localImage" to localImage, "hostImage" to hostImage,
             "aiImage" to aiImage, "readyImage" to readyImage, "notReadyImage" to notReadyImage,
             "emptyImage" to emptyImage, "nameFont" to nameFont, "nameFontBold" to nameFontBold,
+            "borderImage" to borderImage,
         ).forEach { (key, value) -> path("room.player.$key", value) }
+        if (backgroundScale !in ROOM_IMAGE_SCALES) {
+            warnings += "未知战斗室槽位背景缩放方式已回落 crop: $backgroundScale"
+        }
         slotImages.forEach { (key, value) ->
             if (!key.validSlotKey()) warnings += "未知战斗室玩家位置已忽略: $key（应为 1..1000 的整数）"
             path("room.player.slotImages.$key", value)
@@ -490,7 +503,9 @@ fun validateRoomTheme(room: RoomThemeSpec): ThemeValidation {
         color("room.player.backgroundColor", backgroundColor)
         color("room.player.borderColor", borderColor)
         color("room.player.nameColor", nameColor)
+        path("room.player.card.coverImage", card.coverImage)
         with(card.avatar) {
+            path("room.player.card.avatar.frameImage", frameImage)
             color("room.player.card.avatar.borderColor", borderColor)
             color("room.player.card.avatar.backgroundColor", backgroundColor)
             color("room.player.card.avatar.tint", tint)

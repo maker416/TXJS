@@ -9,6 +9,7 @@ package io.github.rwpp.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Person
@@ -141,32 +142,45 @@ internal fun RowScope.RoomPlayerCardBody(
             ) {
                 val theme = ArtThemeController.activeTheme
                 val file = remember(theme, content.avatarImage) { roomThemeAsset(content.avatarImage) }
+                val frame = remember(theme, avatar.frameImage) { roomThemeAsset(avatar.frameImage) }
                 var loaded by remember(theme, file) { mutableStateOf(false) }
+                var frameLoaded by remember(theme, frame) { mutableStateOf(false) }
                 val accountAvatar = roomPlayerAccountAvatar(player, room)
+                val portraitShape = if (frameLoaded) CircleShape else shape
                 Box(
-                    Modifier.size(size).testTag("room-player-avatar-$slot").clip(shape)
-                        .background(roomThemeColor(avatar.backgroundColor, MaterialTheme.colorScheme.primary.copy(alpha = .12f)))
-                        .roomThemeBorder(avatar.borderWidth, roomThemeColor(avatar.borderColor, tint.copy(alpha = .6f)), shape),
+                    Modifier.size(size).testTag("room-player-avatar-$slot"),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (!loaded) {
-                        Icon(
-                            if (player.isAI) RoomRobotAvatarIcon else Icons.Default.Person,
-                            contentDescription = null,
-                            modifier = Modifier.size(size * .65f).testTag("room-player-avatar-fallback-$slot"),
-                            tint = tint,
-                        )
+                    Box(
+                        Modifier.fillMaxSize(if (frameLoaded) .80f else 1f).clip(portraitShape)
+                            .background(roomThemeColor(avatar.backgroundColor, MaterialTheme.colorScheme.primary.copy(alpha = .12f)))
+                            .roomThemeBorder(if (frameLoaded) 0 else avatar.borderWidth,
+                                roomThemeColor(avatar.borderColor, tint.copy(alpha = .6f)), portraitShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (!loaded) {
+                            Icon(
+                                if (player.isAI) RoomRobotAvatarIcon else Icons.Default.Person,
+                                contentDescription = null,
+                                modifier = Modifier.size(size * .65f).testTag("room-player-avatar-fallback-$slot"),
+                                tint = tint,
+                            )
+                        }
+                        if (file != null) key(theme, file) {
+                            AsyncImage(file, null, Modifier.fillMaxSize().testTag("room-player-default-avatar-$slot"), contentScale = ContentScale.Fit,
+                                onSuccess = { loaded = true }, onError = { loaded = false })
+                        }
+                        // Account images always draw over the pack's default, without a theme tint.
+                        // Loading, missing or corrupt account images leave the default visible below.
+                        if (accountAvatar != null) key(accountAvatar) {
+                            AsyncImage(accountAvatar, null,
+                                Modifier.fillMaxSize().testTag("room-player-account-avatar-$slot"),
+                                contentScale = ContentScale.Crop)
+                        }
                     }
-                    if (file != null) key(theme, file) {
-                        AsyncImage(file, null, Modifier.fillMaxSize().testTag("room-player-default-avatar-$slot"), contentScale = ContentScale.Fit,
-                            onSuccess = { loaded = true }, onError = { loaded = false })
-                    }
-                    // Account images always draw over the pack's default, without a theme tint.
-                    // Loading, missing or corrupt account images leave the default visible below.
-                    if (accountAvatar != null) key(accountAvatar) {
-                        AsyncImage(accountAvatar, null,
-                            Modifier.fillMaxSize().testTag("room-player-account-avatar-$slot"),
-                            contentScale = ContentScale.Crop)
+                    if (frame != null) key(theme, frame) {
+                        AsyncImage(frame, null, Modifier.matchParentSize(), contentScale = ContentScale.Fit,
+                            onSuccess = { frameLoaded = true }, onError = { frameLoaded = false })
                     }
                 }
             }

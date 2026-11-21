@@ -56,6 +56,7 @@ private data class CardCosmetic(
     val label: String,
     val art: DrawableResource? = null,
     val variant: PersonalizedVariantSpec? = null,
+    val packImage: String = "",
 )
 
 @Composable
@@ -72,11 +73,19 @@ internal fun PlayerCardShowcase(
     val equippedFrame = PersonalizedAppearanceController.variantFor(player, "room.player.frame")
     val standardCover = CardCosmetic(readI18n("playerCard.outpost"), Res.drawable.player_card_outpost)
     val standardFrame = CardCosmetic(readI18n("playerCard.alloy"))
+    val theme = ArtThemeController.activeTheme
+    val style = roomThemeSpec().player.card
+    val packCover = remember(theme, style.coverImage) {
+        roomThemeAsset(style.coverImage)?.let { CardCosmetic(theme?.spec?.theme?.name.orEmpty(), packImage = style.coverImage) }
+    }
+    val packFrame = remember(theme, style.avatar.frameImage) {
+        roomThemeAsset(style.avatar.frameImage)?.let { CardCosmetic(theme?.spec?.theme?.name.orEmpty(), packImage = style.avatar.frameImage) }
+    }
     var preview by remember { mutableStateOf(false) }
     var coverChoice by remember { mutableStateOf<CardCosmetic?>(null) }
     var frameChoice by remember { mutableStateOf<CardCosmetic?>(null) }
-    val currentCover = equippedCover?.let { CardCosmetic("", variant = it) } ?: standardCover
-    val currentFrame = equippedFrame?.let { CardCosmetic("", variant = it) } ?: standardFrame
+    val currentCover = equippedCover?.let { CardCosmetic("", variant = it) } ?: packCover ?: standardCover
+    val currentFrame = equippedFrame?.let { CardCosmetic("", variant = it) } ?: packFrame ?: standardFrame
     val cover = if (preview) coverChoice ?: currentCover else currentCover
     val frame = if (preview) frameChoice ?: currentFrame else currentFrame
 
@@ -87,6 +96,7 @@ internal fun PlayerCardShowcase(
             painterResource(cover.art ?: Res.drawable.player_card_outpost), null,
             Modifier.matchParentSize(), contentScale = ContentScale.Crop, alignment = Alignment.CenterEnd,
         )
+        RoomThemeImage(cover.packImage, Modifier.matchParentSize(), scale = ContentScale.FillBounds)
         cover.variant?.let { RoomThemeImage(it.image, Modifier.matchParentSize()) }
         Box(Modifier.matchParentSize().background(Brush.horizontalGradient(
             0f to Ink.copy(alpha = .72f), .58f to Ink.copy(alpha = .52f), 1f to Ink.copy(alpha = .04f),
@@ -167,19 +177,18 @@ internal fun PlayerCardShowcase(
     }
     if (canPreview && preview) {
         Column(Modifier.fillMaxWidth().background(Color(0xFF1A2D33)).padding(horizontal = 16.dp, vertical = 8.dp)) {
-            val theme = ArtThemeController.activeTheme
             val slots = remember(theme) {
                 theme?.takeIf { it.personalizedCatalog != null }?.spec?.personalization?.sanitized()?.slots.orEmpty()
             }
-            fun options(slot: String, standard: CardCosmetic, sample: CardCosmetic): List<CardCosmetic> {
+            fun options(slot: String, standard: CardCosmetic, pack: CardCosmetic?, sample: CardCosmetic): List<CardCosmetic> {
                 val packChoices = slots[slot]?.variants.orEmpty().map { (id, variant) ->
                     CardCosmetic(variant.displayName.ifBlank { id }, variant = variant)
                 }
-                return listOf(standard) + packChoices.ifEmpty { listOf(sample) }
+                return listOfNotNull(standard, pack) + packChoices.ifEmpty { listOf(sample) }
             }
-            CosmeticChoices(readI18n("playerCard.cover"), options("room.player.background", standardCover,
+            CosmeticChoices(readI18n("playerCard.cover"), options("room.player.background", standardCover, packCover,
                 CardCosmetic(readI18n("playerCard.aurora"), Res.drawable.player_card_aurora)), cover) { coverChoice = it }
-            CosmeticChoices(readI18n("playerCard.frame"), options("room.player.frame", standardFrame,
+            CosmeticChoices(readI18n("playerCard.frame"), options("room.player.frame", standardFrame, packFrame,
                 CardCosmetic(readI18n("playerCard.prism"), Res.drawable.player_frame_prism)), frame) { frameChoice = it }
         }
     }
@@ -208,7 +217,7 @@ private fun CardPortrait(name: String, avatar: AccountAvatar?, frame: CardCosmet
     val size = if (compact) 80.dp else 100.dp
     Box(Modifier.size(size), contentAlignment = Alignment.Center) {
         Box(Modifier.fillMaxSize(.87f).background(Ink, CircleShape)
-            .roomThemeBorder(variant?.borderWidth ?: 2, tint, CircleShape)
+            .roomThemeBorder(variant?.borderWidth ?: if (frame.packImage.isEmpty()) 2 else 0, tint, CircleShape)
             .padding(5.dp).clip(CircleShape).background(Color(0xFF344F54)),
             contentAlignment = Alignment.Center) {
             Text(name.firstOrNull()?.uppercase().orEmpty(), color = Color.White,
@@ -217,10 +226,11 @@ private fun CardPortrait(name: String, avatar: AccountAvatar?, frame: CardCosmet
                 key(avatar) { AsyncImage(avatar, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
             }
         }
-        if (variant == null || variant.borderWidth > 0) {
+        if (frame.packImage.isEmpty() && (variant == null || variant.borderWidth > 0)) {
             Spacer(Modifier.fillMaxSize(.95f).border(1.dp, tint.copy(alpha = .6f), CircleShape))
         }
         frame.art?.let { Image(painterResource(it), null, Modifier.matchParentSize()) }
+        RoomThemeImage(frame.packImage, Modifier.matchParentSize(), scale = ContentScale.Fit)
         if (variant != null) RoomThemeImage(variant.avatarFrameImage, Modifier.matchParentSize(), scale = ContentScale.Fit)
     }
 }
@@ -232,7 +242,7 @@ private fun CosmeticChoices(title: String, choices: List<CardCosmetic>, current:
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(choices) { item ->
             FilterChip(
-                selected = item.art == current.art && item.variant == current.variant,
+                selected = item.art == current.art && item.variant == current.variant && item.packImage == current.packImage,
                 colors = FilterChipDefaults.filterChipColors(
                     containerColor = Ink, labelColor = Color.White, selectedContainerColor = Brass, selectedLabelColor = Ink,
                 ),
@@ -240,7 +250,7 @@ private fun CosmeticChoices(title: String, choices: List<CardCosmetic>, current:
                 label = { Text(item.label, maxLines = 1) },
                 leadingIcon = {
                     val thumb = Modifier.size(30.dp, 22.dp).clip(RoundedCornerShape(3.dp))
-                    val asset = item.variant?.let { it.avatarFrameImage.ifEmpty { it.image } }.orEmpty()
+                    val asset = item.packImage.ifEmpty { item.variant?.let { it.avatarFrameImage.ifEmpty { it.image } }.orEmpty() }
                     when {
                         item.art != null -> Image(painterResource(item.art), null, thumb,
                             contentScale = if (item.art == Res.drawable.player_frame_prism) ContentScale.Fit else ContentScale.Crop)

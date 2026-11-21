@@ -89,10 +89,13 @@ internal fun Modifier.roomThemePaint(
     shape: Shape,
     opacity: Int = 100,
     scale: ContentScale = ContentScale.Crop,
+    borderImage: String = "",
 ): Modifier {
     val theme = ArtThemeController.activeTheme
     val file = remember(theme, image) { roomThemeAsset(image) }
     val painter = if (file == null) null else key(theme, file) { rememberAsyncImagePainter(file) }
+    val borderFile = remember(theme, borderImage) { roomThemeAsset(borderImage) }
+    val borderPainter = if (borderFile == null) null else key(theme, borderFile) { rememberAsyncImagePainter(borderFile) }
     val alpha = opacity.coerceIn(0, 100) / 100f
     return clip(shape)
         .background(background.copy(alpha = background.alpha * alpha))
@@ -108,6 +111,9 @@ internal fun Modifier.roomThemePaint(
                 }
             }
             drawContent()
+            if (borderPainter != null && size.width > 0f && size.height > 0f) {
+                with(borderPainter) { draw(size, alpha) }
+            }
         }
 }
 
@@ -142,17 +148,18 @@ internal fun RoomThemeImage(
 internal fun RoomThemeBackground(modifier: Modifier = Modifier) {
     val style = roomThemeSpec().background
     Box(modifier.testTag("room-theme-background")) {
-        RoomThemeImage(style.image, Modifier.matchParentSize(), style.alpha / 100f,
-            when (style.scale) {
-                "fit" -> ContentScale.Fit
-                "fill" -> ContentScale.FillBounds
-                else -> ContentScale.Crop
-            })
+        RoomThemeImage(style.image, Modifier.matchParentSize(), style.alpha / 100f, roomThemeImageScale(style.scale))
         if (style.overlayColor.isNotEmpty() && style.overlayAlpha > 0) {
             val color = roomThemeColor(style.overlayColor, Color.Transparent)
             Box(Modifier.matchParentSize().background(color.copy(alpha = color.alpha * style.overlayAlpha / 100f)))
         }
     }
+}
+
+internal fun roomThemeImageScale(scale: String): ContentScale = when (scale) {
+    "fit" -> ContentScale.Fit
+    "fill" -> ContentScale.FillBounds
+    else -> ContentScale.Crop
 }
 
 /** Preserve old explicit onSurface colors while allowing a panel-specific foreground. */
