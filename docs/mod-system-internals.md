@@ -345,6 +345,10 @@ ModName1|/path/to/mod1.rwmod|enabled,ModName2|/path/to/mod2.rwmod|disabled
 
 房内同步时 App 层按 `inRoomSyncActive` 抑制重载弹窗与下载卡片，进度由房间页 `RoomSelfSyncBar` 行内呈现。进房下载路径不得置 `UI.showNetworkDialog`；取消/失败须先自增 `receivingEpoch` 再清 phase，否则迟到进度回调会在回多人列表后把「正在下载房主模组」卡片漏出来。blob 走独立 `blobClient`（空闲 60s / 整次 15 分钟），断流用 HTTP Range 续传。
 
+房主分享模组仅使用 Cloudflare R2 直传。同步节点须在 `/api/v1/capabilities` 同时声明 `upload_auth_required`、`upload_enabled` 和 `r2_direct_upload` 为 `true`，并提供 HTTPS 地址。本机联调可用回环 HTTP。房主仍向该节点注册房间、查缺和发布清单。上传时，客户端通过 `POST /api/v1/files/{sha256}/upload-ticket?key=...` 领取票据，向签名的 R2 地址流式 PUT，随后调用同一路径族下的 `complete` 确认。账号和房间凭据只用于同步节点请求。对象已存在时跳过上传。确认暂时失败时，客户端使用同一上传会话重试确认。直传失败后房主可在客户端重新分享。
+
+加入者从现有文件 GET 接口获取临时下载地址。新请求仅带下载所需的 Range 和编码头。遇到过期票据时重新向原节点领取地址，再从已写入位置续传。完整文件匹配清单中的长度和 SHA-256 后才会进入模组应用阶段。协议回归位于 `rwpp-core-api` 的 `R2ModSyncTest`。
+
 应用阶段点取消：先退房回多人列表，再弹 `cancellingReload`「正在取消」框。`ag.e()`/`ag.h()` 一开始就清空 `l.c`/`l.d`，不能半截停；注入在按目录加载入口对自定义模组抛 `ReloadAbortToVanilla`，然后全禁用并再跑一次原版-only 保连接重载。Android 退房不得立刻 `activityResume`/`i.q()`（会扫单位表 → CME）；须等回落结束、闸门仍开时由 `refreshMenuAfterDisconnect` 再跑，然后才 `KeepConnectedReload.end()`。`clearRoomPresence` 在回落期间不得取消该 job。
 
 **relaymod 必须部署 `PeerPhaseSynced`**：客户端终态上报 `phase=synced`；旧服务端 `ValidPeerPhase` 不含该枚举会 400，心跳失败约 45s 后 `peer_secret` 失效。未升级的服务端上客户端会回退 `applying` 保 TTL，但房主开局门控会把该玩家视为未完成。

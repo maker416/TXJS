@@ -7,6 +7,7 @@
 
 import argparse
 import hashlib
+import json
 import os
 from pathlib import Path, PurePosixPath
 import platform
@@ -20,6 +21,7 @@ import tarfile
 import tempfile
 import zipfile
 from datetime import datetime
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
 PART_SIZE = 95 * 1024 * 1024
@@ -297,6 +299,34 @@ def desktop_jar(root, version):
     return jars[0]
 
 
+def stage_android_update(root, stage, source, version):
+    profile_path = root / "build/client-api-official.json"
+    if not profile_path.is_file():
+        return
+    profile = json.loads(profile_path.read_text(encoding="utf-8-sig"))
+    index_root = profile.get("updateApiUrl", "").strip()
+    if not index_root.endswith("/"):
+        return
+    uri = urlsplit(index_root)
+    if (uri.scheme != "https" or not uri.hostname or uri.username is not None or uri.query or uri.fragment
+            or not re.fullmatch(r"/(?:[A-Za-z0-9][A-Za-z0-9._-]*/)*", uri.path)):
+        raise ValueError("updateApiUrl 的索引目录必须是以 / 结尾的 HTTPS 地址。")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version) or source.stat().st_size <= 0:
+        raise ValueError("客户端更新版本无效或安装包为空。")
+
+    upload_dir = stage / "upneed" / uri.path.strip("/") / "android"
+    version_dir = upload_dir / version
+    version_dir.mkdir(parents=True)
+    installer = version_dir / f"RWJS-Android-{version}.apk"
+    shutil.copy2(source, installer)
+    checksum = installer.with_suffix(".apk.sha256")
+    checksum.write_text(f"{file_hash(installer)}  {installer.name}\n", encoding="ascii")
+    assets = [{"name": path.name, "browser_download_url": f"{index_root}android/{version}/{path.name}",
+               "size": path.stat().st_size} for path in (installer, checksum)]
+    index = {"tag_name": f"v{version}", "body": "", "prerelease": False, "assets": assets}
+    (upload_dir / "latest.json").write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
+
+
 def collect(root, target, args, jdk, source):
     version_match = re.search(r'^version\s*=\s*"([^"]+)"', (root / "build.gradle.kts").read_text(encoding="utf-8-sig"), re.M)
     if not version_match or not re.fullmatch(r"[A-Za-z0-9._+-]+", version_match[1]):
@@ -344,6 +374,8 @@ def collect(root, target, args, jdk, source):
                 raise ValueError("必须生成唯一已签名 APK，拒绝收集缺失、unsigned 或不明确的旧产物。")
             shutil.copy2(apks[0], stage / f"RWJS-Android-{version}-{variant}.apk")
             split_update(apks[0], stage, "RWJS-Android")
+            if target == "android-release" and args.channel == "official" and args.api_profile == "official":
+                stage_android_update(root, stage, apks[0], version)
             (stage / "发布说明.txt").write_text("上传全部 RWJS-Android.zip.001/.002/... 和 RWJS-Android.zip.sha256；完整 APK 供本地安装。\n"
                 "分卷保留原 APK 签名；正式发布仅使用 android-release 且沿用原签名。\n", encoding="utf-8")
         elif target == "browser-kernels":
@@ -372,6 +404,8 @@ def collect(root, target, args, jdk, source):
             shutil.rmtree(dest)
         stage.rename(dest)
     print(f"[DONE] 产物: {dest}", flush=True)
+    if (dest / "upneed").is_dir():
+        print(f"[DONE] R2 待上传文件: {dest / 'upneed'}", flush=True)
 
 
 def file_hash(path):

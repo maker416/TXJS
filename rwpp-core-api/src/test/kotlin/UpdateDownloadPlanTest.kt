@@ -7,12 +7,45 @@
 
 package io.github.rwpp.net
 
+import okhttp3.OkHttpClient
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class UpdateDownloadPlanTest {
+
+    @Test fun `R2 index selects each platform and requires a verifiable installer`() {
+        MockWebServer().use { server ->
+            val client = OkHttpClient()
+            val root = server.url("/client-update/").toString()
+            for ((platform, filename) in listOf(
+                ClientUpdatePlatform.WINDOWS to "RWJS-Setup-1.20.108.exe",
+                ClientUpdatePlatform.ANDROID to "RWJS-Android-1.20.108.apk",
+            )) {
+                val fileUrl = "https://r2.example.com/client-update/${platform.directory}/1.20.108/$filename"
+                val asset = """{"name":"$filename","browser_download_url":"$fileUrl","size":1024}"""
+                val sha = """{"name":"$filename.sha256","browser_download_url":"$fileUrl.sha256","size":98}"""
+                server.enqueue(MockResponse().setBody("""{"tag_name":"v1.20.108","assets":[$asset,$sha]}"""))
+                val profile = fetchClientUpdate(client, root, platform)!!
+                val plan = if (platform == ClientUpdatePlatform.WINDOWS) profile.resolveDesktopUpdatePlan()!!
+                    else profile.resolveAndroidUpdatePlan()!!
+                assertEquals("v1.20.108", profile.version)
+                assertEquals(UpdateDownloadPlan(listOf(fileUrl), "$fileUrl.sha256", false, listOf(1024L)), plan)
+                assertEquals("/client-update/${platform.directory}/latest.json", server.takeRequest().path)
+                server.enqueue(MockResponse().setBody("""{"tag_name":"v1.20.108","assets":[$asset]}"""))
+                assertNull(fetchClientUpdate(client, root, platform))
+                server.takeRequest()
+            }
+            assertNull(fetchClientUpdate(client, root, null))
+            assertEquals(4, server.requestCount)
+            server.enqueue(MockResponse().setBody("""{"tag_name":"v1.20.62","assets":[]}"""))
+            assertEquals("v1.20.62", fetchClientUpdate(client, server.url("/releases/latest").toString(), null)?.version)
+            assertEquals("/releases/latest", server.takeRequest().path)
+        }
+    }
 
     @Test fun `browser kernel attachments cannot become client installers`() {
         val kernels = arrayOf("RWJS-Browser-gecko-157-v1-android-arm64-v8a.kernel.001",

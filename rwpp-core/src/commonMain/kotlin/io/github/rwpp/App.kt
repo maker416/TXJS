@@ -73,6 +73,8 @@ import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.io.SizeUtils
 import io.github.rwpp.net.Net
+import io.github.rwpp.net.resolveAndroidUpdatePlan
+import io.github.rwpp.net.resolveDesktopUpdatePlan
 import io.github.rwpp.net.sync.SyncPeerPhase
 import io.github.rwpp.scripts.Render
 import io.github.rwpp.theme.ArtThemeController
@@ -149,7 +151,12 @@ fun App(
                 onUpdate = updateController::start,
                 onCancel = updateController::cancel,
                 onExit = { updateController.cancel(); appContext.exit() },
-                onOpenRelease = { net.openUriInBrowser("https://gitee.com/maker416/TXJS/releases") })
+                onOpenRelease = {
+                    val plan = if (appContext.isAndroid()) requiredRelease.resolveAndroidUpdatePlan()
+                        else requiredRelease.resolveDesktopUpdatePlan()
+                    val installer = plan?.takeUnless { it.isArchive }?.partUrls?.singleOrNull()
+                    net.openUriInBrowser(installer ?: "https://gitee.com/maker416/TXJS/releases")
+                })
         }
         return
     }

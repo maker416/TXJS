@@ -233,13 +233,13 @@ Linux 使用 `./build/build.sh linux --channel official`（本机入口）或 `.
 - 桌面端：fat jar 配合 `launcher.bat` 使用；Windows 安装器由 `packaging/inno/` 生成到 `build/installer/RWJS-Setup.exe`，`packaging/build.ps1 installer` 收集到 `build/artifacts/installer-<渠道>/` 并生成发布分卷。
 - Android：`rwpp-android/build/outputs/apk/` 下生成 APK
 
-### 自动更新（Gitee release）
+### 自动更新（R2 与旧版 Gitee Release）
 
 浏览器组件与客户端更新分开：组件独立版本在 `packaging/browser-kernels.properties` 中维护，文件名携带版本；运行时只检查最新 Release 并选择兼容的组件。每个新 Release 必须携带仍受支持的组件清单和完整分卷。按用户确认信任最新 Release 清单，校验分卷/完整 ZIP/文件 SHA-256；已有内核的进程不热替换，升级安装后提示重启。详见 `docs/browser-kernel-distribution.md`。
 
-- 版本检查：`Net.getLatestVersionProfile()` 拉取 `gitee.com/maker416/TXJS` 的最新 release 资产列表。
-- **Gitee 单文件限制 100MB**，桌面安装包（`RWJS-Setup.exe` 超 100MB）以 **zip 分卷**发布：`packaging/build.ps1` 的 `installer` 目标收集产物时自动生成 `RWJS-Setup.zip.001/.002/…`（7-Zip/WinRAR 分卷命名约定，用户可直接解压）与 `RWJS-Setup.zip.sha256`（合并 zip 的 SHA-256）。
-- 客户端：`LatestVersionProfile.resolveDesktopUpdatePlan()`（`rwpp-core-api` 的 `net/UpdateDownloadPlan.kt`）识别分卷组（≥2 卷且序号连续，否则回退旧版单 `.exe` 资产）；桌面端 `AutoUpdaterImpl` 顺序下载分卷、sha256 强校验（无校验资产时降级为 zip CRC）、`SequenceInputStream` + `ZipInputStream` 流式合并解出 exe（不落合并后的大 zip），随后以 `/RWJS_UPDATE=1 /SILENT /SP- /NORESTART /LOG` 启动安装并退出进程。Android 仍为单 `.apk` 资产走系统安装器。
+- `Net.getLatestVersionProfile()` 为正式版从 `updateApiUrl` 的 R2 目录读取 `windows/latest.json` 或 `android/latest.json`。静态清单需包含对应平台的完整安装包、大小和 HTTPS SHA-256 校验地址。其他平台没有 R2 自动安装目标。
+- 正式渠道的 Windows 安装包和 Android Release APK 打包后，在各自 `build/artifacts/<目标>-official/upneed/` 生成 R2 上传文件。先上传版本目录中的原始安装包和 SHA-256，再上传平台清单。详见 `packaging/README.md`。
+- 旧客户端沿用 Gitee Release 和 ZIP 分卷。`UpdatePackageDownloader` 共用流式下载及校验。Windows 用 `/RWJS_UPDATE=1 /SILENT /SP- /NORESTART /LOG` 启动 Inno 安装器，Android 使用系统安装器并沿用原签名。
 
 ## 平台抽象模式
 
@@ -344,7 +344,7 @@ Windows 透明菜单优先由 `DesktopLauncherOverlay` 的原生 `ComposeDialog`
 
 - **TServer Direct**：`rwpp-core-api/net/sync/direct/` 使用独立 TCP 控制 Socket，一连接一请求，默认探测 v2 前缀 `TXJSMD2\n`；只有尚未识别合法 v2 MANIFEST/ERROR 时才可探测 v1 `TXJSMD1\n`，两个版本均未识别才可回落 relay。合法 v2 错误不能通过降级绕过；v1 兼容路径不预留槽位。入房前的统一 Loading 链覆盖手动 IP、列表直连、收藏与邀请：v2 先按 scope 预约真实容量，再完成缺失下载、断点续传、完整 SHA-256、二次 manifest 复核、普通 `modReload(forceImmediate=true)`、核心单位 checksum 校验与平台握手准备（双端保留原版 init 缓存）、重载后第三次 manifest 复核，最后调用原版连接。空清单也必须禁用多余 Mod，重载沿用双端原有线程/GL 契约。独立心跳与到期观察覆盖下载、重载和真实注册，直到 RENEW 返回 `admitted` 才确认成功并关闭预约；取消/失败尽力 RELEASE，已注册后的 RELEASE 不踢玩家。凭证仅填入原版包 160 已有 query 字段 `txjsmd2_<短期token的64位小写hex>`，不改变加入地址、relay UUID、游戏包号或双端 `directJoinServer` 接口，不接管游戏 Socket，不跳过原版版本、密码与 checksum 检查。Direct 路径不调用 relay `preJoinSync`、不创建 Presence、不使用保连接重载。Loading 取消必须关闭活动 Socket，临时文件未校验不得发布；文件帧仍须流式读写并限制单项及总大小。协议与生命周期详见 [TServer Direct v2](docs/tserver-direct-mod-sync-v2.md)。
 - **中转服务端**：独立 Go 服务 `relaymod`（源码在 `D:\workspace\RW\relaymod`，非本仓库模块），部署在公网 IPv4；仅标准库 `net/http`。房间同步记录（清单 + TTL + secret + `host_units_checksum`）与内容寻址 blob（按 SHA-256 去重存储）；另提供加入者进度 Presence（内存态，45s TTL，不落盘；新建 PUT 返回一次性 `peer_secret`，后续须 `X-Peer-Secret`；连接 IP 仅房主可见）。`GET .../peers` 双通道：房主 `X-Secret` 得全量（含 ip），加入者 `X-Peer-Secret` 得脱敏列表。Direct 与该 HTTP 服务完全独立。
-- **模组上传账号认证（协议 v2）**：分享房主必须登录 UAS，下载及加入者 Presence 仍免账号登录。`ModSyncClient` 的房主方法要求 `ModSyncCredentials`，统一携带 `X-App-Key` + Bearer token；文件 check/PUT 必带 query `key`。先无凭据请求 `/api/v1/capabilities`，仅选择 `protocol_version >= 2`、`upload_auth_required=true`、`upload_enabled=true` 的 HTTP/HTTPS 节点；兼容已部署的公网 HTTP 同步地址，房主单次会话固定节点，禁止写入失败后回落旧节点，禁止认证请求重定向。加入者按房间 key 查找各镜像，找到清单后在同一节点读取清单、下载和维护 Presence；这些请求不带 UAS 凭据。镜像有故障且均未找到清单时保留故障提示。relay 每次房主请求实时向 `/users/me` 核验，并验证持久化的 `owner_user_id` 和房间 secret；ready 确认清单文件齐全。房主客户端固定账号会话快照；登出/切号立即取消上传、轮询和心跳，使用原凭据尽力清理，不能误用新账号 token。401/403 结束分享并显示登录/权限提示；失败状态可点「重新分享」，同一房间保留原房间 secret 供同账号重新登录恢复，断线清除。旧任务 UI 回写受会话代次限制。默认同步 URL 为 HTTP；客户端允许 HTTP 上传，登录凭据会以明文传输，部署仍建议使用 HTTPS。relay 必须配置 `account_api_url`、`account_app_keys`；未配置认证时仍拒绝上传。UAS 无需新增接口，房内名片缓存不用于上传。回归：`rwpp-core-api` 的 `ModSyncAuthenticationTest`；部署及迁移规则见相邻 relaymod 仓库 README。
+- **模组上传账号认证与 R2 直传（协议 v2）**：分享房主必须登录 UAS，下载及加入者 Presence 仍免账号登录。房主上传仅走 R2 直传。客户端先无凭据请求 `/api/v1/capabilities`，仅选择声明 `protocol_version >= 2`、`upload_auth_required=true`、`upload_enabled=true` 和 `r2_direct_upload=true` 的 HTTPS 节点，本机联调允许回环 HTTP。房主单次会话固定节点，使用 `X-App-Key` 和 Bearer token 调用控制接口，文件查缺、领取票据和确认上传均携带房间 query `key`。客户端向 R2 签名地址流式上传，请求只带对象存储所需的头。加入者按房间 key 查找各镜像，找到清单后在同一节点读取清单、下载和维护 Presence。镜像有故障且均未找到清单时保留故障提示。relay 每次房主请求实时向 `/users/me` 核验，并验证持久化的 `owner_user_id` 和房间 secret；ready 确认清单文件齐全。房主客户端固定账号会话快照；登出或切号立即取消上传、轮询和心跳，使用原凭据尽力清理。relay 返回 401/403 时结束分享并显示登录或权限提示。直传失败时可点「重新分享」，同一房间保留原房间 secret 供同账号恢复，断线清除。旧任务 UI 回写受会话代次限制。relay 必须配置 `account_api_url`、`account_app_keys` 并启用 R2 直传。UAS 无需新增接口，房内名片缓存不用于上传。回归覆盖 `ModSyncAuthenticationTest` 和 `R2ModSyncTest`。部署及迁移规则见相邻 relaymod 仓库 README。
 - **客户端协议层**：`rwpp-core-api` 的 `net/sync/` —— `ModSyncModels.kt`（DTO，snake_case 与 Go 对齐）、`ModSyncKeys.kt`（relay 房间 key 推导：`code:<短码>`、发布后绑定 `sid:<server_id>` 别名；直连 IP 房不提供 relay 同步）、`ModSyncClient.kt`（OkHttp，多 baseUrl failover；Presence 带 peer/room secret）。
 - **编排层**：`rwpp-core` 的 `core/ModSyncController.kt` ——
   - 房主侧：开房勾选「传输模组」后进房拿到短码即注册（status=preparing，含 `hostUnitsChecksum`）→ `files/check` 查缺 → 上传缺失 blob → ready → 60s 心跳续期 → 发布列表后绑定 sid 别名 → 离房（`DisconnectEvent`）注销；注册成功后每 1s 带 `X-Secret` 拉 peers；可 `clearHostPeers()`。

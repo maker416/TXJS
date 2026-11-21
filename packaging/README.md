@@ -45,10 +45,24 @@ Linux 同样支持 `./packaging/build.sh release-all --channel official` 或菜�
 | `openPlatformUrl` | 网游大厅、网页授权、扩展校验、专属外观和支付共用的开放平台根地址。 |
 | `roomListApiUrls`、`modSyncApiUrls` | 房间列表和模组同步的 URL 数组。房间发布及续租使用房间列表数组中的首项。 |
 | `modPlaytimeApiUrl`、`onlinePresenceApiUrl`、`feedbackApiUrl` | 模组时长、在线上报和反馈地址。模组时长地址留空可关闭云端统计。 |
-| `updateApiUrl`、`browserKernelApiUrl` | 客户端更新和浏览器组件的 Release 元数据接口。接口应返回对应的 Gitee Release 结构。 |
+| `updateApiUrl` | 客户端更新清单。以 `/` 结尾的 HTTPS 目录按平台读取 `windows/latest.json` 或 `android/latest.json`，完整接口 URL 直接请求。 |
+| `browserKernelApiUrl` | 浏览器组件的 Release 元数据接口，独立于客户端更新清单。 |
 | `esportsSiteUrl`、`rtsBoxSiteUrl`、`rtsBoxSearchApiUrl`、`rtsBoxLoginApiUrl`、`rtsBoxHotListUrl` | 赛事站与铁锈盒子的网页和接口地址。 |
 
 测试配置沿用 K30 的联调地址，开放平台指向 `topenapi`，共用服务保留当前地址。修改 JSON 后重新打包即可更新出厂默认；客户端已有的手动地址配置及运行参数仍沿用原有优先级。区服、下载地址等由服务端响应下发。原 `-PopenPlatformUrl`、`-PfeedbackApiUrl` 继续支持临时覆盖对应 JSON 字段。JSON 会用于客户端编译，只填写客户端可用的地址和标识。
+
+## 正式版自动更新发布
+
+正式版从 R2 读取 Windows 和 Android 各自的版本清单。`installer` 和 `android-release` 在正式渠道使用 `official` API 配置打包时会收集以下文件。Windows 的 `release-all` 会同时生成两份。Linux 打包入口生成 Android Release 时也会收集 Android 的上传文件。
+
+| 目标 | 上传目录 |
+| --- | --- |
+| Windows | `build/artifacts/installer-official/upneed/client-update/windows/` |
+| Android | `build/artifacts/android-release-official/upneed/client-update/android/` |
+
+`upneed/` 内的相对路径就是 R2 对象键。先上传版本子目录里的完整 EXE 或 APK 及对应 `.sha256`，确认公网可访问后，再上传同平台的 `latest.json`。清单包含实际版本号、安装包大小及 HTTPS 下载地址。桶已发布的版本子目录应保留原文件，供已读取旧清单的客户端完成下载。两端可以分别更新各自的清单。
+
+旧客户端仍从 Gitee 检查更新。首次迁移时，把同版的新客户端分卷和校验文件也发到 Gitee，使旧客户端能升到采用 R2 的版本。Linux 完整包沿用手动更新。
 
 ## 打包自动递增版本
 

@@ -8,6 +8,7 @@
 package io.github.rwpp.net
 
 import com.eclipsesource.json.Json
+import io.github.rwpp.AppContext
 import io.github.rwpp.config.CoreData
 import io.github.rwpp.core.Initialization
 import io.github.rwpp.io.GameInputStream
@@ -104,24 +105,12 @@ interface Net : KoinComponent, Initialization {
     fun openUriInBrowser(uri: String)
 
     fun getLatestVersionProfile(): LatestVersionProfile? {
-        return runCatching {
-            val request = Request.Builder().url(
-                BuildConfig.UPDATE_API_URL
-            ).build()
-            client.newBuilder().callTimeout(12, java.util.concurrent.TimeUnit.SECONDS).build()
-                .newCall(request).execute().use { response ->
-                if (!response.isSuccessful) throw IOException("Release check returned HTTP ${response.code}")
-                val json = Json.parse(response.body?.string() ?: throw IOException("Empty release")).asObject()
-                val version = json.getString("tag_name", "")
-                require(version.matches(Regex("[vV]?\\d+(?:\\.\\d+)+(?:[-+].*)?"))) { "Invalid release version" }
-                val assets = json.get("assets")?.asArray()?.map {
-                    val obj = it.asObject()
-                    ReleaseAsset(obj.getString("name", ""), obj.getString("browser_download_url", ""),
-                        obj.getLong("size", 0))
-                } ?: emptyList()
-                LatestVersionProfile(version, json.getString("body", ""), json.getBoolean("prerelease", false), assets)
-            }
-        }.getOrNull()
+        val platform = when {
+            getKoin().getOrNull<AppContext>()?.isAndroid() == true -> ClientUpdatePlatform.ANDROID
+            System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true) -> ClientUpdatePlatform.WINDOWS
+            else -> null
+        }
+        return fetchClientUpdate(client, BuildConfig.UPDATE_API_URL, platform)
     }
 
     fun searchBBS(

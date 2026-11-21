@@ -30,24 +30,38 @@ class ModTransferMemoryTest {
         val uploaded = AtomicLong(-1)
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         server.createContext("/api/v1/files/$hash") { exchange ->
-            if (exchange.requestMethod == "PUT") {
-                var count = 0L
-                val buffer = ByteArray(64 * 1024)
-                exchange.requestBody.use { input -> while (true) {
+            exchange.sendResponseHeaders(200, size)
+            exchange.responseBody.use { output -> source.inputStream().use { it.copyTo(output, 64 * 1024) } }
+            exchange.close()
+        }
+        val base = "http://127.0.0.1:${server.address.port}"
+        server.createContext("/api/v1/files/$hash/upload-ticket") { exchange ->
+            val bytes = """{"upload_id":"staging123","url":"$base/staging/staging123","headers":{"Content-Length":"$size","If-None-Match":"*"}}""".toByteArray()
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+            exchange.close()
+        }
+        server.createContext("/staging/staging123") { exchange ->
+            var count = 0L
+            val buffer = ByteArray(64 * 1024)
+            exchange.requestBody.use { input ->
+                while (true) {
                     val n = input.read(buffer)
                     if (n < 0) break
                     count += n
-                } }
-                uploaded.set(count)
-                exchange.sendResponseHeaders(200, -1)
-            } else {
-                exchange.sendResponseHeaders(200, size)
-                exchange.responseBody.use { output -> source.inputStream().use { it.copyTo(output, 64 * 1024) } }
+                }
             }
+            uploaded.set(count)
+            exchange.sendResponseHeaders(200, -1)
+            exchange.close()
+        }
+        server.createContext("/api/v1/files/$hash/complete") { exchange ->
+            exchange.requestBody.close()
+            exchange.sendResponseHeaders(200, -1)
             exchange.close()
         }
         server.createContext("/api/v1/capabilities") { exchange ->
-            val bytes = """{"protocol_version":2,"upload_auth_required":true,"upload_enabled":true}""".toByteArray()
+            val bytes = """{"protocol_version":2,"upload_auth_required":true,"upload_enabled":true,"r2_direct_upload":true}""".toByteArray()
             exchange.sendResponseHeaders(200, bytes.size.toLong())
             exchange.responseBody.use { it.write(bytes) }
             exchange.close()
@@ -55,7 +69,7 @@ class ModTransferMemoryTest {
         server.start()
         val http = OkHttpClient()
         try {
-            val client = ModSyncClient(listOf("http://127.0.0.1:${server.address.port}"), http, ModSyncCredentials("app", "token"))
+            val client = ModSyncClient(listOf(base), http, ModSyncCredentials("app", "token"))
             val download = File(root, "download.tmp")
             client.downloadFileTo(hash, size, download)
             assertEquals(hash, HashUtils.sha256(download))

@@ -26,15 +26,16 @@ class ModSyncAuthenticationTest {
         io.github.rwpp.logger = org.slf4j.LoggerFactory.getLogger(ModSyncAuthenticationTest::class.java)
     }
 
-    private val caps = """{"protocol_version":2,"upload_auth_required":true,"upload_enabled":true}"""
+    private val caps = """{"protocol_version":2,"upload_auth_required":true,"upload_enabled":true,"r2_direct_upload":true}"""
     private val credentials = ModSyncCredentials("app-key", "login-token")
+    private fun loopbackServer() = MockWebServer().apply { start(InetAddress.getByName("127.0.0.1"), 0) }
     private fun client(vararg servers: MockWebServer, current: () -> Boolean = { true }) =
-        ModSyncClient(servers.map { it.url("/").toString() }, OkHttpClient(), credentials, current)
+        ModSyncClient(servers.map { "http://127.0.0.1:${it.port}" }, OkHttpClient(), credentials, current)
     private fun ok(body: String = "{}") = MockResponse().setBody(body)
 
     @Test fun preflightChecksCapabilitiesWithoutWritingAndUploadUsesTheSameNode() = runBlocking {
-        MockWebServer().use { old -> MockWebServer().use { selected ->
-            old.enqueue(MockResponse().setResponseCode(404))
+        loopbackServer().use { old -> loopbackServer().use { selected ->
+            old.enqueue(ok("""{"protocol_version":2,"upload_auth_required":true,"upload_enabled":true,"legacy_upload_enabled":true}"""))
             selected.enqueue(ok(caps))
             val c = client(old, selected)
             c.prepareHostUpload()
@@ -57,10 +58,9 @@ class ModSyncAuthenticationTest {
         } }
     }
 
-    @Test fun publicHttpServiceChecksCapabilitiesBeforeSendingUploadCredentials() = runBlocking {
-        MockWebServer().use { server ->
+    @Test fun publicHttpServiceIsRejectedWithoutSendingUploadCredentials() = runBlocking {
+        loopbackServer().use { server ->
             server.enqueue(ok(caps))
-            server.enqueue(ok())
             val base = server.url("/").newBuilder().host("relay.example.test").build()
             val http = OkHttpClient.Builder()
                 .dns(object : okhttp3.Dns {
@@ -71,7 +71,8 @@ class ModSyncAuthenticationTest {
                 .build()
             val c = ModSyncClient(listOf(base.toString()), http, credentials)
 
-            c.prepareHostUpload()
+            val error = assertFailsWith<ModSyncException> { c.prepareHostUpload() }
+            assertEquals("authenticated_upload_requires_https", error.message)
             val capability = assertNotNull(server.takeRequest(2, TimeUnit.SECONDS))
             assertEquals("${base.host}:${base.port}", capability.getHeader("Host"))
             assertEquals("GET", capability.method)
@@ -79,23 +80,18 @@ class ModSyncAuthenticationTest {
             assertNull(capability.getHeader("Authorization"))
             assertNull(capability.getHeader("X-App-Key"))
 
-            c.register(RoomRegisterRequest("room", "secret", "1.15", mods = emptyList()))
-            val upload = assertNotNull(server.takeRequest(2, TimeUnit.SECONDS))
-            assertEquals("/api/v1/rooms", upload.path)
-            assertEquals("Bearer login-token", upload.getHeader("Authorization"))
-            assertEquals("app-key", upload.getHeader("X-App-Key"))
-            assertEquals(2, server.requestCount)
+            assertEquals(1, server.requestCount)
         }
     }
 
     @Test fun preflightRejectsDisabledAndUnavailableServicesWithoutRegistering() = runBlocking {
-        MockWebServer().use { server ->
+        loopbackServer().use { server ->
             server.enqueue(ok("""{"protocol_version":2,"upload_auth_required":true,"upload_enabled":false}"""))
             assertEquals("authenticated_upload_unavailable", assertFailsWith<ModSyncException> { client(server).prepareHostUpload() }.message)
             assertEquals(1, server.requestCount)
             assertEquals("/api/v1/capabilities", server.takeRequest().path)
         }
-        MockWebServer().use { server ->
+        loopbackServer().use { server ->
             val url = server.url("/").toString()
             server.shutdown()
             val unavailable = ModSyncClient(listOf(url), OkHttpClient(), credentials)
@@ -105,7 +101,7 @@ class ModSyncAuthenticationTest {
     }
 
     @Test fun cancellingPreflightDoesNotTryAnotherMirrorOrProceedToUpload() = runBlocking {
-        MockWebServer().use { server -> MockWebServer().use { other ->
+        loopbackServer().use { server -> loopbackServer().use { other ->
             server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
             val task = launch(Dispatchers.IO) { client(server, other).prepareHostUpload() }
             assertNotNull(withContext(Dispatchers.IO) { server.takeRequest(3, TimeUnit.SECONDS) })
@@ -117,7 +113,7 @@ class ModSyncAuthenticationTest {
     }
 
     @Test fun accountInvalidatedDuringPreflightCannotProceedToRegistration() = runBlocking {
-        MockWebServer().use { server ->
+        loopbackServer().use { server ->
             val current = java.util.concurrent.atomic.AtomicBoolean(true)
             server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
                 override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse {
@@ -136,14 +132,21 @@ class ModSyncAuthenticationTest {
     }
 
     @Test fun everyHostOperationCarriesCredentialsAndRoomContext() = runBlocking {
-        MockWebServer().use { server ->
+        loopbackServer().use { server ->
             server.enqueue(ok(caps))
-            repeat(11) { server.enqueue(ok(if (it == 1) """{"missing":[]}""" else if (it == 8) """{"peers":[]}""" else "{}")) }
+            repeat(11) { index ->
+                server.enqueue(ok(when (index) {
+                    1 -> """{"missing":[]}"""
+                    2, 3 -> """{"already_present":true}"""
+                    8 -> """{"peers":[]}"""
+                    else -> "{}"
+                }))
+            }
             val c = client(server)
             c.register(RoomRegisterRequest("code:Q1", "room-secret", "1.15", mods = emptyList()))
             val hash = "a".repeat(64)
             c.checkFiles("code:Q1", "room-secret", listOf(hash, hash))
-            c.uploadFile("code:Q1", "a".repeat(64), "room-secret", byteArrayOf(1,2))
+            c.uploadFile("code:Q1", hash, "room-secret", byteArrayOf(1,2))
             val file = File.createTempFile("mod-auth", ".tmp")
             try { file.writeBytes(byteArrayOf(3,4)); c.uploadFile("code:Q1", "b".repeat(64), "room-secret", file) }
             finally { file.delete() }
@@ -163,12 +166,17 @@ class ModSyncAuthenticationTest {
                 assertEquals("app-key", request.getHeader("X-App-Key"))
                 if (index in 1..3) assertEquals("code:Q1", request.requestUrl!!.queryParameter("key"))
                 if (index == 1) assertEquals(FilesCheckRequest(listOf(hash)), Json.decodeFromString<FilesCheckRequest>(request.body.readUtf8()))
+                if (index in 2..3) {
+                    assertEquals("POST", request.method)
+                    assertTrue(request.requestUrl!!.encodedPath.endsWith("/upload-ticket"))
+                    assertEquals("room-secret", request.getHeader("X-Secret"))
+                }
             }
         }
     }
 
     @Test fun oldMirrorReceivesNoCredentialsAndHostRequestsStayOnSelectedMirror() = runBlocking {
-        MockWebServer().use { old -> MockWebServer().use { modern ->
+        loopbackServer().use { old -> loopbackServer().use { modern ->
             old.enqueue(MockResponse().setResponseCode(404))
             modern.enqueue(ok(caps)); modern.enqueue(ok()); modern.enqueue(MockResponse().setResponseCode(503))
             val c = client(old,modern)
@@ -182,7 +190,7 @@ class ModSyncAuthenticationTest {
 
     @Test fun unauthorizedForbiddenAndRateLimitsNeverFailOver() = runBlocking {
         for (status in listOf(401,403,429)) {
-            MockWebServer().use { a -> MockWebServer().use { b ->
+            loopbackServer().use { a -> loopbackServer().use { b ->
                 a.enqueue(ok(caps)); a.enqueue(MockResponse().setResponseCode(status).setHeader("Retry-After","4").setBody("""{"error":"denied"}"""))
                 val error = assertFailsWith<ModSyncException> { client(a,b).register(RoomRegisterRequest("room","s","1.15",mods=emptyList())) }
                 assertEquals(status,error.statusCode)
@@ -193,7 +201,7 @@ class ModSyncAuthenticationTest {
     }
 
     @Test fun noLoginAndInvalidatedSessionCannotUploadButOldCredentialsCanOnlyCleanUp() = runBlocking {
-        MockWebServer().use { server ->
+        loopbackServer().use { server ->
             val anonymous = ModSyncClient(listOf(server.url("/").toString()),OkHttpClient())
             assertEquals(401,assertFailsWith<ModSyncException> { anonymous.uploadFile("room","a".repeat(64),"s",byteArrayOf(1)) }.statusCode)
             assertEquals(0,server.requestCount)
@@ -210,7 +218,7 @@ class ModSyncAuthenticationTest {
     }
 
     @Test fun manifestsAndDownloadsNeverSendAccountCredentials() = runBlocking {
-        MockWebServer().use { server ->
+        loopbackServer().use { server ->
             server.enqueue(ok("""{"status":"ready","game_version":"1.15","mods":[]}"""))
             val c = client(server)
             assertNotNull(c.fetchManifest("room"))
@@ -229,14 +237,14 @@ class ModSyncAuthenticationTest {
     }
 
     @Test fun authenticatedRedirectIsNotFollowed() = runBlocking {
-        MockWebServer().use { a -> MockWebServer().use { b ->
+        loopbackServer().use { a -> loopbackServer().use { b ->
             a.enqueue(ok(caps)); a.enqueue(MockResponse().setResponseCode(307).setHeader("Location",b.url("/steal")))
             assertEquals(307,assertFailsWith<ModSyncException> { client(a).register(RoomRegisterRequest("room","s","1.15",mods=emptyList())) }.statusCode)
             assertEquals(0,b.requestCount)
         } }
     }
     @Test fun disabledCapabilitiesPreventAuthenticatedUpload() = runBlocking {
-        MockWebServer().use { server ->
+        loopbackServer().use { server ->
             server.enqueue(ok("""{"protocol_version":2,"upload_auth_required":true,"upload_enabled":false}"""))
             assertEquals(503,assertFailsWith<ModSyncException> { client(server).register(RoomRegisterRequest("room","s","1.15",mods=emptyList())) }.statusCode)
             assertEquals(1,server.requestCount)
@@ -245,7 +253,7 @@ class ModSyncAuthenticationTest {
     }
 
     @Test fun cancellingHostRequestClosesCallWithoutTryingAnotherMirror() = runBlocking {
-        MockWebServer().use { server -> MockWebServer().use { other ->
+        loopbackServer().use { server -> loopbackServer().use { other ->
             server.enqueue(ok(caps)); server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
             val c = client(server,other)
             val task = launch(Dispatchers.IO) { c.register(RoomRegisterRequest("room","s","1.15",mods=emptyList())) }
@@ -258,8 +266,8 @@ class ModSyncAuthenticationTest {
     }
 
     @Test fun guestDiscoversTheHostsMirrorAndKeepsAllRoomTrafficThere() = runBlocking {
-        MockWebServer().use { old ->
-            MockWebServer().use { selected ->
+        loopbackServer().use { old ->
+            loopbackServer().use { selected ->
                 val manifest = """{"status":"ready","mods":[]}"""
                 old.enqueue(MockResponse().setResponseCode(404))
                 selected.enqueue(ok(manifest))
@@ -308,8 +316,8 @@ class ModSyncAuthenticationTest {
     }
 
     @Test fun guestDiscoveryPreservesAnUnavailableMirrorError() = runBlocking {
-        MockWebServer().use { old ->
-            MockWebServer().use { unavailable ->
+        loopbackServer().use { old ->
+            loopbackServer().use { unavailable ->
                 old.enqueue(MockResponse().setResponseCode(404))
                 unavailable.enqueue(MockResponse().setResponseCode(503))
                 val error = assertFailsWith<ModSyncException> { client(old, unavailable).locateManifest("room") }

@@ -16,7 +16,7 @@
 
 打包在 IO 线程流式完成：短暂锁定日志输出捕获文件长度，压缩阶段释放锁，只读取捕获时已有的内容，不阻塞游戏线程。压缩包上传后或失败时删除，进程被强杀后遗留的包会在后续启动清理。原始日志最多 128 MiB、压缩包最多 64 MiB；超限明确提示，不静默丢弃历史内容。
 
-默认服务地址为 `https://fk.xn--rhqr8xvr4ahqsgka.com`（标准443端口），部署方须配置域名证书和反向代理。覆盖优先级：系统属性 `rwjs.feedback.apiUrl` → 环境变量 `RWJS_FEEDBACK_API_URL` → `FeedbackPreferences.apiUrl` → 构建参数 `-PfeedbackApiUrl=...`。旧 HTTP 覆盖地址仍可匿名提交，发送账号凭据必须为 HTTPS；本机回环 HTTP 仅用于直接联调，并且绕过外部代理。所有反馈请求不跟随 HTTP 重定向。Android 本地联调可用 `adb reverse tcp:11556 tcp:11556`，通过配置文件把 `apiUrl` 设为 `http://127.0.0.1:11556`。
+正式版默认使用 `https://ffeedback.铁壳锈世纪.com`，测试版默认使用 `https://fk.铁壳锈世纪.com`。部署方须配置 HTTPS 证书和反向代理。客户端依次使用系统属性 `rwjs.feedback.apiUrl`、环境变量 `RWJS_FEEDBACK_API_URL`、`FeedbackPreferences.apiUrl` 和构建时默认值。构建时可用 `-PfeedbackApiUrl=...` 覆盖 API 配置。旧 HTTP 覆盖地址仍可匿名提交，发送账号凭据必须为 HTTPS；本机回环 HTTP 仅用于直接联调，并且绕过外部代理。所有反馈请求不跟随 HTTP 重定向。Android 本地联调可用 `adb reverse tcp:11556 tcp:11556`，通过配置文件把 `apiUrl` 设为 `http://127.0.0.1:11556`。
 
 配套服务端为 `D:\workspace\RW\RWJS-all` 中的 `modules/fakuiserver`。玩家客户端不使用管理员密钥；管理人员通过平台 UAS 后台维护状态、内部备注和公开回复。原独立项目保留，账号历史等新增接口需要部署升级后的服务端。
 

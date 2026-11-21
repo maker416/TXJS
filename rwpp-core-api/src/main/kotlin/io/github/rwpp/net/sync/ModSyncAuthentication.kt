@@ -20,4 +20,16 @@ internal data class ModSyncCapabilities(
     @SerialName("protocol_version") val protocolVersion: Int = 0,
     @SerialName("upload_auth_required") val uploadAuthRequired: Boolean = false,
     @SerialName("upload_enabled") val uploadEnabled: Boolean = false,
+    @SerialName("r2_direct_upload") val r2DirectUpload: Boolean = false,
 )
+
+@Serializable
+internal class ModUploadTicket(
+    @SerialName("already_present") val alreadyPresent: Boolean = false,
+    @SerialName("upload_id") val uploadId: String = "",
+    val url: String = "",
+    val headers: Map<String, String> = emptyMap(),
+)
+
+@Serializable
+internal data class ModUploadCompletion(@SerialName("upload_id") val uploadId: String)

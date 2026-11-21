@@ -14,6 +14,12 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import okhttp3.Authenticator
+import okhttp3.CookieJar
+import okhttp3.EventListener
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -47,13 +53,14 @@ private val OCTET_STREAM_MEDIA_TYPE = "application/octet-stream".toMediaType()
 class ModSyncException(message: String, val statusCode: Int?, val retryAfterSeconds: Long? = null) : IOException(message)
 
 private class InvalidBlob(message: String) : IOException(message)
+private class R2UploadHttpFailure(val statusCode: Int) : IOException("R2 upload HTTP $statusCode")
 
 /**
  * 模组同步服务器（Go 端 relaymod）的 HTTP 客户端。
  *
  * - 全部方法为 suspend，并在 [Dispatchers.IO] 上执行，支持协程取消（取消即中断底层 OkHttp 调用）；
  * - 加入者多 [baseUrls] failover：网络错误与 5xx 换地址，4xx 立即失败；
- * - 房主携带登录凭据，支持声明强制认证并开放上传的 HTTP/HTTPS 节点；一次会话固定节点，写入失败不换镜像；
+ * - 房主固定使用声明支持账号认证和 R2 直传的 HTTPS 节点（本机联调允许回环 HTTP）；
  * - 服务端错误体会按 [ErrorResponse] 解析，提取其中的 `error` 作为异常信息。
  */
 class ModSyncClient(
@@ -83,6 +90,8 @@ class ModSyncClient(
      */
     private val blobClient: OkHttpClient by lazy {
         client.newBuilder()
+            .followRedirects(false)
+            .followSslRedirects(false)
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)
@@ -90,18 +99,37 @@ class ModSyncClient(
             .build()
     }
 
+    // Signed URLs are bearer credentials. Keep account cookies, authenticators and logging interceptors
+    // out of cross-origin requests, including HTTP challenges and redirects.
+    private val storageHttp by lazy {
+        blobClient.newBuilder().apply {
+            interceptors().clear()
+            networkInterceptors().clear()
+        }.eventListener(EventListener.NONE)
+            .cache(null)
+            .cookieJar(CookieJar.NO_COOKIES)
+            .authenticator(Authenticator.NONE)
+            .proxyAuthenticator(Authenticator.NONE)
+            .build()
+    }
+
     // 房主固定在验证过能力的节点；不把凭据发往旧节点，也不把状态散落到多个镜像。
     private val hostHttp by lazy { client.newBuilder().followRedirects(false).followSslRedirects(false).build() }
+    private val verificationHttp by lazy {
+        hostHttp.newBuilder().readTimeout(3, TimeUnit.MINUTES).callTimeout(4, TimeUnit.MINUTES).build()
+    }
     private val hostMutex = kotlinx.coroutines.sync.Mutex()
     private var hostBaseUrl: String? = null
+
+    private suspend fun selectedHost() = hostMutex.withLock {
+        hostBaseUrl ?: selectHostServer().also { hostBaseUrl = it }
+    }
 
     /** 开房前只探测公开能力，不发送账号凭据；成功后本次分享固定使用该节点。 */
     suspend fun prepareHostUpload() = withContext(Dispatchers.IO) {
         if (hostCredentials == null) throw ModSyncException("account_login_required", 401)
         if (!isHostSessionCurrent()) throw ModSyncException("account_session_changed", 401)
-        hostMutex.withLock {
-            if (hostBaseUrl == null) hostBaseUrl = selectHostServer()
-        }
+        selectedHost()
         if (!isHostSessionCurrent()) throw ModSyncException("account_session_changed", 401)
     }
 
@@ -109,19 +137,18 @@ class ModSyncClient(
         path: String,
         customize: Request.Builder.() -> Unit,
         checkSession: Boolean = true,
+        transport: OkHttpClient = hostHttp,
         onSuccess: (Response) -> T,
     ): T = withContext(Dispatchers.IO) {
         val credentials = hostCredentials ?: throw ModSyncException("account_login_required", 401)
         if (checkSession && !isHostSessionCurrent()) throw ModSyncException("account_session_changed", 401)
-        val base = hostMutex.withLock {
-            hostBaseUrl ?: selectHostServer().also { hostBaseUrl = it }
-        }
+        val base = selectedHost()
         if (checkSession && !isHostSessionCurrent()) throw ModSyncException("account_session_changed", 401)
         val request = Request.Builder().url(base + path)
             .header("X-App-Key", credentials.appKey)
             .header("Authorization", "Bearer ${credentials.token}")
             .apply(customize).build()
-        hostHttp.useCancellable(request) { response ->
+        transport.useCancellable(request) { response ->
             if (!response.isSuccessful) throw response.toModSyncException()
             onSuccess(response)
         }
@@ -129,21 +156,25 @@ class ModSyncClient(
 
     private suspend fun selectHostServer(): String {
         var lastNetworkFailure: IOException? = null
+        var needsHttps = false
         for (base in baseUrls) {
             currentCoroutineContext().ensureActive()
+            val origin = base.toHttpUrlOrNull() ?: continue
             try {
-                val available = hostHttp.useCancellable(Request.Builder().url("$base$API_PREFIX/capabilities").build()) { response ->
-                    if (!response.isSuccessful) false else {
-                        val caps = json.decodeFromString<ModSyncCapabilities>(response.body?.string().orEmpty())
-                        caps.protocolVersion >= 2 && caps.uploadAuthRequired && caps.uploadEnabled
-                    }
+                val caps = hostHttp.useCancellable(Request.Builder().url("$base$API_PREFIX/capabilities").build()) { response ->
+                    if (!response.isSuccessful) null
+                    else json.decodeFromString<ModSyncCapabilities>(response.body?.string().orEmpty())
                 }
-                if (available) return base
+                if (caps == null || caps.protocolVersion < 2 || !caps.uploadAuthRequired ||
+                    !caps.uploadEnabled || !caps.r2DirectUpload) continue
+                if (origin.isHttps || origin.isLoopback()) return base
+                needsHttps = true
             } catch (e: CancellationException) { throw e }
               catch (e: IOException) { currentCoroutineContext().ensureActive(); lastNetworkFailure = e }
               catch (e: kotlinx.serialization.SerializationException) { /* 旧节点不接收凭据。 */ }
         }
         lastNetworkFailure?.let { throw it }
+        if (needsHttps) throw ModSyncException("authenticated_upload_requires_https", 503)
         throw ModSyncException("authenticated_upload_unavailable", 503)
     }
 
@@ -205,8 +236,7 @@ class ModSyncClient(
     }
 
     /**
-     * 上传模组 blob（PUT 原始字节，`Content-Type: application/octet-stream`）。
-     * 对应 `PUT /files/{sha256}`；服务端复算 sha256 与路径一致才接受。
+     * 领取 R2 上传票据，直传模组 blob，再向同步节点确认供服务端校验 SHA-256。
      *
      * @param onProgress 按缓冲区回调上传进度（0..1）。
      */
@@ -217,10 +247,7 @@ class ModSyncClient(
         bytes: ByteArray,
         onProgress: (Float) -> Unit = {},
     ) {
-        hostRequest("$API_PREFIX/files/$sha256?key=${enc(key)}", {
-            header(SECRET_HEADER, secret)
-            put(progressRequestBody(bytes, onProgress))
-        }) { }
+        uploadBody(key, sha256, secret, progressRequestBody(bytes, onProgress))
     }
 
     /** Upload an immutable snapshot; retries reopen the file instead of retaining it in memory. */
@@ -248,10 +275,90 @@ class ModSyncClient(
                 onProgress(1f)
             }
         }
-        hostRequest("$API_PREFIX/files/$sha256?key=${enc(key)}", {
-            header(SECRET_HEADER, secret)
-            put(body)
-        }) { }
+        uploadBody(key, sha256, secret, body)
+    }
+
+    private suspend fun uploadBody(key: String, sha256: String, secret: String, body: RequestBody) = withContext(Dispatchers.IO) {
+        require(sha256.matches(Regex("[0-9a-fA-F]{64}"))) { "Invalid mod SHA-256" }
+        prepareHostUpload()
+        val origin = selectedHost().toHttpUrl()
+        val path = "$API_PREFIX/files/$sha256"
+        val query = "?key=${enc(key)}"
+
+        for (ticketAttempt in 0..1) {
+            val ticket = retryTransfer {
+                hostRequest("$path/upload-ticket$query", {
+                    header(SECRET_HEADER, secret)
+                    post(EMPTY_BODY)
+                }) { json.decodeFromString<ModUploadTicket>(it.body?.string().orEmpty()) }
+            }
+            if (ticket.alreadyPresent) return@withContext
+            if (ticket.uploadId.isBlank()) throw ModSyncException("Invalid R2 upload ticket", null)
+            val uploadUrl = storageUrl(origin, ticket.url, upload = true)
+            val request = Request.Builder().url(uploadUrl).put(body)
+            val headers = ticket.headers.entries.associate { it.key.lowercase() to it.value }
+            if (headers.size != ticket.headers.size ||
+                headers.keys.any { it !in setOf("if-none-match", "content-length") } ||
+                headers["if-none-match"] != "*" || headers["content-length"] != body.contentLength().toString()) {
+                throw ModSyncException("Invalid R2 upload headers", null)
+            }
+            // OkHttp writes the exact Content-Length supplied by the immutable RequestBody.
+            val put = request.header("If-None-Match", "*").build()
+            try {
+                retryTransfer {
+                    if (!isHostSessionCurrent()) throw ModSyncException("account_session_changed", 401)
+                    storageHttp.useCancellable(put) { response ->
+                        if (!response.isSuccessful && response.code != 412)
+                            throw R2UploadHttpFailure(response.code)
+                    }
+                }
+            } catch (expired: R2UploadHttpFailure) {
+                if (expired.statusCode == 403 && ticketAttempt == 0) continue
+                // R2 access errors are separate from relay account authentication.
+                throw ModSyncException(expired.message.orEmpty(), null)
+            }
+            // Keep retrying the receipt for the same uploaded object if the Worker or relay disconnects.
+            retryTransfer {
+                hostRequest("$path/complete$query", {
+                    header(SECRET_HEADER, secret)
+                    post(json.encodeToString(ModUploadCompletion(ticket.uploadId)).toRequestBody(JSON_MEDIA_TYPE))
+                }, transport = verificationHttp) { }
+            }
+            return@withContext
+        }
+    }
+
+    private suspend fun <T> retryTransfer(operation: suspend () -> T): T {
+        var attempt = 0
+        while (true) {
+            try {
+                return operation()
+            } catch (error: IOException) {
+                currentCoroutineContext().ensureActive()
+                if (attempt == 2) throw error
+                val response = error as? ModSyncException
+                val statusCode = response?.statusCode ?: (error as? R2UploadHttpFailure)?.statusCode
+                if (statusCode != null && statusCode !in setOf(408, 429, 500, 502, 503, 504)) throw error
+                val retryAfter = response?.retryAfterSeconds
+                if (retryAfter != null && retryAfter > 20) throw error
+                delay(retryAfter?.times(1_000) ?: (400L shl attempt))
+                attempt++
+            }
+        }
+    }
+
+    private fun HttpUrl.isLoopback() = host in setOf("127.0.0.1", "::1", "localhost")
+
+    private fun storageUrl(origin: HttpUrl, raw: String, upload: Boolean): HttpUrl {
+        val url = if (upload) raw.toHttpUrlOrNull() else origin.resolve(raw)
+        val localTest = origin.isLoopback() && url?.isLoopback() == true
+        val sameOriginRead = !upload && url?.scheme == origin.scheme && url.host == origin.host && url.port == origin.port
+        if (url == null || url.username.isNotEmpty() || url.password.isNotEmpty() || url.fragment != null ||
+            !url.isHttps && !localTest && !sameOriginRead ||
+            upload && !localTest && (url.port != 443 || !url.host.endsWith(".r2.cloudflarestorage.com"))) {
+            throw ModSyncException("Invalid mod storage URL", null)
+        }
+        return url
     }
 
     /**
@@ -539,6 +646,11 @@ class ModSyncClient(
                                 onResponse(response)
                                 return@withContext
                             }
+                            response.isRedirect -> {
+                                startedBody = true
+                                downloadRedirect(response, customize, onResponse)
+                                return@withContext
+                            }
                             response.code in 500..599 -> {
                                 logger.warn("同步服务器 $base 返回 HTTP ${response.code}，尝试下一个地址")
                                 lastError = response.toModSyncException()
@@ -560,6 +672,34 @@ class ModSyncClient(
             }
             throw lastError ?: ModSyncException("没有可用的同步服务器地址", null)
         }
+    }
+
+    private suspend fun downloadRedirect(
+        redirect: Response,
+        customize: Request.Builder.() -> Unit,
+        onResponse: (Response) -> Unit,
+    ) {
+        val origin = redirect.request.url
+        var location = redirect.header("Location") ?: throw InvalidBlob("Missing download URL")
+        redirect.close()
+        var previous = origin
+        repeat(5) {
+            val url = storageUrl(previous, location, upload = false)
+            val request = Request.Builder().url(url).apply(customize).build()
+            storageHttp.useCancellable(request) { response ->
+                when {
+                    response.isSuccessful -> { onResponse(response); return }
+                    response.isRedirect -> {
+                        location = response.header("Location") ?: throw InvalidBlob("Missing download URL")
+                        previous = url
+                    }
+                    // Return to the room's relay for a fresh ticket with the same Range offset.
+                    response.code == 403 -> throw IOException("Mod download ticket expired or refused")
+                    else -> throw ModSyncException("Mod storage HTTP ${response.code}", response.code)
+                }
+            }
+        }
+        throw InvalidBlob("Too many mod download redirects")
     }
 
     /**

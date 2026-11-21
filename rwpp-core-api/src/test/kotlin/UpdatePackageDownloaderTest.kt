@@ -88,6 +88,21 @@ class UpdatePackageDownloaderTest {
         }
     }
 
+    @Test fun `raw R2 installer is checked against its sha file`() = exercise { server, dir, downloader ->
+        val payload = "signed installer".toByteArray()
+        val plan = UpdateDownloadPlan(listOf(server.url("/setup.exe").toString()),
+            server.url("/setup.exe.sha256").toString(), partSizes = listOf(payload.size.toLong()))
+        for (checksum in listOf(hash(payload), "0".repeat(64))) {
+            server.enqueue(MockResponse().setBody(Buffer().write(payload)))
+            server.enqueue(MockResponse().setBody("$checksum  setup.exe"))
+        }
+        val output = File(dir, "out.exe")
+        assertContentEquals(payload, downloader.download(plan, UpdateDownloadSession(), dir, output, ".exe") {}.readBytes())
+        assertFailsWith<java.io.IOException> {
+            downloader.download(plan, UpdateDownloadSession(), dir, output, ".exe") {}
+        }
+    }
+
     @Test fun `cancel during progress stops before verification and installation`() = exercise { server, dir, downloader ->
         server.enqueue(MockResponse().setBody(Buffer().write(ByteArray(100000))))
         val session = UpdateDownloadSession()

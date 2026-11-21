@@ -104,6 +104,25 @@ try {
     Assert-True (Test-Path -LiteralPath (Join-Path $ArtifactsDir 'installer-test_cn/RWJS-Setup-1.20.63.exe')) 'PC installer missing'
     Assert-True (Test-Path -LiteralPath (Join-Path $ArtifactsDir 'android-release-test_cn/rwpp-android-release-1.20.63.apk')) 'Release APK missing'
 
+    Write-Fixture 'build/client-api-official.json' '{"updateApiUrl":"https://r2.example.com/client-update/"}'
+    $Script:Channel = 'official'
+    Invoke-CollectArtifacts 'release-all'
+    foreach ($item in @(
+        @{ Target = 'installer'; Platform = 'windows'; File = 'RWJS-Setup-1.20.63.exe' },
+        @{ Target = 'android-release'; Platform = 'android'; File = 'RWJS-Android-1.20.63.apk' }
+    )) {
+        $uploadDir = Join-Path $ArtifactsDir "$($item.Target)-official/upneed/client-update/$($item.Platform)"
+        $index = Get-Content -LiteralPath (Join-Path $uploadDir 'latest.json') -Raw | ConvertFrom-Json
+        $installer = Get-Item -LiteralPath (Join-Path $uploadDir "1.20.63/$($item.File)")
+        $hash = (Get-FileHash -LiteralPath $installer.FullName).Hash.ToLowerInvariant()
+        $checksum = Get-Content -LiteralPath "$($installer.FullName).sha256" -Raw
+        $expectedUrl = "https://r2.example.com/client-update/$($item.Platform)/1.20.63/$($item.File)"
+        Assert-True ($index.tag_name -eq 'v1.20.63' -and $index.assets.Count -eq 2) 'Incorrect R2 release metadata'
+        Assert-True ($index.assets[0].browser_download_url -eq $expectedUrl -and $index.assets[0].size -eq $installer.Length) 'Incorrect R2 installer URL or length'
+        Assert-True ($index.assets[1].browser_download_url -eq "$expectedUrl.sha256" -and $checksum.Split(' ')[0] -eq $hash) 'Incorrect R2 checksum'
+    }
+    $Script:Channel = 'test_cn'
+
     $Check = $true
     $Script:EnvironmentChecks.Clear()
     Assert-True ((Invoke-Main) -eq 0) 'Combined check failed'

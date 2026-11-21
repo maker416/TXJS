@@ -643,12 +643,23 @@ function Copy-InstallerFiles ([string]$Key) {
     $destSetupExe = Join-Path $dest 'RWJS-Setup.exe'
     Copy-Item -LiteralPath $setupExe -Destination $destSetupExe -Force
     Split-SetupPackage $destSetupExe $dest
+    Collect-ClientUpdateFiles $Key 'windows' $destSetupExe $dest
     Write-BuildInfo $dest $Key
     Write-Step "Inno Setup 安装包已复制到: $dest"
     Get-ChildItem -LiteralPath $dest -Filter 'RWJS*' | ForEach-Object { Write-Host "  $($_.Name)" }
 }
 function Split-SetupPackage ([string]$SourceExe, [string]$Dest) {
     Split-UpdatePackage -Source $SourceExe -Dest $Dest -BaseName 'RWJS-Setup'
+}
+
+function Collect-ClientUpdateFiles ([string]$Key, [string]$Platform, [string]$Source, [string]$Dest) {
+    if ($Script:Channel -ne 'official' -or (Get-ApiProfile $Key) -ne 'official') { return }
+    $profile = Get-Content -LiteralPath (Join-Path $BuildDir 'client-api-official.json') -Encoding UTF8 -Raw | ConvertFrom-Json
+    $indexRoot = ([string]$profile.updateApiUrl).Trim()
+    if ($indexRoot.EndsWith('/')) {
+        $uploadDir = Write-RwClientUpdateFiles -Source $Source -Dest $Dest -IndexRoot $indexRoot -Platform $Platform -Version $Version
+        Write-Step "R2 待上传文件: $uploadDir"
+    }
 }
 
 function Copy-TestReports ([string]$Key) {
@@ -695,6 +706,9 @@ function Copy-Apk ([string]$Key, [string]$RelDir, [string]$BaseName) {
     }
     Write-BuildInfo $dest $Key
     Split-UpdatePackage -Source $apks[0].FullName -Dest $dest -BaseName 'RWJS-Android'
+    if ($Key -eq 'android-release') {
+        Collect-ClientUpdateFiles $Key 'android' $apks[0].FullName $dest
+    }
     Set-Content -LiteralPath (Join-Path $dest '发布说明.txt') -Encoding UTF8 -Value 'Gitee Release 上传全部 RWJS-Android.zip.001/.002/... 和 RWJS-Android.zip.sha256。完整 APK 供本地安装，不需要上传。分卷不是 Android split APK，客户端合并解出完整签名 APK。Debug 包只供测试；正式更新必须使用 android-release 并保持同一签名和渠道。'
     Write-Step "APK 及发布分卷已复制到: $dest"
     Get-ChildItem -LiteralPath $dest -Filter '*.apk' | ForEach-Object { Write-Host "  $($_.Name)" }
