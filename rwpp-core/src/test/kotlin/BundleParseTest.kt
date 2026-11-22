@@ -158,8 +158,16 @@ class BundleParseTest {
         bundleNames.forEach { name ->
             val root = Toml.parseToTomlTable(File(bundleDir, name).readText())
             val roomList = (root["multiplayer"] as TomlTable)["roomList"] as TomlTable
-            listOf("unnamedRoom", "mapNotProvided", "modCount", "currentPlayers", "statusUnknown").forEach { key ->
-                assertTrue(roomList.containsKey(key), "multiplayer.roomList.$key missing in $name")
+            listOf(
+                "unnamedRoom", "mapNotProvided", "modCount", "currentPlayers", "statusUnknown",
+                "loadingBadge", "loadingTitle", "loadingHintConnect", "loadingHintPreview",
+                "loadingHintModSync", "loadingHintFilter", "loadingHintShortcut", "loadingHintHost",
+                "retry",
+            ).forEach { key ->
+                assertTrue(
+                    (roomList[key] as? TomlLiteral)?.content?.isNotBlank() == true,
+                    "multiplayer.roomList.$key missing in $name",
+                )
             }
         }
     }

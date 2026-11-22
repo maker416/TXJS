@@ -97,22 +97,28 @@ internal fun MultiplayerTopBar(
         shadowElevation = 4.dp,
         modifier = modifier.fillMaxWidth(),
     ) {
-        MultiplayerTopBarRow(
-            userName = userName,
-            accountNameLocked = accountNameLocked,
-            onUserNameChange = onUserNameChange,
-            accountAvatar = accountAvatar,
-            joinServerAddress = joinServerAddress,
-            onJoinServerAddressChange = onJoinServerAddressChange,
-            onJoinServer = onJoinServer,
-            onFilter = onFilter,
-            onRefresh = onRefresh,
-            isRefreshing = isRefreshing,
-            joinFieldWidth = joinFieldWidth,
-            joinHistory = joinHistory,
-            onSelectJoinHistory = onSelectJoinHistory,
-            onClose = onClose,
-        )
+        Box(modifier = Modifier.fillMaxWidth()) {
+            MultiplayerTopBarRow(
+                userName = userName,
+                accountNameLocked = accountNameLocked,
+                onUserNameChange = onUserNameChange,
+                accountAvatar = accountAvatar,
+                joinServerAddress = joinServerAddress,
+                onJoinServerAddressChange = onJoinServerAddressChange,
+                onJoinServer = onJoinServer,
+                onFilter = onFilter,
+                onRefresh = onRefresh,
+                isRefreshing = isRefreshing,
+                joinFieldWidth = joinFieldWidth,
+                joinHistory = joinHistory,
+                onSelectJoinHistory = onSelectJoinHistory,
+                onClose = onClose,
+            )
+            MultiplayerTopBarRefreshLine(
+                isRefreshing = isRefreshing,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
     }
 }
 

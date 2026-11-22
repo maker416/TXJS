@@ -322,6 +322,8 @@ internal fun prewarmLauncherUiClassesAndCaches() {
         "io.github.rwpp.ui.ComposableSingletons\$MultiplayerKt",
         "io.github.rwpp.ui.MultiplayerTopBarKt",
         "io.github.rwpp.ui.ComposableSingletons\$MultiplayerTopBarKt",
+        "io.github.rwpp.ui.RoomListLoadingKt",
+        "io.github.rwpp.ui.ComposableSingletons\$RoomListLoadingKt",
         "io.github.rwpp.ui.ModsKt",
         "io.github.rwpp.ui.ModsAndMapsViewKt",
         "io.github.rwpp.ui.AccountKt",

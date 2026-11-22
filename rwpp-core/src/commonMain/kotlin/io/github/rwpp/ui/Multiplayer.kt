@@ -192,6 +192,7 @@ fun MultiplayerView(
         }
     }
 
+    val appContext = koinInject<AppContext>()
     val instance = koinInject<MultiplayerPreferences>()
     val settings = koinInject<Settings>()
     val configIO = koinInject<ConfigIO>()
@@ -199,8 +200,11 @@ fun MultiplayerView(
     val net = koinInject<Net>()
     val blacklistsInstance = koinInject<Blacklists>()
 
-    val refresh = remember { Channel<Unit>(1) }
+    val refresh = remember { Channel<Boolean>(Channel.CONFLATED) }
     var isRefreshing by remember { mutableStateOf(false) }
+    var hasCompletedInitialLoad by remember { mutableStateOf(false) }
+    var manualRefreshInProgress by remember { mutableStateOf(false) }
+    val roomArrivalState = remember { RoomListArrivalState() }
 
 
     var updateServerConfig by remember { mutableStateOf(false) }
@@ -282,7 +286,6 @@ fun MultiplayerView(
 
     val roomJoinContext = remember { MultiplayerRoomJoinContext() }
     var showJoinRequestDialog by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
 
     remember(blacklists.size) {
         blacklistsInstance.blacklists = blacklists.toMutableList()
@@ -1460,14 +1463,20 @@ fun MultiplayerView(
 
     with(net) {
         LaunchedEffect(Unit) {
-            refresh.send(Unit)
-            for (u in refresh) {
+            refresh.send(true)
+            for (isExplicit in refresh) {
                 if (isRefreshing) continue
+                val wasEmptyBeforeRefresh = currentViewList.isEmpty()
                 throwable = null
+                manualRefreshInProgress = isExplicit || !hasCompletedInitialLoad
                 isRefreshing = true
                 try {
                     val effectiveUrls = roomListApiBasesWithDefaultFallback(instance.roomListApiUrls)
-                    currentViewList = getRoomListFromSourceUrl(effectiveUrls)
+                    val fetched = getRoomListFromSourceUrl(effectiveUrls)
+                    if (wasEmptyBeforeRefresh && fetched.isNotEmpty() && manualRefreshInProgress) {
+                        roomArrivalState.markArrival()
+                    }
+                    currentViewList = fetched
                     for (s in allServerData) {
                         launch(Dispatchers.IO) {
                             withContext(Dispatchers.Main.immediate) { s.isLoading = true }
@@ -1481,9 +1490,11 @@ fun MultiplayerView(
                     }
                 } catch (e: Throwable) {
                     throwable = e
+                } finally {
+                    hasCompletedInitialLoad = true
+                    isRefreshing = false
+                    manualRefreshInProgress = false
                 }
-
-                isRefreshing = false
             }
         }
 
@@ -1491,7 +1502,7 @@ fun MultiplayerView(
         LaunchedEffect(Unit) {
             while (true) {
                 delay(5000)
-                refresh.trySend(Unit)
+                refresh.trySend(false)
             }
         }
     }
@@ -1614,6 +1625,10 @@ fun MultiplayerView(
                         ) {
                             BoxWithConstraints(Modifier.weight(1f).fillMaxHeight()) {
                                 val roomColumns = roomCardColumnCount(maxWidth, LocalDensity.current.fontScale)
+                                val showRoomListLoading =
+                                    (!hasCompletedInitialLoad || (isRefreshing && manualRefreshInProgress)) &&
+                                        currentViewList.isEmpty() && throwable == null
+                                val loadingPhase = rememberRoomListLoadingPhase(active = showRoomListLoading)
                                 LazyColumn(
                                     modifier = Modifier
                                         .fillMaxSize()
@@ -1627,7 +1642,7 @@ fun MultiplayerView(
                                     ),
                                 ) {
                                 if (throwable != null) {
-                                    item {
+                                    item(key = "room-list-error") {
                                         var showErrorDetails by remember { mutableStateOf(false) }
                                         Column(modifier = Modifier.padding(16.dp)) {
                                             Text(
@@ -1636,8 +1651,16 @@ fun MultiplayerView(
                                                 style = MaterialTheme.typography.bodyMedium,
                                             )
                                             Spacer(Modifier.height(8.dp))
-                                            TextButton(onClick = { showErrorDetails = !showErrorDetails }) {
-                                                Text(readI18n("multiplayer.viewDetails"))
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                            ) {
+                                                TextButton(onClick = { if (!isRefreshing) refresh.trySend(true) }) {
+                                                    Text(readI18n("multiplayer.roomList.retry"))
+                                                }
+                                                TextButton(onClick = { showErrorDetails = !showErrorDetails }) {
+                                                    Text(readI18n("multiplayer.viewDetails"))
+                                                }
                                             }
                                             AnimatedVisibility(showErrorDetails,
                                                 enter = if (enableAnimations) fadeIn() + expandVertically() else EnterTransition.None,
@@ -1655,8 +1678,16 @@ fun MultiplayerView(
                                         }
                                     }
                                 }
-                                if (realList.isEmpty() && allServerData.isEmpty() && throwable == null && !isRefreshing) {
-                                    item {
+                                if (showRoomListLoading) {
+                                    roomListLoadingStage(
+                                        columns = roomColumns,
+                                        phase = loadingPhase,
+                                        compactSkeletonRows = allServerData.isNotEmpty(),
+                                        isDesktop = appContext.isDesktop(),
+                                        animate = enableAnimations,
+                                    )
+                                } else if (realList.isEmpty() && allServerData.isEmpty() && throwable == null) {
+                                    item(key = "room-list-empty") {
                                         Box(
                                             modifier = Modifier.fillMaxWidth().padding(32.dp),
                                             contentAlignment = Alignment.Center,
@@ -1669,7 +1700,7 @@ fun MultiplayerView(
                                         }
                                     }
                                 }
-                                roomCardRows(realList, roomColumns, enableAnimations) { room ->
+                                roomCardRows(realList, roomColumns, enableAnimations, roomArrivalState) { room ->
                                     roomJoinContext.selectedRoom = room
                                     showJoinRequestDialog = true
                                 }
@@ -1714,7 +1745,7 @@ fun MultiplayerView(
                         }
                     },
                     onFilter = { filterSurfaceDialogVisible = true },
-                    onRefresh = { if (!isRefreshing) scope.launch { refresh.trySend(Unit) } },
+                    onRefresh = { if (!isRefreshing) refresh.trySend(true) },
                     isRefreshing = isRefreshing,
                     joinHistory = joinHistory,
                     onSelectJoinHistory = { entry ->
@@ -2230,7 +2261,7 @@ internal fun JoinServerRequestDialog(
 
 /**
  * 顶部工具栏的刷新按钮，保持与 RWIconButton 一致的边框/背景风格，
- * 并在刷新时显示 CircularProgressIndicator。桌面端按下 Space 键刷新房间列表，
+ * 并在刷新时以柔滑旋转图标与轨道流光弧提示同步状态。桌面端按下 Space 键刷新房间列表，
  * 与点击按钮等效（提示卡片中的 "space" 即此快捷键）。
  */
 @Composable
@@ -2274,25 +2305,10 @@ internal fun RefreshButtonWithHint(
                 }
                 .bounceClick(onClick = onRefresh),
         ) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (isRefreshing) {
-                    UiCircularProgressIndicator(
-                        color = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.size(30.dp),
-                        strokeWidth = 3.dp,
-                    )
-                } else {
-                    Icon(
-                        Icons.Default.Refresh,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.surfaceTint,
-                        modifier = Modifier.size(30.dp),
-                    )
-                }
-            }
+            RefreshActionIndicator(
+                isRefreshing = isRefreshing,
+                iconSize = (buttonSize * 0.56f).coerceIn(20.dp, 28.dp),
+            )
         }
 
         if (appContext.isDesktop()) {
