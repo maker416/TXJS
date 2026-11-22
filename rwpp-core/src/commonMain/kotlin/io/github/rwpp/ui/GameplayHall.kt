@@ -28,7 +28,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -78,7 +78,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
@@ -100,9 +99,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -125,14 +121,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.isAltPressed
-import androidx.compose.ui.input.key.isCtrlPressed
-import androidx.compose.ui.input.key.isMetaPressed
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -152,8 +141,6 @@ import io.github.rwpp.account.AccountSession
 import io.github.rwpp.app.LauncherVisibility
 import io.github.rwpp.app.pollWhileVisible
 import io.github.rwpp.config.resolveOpenPlatformUrl
-import io.github.rwpp.event.GlobalEventChannel
-import io.github.rwpp.event.events.KeyboardEvent
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.net.games.OnlineGame
 import io.github.rwpp.net.games.OnlineGameClient
@@ -481,71 +468,40 @@ private fun adaptiveHallColumns(itemCount: Int, availableWidth: Dp, narrow: Bool
     }
 }
 
-internal const val HALL_DEV_UNLOCK_KEY_COUNT = 5
+internal const val HALL_DEV_UNLOCK_TAP_COUNT = 5
 internal const val HALL_DEV_UNLOCK_WINDOW_MS = 4_000L
 
 /**
  * 开发者测试解锁状态机：第二主界面默认由全屏毛玻璃遮罩覆盖，
- * 连续按下 5 次 Q 键后放行，供开发与测试验证实际大厅内容。
+ * 连续点击 5 下「开发中」徽章后放行，供开发与测试验证实际大厅内容（PC 与移动端通用）。
  */
 internal class HallDevUnlockTracker(
-    private val requiredCount: Int = HALL_DEV_UNLOCK_KEY_COUNT,
+    private val requiredCount: Int = HALL_DEV_UNLOCK_TAP_COUNT,
     private val timeoutMillis: Long = HALL_DEV_UNLOCK_WINDOW_MS,
     private val nowMillis: () -> Long = { System.currentTimeMillis() },
 ) {
     private var count = 0
-    private var lastPressMs = Long.MIN_VALUE
-    private var keyHeld = false
+    private var lastTapMs = Long.MIN_VALUE
 
-    fun onQKeyDown(): Boolean {
-        if (keyHeld) return false
-        keyHeld = true
-        return recordQPress()
-    }
-
-    fun onQKeyUp() {
-        keyHeld = false
-    }
-
-    fun onFallbackQPress(): Boolean = recordQPress()
-
-    fun onOtherKeyDown() {
-        reset()
-    }
-
-    fun onFocusLost() {
-        keyHeld = false
-    }
-
-    fun reset() {
-        count = 0
-        lastPressMs = Long.MIN_VALUE
-        keyHeld = false
-    }
-
-    private fun recordQPress(): Boolean {
+    fun onBadgeTap(): Boolean {
         val now = nowMillis()
-        count = if (lastPressMs != Long.MIN_VALUE && now - lastPressMs <= timeoutMillis) {
+        count = if (lastTapMs != Long.MIN_VALUE && now - lastTapMs <= timeoutMillis) {
             count + 1
         } else {
             1
         }
-        lastPressMs = now
+        lastTapMs = now
         if (count >= requiredCount) {
             reset()
             return true
         }
         return false
     }
-}
 
-private fun isHallModifierKey(key: Key): Boolean = when (key) {
-    Key.ShiftLeft, Key.ShiftRight,
-    Key.CtrlLeft, Key.CtrlRight,
-    Key.AltLeft, Key.AltRight,
-    Key.MetaLeft, Key.MetaRight,
-    Key.CapsLock, Key.NumLock, Key.ScrollLock -> true
-    else -> false
+    fun reset() {
+        count = 0
+        lastTapMs = Long.MIN_VALUE
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -1226,60 +1182,12 @@ private fun HallUnderDevelopmentOverlay(
     onUnlock: () -> Unit,
     clockMillis: () -> Long,
 ) {
-    val lockFocusRequester = remember { FocusRequester() }
-    val backdropInteraction = remember { MutableInteractionSource() }
+    val badgeInteraction = remember { MutableInteractionSource() }
     val unlockTracker = remember(clockMillis) { HallDevUnlockTracker(nowMillis = clockMillis) }
     val latestOnUnlock by rememberUpdatedState(onUnlock)
-    val latestTracker by rememberUpdatedState(unlockTracker)
 
     LaunchedEffect(active) {
         unlockTracker.reset()
-        if (active) {
-            runCatching { lockFocusRequester.requestFocus() }
-        }
-    }
-
-    val qFallbackKeyCode = remember {
-        val qCode = Key.Q.keyCode.toInt()
-        val aCode = Key.A.keyCode.toInt()
-        if (qCode != 0 && qCode != aCode) qCode else null
-    }
-    val modifierFallbackKeyCodes = remember(qFallbackKeyCode) {
-        if (qFallbackKeyCode == null) {
-            emptySet()
-        } else {
-            setOf(
-                Key.ShiftLeft.keyCode.toInt(),
-                Key.ShiftRight.keyCode.toInt(),
-                Key.CtrlLeft.keyCode.toInt(),
-                Key.CtrlRight.keyCode.toInt(),
-                Key.AltLeft.keyCode.toInt(),
-                Key.AltRight.keyCode.toInt(),
-                Key.MetaLeft.keyCode.toInt(),
-                Key.MetaRight.keyCode.toInt(),
-                Key.CapsLock.keyCode.toInt(),
-                Key.NumLock.keyCode.toInt(),
-                Key.ScrollLock.keyCode.toInt(),
-            )
-        }
-    }
-    DisposableEffect(active, qFallbackKeyCode) {
-        if (!active || qFallbackKeyCode == null) {
-            onDispose { }
-        } else {
-            val channel = GlobalEventChannel.filter(KeyboardEvent::class)
-            val listener = channel.subscribeAlways(Dispatchers.Main.immediate) { event ->
-                if (event.keyCode == qFallbackKeyCode) {
-                    event.intercept()
-                    if (latestTracker.onFallbackQPress()) {
-                        latestOnUnlock()
-                    }
-                } else if (event.keyCode !in modifierFallbackKeyCodes) {
-                    latestTracker.onOtherKeyDown()
-                }
-            }
-            onDispose { channel.unregisterListener(listener) }
-        }
     }
 
     val frostGrainBrush = remember {
@@ -1300,39 +1208,12 @@ private fun HallUnderDevelopmentOverlay(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .focusRequester(lockFocusRequester)
-            .onFocusChanged { state ->
-                if (!state.hasFocus) unlockTracker.onFocusLost()
+            .pointerInput(active, unlockTracker) {
+                if (!active) return@pointerInput
+                // 未被子控件（「开发中」徽章或返回按钮）消费的点击在此拦截，既防止穿透底层又重置连击计数，
+                // 且不触发 clickable 的语义节点合并。
+                detectTapGestures { unlockTracker.reset() }
             }
-            .onPreviewKeyEvent { event ->
-                if (!active) return@onPreviewKeyEvent false
-                val key = event.key
-                if (key == Key.Q) {
-                    if (event.isCtrlPressed || event.isAltPressed || event.isMetaPressed) {
-                        if (event.type == KeyEventType.KeyDown) unlockTracker.onOtherKeyDown()
-                        return@onPreviewKeyEvent false
-                    }
-                    when (event.type) {
-                        KeyEventType.KeyDown -> {
-                            if (unlockTracker.onQKeyDown()) {
-                                latestOnUnlock()
-                            }
-                            true
-                        }
-                        KeyEventType.KeyUp -> {
-                            unlockTracker.onQKeyUp()
-                            true
-                        }
-                        else -> false
-                    }
-                } else if (event.type == KeyEventType.KeyDown && !isHallModifierKey(key)) {
-                    unlockTracker.onOtherKeyDown()
-                    false
-                } else {
-                    false
-                }
-            }
-            .focusable(enabled = active)
             .testTag("hall-dev-overlay"),
     ) {
         // 第 1 层：强高斯模糊的抽象氛围光场（不含任何真实大厅内容，确保 Android 8-11 无 RenderEffect 也不泄露底层界面）
@@ -1397,21 +1278,9 @@ private fun HallUnderDevelopmentOverlay(
         )
 
         // 第 2 层：全屏磨砂玻璃介质（半透明冰雾面 + 斜向玻璃反光 + 细微磨砂颗粒 + 四周柔暗晕）
-        // 作为底层独立兄弟节点承接空白点击，既拦截穿透并维持焦点，又不把前景文案合并为单个可点击节点。
         Box(
             modifier = Modifier
                 .matchParentSize()
-                .then(
-                    if (active) {
-                        Modifier.clickable(
-                            interactionSource = backdropInteraction,
-                            indication = null,
-                            onClick = { runCatching { lockFocusRequester.requestFocus() } },
-                        )
-                    } else {
-                        Modifier
-                    },
-                )
                 .drawBehind {
                     drawRect(
                         Brush.linearGradient(
@@ -1560,10 +1429,27 @@ private fun HallUnderDevelopmentOverlay(
                         HallDevSparkEmblem(size = if (compact) 44.dp else 54.dp)
                     }
 
+                    // 开发者测试入口：外观保持静态状态徽章（无波纹/无提示），连续点击 5 次关闭遮罩进入大厅。
                     Row(
                         modifier = Modifier
+                            .clip(CircleShape)
                             .background(HallAmber.copy(alpha = 0.14f), CircleShape)
                             .border(1.dp, HallAmber.copy(alpha = 0.34f), CircleShape)
+                            .then(
+                                if (active) {
+                                    Modifier.clickable(
+                                        interactionSource = badgeInteraction,
+                                        indication = null,
+                                        onClick = {
+                                            if (unlockTracker.onBadgeTap()) {
+                                                latestOnUnlock()
+                                            }
+                                        },
+                                    )
+                                } else {
+                                    Modifier
+                                },
+                            )
                             .padding(horizontal = 11.dp, vertical = 4.dp)
                             .testTag("hall-dev-badge"),
                         verticalAlignment = Alignment.CenterVertically,

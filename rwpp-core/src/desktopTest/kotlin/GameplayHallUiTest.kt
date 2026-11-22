@@ -449,7 +449,7 @@ class GameplayHallUiTest {
     }
 
     @Test
-    fun underDevelopmentFrostedOverlayBlocksContentAndUnlocksAfterFiveQPresses() = runDesktopComposeUiTest(width = 1280, height = 720) {
+    fun underDevelopmentFrostedOverlayBlocksContentAndUnlocksAfterFiveBadgeTaps() = runDesktopComposeUiTest(width = 1280, height = 720) {
         var loads = 0
         show(
             load = {
@@ -466,7 +466,7 @@ class GameplayHallUiTest {
         onNodeWithTag("hall-dev-back").assertIsDisplayed()
         onNodeWithText("正在开发中，敬请期待").assertIsDisplayed()
 
-        // 不可由普通玩家点击关闭，也不暴露开发者解锁按键说明。
+        // 没有普通关闭按钮，也不暴露开发者解锁说明。
         onNodeWithTag("hall-dev-notice-dismiss").assertDoesNotExist()
         assertTrue(onAllNodesWithText("Q", substring = true, ignoreCase = true).fetchSemanticsNodes().isEmpty())
         assertTrue(onAllNodesWithText("5", substring = true).fetchSemanticsNodes().isEmpty())
@@ -480,29 +480,30 @@ class GameplayHallUiTest {
         runOnIdle { assertEquals(0, loads) }
         save("dev-frosted-desktop.png")
 
-        // 点击遮罩或徽章不会关闭提示。
-        onNodeWithTag("hall-dev-overlay").performClick()
-        onNodeWithTag("hall-dev-badge").performClick()
+        // 连续点击空白遮罩不会关闭提示。
+        repeat(6) {
+            onNodeWithTag("hall-dev-overlay").performTouchInput { click(Offset(200f, 120f)) }
+        }
         onNodeWithTag("hall-dev-overlay").assertIsDisplayed()
 
-        // 按 4 下 Q 仍保持锁定。
+        // 点击 4 下「开发中」徽章仍保持锁定。
         repeat(4) {
-            onNodeWithTag("hall-dev-overlay").performKeyInput { pressKey(Key.Q) }
+            onNodeWithTag("hall-dev-badge").performClick()
         }
         waitForIdle()
         onNodeWithTag("hall-dev-overlay").assertIsDisplayed()
         onNodeWithTag("hall-featured").assertDoesNotExist()
 
-        // 插入其他按键会重置计数，再按 4 下 Q 仍不解锁。
-        onNodeWithTag("hall-dev-overlay").performKeyInput { pressKey(Key.A) }
+        // 点击空白遮罩重置计数，再点 4 下「开发中」仍不解锁。
+        onNodeWithTag("hall-dev-overlay").performTouchInput { click(Offset(200f, 120f)) }
         repeat(4) {
-            onNodeWithTag("hall-dev-overlay").performKeyInput { pressKey(Key.Q) }
+            onNodeWithTag("hall-dev-badge").performClick()
         }
         waitForIdle()
         onNodeWithTag("hall-dev-overlay").assertIsDisplayed()
 
-        // 第 5 下 Q 关闭毛玻璃遮罩，显示真实第二主界面供开发者测试。
-        onNodeWithTag("hall-dev-overlay").performKeyInput { pressKey(Key.Q) }
+        // 第 5 下点击「开发中」关闭毛玻璃遮罩，显示真实第二主界面供开发者测试。
+        onNodeWithTag("hall-dev-badge").performClick()
         waitUntil(timeoutMillis = 3_000) { loads >= 1 }
         waitForIdle()
         onNodeWithTag("hall-dev-overlay").assertDoesNotExist()
@@ -517,63 +518,9 @@ class GameplayHallUiTest {
     }
 
     @Test
-    fun underDevelopmentOverlayIgnoresHeldQRepeatAndTimeoutWindowAndSupportsExit() = runDesktopComposeUiTest(width = 1280, height = 720) {
+    fun underDevelopmentOverlayIgnoresQKeyAndRespectsTapTimeoutWindowAndExit() = runDesktopComposeUiTest(width = 1280, height = 720) {
         var nowMs = 1_000L
         var exits = 0
-        show(
-            onExit = { exits++ },
-            devUnlocked = false,
-            devUnlockClockMillis = { nowMs },
-        )
-        waitForIdle()
-        onNodeWithTag("hall-dev-overlay").assertIsDisplayed()
-
-        // 长按 Q（仅一次按下与抬起）不会触发 5 次解锁。
-        onNodeWithTag("hall-dev-overlay").performKeyInput {
-            keyDown(Key.Q)
-            advanceEventTime(600L)
-            keyUp(Key.Q)
-        }
-        waitForIdle()
-        onNodeWithTag("hall-dev-overlay").assertIsDisplayed()
-
-        // Ctrl+Q 组合键不计入解锁。
-        repeat(5) {
-            onNodeWithTag("hall-dev-overlay").performKeyInput {
-                withKeyDown(Key.CtrlLeft) { pressKey(Key.Q) }
-            }
-        }
-        waitForIdle()
-        onNodeWithTag("hall-dev-overlay").assertIsDisplayed()
-
-        // 超过时间窗后计数归零重新起算。
-        repeat(3) {
-            nowMs += 200L
-            onNodeWithTag("hall-dev-overlay").performKeyInput { pressKey(Key.Q) }
-        }
-        nowMs += HALL_DEV_UNLOCK_WINDOW_MS + 100L
-        repeat(4) {
-            nowMs += 200L
-            onNodeWithTag("hall-dev-overlay").performKeyInput { pressKey(Key.Q) }
-        }
-        waitForIdle()
-        onNodeWithTag("hall-dev-overlay").assertIsDisplayed()
-
-        // 返回按钮正常退出第二主界面。
-        onNodeWithTag("hall-dev-back").performClick()
-        onNodeWithTag("hall-back").performClick()
-        runOnIdle { assertEquals(2, exits) }
-
-        // 窗口内补齐第 5 次 Q 即可关闭。
-        nowMs += 200L
-        onNodeWithTag("hall-dev-overlay").performKeyInput { pressKey(Key.Q) }
-        waitForIdle()
-        onNodeWithTag("hall-dev-overlay").assertDoesNotExist()
-        onNodeWithTag("hall-featured").assertIsDisplayed()
-    }
-
-    @Test
-    fun underDevelopmentOverlayUnlocksViaFallbackKeyboardEventWhenFocusIsOutsideOverlay() = runDesktopComposeUiTest(width = 1280, height = 720) {
         setContent {
             val scope = rememberCoroutineScope()
             val outerFocus = remember { FocusRequester() }
@@ -587,10 +534,11 @@ class GameplayHallUiTest {
                         .testTag("outer-host"),
                 ) {
                     GameplayHallView(
-                        onExit = {},
+                        onExit = { exits++ },
                         onOpenPage = {},
                         loadGames = { listOf(published) },
                         initialDevUnlocked = false,
+                        devUnlockClockMillis = { nowMs },
                     )
                 }
             }
@@ -601,17 +549,36 @@ class GameplayHallUiTest {
         waitForIdle()
         onNodeWithTag("hall-dev-overlay").assertIsDisplayed()
 
-        // 即使焦点停留在外层 App 根节点，桌面全局 KeyboardEvent 兜底也能准确计数 5 次解锁。
-        repeat(4) {
+        // 已改为点击 5 下「开发中」解锁，连按 Q 键不再触发解锁。
+        repeat(6) {
             onNodeWithTag("outer-host").performKeyInput { pressKey(Key.Q) }
             waitForIdle()
         }
         onNodeWithTag("hall-dev-overlay").assertIsDisplayed()
 
-        onNodeWithTag("outer-host").performKeyInput { pressKey(Key.Q) }
-        waitUntil(timeoutMillis = 3_000) {
-            onAllNodesWithTag("hall-dev-overlay").fetchSemanticsNodes().isEmpty()
+        // 超过时间窗后计数归零重新起算。
+        repeat(3) {
+            nowMs += 200L
+            onNodeWithTag("hall-dev-badge").performClick()
         }
+        nowMs += HALL_DEV_UNLOCK_WINDOW_MS + 100L
+        repeat(4) {
+            nowMs += 200L
+            onNodeWithTag("hall-dev-badge").performClick()
+        }
+        waitForIdle()
+        onNodeWithTag("hall-dev-overlay").assertIsDisplayed()
+
+        // 返回按钮正常退出第二主界面。
+        onNodeWithTag("hall-dev-back").performClick()
+        onNodeWithTag("hall-back").performClick()
+        runOnIdle { assertEquals(2, exits) }
+
+        // 窗口内补齐第 5 下点击「开发中」即可进入。
+        nowMs += 200L
+        onNodeWithTag("hall-dev-badge").performClick()
+        waitForIdle()
+        onNodeWithTag("hall-dev-overlay").assertDoesNotExist()
         onNodeWithTag("hall-featured").assertIsDisplayed()
     }
 
@@ -688,49 +655,34 @@ class GameplayHallUiTest {
         var now = 10_000L
         val tracker = HallDevUnlockTracker(requiredCount = 5, timeoutMillis = 4_000L, nowMillis = { now })
 
-        // 连续按住只记 1 次，抬起后恢复计数。
-        assertFalse(tracker.onQKeyDown())
-        assertFalse(tracker.onQKeyDown())
-        tracker.onQKeyUp()
-
-        // 恰好在时间窗边界内累计到 5 次触发解锁。
+        // 恰好在时间窗边界内累计点击 5 次触发解锁。
+        assertFalse(tracker.onBadgeTap())
         now += 4_000L
-        assertFalse(tracker.onQKeyDown()); tracker.onQKeyUp()
+        assertFalse(tracker.onBadgeTap())
         now += 100L
-        assertFalse(tracker.onQKeyDown()); tracker.onQKeyUp()
+        assertFalse(tracker.onBadgeTap())
         now += 100L
-        assertFalse(tracker.onQKeyDown()); tracker.onQKeyUp()
+        assertFalse(tracker.onBadgeTap())
         now += 100L
-        assertTrue(tracker.onQKeyDown())
-        tracker.onQKeyUp()
+        assertTrue(tracker.onBadgeTap())
 
-        // 解锁后自动重置，再次按 4 次不会触发。
+        // 解锁后自动重置，再次点 4 次不会触发。
         repeat(4) {
             now += 100L
-            assertFalse(tracker.onQKeyDown())
-            tracker.onQKeyUp()
+            assertFalse(tracker.onBadgeTap())
         }
         // 超过时间窗 1ms 即重新从 1 开始计数。
         now += 4_001L
-        assertFalse(tracker.onQKeyDown())
-        tracker.onQKeyUp()
+        assertFalse(tracker.onBadgeTap())
 
-        // 失焦解除 keyHeld 但不要求立即再次抬起。
-        assertFalse(tracker.onQKeyDown())
-        tracker.onFocusLost()
-        now += 100L
-        assertFalse(tracker.onQKeyDown())
-        tracker.onQKeyUp()
-
-        // 非 Q 按键清空序列。
-        tracker.onOtherKeyDown()
+        // 手动重置清空计数。
+        tracker.reset()
         repeat(4) {
             now += 100L
-            assertFalse(tracker.onQKeyDown())
-            tracker.onQKeyUp()
+            assertFalse(tracker.onBadgeTap())
         }
         now += 100L
-        assertTrue(tracker.onQKeyDown())
+        assertTrue(tracker.onBadgeTap())
     }
 
     @Test
