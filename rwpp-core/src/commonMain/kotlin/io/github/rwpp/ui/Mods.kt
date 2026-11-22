@@ -9,6 +9,7 @@ package io.github.rwpp.ui
 
 import io.github.rwpp.widget.UiSwitch
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.*
@@ -16,6 +17,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -32,6 +34,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -40,6 +43,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.rwpp.AppContext
@@ -78,7 +82,7 @@ import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
 import org.koin.compose.koinInject
 
-private enum class ModListFilter {
+internal enum class ModListFilter {
     All,
     Enabled,
     Disabled,
@@ -136,7 +140,7 @@ private class TitleErrorMod(delegate: Mod) : Mod by delegate
 /** Capture engine-owned fields on the UI thread before reading file metadata in the background. */
 private data class ModFileInput(val mod: Mod, val path: String, val hasError: Boolean, val enabled: Boolean)
 
-private data class ModFiles(
+internal data class ModFiles(
     val engineMods: List<Mod>,
     val allMods: List<Mod>,
     val loadedEnabledPaths: Set<String>,
@@ -199,7 +203,12 @@ private fun ModImportProgressDialog(progress: ModImportProgress?) {
         enableDismiss = false
     ) {
         val current = progress ?: return@AnimatedAlertDialog
-        BorderCard(modifier = Modifier.width(420.dp).wrapContentHeight()) {
+        BorderCard(
+            modifier = Modifier.fillMaxWidth(0.88f).widthIn(max = 420.dp).wrapContentHeight(),
+            shape = RoundedCornerShape(18.dp),
+            backgroundColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f)),
+        ) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -284,8 +293,61 @@ private fun collectFailedMods(mods: List<Mod>): List<FailedModLoadInfo> {
     }
 }
 
+@Composable
+internal fun RowScope.ModsHeaderTools(
+    filter: String,
+    onFilterChange: (String) -> Unit,
+    searchExpanded: Boolean,
+    onExpandSearch: () -> Unit,
+    onCloseSearch: () -> Unit,
+    wide: Boolean,
+    compactWidth: Boolean,
+) {
+    if (searchExpanded) {
+        LocalContentSearchField(
+            value = filter,
+            onValueChange = onFilterChange,
+            placeholder = readI18n("mod.search"),
+            modifier = if (wide) Modifier.weight(1f).widthIn(max = 300.dp) else Modifier.weight(1f),
+            fieldModifier = Modifier.testTag("mods-search-field"),
+        )
+        if (wide) {
+            MemoryUsageButton(Modifier.width(if (compactWidth) 112.dp else 136.dp))
+        }
+        IconButton(
+            onClick = onCloseSearch,
+            modifier = Modifier.size(44.dp),
+        ) {
+            Icon(
+                Icons.Default.Close,
+                contentDescription = readI18n("mod.closeSearch"),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    } else {
+        MemoryUsageButton(
+            if (wide) Modifier.width(if (compactWidth) 116.dp else 138.dp) else Modifier.weight(1f),
+        )
+        Surface(
+            onClick = onExpandSearch,
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.56f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f)),
+            modifier = Modifier.size(48.dp).testTag("mods-search-button"),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    Icons.Default.Search,
+                    contentDescription = readI18n("mod.search"),
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
-@Suppress("UnusedMaterial3ScaffoldPaddingParameter")
 @Composable
 fun ModsView(
     onExit: () -> Unit,
@@ -294,22 +356,42 @@ fun ModsView(
     /** 嵌入 [ModsAndMapsView] 共用外壳时为 true：不渲染 ExpandedCard / 关闭按钮。 */
     embedded: Boolean = false,
 ) {
+    val shellCache = LocalLocalContentSessionCache.current
     if (io.github.rwpp.content.ExpansionPackages.activeSha != null) {
-        Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(readI18n("expansion.modManagementLocked"), style = MaterialTheme.typography.bodyLarge)
-        }
+        LocalContentEmptyState(
+            message = readI18n("expansion.modManagementLocked"),
+            iconPainter = painterResource(Res.drawable.extension_30),
+            modifier = Modifier.fillMaxSize(),
+        )
         return
     }
     val modManager = koinInject<ModManager>()
 
     var deletedMod by remember { mutableStateOf(false) }
-    val fileLoad = rememberPageFileLoadState<ModFiles>()
-    val mods = remember { SnapshotStateList<Mod>() }
-    var loadedEnabledPaths by remember { mutableStateOf(emptySet<String>()) }
-    var canonicalPaths by remember { mutableStateOf(emptyMap<String, String>()) }
-    var filter by remember { mutableStateOf("") }
-    var listFilter by remember { mutableStateOf(ModListFilter.All) }
+    val cachedModFiles = shellCache?.modFiles
+    val fileLoad = rememberPageFileLoadState(initialValue = cachedModFiles)
+    val mods = remember {
+        SnapshotStateList<Mod>().apply {
+            cachedModFiles?.allMods?.let(::addAll)
+        }
+    }
+    var loadedEnabledPaths by remember { mutableStateOf(cachedModFiles?.loadedEnabledPaths ?: emptySet()) }
+    var canonicalPaths by remember { mutableStateOf(cachedModFiles?.canonicalPaths ?: emptyMap()) }
+    var localFilter by remember { mutableStateOf("") }
+    var localSearchExpanded by remember { mutableStateOf(false) }
+    var localListFilter by remember { mutableStateOf(ModListFilter.All) }
+    val filter = shellCache?.modsFilter ?: localFilter
+    val searchExpanded = shellCache?.modsSearchExpanded ?: localSearchExpanded
+    val listFilter = shellCache?.modsListFilter ?: localListFilter
+    fun setFilter(value: String) {
+        if (shellCache != null) shellCache.modsFilter = value else localFilter = value
+    }
+    fun setSearchExpanded(value: Boolean) {
+        if (shellCache != null) shellCache.modsSearchExpanded = value else localSearchExpanded = value
+    }
+    fun setListFilter(value: ModListFilter) {
+        if (shellCache != null) shellCache.modsListFilter = value else localListFilter = value
+    }
     var selectedMod by remember { mutableStateOf<Mod?>(null) }
 
     val scope = rememberCoroutineScope()
@@ -367,12 +449,20 @@ fun ModsView(
         mods.addAll(files.allMods)
         loadedEnabledPaths = files.loadedEnabledPaths
         canonicalPaths = files.canonicalPaths
+        shellCache?.modFiles = files
         updated = !updated
         enabledChanged = !enabledChanged
         return files
     }
 
-    LaunchedEffect(modManager) { loadModFiles(modManager.getAllMods()) }
+    LaunchedEffect(modManager) {
+        if (fileLoad.value == null) loadModFiles(modManager.getAllMods())
+    }
+    val modsBusy = isReloading || isClosingAfterDelete || importProgress != null
+    SideEffect { shellCache?.modsBusy = modsBusy }
+    DisposableEffect(Unit) {
+        onDispose { shellCache?.modsBusy = false }
+    }
 
     suspend fun reloadMods(knownStates: Map<String, Boolean>): List<FailedModLoadInfo> {
         // Only this explicit Apply commits the temporary startup choice as the user's new selection.
@@ -487,11 +577,17 @@ fun ModsView(
             val canonical = target.canonicalPath
             if (canonical !in existingPaths && target.isFile) UnloadedMod(target) to canonical else null
         }
-        filter = ""
-        listFilter = ModListFilter.All
+        setFilter("")
+        setListFilter(ModListFilter.All)
         if (discovered != null) {
             mods.add(discovered.first)
             canonicalPaths = canonicalPaths + (discovered.first.path to discovered.second)
+            shellCache?.modFiles?.let { existing ->
+                shellCache.modFiles = existing.copy(
+                    allMods = mods.toList(),
+                    canonicalPaths = canonicalPaths,
+                )
+            }
         }
         updated = !updated
     }
@@ -601,6 +697,9 @@ fun ModsView(
         } else if (mod.tryDelete()) {
             mods.remove(mod)
             deletedMod = true
+            shellCache?.modFiles?.let { existing ->
+                shellCache.modFiles = existing.copy(allMods = mods.toList())
+            }
         } else {
             UI.showWarning(readI18n("mod.removeInfo"))
         }
@@ -616,81 +715,68 @@ fun ModsView(
     )
 
     @Composable
-    fun FilterField(modifier: Modifier = Modifier) {
-        RWSingleOutlinedTextField(
-            readI18n("mod.search"),
-            filter,
-            modifier = modifier.testTag("mods-search-field"),
-            leadingIcon = { Icon(Icons.Default.Search, null) },
-        ) { filter = it }
-    }
-
-    @Composable
-    fun ModsTopBar(modifier: Modifier = Modifier) {
-        var searchExpanded by remember { mutableStateOf(false) }
-        BoxWithConstraints(modifier.fillMaxWidth()) {
-            val narrow = maxWidth < 600.dp
-            Column {
-                if (narrow && onTabChange != null && !searchExpanded) {
+    fun ModsTopBar(wide: Boolean, shortViewport: Boolean, maxWidth: androidx.compose.ui.unit.Dp) {
+        LocalContentTopChrome(
+            wide = wide,
+            shortViewport = shortViewport,
+            navigation = { navModifier ->
+                if (onTabChange != null) {
                     ModsMapsSegmentedControl(
                         selected = selectedTab,
                         onSelect = onTabChange,
-                        modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 56.dp, top = 4.dp),
+                        enabled = !modsBusy,
+                        compact = shortViewport,
+                        modifier = if (wide) {
+                            navModifier.width(if (maxWidth < 700.dp) 224.dp else 264.dp)
+                        } else {
+                            navModifier
+                        },
+                    )
+                } else {
+                    Text(
+                        readI18n("menu.mods"),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = navModifier,
                     )
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 56.dp, top = 4.dp, bottom = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    if (searchExpanded) {
-                        FilterField(Modifier.weight(1f))
-                        if (!narrow) MemoryUsageButton(Modifier.width(140.dp))
-                        IconButton(
-                            onClick = {
-                                filter = ""
-                                searchExpanded = false
-                            },
-                            modifier = Modifier.size(48.dp),
-                        ) {
-                            Icon(
-                                Icons.Default.Close,
-                                contentDescription = readI18n("mod.closeSearch"),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    } else {
-                        if (onTabChange != null && !narrow) {
-                            ModsMapsSegmentedControl(
-                                selected = selectedTab,
-                                onSelect = onTabChange,
-                                modifier = Modifier.width(240.dp),
-                            )
-                        } else if (onTabChange == null) {
-                            Text(
-                                readI18n("menu.mods"),
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        if (!narrow) Spacer(Modifier.weight(1f))
-                        MemoryUsageButton(if (narrow) Modifier.weight(1f) else Modifier.width(140.dp))
-                        IconButton(
-                            onClick = { searchExpanded = true },
-                            modifier = Modifier.size(48.dp).testTag("mods-search-button"),
-                        ) {
-                            Icon(
-                                Icons.Default.Search,
-                                contentDescription = readI18n("mod.search"),
-                                tint = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                    }
-                }
-            }
-        }
+            },
+            wideTools = {
+                ModsHeaderTools(
+                    filter = filter,
+                    onFilterChange = ::setFilter,
+                    searchExpanded = searchExpanded,
+                    onExpandSearch = { setSearchExpanded(true) },
+                    onCloseSearch = {
+                        setFilter("")
+                        setSearchExpanded(false)
+                    },
+                    wide = true,
+                    compactWidth = maxWidth < 740.dp,
+                )
+            },
+            narrowTools = {
+                ModsHeaderTools(
+                    filter = filter,
+                    onFilterChange = ::setFilter,
+                    searchExpanded = searchExpanded,
+                    onExpandSearch = { setSearchExpanded(true) },
+                    onCloseSearch = {
+                        setFilter("")
+                        setSearchExpanded(false)
+                    },
+                    wide = false,
+                    compactWidth = true,
+                )
+            },
+            onClose = if (!embedded) ({ exit() }) else null,
+            closeEnabled = !modsBusy,
+            reserveTrailingCloseSpace = embedded,
+            busy = modsBusy,
+        )
     }
 
     /** 列表只显示两行关键信息；开关独立命中，说明和删除收进详情。 */
@@ -702,24 +788,37 @@ fun ModsView(
             ModCardStatus.TitleWarn -> readI18n("mod.metadataWarning")
             else -> null
         }
+        val badgeAccent = if (status == ModCardStatus.Neutral) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            modCardStatusColor(status)
+        }
         Row(
             modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp)
                 .clickable(onClickLabel = readI18n("mod.errorViewDetails")) { selectedMod = mod }
                 .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Surface(
-                modifier = Modifier.size(32.dp),
-                shape = RoundedCornerShape(8.dp),
-                color = modCardStatusColor(status).copy(alpha = .16f),
+                modifier = Modifier.size(36.dp),
+                shape = RoundedCornerShape(10.dp),
+                color = badgeAccent.copy(alpha = if (status == ModCardStatus.Neutral && !mod.isEnabled) .10f else .16f),
+                border = BorderStroke(
+                    1.dp,
+                    badgeAccent.copy(alpha = if (status == ModCardStatus.Neutral && !mod.isEnabled) .18f else .34f),
+                ),
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     if (issue != null) {
                         Icon(Icons.Default.Warning, null, Modifier.size(18.dp), tint = modCardStatusColor(status))
                     } else {
-                        Text(mod.name.take(1).uppercase(), style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.primary)
+                        Text(
+                            mod.name.take(1).uppercase(),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (mod.isEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
@@ -860,12 +959,15 @@ fun ModsView(
             ) {
                 resolveModCardStatus(mod, loadedEnabledPaths, canonicalPaths)
             }
+            val borderColor = if (cardStatus == ModCardStatus.Neutral) {
+                localContentCardBorderColor()
+            } else {
+                modCardStatusColor(cardStatus).copy(alpha = 0.72f)
+            }
             BorderCard(
-                backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(
-                    if (mod.isEnabled) .72f else .5f
-                ),
-                shape = RoundedCornerShape(8.dp),
-                border = BorderStroke(1.dp, modCardStatusColor(cardStatus)),
+                backgroundColor = localContentCardColor(elevated = mod.isEnabled),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, borderColor),
                 modifier = Modifier.then(
                     if (uiAnimationsEnabled())
                         Modifier.animateItem()
@@ -883,15 +985,24 @@ fun ModsView(
 
     @Composable
     fun Header(isEnabledList: Boolean, count: Int) {
+        val dotColor = if (isEnabledList) ModCardOkBorder else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp)) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 3.dp),
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
             ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(dotColor),
+                )
                 Text(
                     readI18n("mod.${if (isEnabledList) "enabled" else "disabled"}"),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (isEnabledList) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
@@ -899,14 +1010,18 @@ fun ModsView(
 
                 Text(
                     readI18n("mod.count", I18nType.RWPP, count.toString()),
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
             HorizontalDivider(
-                thickness = 2.dp,
-                color = MaterialTheme.colorScheme.primary.copy(alpha = .85f)
+                thickness = 1.dp,
+                color = if (isEnabledList) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
+                } else {
+                    localContentHairlineColor()
+                },
             )
         }
     }
@@ -944,12 +1059,11 @@ fun ModsView(
     }
 
     @Composable
-    fun ActionBar() {
+    fun ActionBar(shortViewport: Boolean) {
         var moreExpanded by remember { mutableStateOf(false) }
-        Row(
-            modifier = Modifier.fillMaxWidth().testTag("mods-actions").padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        LocalContentBottomBar(
+            shortViewport = shortViewport,
+            rowModifier = Modifier.testTag("mods-actions"),
         ) {
             TextButton(
                 onClick = {
@@ -960,6 +1074,7 @@ fun ModsView(
                     }
                 },
                 enabled = fileLoad.isReady && !isReloading && importProgress == null,
+                shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.heightIn(min = 48.dp),
                 contentPadding = PaddingValues(horizontal = 10.dp),
             ) {
@@ -988,17 +1103,18 @@ fun ModsView(
                 }
             }
             Spacer(Modifier.weight(1f))
-            Button(
-                onClick = { reload() },
+            LocalContentPrimaryButton(
+                text = readI18n("mod.reload"),
+                leadingIcon = Icons.Default.Refresh,
                 enabled = fileLoad.isReady && !isReloading && importProgress == null,
-                modifier = Modifier.heightIn(min = 48.dp).testTag("mods-reload"),
-                contentPadding = PaddingValues(horizontal = 12.dp),
-            ) {
-                Icon(Icons.Default.Refresh, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(readI18n("mod.reload"), maxLines = 1)
-            }
-            OutlinedButton(
+                minHeight = 48.dp,
+                onClick = { reload() },
+                modifier = Modifier.testTag("mods-reload"),
+            )
+            LocalContentSecondaryButton(
+                text = readI18n("mod.apply"),
+                enabled = fileLoad.isReady && !isReloading && !isClosingAfterDelete && importProgress == null,
+                minHeight = 48.dp,
                 onClick = {
                     val enabledNotLoaded = mods.filter { mod ->
                         mod.isEnabled && canonicalPaths[mod.path] !in loadedEnabledPaths
@@ -1011,7 +1127,7 @@ fun ModsView(
                                 enabledNotLoaded.joinToString { it.name }
                             )
                         )
-                        return@OutlinedButton
+                        return@LocalContentSecondaryButton
                     }
 
                     val needsUnitRebuild = deletedMod || mods.any { mod ->
@@ -1021,18 +1137,14 @@ fun ModsView(
                         // 禁用/删除已加载模组后必须先重载：直接应用会在错误线程重建单位表，
                         // 与存活的对局世界并发导致单位贴图丢失（紫色 M 占位）
                         UI.showWarning(readI18n("mod.applyNeedReload"))
-                        return@OutlinedButton
+                        return@LocalContentSecondaryButton
                     }
 
                     // 仅导入了默认禁用的模组时无需触碰引擎；文件继续保持未加载状态。
                     onExit()
                 },
-                enabled = fileLoad.isReady && !isReloading && !isClosingAfterDelete && importProgress == null,
-                modifier = Modifier.heightIn(min = 48.dp).testTag("mods-apply"),
-                contentPadding = PaddingValues(horizontal = 12.dp),
-            ) {
-                Text(readI18n("mod.apply"), maxLines = 1)
-            }
+                modifier = Modifier.testTag("mods-apply"),
+            )
         }
     }
 
@@ -1045,7 +1157,10 @@ fun ModsView(
             enableDismiss = true
         ) { dismiss ->
             BorderCard(
-                modifier = Modifier.fillMaxWidth(0.86f).widthIn(max = 420.dp).wrapContentHeight()
+                modifier = Modifier.fillMaxWidth(0.88f).widthIn(max = 440.dp).wrapContentHeight(),
+                shape = RoundedCornerShape(18.dp),
+                backgroundColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)),
             ) {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(20.dp),
@@ -1053,17 +1168,26 @@ fun ModsView(
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Icon(
-                            Icons.Default.Warning,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(24.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.error.copy(alpha = 0.16f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                         Text(
                             readI18n("mod.memoryExhaustedTitle"),
                             style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.error,
                             maxLines = 1
                         )
@@ -1087,7 +1211,7 @@ fun ModsView(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End
                     ) {
-                        RWTextButton(readI18n("common.ok"), onClick = dismiss)
+                        LocalContentPrimaryButton(readI18n("common.ok"), onClick = dismiss, minHeight = 42.dp)
                     }
                 }
             }
@@ -1102,18 +1226,43 @@ fun ModsView(
             enableDismiss = true
         ) { dismiss ->
             val mod = pendingDeleteMod ?: return@AnimatedAlertDialog
-            BorderCard(modifier = Modifier.fillMaxWidth(0.86f).widthIn(max = 420.dp).wrapContentHeight()) {
+            BorderCard(
+                modifier = Modifier.fillMaxWidth(0.86f).widthIn(max = 440.dp).wrapContentHeight(),
+                shape = RoundedCornerShape(18.dp),
+                backgroundColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)),
+            ) {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Text(
-                        readI18n("mod.deleteConfirmTitle"),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.error.copy(alpha = 0.16f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                        Text(
+                            readI18n("mod.deleteConfirmTitle"),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
 
                     Text(
                         readI18n("mod.deleteConfirmMessage", I18nType.RWPP, mod.name),
@@ -1123,36 +1272,23 @@ fun ModsView(
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        RWTextButton(
-                            readI18n("mod.cancel"),
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Default.Close,
-                                    null,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            },
-                            modifier = Modifier.padding(end = 8.dp),
-                            onClick = dismiss
-                        )
+                        TextButton(onClick = dismiss, modifier = Modifier.heightIn(min = 42.dp)) {
+                            Text(readI18n("mod.cancel"))
+                        }
 
-                        RWTextButton(
-                            readI18n("mod.delete"),
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Default.Delete,
-                                    null,
-                                    modifier = Modifier.size(24.dp),
-                                    tint = MaterialTheme.colorScheme.error
-                                )
-                            },
+                        LocalContentPrimaryButton(
+                            text = readI18n("mod.delete"),
+                            leadingIcon = Icons.Default.Delete,
+                            minHeight = 42.dp,
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError,
                             onClick = {
                                 pendingDeleteMod = null
                                 deleteMod(mod)
-                            }
+                            },
                         )
                     }
                 }
@@ -1175,7 +1311,9 @@ fun ModsView(
                     .widthIn(max = 520.dp)
                     .wrapContentHeight()
                     .padding(10.dp),
-                backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                shape = RoundedCornerShape(18.dp),
+                backgroundColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)),
             ) {
                 val listScrollState = rememberScrollState()
                 Column(
@@ -1183,15 +1321,24 @@ fun ModsView(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Icon(
-                        Icons.Default.Warning,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(48.dp),
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.error.copy(alpha = 0.16f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(26.dp),
+                        )
+                    }
                     Text(
                         readI18n("mod.reloadFailedTitle"),
                         style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.error,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -1202,7 +1349,7 @@ fun ModsView(
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Surface(
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(10.dp),
                         color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.45f)),
                         modifier = Modifier
@@ -1239,7 +1386,7 @@ fun ModsView(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    RWTextButton(readI18n("common.ok"), onClick = dismiss)
+                    LocalContentPrimaryButton(readI18n("common.ok"), onClick = dismiss, minHeight = 42.dp)
                 }
             }
         }
@@ -1254,34 +1401,51 @@ fun ModsView(
             ModListFilter.Disabled -> disabledMods
         }
         Column(modifier.fillMaxSize()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                ModListFilter.entries.forEach { option ->
-                    val label = readI18n(when (option) {
-                        ModListFilter.All -> "mod.total"
-                        ModListFilter.Enabled -> "mod.enabled"
-                        ModListFilter.Disabled -> "mod.disabled"
-                    })
-                    val count = when (option) {
-                        ModListFilter.All -> filteredMods.size
-                        ModListFilter.Enabled -> enabledMods.size
-                        ModListFilter.Disabled -> disabledMods.size
-                    }
-                    Surface(
-                        modifier = Modifier.weight(1f).testTag("mods-filter-${option.name}")
-                            .selectable(listFilter == option, role = Role.Tab) { listFilter = option },
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (listFilter == option) MaterialTheme.colorScheme.primary.copy(alpha = .18f)
-                            else Color.Transparent,
-                    ) {
-                        Box(Modifier.heightIn(min = 48.dp).padding(horizontal = 4.dp), contentAlignment = Alignment.Center) {
-                            Text(
-                                "$label $count",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (listFilter == option) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                shape = RoundedCornerShape(10.dp),
+                color = localContentRecessedColor(),
+                border = BorderStroke(1.dp, localContentHairlineColor()),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    ModListFilter.entries.forEach { option ->
+                        val label = readI18n(when (option) {
+                            ModListFilter.All -> "mod.total"
+                            ModListFilter.Enabled -> "mod.enabled"
+                            ModListFilter.Disabled -> "mod.disabled"
+                        })
+                        val count = when (option) {
+                            ModListFilter.All -> filteredMods.size
+                            ModListFilter.Enabled -> enabledMods.size
+                            ModListFilter.Disabled -> disabledMods.size
+                        }
+                        val selectedOption = listFilter == option
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("mods-filter-${option.name}")
+                                .clip(RoundedCornerShape(8.dp))
+                                .selectable(selectedOption, role = Role.Tab) { setListFilter(option) },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (selectedOption) MaterialTheme.colorScheme.primary.copy(alpha = .20f)
+                                else Color.Transparent,
+                            border = if (selectedOption) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.42f))
+                                else null,
+                        ) {
+                            Box(Modifier.heightIn(min = 38.dp).padding(horizontal = 4.dp), contentAlignment = Alignment.Center) {
+                                Text(
+                                    "$label $count",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
+                                    fontWeight = if (selectedOption) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (selectedOption) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         }
                     }
                 }
@@ -1296,47 +1460,18 @@ fun ModsView(
             ) {
                 LazyColumn(
                     state = state, modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 6.dp, end = ModListScrollbarReservedWidth, bottom = 8.dp),
+                    contentPadding = PaddingValues(start = 10.dp, end = ModListScrollbarReservedWidth, bottom = 10.dp),
                 ) { ModList(visibleMods) }
             }
         }
     }
 
     @Composable
-    fun ModsBody(singleColumn: Boolean, modifier: Modifier = Modifier) {
-        Column(modifier = modifier.fillMaxSize()) {
-            ModsTopBar()
-            if (!fileLoad.isReady) {
-                PageFileLoading(
-                    state = fileLoad,
-                    pageTitle = readI18n("common.mod"),
-                    onRetry = { scope.launch { loadModFiles(modManager.getAllMods()) } },
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                )
-            } else if (singleColumn) {
-                SingleModList(Modifier.weight(1f))
-            } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth().weight(1f).padding(start = 8.dp, end = 8.dp, bottom = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    ModListPanel(isEnabledList = true, data = enabledMods, modifier = Modifier.weight(1f))
-                    VerticalDivider(Modifier.fillMaxHeight(), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .5f))
-                    ModListPanel(isEnabledList = false, data = disabledMods, modifier = Modifier.weight(1f))
-                }
-            }
-        }
-    }
-
-    Scaffold(
-        containerColor = Color.Transparent,
-        bottomBar = { ActionBar() }
-    ) { paddingValues ->
+    fun ModsWorkspace(modifier: Modifier = Modifier) {
         // 手机横屏保留双栏，窄窗口使用全宽列表；所有尺寸都把高度留给模组。
         BoxWithConstraints(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxSize()
-                .padding(paddingValues)
                 .modFileDropTarget(
                     enabled = canAcceptModFileDrop,
                     onDragStarted = { modDropOverlayActive = true },
@@ -1353,20 +1488,35 @@ fun ModsView(
                     },
                 )
         ) {
-            val singleColumn = maxWidth < 600.dp
+            val availableWidth = maxWidth
+            val wide = availableWidth >= LocalContentWideBreakpoint
+            val shortViewport = maxHeight < LocalContentShortHeightBreakpoint
+            val singleColumn = !wide
             Box(modifier = Modifier.fillMaxSize()) {
-                if (embedded) {
-                    ModsBody(singleColumn = singleColumn, modifier = Modifier.fillMaxSize())
-                } else {
-                    ExpandedCard {
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            ModsBody(
-                                singleColumn = singleColumn,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                            ExitButton { exit() }
+                Column(modifier = Modifier.fillMaxSize()) {
+                    if (shellCache == null) {
+                        ModsTopBar(wide = wide, shortViewport = shortViewport, maxWidth = availableWidth)
+                    }
+                    if (!fileLoad.isReady) {
+                        PageFileLoading(
+                            state = fileLoad,
+                            pageTitle = readI18n("common.mod"),
+                            onRetry = { scope.launch { loadModFiles(modManager.getAllMods()) } },
+                            modifier = Modifier.fillMaxWidth().weight(1f),
+                        )
+                    } else if (singleColumn) {
+                        SingleModList(Modifier.weight(1f))
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().weight(1f).padding(start = 10.dp, end = 10.dp, top = 2.dp, bottom = 2.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            ModListPanel(isEnabledList = true, data = enabledMods, modifier = Modifier.weight(1f))
+                            VerticalDivider(Modifier.fillMaxHeight(), color = localContentHairlineColor())
+                            ModListPanel(isEnabledList = false, data = disabledMods, modifier = Modifier.weight(1f))
                         }
                     }
+                    ActionBar(shortViewport = shortViewport)
                 }
                 ModDropOverlay(
                     visible = modDropOverlayActive,
@@ -1374,6 +1524,14 @@ fun ModsView(
                     modifier = Modifier.fillMaxSize(),
                 )
             }
+        }
+    }
+
+    if (embedded) {
+        ModsWorkspace(modifier = Modifier.fillMaxSize())
+    } else {
+        ExpandedCard {
+            ModsWorkspace(modifier = Modifier.fillMaxSize())
         }
     }
 

@@ -9,17 +9,18 @@ package io.github.rwpp.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -27,13 +28,17 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
-import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.appKoin
 import io.github.rwpp.customMapDir
 import io.github.rwpp.event.broadcastIn
@@ -51,8 +56,8 @@ import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.error_missingmap
 import io.github.rwpp.rwpp_core.generated.resources.file_open
+import io.github.rwpp.rwpp_core.generated.resources.launcher_maps
 import io.github.rwpp.widget.*
-import io.github.rwpp.widget.UiLinearProgressIndicator
 import io.github.rwpp.widget.v2.ExpandedCard
 import java.io.File
 import kotlin.math.roundToInt
@@ -76,7 +81,7 @@ private data class MapImportProgress(
 )
 
 /** Filesystem metadata is captured once by the background scan, never during card composition. */
-private data class ManagedCustomMap(
+internal data class ManagedCustomMap(
     val map: CustomMapFile,
     val thumbnail: File?,
     val sizeLabel: String,
@@ -98,6 +103,46 @@ private fun formatMapBytes(bytes: Long): String {
 }
 
 @Composable
+internal fun RowScope.MapsHeaderTools(
+    filter: String,
+    onFilterChange: (String) -> Unit,
+    count: Int?,
+    busy: Boolean,
+    wide: Boolean,
+    showCountBadge: Boolean,
+) {
+    if (wide) {
+        if (showCountBadge && count != null) {
+            LocalContentCountBadge(
+                text = readI18n("maps.count", I18nType.RWPP, count.toString()),
+            )
+        }
+        LocalContentSearchField(
+            value = filter,
+            onValueChange = onFilterChange,
+            placeholder = readI18n("maps.search"),
+            enabled = !busy,
+            modifier = Modifier.widthIn(min = 160.dp, max = 260.dp),
+            fieldModifier = Modifier.testTag("maps-search-field"),
+        )
+    } else {
+        LocalContentSearchField(
+            value = filter,
+            onValueChange = onFilterChange,
+            placeholder = readI18n("maps.search"),
+            enabled = !busy,
+            modifier = Modifier.weight(1f),
+            fieldModifier = Modifier.testTag("maps-search-field"),
+        )
+        if (count != null) {
+            LocalContentCountBadge(
+                text = readI18n("maps.count", I18nType.RWPP, count.toString()),
+            )
+        }
+    }
+}
+
+@Composable
 private fun MapImportProgressDialog(progress: MapImportProgress?) {
     AnimatedAlertDialog(
         visible = progress != null,
@@ -106,12 +151,15 @@ private fun MapImportProgressDialog(progress: MapImportProgress?) {
     ) {
         BorderCard(
             modifier = Modifier
-                .fillMaxWidth(0.85f)
+                .fillMaxWidth(0.86f)
                 .padding(10.dp)
                 .widthIn(max = 420.dp),
+            shape = RoundedCornerShape(18.dp),
+            backgroundColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f)),
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                modifier = Modifier.fillMaxWidth().padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 val title = when (progress?.stage) {
@@ -121,13 +169,15 @@ private fun MapImportProgressDialog(progress: MapImportProgress?) {
                 }
                 Text(
                     title,
-                    style = MaterialTheme.typography.headlineSmall,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.primary,
                 )
                 progress?.fileName?.let { name ->
                     Text(
                         name,
                         style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -137,11 +187,11 @@ private fun MapImportProgressDialog(progress: MapImportProgress?) {
                 if (total != null && total > 0L) {
                     LinearProgressIndicator(
                         progress = { (copied.toFloat() / total.toFloat()).coerceIn(0f, 1f) },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)),
                     )
                     Text(
                         "${formatMapBytes(copied)} / ${formatMapBytes(total)}",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
@@ -153,74 +203,68 @@ private fun MapImportProgressDialog(progress: MapImportProgress?) {
 }
 
 @Composable
-private fun MapMetadataPill(text: String, color: Color) {
-    Surface(
-        shape = RoundedCornerShape(8.dp),
-        color = color.copy(alpha = .14f),
-        border = BorderStroke(1.dp, color.copy(alpha = .35f)),
-    ) {
-        Text(
-            text,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = color,
-            maxLines = 1,
-        )
-    }
-}
-
-@Composable
-private fun MapCountPill(count: Int) {
-    Surface(
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .14f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .45f)),
-    ) {
-        Text(
-            readI18n("maps.count", I18nType.RWPP, count.toString()),
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-        )
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Suppress("UnusedMaterial3ScaffoldPaddingParameter")
-@Composable
 fun CustomMapsManagementView(
     onExit: () -> Unit,
     selectedTab: ModsMapsTab = ModsMapsTab.Maps,
     onTabChange: ((ModsMapsTab) -> Unit)? = null,
-    /** 嵌入 [ModsAndMapsView] 共用外壳时为 true：不渲染 ExpandedCard / 分段 / 关闭按钮。 */
+    /** 嵌入 [ModsAndMapsView] 共用外壳时为 true：不渲染 ExpandedCard / 关闭按钮。 */
     embedded: Boolean = false,
 ) {
+    val shellCache = LocalLocalContentSessionCache.current
     val game = koinInject<Game>()
     val scope = rememberCoroutineScope()
-    val windowManager = LocalWindowManager.current
-    val compact = windowManager == WindowManager.Small
 
-    val fileLoad = rememberPageFileLoadState<List<ManagedCustomMap>>()
-    val maps = remember { SnapshotStateList<ManagedCustomMap>() }
-    var filter by remember { mutableStateOf("") }
+    val fileLoad = rememberPageFileLoadState(initialValue = shellCache?.customMaps)
+    val maps = remember {
+        SnapshotStateList<ManagedCustomMap>().apply {
+            shellCache?.customMaps?.let(::addAll)
+        }
+    }
+    var localFilter by remember { mutableStateOf("") }
+    val filter = shellCache?.mapsFilter ?: localFilter
+    fun setFilter(value: String) {
+        if (shellCache != null) shellCache.mapsFilter = value else localFilter = value
+    }
+
     var importProgress by remember { mutableStateOf<MapImportProgress?>(null) }
     var pendingDelete by remember { mutableStateOf<CustomMapFile?>(null) }
     var pendingOverwrite by remember { mutableStateOf<File?>(null) }
     /** 文件选择已结束（进入导入/覆盖确认），忽略迟到的 Preparing 进度回调，避免叠层卡住。 */
     var suppressPrepareProgress by remember { mutableStateOf(false) }
 
-    val filtered = maps.filter { it.map.displayName().contains(filter, ignoreCase = true) }
+    val busy = importProgress != null
+    val filtered = remember(maps.size, filter, maps.toList()) {
+        val keyword = filter.trim()
+        if (keyword.isEmpty()) maps.toList()
+        else maps.filter { it.map.displayName().contains(keyword, ignoreCase = true) }
+    }
+
+    SideEffect {
+        shellCache?.mapsBusy = busy
+        shellCache?.mapsVisibleCount = if (fileLoad.isReady) filtered.size else null
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            shellCache?.mapsBusy = false
+            // 嵌入模式下切换 tab 会 dispose，勿广播关闭；由外壳统一处理。
+            if (!embedded) {
+                CloseUIPanelEvent("maps").broadcastIn()
+            }
+        }
+    }
 
     suspend fun refreshMaps(refreshEngine: Boolean = true) {
         val files = fileLoad.load { readManagedCustomMaps() } ?: return
         maps.clear()
         maps.addAll(files)
+        shellCache?.customMaps = files
         // getAllMaps may enter the platform engine. Preserve its original UI-thread contract.
         if (refreshEngine) game.getAllMaps(true)
     }
 
-    LaunchedEffect(game) { refreshMaps(refreshEngine = false) }
+    LaunchedEffect(game) {
+        if (fileLoad.value == null) refreshMaps(refreshEngine = false)
+    }
 
     fun updateFileChooseProgress(progress: FileChooseProgress) {
         if (suppressPrepareProgress || pendingOverwrite != null) return
@@ -307,6 +351,7 @@ fun CustomMapsManagementView(
         if (!fileLoad.isReady) return
         if (deleteCustomMapFilesSafely(map.file)) {
             maps.removeAll { it.map.file.absolutePath == map.file.absolutePath }
+            shellCache?.customMaps = maps.toList()
             game.getAllMaps(true)
         } else {
             UI.showWarning(readI18n("maps.deleteFailed"))
@@ -315,15 +360,6 @@ fun CustomMapsManagementView(
 
     if (!embedded) {
         BackHandler(true) { onExit() }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            // 嵌入模式下切换 tab 会 dispose，勿广播关闭；由外壳统一处理。
-            if (!embedded) {
-                CloseUIPanelEvent("maps").broadcastIn()
-            }
-        }
     }
 
     // 覆盖确认优先；有确认框时绝不显示进度，避免两层 Dialog 叠死。
@@ -342,45 +378,69 @@ fun CustomMapsManagementView(
                 modifier = Modifier
                     .fillMaxWidth(0.9f)
                     .padding(10.dp)
-                    .widthIn(max = 480.dp),
-                backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                    .widthIn(max = 440.dp),
+                shape = RoundedCornerShape(18.dp),
+                backgroundColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
             ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 18.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    Icon(
-                        Icons.Default.Warning,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(42.dp),
-                    )
-                    Text(
-                        readI18n("maps.importExistsTitle"),
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                        Text(
+                            readI18n("maps.importExistsTitle"),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
                     Text(
                         readI18n("maps.importExistsMessage", I18nType.RWPP, displayName),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        RWTextButton(readI18n("mod.cancel")) {
-                            pendingOverwrite = null
-                            suppressPrepareProgress = false
-                            dismiss()
+                        TextButton(
+                            onClick = {
+                                pendingOverwrite = null
+                                suppressPrepareProgress = false
+                                dismiss()
+                            },
+                            modifier = Modifier.heightIn(min = 42.dp),
+                        ) {
+                            Text(readI18n("mod.cancel"))
                         }
-                        RWTextButton(readI18n("maps.importOverwrite")) {
-                            pendingOverwrite = null
-                            dismiss()
-                            importMapFile(file, overwrite = true)
-                        }
+                        LocalContentPrimaryButton(
+                            text = readI18n("maps.importOverwrite"),
+                            minHeight = 42.dp,
+                            onClick = {
+                                pendingOverwrite = null
+                                dismiss()
+                                importMapFile(file, overwrite = true)
+                            },
+                        )
                     }
                 }
             }
@@ -396,257 +456,215 @@ fun CustomMapsManagementView(
                 modifier = Modifier
                     .fillMaxWidth(0.9f)
                     .padding(10.dp)
-                    .widthIn(max = 480.dp),
-                backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                    .widthIn(max = 440.dp),
+                shape = RoundedCornerShape(18.dp),
+                backgroundColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)),
             ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    Text(
-                        readI18n("maps.deleteConfirmTitle"),
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.error.copy(alpha = 0.16f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                        Text(
+                            readI18n("maps.deleteConfirmTitle"),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                     Text(
                         readI18n("maps.deleteConfirmMessage", I18nType.RWPP, map.displayName()),
                         style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        RWTextButton(readI18n("mod.cancel"), onClick = dismiss)
-                        RWTextButton(
-                            readI18n("mod.delete"),
-                            leadingIcon = {
-                                Icon(Icons.Default.Delete, null, modifier = Modifier.size(24.dp))
+                        TextButton(onClick = dismiss, modifier = Modifier.heightIn(min = 42.dp)) {
+                            Text(readI18n("mod.cancel"))
+                        }
+                        LocalContentPrimaryButton(
+                            text = readI18n("mod.delete"),
+                            leadingIcon = Icons.Default.Delete,
+                            minHeight = 42.dp,
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError,
+                            onClick = {
+                                deleteMap(map)
+                                dismiss()
                             },
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun MapsWorkspace(modifier: Modifier = Modifier) {
+        BoxWithConstraints(modifier = modifier.fillMaxSize().testTag("mapsPage")) {
+            val availableWidth = maxWidth
+            val wide = availableWidth >= LocalContentWideBreakpoint
+            val shortViewport = maxHeight < LocalContentShortHeightBreakpoint
+            val gridMinCell = if (availableWidth < 460.dp) 148.dp else 188.dp
+
+            Column(Modifier.fillMaxSize()) {
+                if (shellCache == null) {
+                    LocalContentTopChrome(
+                        wide = wide,
+                        shortViewport = shortViewport,
+                        navigation = { navModifier ->
+                            if (onTabChange != null) {
+                                ModsMapsSegmentedControl(
+                                    selected = selectedTab,
+                                    onSelect = onTabChange,
+                                    enabled = !busy,
+                                    compact = shortViewport,
+                                    modifier = if (wide) {
+                                        navModifier.width(if (availableWidth < 700.dp) 224.dp else 264.dp)
+                                    } else {
+                                        navModifier
+                                    },
+                                )
+                            } else {
+                                Text(
+                                    readI18n("maps.title"),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = navModifier,
+                                )
+                            }
+                        },
+                        wideTools = {
+                            MapsHeaderTools(
+                                filter = filter,
+                                onFilterChange = ::setFilter,
+                                count = if (fileLoad.isReady) filtered.size else null,
+                                busy = busy,
+                                wide = true,
+                                showCountBadge = availableWidth >= 680.dp,
+                            )
+                        },
+                        narrowTools = {
+                            MapsHeaderTools(
+                                filter = filter,
+                                onFilterChange = ::setFilter,
+                                count = if (fileLoad.isReady) filtered.size else null,
+                                busy = busy,
+                                wide = false,
+                                showCountBadge = true,
+                            )
+                        },
+                        onClose = if (!embedded) onExit else null,
+                        reserveTrailingCloseSpace = embedded,
+                        busy = busy,
+                    )
+                }
+
+                when {
+                    !fileLoad.isReady -> PageFileLoading(
+                        state = fileLoad,
+                        pageTitle = readI18n("common.map"),
+                        onRetry = { scope.launch { refreshMaps() } },
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                    )
+                    filtered.isEmpty() -> {
+                        val isFiltered = filter.isNotBlank()
+                        LocalContentEmptyState(
+                            message = readI18n(if (isFiltered) "maps.emptyFiltered" else "maps.empty"),
+                            iconPainter = painterResource(Res.drawable.launcher_maps),
+                            actionLabel = if (isFiltered) readI18n("replays.resetFilters") else null,
+                            onAction = if (isFiltered) ({ setFilter("") }) else null,
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                        )
+                    }
+                    else -> {
+                        val gridState = rememberLazyGridState()
+                        val horizontalPad = if (wide) 16.dp else 12.dp
+                        LazyVerticalGrid(
+                            state = gridState,
+                            columns = GridCells.Adaptive(gridMinCell),
+                            modifier = Modifier.weight(1f).fillMaxWidth().testTag("mapsGrid"),
+                            contentPadding = PaddingValues(
+                                start = horizontalPad,
+                                end = horizontalPad,
+                                top = if (shortViewport) 8.dp else 12.dp,
+                                bottom = 14.dp,
+                            ),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            deleteMap(map)
-                            dismiss()
+                            items(
+                                items = filtered,
+                                key = { it.map.file.absolutePath },
+                            ) { entry ->
+                                CustomMapCard(
+                                    entry = entry,
+                                    onDelete = { pendingDelete = entry.map },
+                                )
+                            }
                         }
                     }
                 }
-            }
-        }
-    }
 
-    @Composable
-    fun SearchField(modifier: Modifier = Modifier) {
-        RWSingleOutlinedTextField(
-            readI18n("maps.search"),
-            filter,
-            modifier = modifier,
-            leadingIcon = { Icon(Icons.Default.Search, null, tint = MaterialTheme.colorScheme.surfaceTint) },
-            trailingIcon = if (filter.isNotBlank()) {
-                {
-                    IconButton(
-                        onClick = { filter = "" },
-                        modifier = Modifier.size(36.dp),
-                    ) {
-                        Icon(Icons.Default.Close, null, tint = MaterialTheme.colorScheme.surfaceTint)
-                    }
-                }
-            } else {
-                null
-            },
-        ) { filter = it }
-    }
-
-    @Composable
-    fun MapsTopBar() {
-        // 与模组页一致：顶栏单行（分段 + 数量 + 搜索图标）
-        var searchExpanded by remember { mutableStateOf(filter.isNotBlank()) }
-        LaunchedEffect(filter) {
-            if (filter.isNotBlank()) searchExpanded = true
-        }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(
-                    start = 12.dp,
-                    top = if (embedded) 8.dp else 12.dp,
-                    end = if (embedded || compact) 10.dp else 46.dp,
-                    bottom = 6.dp,
-                ),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            if (onTabChange != null) {
-                ModsMapsSegmentedControl(
-                    selected = selectedTab,
-                    onSelect = onTabChange,
-                    modifier = Modifier.width(176.dp),
-                )
-            } else {
-                Text(
-                    readI18n("maps.title"),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-
-            if (searchExpanded) {
-                SearchField(modifier = Modifier.weight(1f))
-                IconButton(
-                    onClick = {
-                        filter = ""
-                        searchExpanded = false
-                    },
-                    modifier = Modifier.size(36.dp),
-                ) {
-                    Icon(
-                        Icons.Default.Close,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                LocalContentBottomBar(shortViewport = shortViewport) {
+                    val buttonHeight = if (shortViewport) 40.dp else 44.dp
+                    val actionsReady = fileLoad.isReady && importProgress == null && pendingOverwrite == null && pendingDelete == null
+                    LocalContentSecondaryButton(
+                        text = readI18n("maps.refresh"),
+                        leadingIcon = Icons.Default.Refresh,
+                        enabled = actionsReady,
+                        minHeight = buttonHeight,
+                        onClick = { scope.launch { refreshMaps() } },
+                        modifier = Modifier.testTag("mapsRefresh"),
                     )
-                }
-            } else {
-                MapCountPill(filtered.size)
-                Spacer(modifier = Modifier.weight(1f))
-                IconButton(
-                    onClick = { searchExpanded = true },
-                    modifier = Modifier.size(36.dp),
-                ) {
-                    Icon(
-                        Icons.Default.Search,
-                        contentDescription = readI18n("maps.search"),
-                        tint = MaterialTheme.colorScheme.primary,
+                    Spacer(Modifier.weight(1f))
+                    LocalContentPrimaryButton(
+                        text = readI18n("maps.import"),
+                        leadingPainter = painterResource(Res.drawable.file_open),
+                        enabled = fileLoad.isReady && importProgress == null && pendingOverwrite == null,
+                        minHeight = buttonHeight,
+                        onClick = {
+                            suppressPrepareProgress = false
+                            appKoin.get<ExternalHandler>().openFileChooser(
+                                onProgress = { updateFileChooseProgress(it) },
+                            ) { file -> importMapFile(file) }
+                        },
+                        modifier = Modifier.testTag("mapsImport"),
                     )
                 }
             }
         }
     }
 
-    @Composable
-    fun MapsBody(modifier: Modifier = Modifier) {
-        Column(modifier = modifier.fillMaxSize()) {
-            MapsTopBar()
-
-            if (!fileLoad.isReady) {
-                PageFileLoading(
-                    state = fileLoad,
-                    pageTitle = readI18n("common.map"),
-                    onRetry = { scope.launch { refreshMaps() } },
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else if (filtered.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 24.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Image(
-                            painter = painterResource(Res.drawable.error_missingmap),
-                            contentDescription = null,
-                            modifier = Modifier
-                                .size(72.dp)
-                                .clip(RoundedCornerShape(10.dp)),
-                            contentScale = ContentScale.Crop,
-                            alpha = 0.55f,
-                        )
-                        Text(
-                            if (filter.isNotBlank()) {
-                                readI18n("maps.emptyFiltered")
-                            } else {
-                                readI18n("maps.empty")
-                            },
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            } else {
-                val gridState = rememberLazyGridState()
-                LazyVerticalGrid(
-                    state = gridState,
-                    columns = GridCells.Adaptive(180.dp),
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(start = 16.dp, end = if (embedded || compact) 10.dp else 46.dp),
-                    contentPadding = PaddingValues(bottom = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    items(
-                        items = filtered,
-                        key = { it.map.file.absolutePath },
-                    ) { entry ->
-                        CustomMapCard(
-                            entry = entry,
-                            onDelete = { pendingDelete = entry.map },
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    Scaffold(
-        containerColor = Color.Transparent,
-        bottomBar = {
-            FlowRow(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                RWTextButton(
-                    readI18n("maps.refresh"),
-                    leadingIcon = {
-                        Icon(Icons.Default.Refresh, null, modifier = Modifier.size(28.dp))
-                    },
-                    modifier = Modifier.padding(horizontal = 4.dp).alpha(if (fileLoad.isReady) 1f else 0.5f),
-                ) {
-                    if (!fileLoad.isReady || importProgress != null || pendingOverwrite != null || pendingDelete != null) return@RWTextButton
-                    scope.launch { refreshMaps() }
-                }
-
-                RWTextButton(
-                    readI18n("maps.import"),
-                    leadingIcon = {
-                        Icon(
-                            painterResource(Res.drawable.file_open),
-                            null,
-                            modifier = Modifier.size(28.dp),
-                        )
-                    },
-                    modifier = Modifier.padding(horizontal = 4.dp).alpha(if (fileLoad.isReady) 1f else 0.5f),
-                ) {
-                    if (!fileLoad.isReady || importProgress != null || pendingOverwrite != null) return@RWTextButton
-                    suppressPrepareProgress = false
-                    appKoin.get<ExternalHandler>().openFileChooser(
-                        onProgress = { updateFileChooseProgress(it) },
-                    ) { file -> importMapFile(file) }
-                }
-            }
-        },
-    ) { paddingValues ->
-        if (embedded) {
-            MapsBody(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues),
-            )
-        } else {
-            ExpandedCard {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(paddingValues),
-                ) {
-                    MapsBody(modifier = Modifier.fillMaxSize())
-                    ExitButton { onExit() }
-                }
-            }
+    if (embedded) {
+        MapsWorkspace(modifier = Modifier.fillMaxSize())
+    } else {
+        ExpandedCard {
+            MapsWorkspace(modifier = Modifier.fillMaxSize())
         }
     }
 }
@@ -658,21 +676,26 @@ private fun CustomMapCard(
 ) {
     val map = entry.map
     val thumb = entry.thumbnail
-    val thumbShape = RoundedCornerShape(8.dp)
+    val thumbShape = RoundedCornerShape(10.dp)
+    val deleteLabel = readI18n("mod.delete")
 
-    BorderCard(
+    Surface(
         modifier = Modifier.fillMaxWidth(),
-        backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(.7f),
+        shape = RoundedCornerShape(14.dp),
+        color = localContentCardColor(),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        border = BorderStroke(1.dp, localContentCardBorderColor()),
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(10.dp),
+            modifier = Modifier.fillMaxWidth().padding(9.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(16f / 10f)
-                    .clip(thumbShape),
+                    .clip(thumbShape)
+                    .background(Color.Black.copy(alpha = 0.25f)),
             ) {
                 if (thumb != null) {
                     AsyncImage(
@@ -690,39 +713,64 @@ private fun CustomMapCard(
                     )
                 }
 
-                IconButton(
-                    onClick = onDelete,
+                // 轻薄暗角渐变，增强预览层次并确保右上角删除徽章在亮色地图上清晰可见
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                colorStops = arrayOf(
+                                    0f to Color.Black.copy(alpha = 0.22f),
+                                    0.45f to Color.Transparent,
+                                    1f to Color.Black.copy(alpha = 0.34f),
+                                ),
+                            ),
+                        ),
+                )
+
+                Surface(
+                    shape = CircleShape,
+                    color = Color.Black.copy(alpha = 0.58f),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)),
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .padding(2.dp)
-                        .size(32.dp),
+                        .padding(6.dp)
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .semantics { contentDescription = deleteLabel }
+                        .clickable(role = Role.Button, onClick = onDelete),
                 ) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = readI18n("mod.delete"),
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(20.dp),
-                    )
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = null,
+                            tint = Color(0xFFFF8A80),
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                 }
             }
 
             Text(
                 map.displayName(),
                 style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 2.dp),
             )
 
             Row(
+                modifier = Modifier.padding(horizontal = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                MapMetadataPill(
+                LocalContentMetaPill(
                     text = readI18n("maps.extensionTmx"),
                     color = MaterialTheme.colorScheme.secondary,
                 )
-                MapMetadataPill(
+                LocalContentMetaPill(
                     text = entry.sizeLabel,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

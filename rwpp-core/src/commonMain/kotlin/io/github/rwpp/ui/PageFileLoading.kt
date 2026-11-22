@@ -36,10 +36,11 @@ import kotlinx.coroutines.withContext
 /** UI-owned state for file-only reads. Engine snapshots must be captured before calling [load]. */
 internal class PageFileLoadState<T : Any>(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    initialValue: T? = null,
 ) {
-    var value: T? by mutableStateOf(null)
+    var value: T? by mutableStateOf(initialValue)
         private set
-    var isLoading by mutableStateOf(true)
+    var isLoading by mutableStateOf(initialValue == null)
         private set
     var failure: Exception? by mutableStateOf(null)
         private set
@@ -77,8 +78,8 @@ internal class PageFileLoadState<T : Any>(
 }
 
 @Composable
-internal fun <T : Any> rememberPageFileLoadState(): PageFileLoadState<T> {
-    val state = remember { PageFileLoadState<T>() }
+internal fun <T : Any> rememberPageFileLoadState(initialValue: T? = null): PageFileLoadState<T> {
+    val state = remember { PageFileLoadState(initialValue = initialValue) }
     DisposableEffect(state) { onDispose { state.close() } }
     return state
 }
