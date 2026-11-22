@@ -9,8 +9,18 @@ package io.github.rwpp.config
 
 import io.github.rwpp.logger
 import io.github.rwpp.utils.setPropertyFromObject
+import kotlinx.serialization.InternalSerializationApi
+import kotlinx.serialization.serializer
+import net.peanuuutz.tomlkt.Toml
 import org.koin.core.component.KoinComponent
 import kotlin.reflect.KClass
+
+private val savedConfigToml = Toml { ignoreUnknownKeys = true }
+
+/** Old settings files can still carry addresses that are now runtime-only. */
+@OptIn(InternalSerializationApi::class)
+fun <T : Config> decodeSavedConfig(clazz: KClass<T>, source: String): T =
+    savedConfigToml.decodeFromString(clazz.serializer(), source)
 
 /**
  * An interface that describes all operations related to configuring reads and writes.

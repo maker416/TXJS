@@ -7,7 +7,6 @@
 
 package io.github.rwpp.ui
 
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -36,7 +35,6 @@ import io.github.rwpp.i18n.reloadI18n
 import io.github.rwpp.i18n.setI18nOverride
 import io.github.rwpp.logger
 import io.github.rwpp.modDir
-import io.github.rwpp.widget.ExitButton
 import io.github.rwpp.widget.defaultRWPPColorScheme
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -86,9 +84,19 @@ class ModsLayoutUiTest {
             modules(module {
                 single { Settings(enableAnimations = false) }
                 single<ModManager> {
-                    stub(ModManager::class.java) { name, _ ->
+                    stub(ModManager::class.java) { name, args ->
                         when (name) {
                             "getAllMods" -> fixtures
+                            "modReload" -> {
+                                fixtures = fixtures.filter { File(it.path).exists() }
+                                Unit
+                            }
+                            "deleteModFile" -> {
+                                assertFalse(SwingUtilities.isEventDispatchThread())
+                                val file = args!!.single() as File
+                                assertEquals(fixtureRoot, file.parentFile)
+                                file.delete()
+                            }
                             "getKoin" -> appKoin
                             else -> error("Unexpected ModManager access: $name")
                         }
@@ -204,6 +212,28 @@ class ModsLayoutUiTest {
             onNodeWithTag("mod-row-1").assertIsDisplayed()
             onNodeWithTag("mod-switch-1").assertIsOff()
             onNodeWithTag("mod-row-2").assertDoesNotExist()
+        }
+
+    @Test
+    fun confirmingDeleteRemovesTheSelectedDisabledMod() =
+        runDesktopComposeUiTest(width = 720, height = 360) {
+            val exited = java.util.concurrent.atomic.AtomicBoolean(false)
+            setContent { TestPage { exited.set(true) } }
+            awaitInitialFiles()
+            val target = File(fixtures.single { it.id == 7 }.path)
+            onNodeWithTag("mod-row-7").performClick()
+            onNodeWithTag("mod-delete").performClick()
+            onNodeWithText(readI18n("mod.deleteConfirmTitle")).assertExists()
+            assertTrue(target.exists())
+            onNodeWithText(readI18n("mod.delete")).performClick()
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithTag("mod-row-7").fetchSemanticsNodes().isEmpty()
+            }
+            assertFalse(target.exists())
+            onNodeWithTag("mod-row-8").assertExists()
+            onNodeWithContentDescription(readI18n("common.close")).performClick()
+            waitUntil(timeoutMillis = 5_000) { exited.get() }
+            assertFalse(fixtures.any { it.id == 7 })
         }
 
     @Test
@@ -343,10 +373,7 @@ class ModsLayoutUiTest {
                         color = MaterialTheme.colorScheme.background,
                         contentColor = MaterialTheme.colorScheme.onSurface,
                     ) {
-                        Box(Modifier.fillMaxSize()) {
-                            ModsView(onExit, selectedTab = ModsMapsTab.Mods, onTabChange = {}, embedded = true)
-                            ExitButton(onExit)
-                        }
+                        ModsView(onExit, selectedTab = ModsMapsTab.Mods, onTabChange = {}, embedded = true)
                     }
                 }
             }

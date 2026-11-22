@@ -32,6 +32,28 @@ fun detectModSourceType(file: File): ModSourceType {
 fun deleteModFileSafely(
     file: File,
     allowedRoots: List<File> = listOf(File(modDir), File(internalModDir))
+): Boolean = deleteModFileSafely(file, allowedRoots, File::delete)
+
+/** The UI captures the engine path before dispatching this file operation to IO. */
+fun deleteInstalledModFile(
+    file: File,
+    cache: NetworkModCache,
+    withReleasedArchive: (File, () -> Boolean) -> Boolean = { _, remove -> remove() },
+): Boolean {
+    val source = archiveFile(file.path)?.takeIf(File::isFile) ?: file
+    return deleteModFileSafely(source, listOf(File(modDir), File(internalModDir))) { target ->
+        withReleasedArchive(target) {
+            if (target.name.endsWith(NetworkModCacheFiles.ACTIVE_SUFFIX)) {
+                cache.deleteManagedWorkingCopy(target) ?: target.delete()
+            } else target.delete()
+        }
+    }
+}
+
+private fun deleteModFileSafely(
+    file: File,
+    allowedRoots: List<File>,
+    removeFile: (File) -> Boolean,
 ): Boolean {
     return runCatching {
         if (!file.exists()) return@runCatching false
@@ -48,7 +70,7 @@ fun deleteModFileSafely(
         if (target.isDirectory) {
             target.deleteRecursively()
         } else {
-            target.delete()
+            removeFile(target)
         }
     }.getOrDefault(false)
 }
@@ -70,6 +92,8 @@ interface Mod {
     val errorMessage: String?
     var isEnabled: Boolean
     val path: String
+    /** Exact source selected by the engine. A read fallback may refer to a different mod with the same name. */
+    val deletionPath: String get() = path
     val sourceType: ModSourceType
         get() = detectModSourceType(File(path))
 
@@ -88,7 +112,7 @@ interface Mod {
         get() = ContentProfiles.isExpansionPath(path)
 
     fun tryDelete(): Boolean {
-        return deleteModFileSafely(File(path))
+        return deleteModFileSafely(File(deletionPath))
     }
 
     fun getRamUsed(): String

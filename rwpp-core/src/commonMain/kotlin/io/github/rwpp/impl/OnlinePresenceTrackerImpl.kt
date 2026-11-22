@@ -11,6 +11,7 @@ import com.eclipsesource.json.Json
 import io.github.rwpp.AppContext
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.DEFAULT_ONLINE_CHANNEL
+import io.github.rwpp.config.DEFAULT_ONLINE_PRESENCE_API_URL
 import io.github.rwpp.config.OnlinePresencePreferences
 import io.github.rwpp.config.normalizeOnlinePresenceBaseUrl
 import io.github.rwpp.core.Initialization
@@ -22,7 +23,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaType
@@ -37,97 +41,86 @@ import kotlin.random.Random
 class OnlinePresenceTrackerImpl : OnlinePresenceTracker, KoinComponent {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var heartbeatJob: Job? = null
+    private val endpoint = MutableStateFlow(DEFAULT_ONLINE_PRESENCE_API_URL)
 
-    @Volatile
-    private var sessionId: String? = null
+    private data class PresenceSession(val id: String, val heartbeatIntervalSec: Int)
 
-    @Volatile
-    private var heartbeatIntervalSec: Int = 15
-
-    @Volatile
-    private var deviceId: String? = null
-
-    // 同一进程固定服务节点，设置页编辑地址不会把已有会话的心跳发往新节点。
-    private val baseUrl: String by lazy {
-        normalizeOnlinePresenceBaseUrl(get<OnlinePresencePreferences>().apiUrl)
+    override fun refreshEndpoint() {
+        endpoint.value = normalizeOnlinePresenceBaseUrl(get<OnlinePresencePreferences>().apiUrl)
     }
 
     override fun init() {
-        // 两端均在读取持久化配置后初始化；新地址在重启后生效。
-        baseUrl
+        refreshEndpoint()
         val appContext = get<AppContext>()
         appContext.onExit { stop() }
-        startHeartbeatLoop()
+        if (heartbeatJob?.isActive != true) {
+            heartbeatJob = scope.launch { endpoint.collectLatest { runHeartbeatLoop(it) } }
+        }
     }
 
     override fun stop() {
         heartbeatJob?.cancel()
         heartbeatJob = null
-        sessionId = null
     }
 
-    private fun startHeartbeatLoop() {
-        if (heartbeatJob?.isActive == true) return
-
-        heartbeatJob = scope.launch {
-            val registrationBackoffSec = listOf(0L, 5L, 10L, 30L)
-
-            while (isActive) {
-                if (sessionId == null) {
-                    var registered = false
-                    for (backoff in registrationBackoffSec) {
-                        if (!isActive) return@launch
-                        if (backoff > 0) delay(backoff * 1000L)
-                        val registeredNow = runCatching { registerSession() }.getOrElse { error ->
-                            logger.debug("Online presence registration failed: ${error.message}")
-                            false
-                        }
-                        if (registeredNow) {
-                            registered = true
-                            break
-                        }
+    private suspend fun runHeartbeatLoop(baseUrl: String) = coroutineScope {
+        val registrationBackoffSec = listOf(0L, 5L, 10L, 30L)
+        var session: PresenceSession? = null
+        var deviceId: String? = null
+        while (isActive) {
+            if (session == null) {
+                for (backoff in registrationBackoffSec) {
+                    if (!isActive) return@coroutineScope
+                    if (backoff > 0) delay(backoff * 1000L)
+                    session = runCatching {
+                        deviceId = deviceId ?: resolveDeviceId(baseUrl)
+                        registerSession(baseUrl, deviceId)
+                    }.getOrElse { error ->
+                        logger.debug("Online presence registration failed: ${error.message}")
+                        null
                     }
-                    if (!registered) {
-                        delay(30_000L)
-                        continue
-                    }
+                    if (session != null) break
                 }
+            }
 
-                val jitterSec = Random.nextInt(-1, 2)
-                val waitSec = (heartbeatIntervalSec + jitterSec).coerceAtLeast(5)
-                delay(waitSec * 1000L)
-                if (!isActive) return@launch
+            val activeSession = session
+            if (activeSession == null) {
+                delay(30_000L)
+                continue
+            }
+            val jitterSec = Random.nextInt(-1, 2)
+            val waitSec = (activeSession.heartbeatIntervalSec + jitterSec).coerceAtLeast(5)
+            delay(waitSec * 1000L)
+            if (!isActive) return@coroutineScope
 
-                val statusCode = runCatching { sendHeartbeat() }.getOrElse { error ->
-                    logger.debug("Online presence heartbeat failed: ${error.message}")
-                    -1
+            val statusCode = runCatching { sendHeartbeat(baseUrl, activeSession.id) }.getOrElse { error ->
+                logger.debug("Online presence heartbeat failed: ${error.message}")
+                -1
+            }
+
+            when (statusCode) {
+                200, -1 -> Unit
+                404 -> {
+                    logger.info("Online presence session expired, re-registering")
+                    session = null
                 }
-
-                when (statusCode) {
-                    200 -> Unit
-                    404 -> {
-                        logger.info("Online presence session expired, re-registering")
-                        sessionId = null
-                    }
-                    -1 -> Unit
-                    else -> logger.debug("Online presence heartbeat returned HTTP $statusCode")
-                }
+                else -> logger.debug("Online presence heartbeat returned HTTP $statusCode")
             }
         }
     }
 
-    private fun registerSession(): Boolean {
+    private fun registerSession(baseUrl: String, deviceId: String?): PresenceSession? {
         val appContext = get<AppContext>()
         val platform = when {
             appContext.isAndroid() -> "android"
             appContext.isDesktop() -> "windows"
             else -> {
                 logger.warn("Online presence: unknown platform, skipping registration")
-                return false
+                return null
             }
         }
 
-        val deviceField = resolveDeviceId()?.let { ""","device_id":"$it"""" } ?: ""
+        val deviceField = deviceId?.let { ""","device_id":"$it"""" } ?: ""
         val body = """{"platform":"$platform","version":"$projectVersion","channel":"$DEFAULT_ONLINE_CHANNEL"$deviceField}"""
             .toRequestBody(JSON_MEDIA_TYPE)
         val request = Request.Builder()
@@ -143,26 +136,25 @@ class OnlinePresenceTrackerImpl : OnlinePresenceTracker, KoinComponent {
                     "Online presence registration failed: HTTP ${response.code}" +
                         if (errorBody.isNotEmpty()) " ($errorBody)" else ""
                 )
-                return false
+                return null
             }
 
             val responseBody = response.body?.string()
             if (responseBody.isNullOrBlank()) {
                 logger.debug("Online presence registration returned empty body")
-                return false
+                return null
             }
 
             val json = Json.parse(responseBody).asObject()
             val id = json.getString("session_id", "").trim()
             if (id.isEmpty()) {
                 logger.debug("Online presence registration missing session_id")
-                return false
+                return null
             }
 
-            sessionId = id
-            heartbeatIntervalSec = json.getInt("heartbeat_interval_sec", 15).coerceAtLeast(5)
-            logger.info("Online presence session registered ($platform), interval=${heartbeatIntervalSec}s")
-            return true
+            val interval = json.getInt("heartbeat_interval_sec", 15).coerceAtLeast(5)
+            logger.info("Online presence session registered ($platform), interval=${interval}s")
+            return PresenceSession(id, interval)
         }
     }
 
@@ -171,14 +163,12 @@ class OnlinePresenceTrackerImpl : OnlinePresenceTracker, KoinComponent {
      * 只要应用数据不被清除（卸载重装、清数据）就一直沿用，升级不受影响。
      * 申请失败返回 null，本次注册不带 device_id（服务端回退按 IP 统计）。
      */
-    private fun resolveDeviceId(): String? {
-        deviceId?.let { return it }
-
+    private fun resolveDeviceId(baseUrl: String): String? {
         val configIO = get<ConfigIO>()
-        val saved = configIO.readSingleConfig(CONFIG_GROUP, DEVICE_ID_KEY)?.trim()
-        if (!saved.isNullOrEmpty()) {
-            deviceId = saved
-            return saved
+        val isDefaultEndpoint = baseUrl == normalizeOnlinePresenceBaseUrl(DEFAULT_ONLINE_PRESENCE_API_URL)
+        if (isDefaultEndpoint) {
+            val saved = configIO.readSingleConfig(CONFIG_GROUP, DEVICE_ID_KEY)?.trim()
+            if (!saved.isNullOrEmpty()) return saved
         }
 
         val request = Request.Builder()
@@ -200,9 +190,7 @@ class OnlinePresenceTrackerImpl : OnlinePresenceTracker, KoinComponent {
                     if (id == null) {
                         null
                     } else {
-                        configIO.saveSingleConfig(CONFIG_GROUP, DEVICE_ID_KEY, id)
-                        deviceId = id
-                        logger.info("Online presence device id issued and saved")
+                        if (isDefaultEndpoint) configIO.saveSingleConfig(CONFIG_GROUP, DEVICE_ID_KEY, id)
                         id
                     }
                 }
@@ -213,8 +201,7 @@ class OnlinePresenceTrackerImpl : OnlinePresenceTracker, KoinComponent {
         }
     }
 
-    private fun sendHeartbeat(): Int {
-        val id = sessionId ?: return -1
+    private fun sendHeartbeat(baseUrl: String, id: String): Int {
         val request = Request.Builder()
             .url("$baseUrl/api/v1/sessions/$id/heartbeat")
             .post(EMPTY_BODY)

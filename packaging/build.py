@@ -21,6 +21,8 @@ import tarfile
 import tempfile
 import zipfile
 from datetime import datetime
+from urllib.error import HTTPError
+from urllib.request import urlopen
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -299,32 +301,67 @@ def desktop_jar(root, version):
     return jars[0]
 
 
-def stage_android_update(root, stage, source, version):
-    profile_path = root / "build/client-api-official.json"
-    if not profile_path.is_file():
-        return
-    profile = json.loads(profile_path.read_text(encoding="utf-8-sig"))
-    index_root = profile.get("updateApiUrl", "").strip()
-    if not index_root.endswith("/"):
-        return
-    uri = urlsplit(index_root)
-    if (uri.scheme != "https" or not uri.hostname or uri.username is not None or uri.query or uri.fragment
-            or not re.fullmatch(r"/(?:[A-Za-z0-9][A-Za-z0-9._-]*/)*", uri.path)):
-        raise ValueError("updateApiUrl 的索引目录必须是以 / 结尾的 HTTPS 地址。")
-    if not re.fullmatch(r"\d+\.\d+\.\d+", version) or source.stat().st_size <= 0:
-        raise ValueError("客户端更新版本无效或安装包为空。")
+def read_update_index(index_url):
+    try:
+        with urlopen(index_url, timeout=12) as response:
+            return json.load(response)
+    except HTTPError as error:
+        if error.code != 404:
+            raise
+        return {"tag_name": "latest", "assets": []}
 
-    upload_dir = stage / "upneed" / uri.path.strip("/") / "android"
-    version_dir = upload_dir / version
-    version_dir.mkdir(parents=True)
-    installer = version_dir / f"RWJS-Android-{version}.apk"
-    shutil.copy2(source, installer)
-    checksum = installer.with_suffix(".apk.sha256")
-    checksum.write_text(f"{file_hash(installer)}  {installer.name}\n", encoding="ascii")
-    assets = [{"name": path.name, "browser_download_url": f"{index_root}android/{version}/{path.name}",
-               "size": path.stat().st_size} for path in (installer, checksum)]
-    index = {"tag_name": f"v{version}", "body": "", "prerelease": False, "assets": assets}
-    (upload_dir / "latest.json").write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
+
+def write_update_bundle(dest, index_url, version, installers=None, kernel_files=()):
+    installers = installers or {}
+    uri = urlsplit(index_url)
+    if (uri.scheme != "https" or not uri.hostname or uri.username is not None or uri.query or uri.fragment
+            or not re.fullmatch(r"/(?:[A-Za-z0-9][A-Za-z0-9._-]*/)*version\.json", uri.path)):
+        raise ValueError("R2 更新清单必须使用有效的 HTTPS version.json 地址。")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise ValueError("客户端更新版本无效。")
+    index_base = index_url.removesuffix("version.json")
+    previous = read_update_index(index_url)
+    if not isinstance(previous, dict) or not previous.get("tag_name") or not isinstance(previous.get("assets"), list):
+        raise ValueError("现有 R2 更新清单无效。")
+    assets = {}
+    for asset in previous["assets"]:
+        name, download_url = asset.get("name"), asset.get("browser_download_url")
+        if not name or not download_url:
+            raise ValueError("现有 R2 清单存在无效文件项。")
+        if re.fullmatch(r"RWJS-Browser-[A-Za-z0-9_.+-]+\.(json|kernel\.\d{3})", name) and download_url == f"https://{uri.netloc}/{name}":
+            asset = dict(asset, browser_download_url=index_base + name)
+        assets[name] = asset
+
+    upload_dir = dest / "upneed" / uri.path.removesuffix("version.json").strip("/")
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    versions = {}
+    for platform, stem, extension in (("windows", "RWJS-Setup", ".exe"), ("android", "RWJS-Android", ".apk")):
+        if platform in installers:
+            installer = upload_dir / f"{stem}-{version}{extension}"
+            shutil.copy2(installers[platform], installer)
+            if installer.stat().st_size <= 0:
+                raise ValueError("客户端安装包为空。")
+            checksum = installer.with_suffix(extension + ".sha256")
+            checksum.write_text(f"{file_hash(installer)}  {installer.name}\n", encoding="ascii")
+            assets = {name: asset for name, asset in assets.items() if not name.lower().endswith((extension, extension + ".sha256"))}
+            for path in (installer, checksum):
+                assets[path.name] = {"name": path.name, "browser_download_url": index_base + path.name, "size": path.stat().st_size}
+            versions[platform] = f"v{version}"
+        else:
+            prior_versions = previous.get("platform_versions")
+            prior_version = prior_versions.get(platform) if prior_versions is not None else (
+                previous["tag_name"] if any(name.lower().endswith(extension) for name in assets) else None
+            )
+            if prior_version:
+                versions[platform] = prior_version
+    for path in kernel_files:
+        shutil.copy2(path, upload_dir)
+        assets[path.name] = {"name": path.name, "browser_download_url": index_base + path.name, "size": path.stat().st_size}
+    index = {"tag_name": f"v{version}" if installers else previous["tag_name"], "body": previous.get("body", ""),
+             "prerelease": not installers and previous.get("prerelease", False), "platform_versions": versions,
+             "assets": list(assets.values())}
+    (upload_dir / "version.json").write_text(json.dumps(index, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return upload_dir
 
 
 def collect(root, target, args, jdk, source):
@@ -339,6 +376,7 @@ def collect(root, target, args, jdk, source):
             subdir += "-api-" + args.api_profile
     artifacts = root / "build/artifacts"
     artifacts.mkdir(parents=True, exist_ok=True)
+    update_upload = None
     with tempfile.TemporaryDirectory(prefix=".collect-", dir=artifacts) as temp:
         stage = Path(temp) / "output"
         stage.mkdir()
@@ -374,16 +412,37 @@ def collect(root, target, args, jdk, source):
                 raise ValueError("必须生成唯一已签名 APK，拒绝收集缺失、unsigned 或不明确的旧产物。")
             shutil.copy2(apks[0], stage / f"RWJS-Android-{version}-{variant}.apk")
             split_update(apks[0], stage, "RWJS-Android")
-            if target == "android-release" and args.channel == "official" and args.api_profile == "official":
-                stage_android_update(root, stage, apks[0], version)
             (stage / "发布说明.txt").write_text("上传全部 RWJS-Android.zip.001/.002/... 和 RWJS-Android.zip.sha256；完整 APK 供本地安装。\n"
                 "分卷保留原 APK 签名；正式发布仅使用 android-release 且沿用原签名。\n", encoding="utf-8")
         elif target == "browser-kernels":
-            files = list((root / "build/browser-kernels").glob("*/RWJS-Browser-*"))
+            output = root / "build/browser-kernels"
+            files = sorted(
+                path for directory in ("android", "desktop")
+                for path in (output / directory).glob("RWJS-Browser-*")
+                if path.is_file() and re.fullmatch(r"RWJS-Browser-.+\.(json|kernel\.[0-9]{3})", path.name)
+            )
             if not files:
                 raise ValueError("浏览器内核附件未生成")
-            for path in files:
-                shutil.copy2(path, stage)
+            profile_path = root / f"build/client-api-{args.api_profile}.json"
+            profile = json.loads(profile_path.read_text(encoding="utf-8-sig")) if profile_path.is_file() else {}
+            index_url = profile.get("browserKernelApiUrl", "").strip()
+            if index_url.endswith("/version.json"):
+                update_upload = write_update_bundle(artifacts / f"release-{version}", index_url, version, kernel_files=files)
+            else:
+                upload_dir = stage / "needup/update"
+                upload_dir.mkdir(parents=True)
+                for path in files:
+                    shutil.copy2(path, upload_dir)
+                uri = urlsplit(index_url)
+                use_default_path = uri.scheme == "https" and uri.path in ("", "/", "/latest.json")
+                if use_default_path or index_url.endswith("/latest.json"):
+                    if uri.scheme != "https" or not uri.hostname or uri.username is not None or uri.query or uri.fragment:
+                        raise ValueError("browserKernelApiUrl 的静态索引必须是有效的 HTTPS 地址。")
+                    index_base = (f"https://{uri.netloc}/update/" if use_default_path
+                                  else uri.geturl().removesuffix("latest.json"))
+                    assets = [{"name": path.name, "browser_download_url": index_base + path.name} for path in files]
+                    index = json.dumps({"tag_name": "latest", "assets": assets}, indent=2)
+                    (upload_dir / "latest.json").write_text(index + "\n", encoding="utf-8")
         elif target == "test":
             copied = False
             for module in ("rwpp-core", "rwpp-core-api"):
@@ -403,9 +462,19 @@ def collect(root, target, args, jdk, source):
         if dest.exists():
             shutil.rmtree(dest)
         stage.rename(dest)
-    print(f"[DONE] 产物: {dest}", flush=True)
-    if (dest / "upneed").is_dir():
-        print(f"[DONE] R2 待上传文件: {dest / 'upneed'}", flush=True)
+    if target == "android-release" and args.channel == "official" and args.api_profile == "official":
+        profile_path = root / "build/client-api-official.json"
+        if profile_path.is_file():
+            index_url = json.loads(profile_path.read_text(encoding="utf-8-sig")).get("updateApiUrl", "").strip()
+            if index_url.endswith("/version.json"):
+                update_upload = write_update_bundle(artifacts / f"release-{version}", index_url, version,
+                                                    installers={"android": dest / f"RWJS-Android-{version}-release.apk"})
+    if update_upload is not None:
+        print(f"[DONE] R2 待上传文件: {update_upload}", flush=True)
+    elif target == "browser-kernels":
+        print(f"[DONE] 待上传的浏览器内核文件: {dest / 'needup/update'}", flush=True)
+    else:
+        print(f"[DONE] 产物: {dest}", flush=True)
 
 
 def file_hash(path):

@@ -8,6 +8,7 @@
 package io.github.rwpp.platform
 
 import io.github.rwpp.net.games.GamePortalException
+import io.github.rwpp.net.games.onlineGamePortalOrigin
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -16,7 +17,6 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.concurrent.atomic.AtomicLong
 
 /** 业务层持有账号快照；浏览器层仅传结构化请求，不接触 UAS Token 或开发者 Secret。 */
@@ -30,15 +30,8 @@ interface GamePortalBridge {
 
 class GamePortalBridgeException(val code: String, override val message: String) : Exception(message)
 
-/** 精确的 scheme/host/port；仅回环开发页面允许 HTTP，保留页面自身的 query/fragment。 */
-internal fun gamePortalOrigin(value: String): String? {
-    val url = value.toHttpUrlOrNull() ?: return null
-    if (url.username.isNotEmpty() || url.password.isNotEmpty()) return null
-    val loopback = url.host in setOf("localhost", "::1") ||
-        url.host.split('.').let { parts -> parts.size == 4 && parts.first() == "127" && parts.all { it.toIntOrNull() in 0..255 } }
-    if (!url.isHttps && !(url.scheme == "http" && loopback)) return null
-    return url.newBuilder().encodedPath("/").query(null).fragment(null).build().toString().removeSuffix("/")
-}
+/** 网页和客户端目录使用同一套来源规则，协议、主机和端口都必须匹配。 */
+internal fun gamePortalOrigin(value: String): String? = onlineGamePortalOrigin(value)
 
 /** 每次真实主文档导航作废旧请求；SPA 的 fragment/history 不额外建立授权文档。 */
 internal class GamePortalBrowserDispatcher(private val binding: GamePortalBridge) {

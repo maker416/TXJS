@@ -4,36 +4,83 @@ Copyright 2023-2025 RWPP contributors
 Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
 https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
 #>
-function Write-RwClientUpdateFiles {
-    param([string]$Source, [string]$Dest, [string]$IndexRoot,
-        [ValidateSet('windows', 'android')][string]$Platform, [string]$Version)
+function Read-RwUpdateIndex ([string]$IndexUrl) {
+    try {
+        $response = Invoke-WebRequest -Uri $IndexUrl -TimeoutSec 12 -UseBasicParsing
+        [Text.Encoding]::UTF8.GetString($response.RawContentStream.ToArray()).TrimStart([char]0xfeff) | ConvertFrom-Json
+    } catch {
+        if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 404) {
+            [pscustomobject]@{ tag_name = 'latest'; assets = @() }
+        } else { throw }
+    }
+}
+
+function Write-RwUpdateBundle {
+    param([string]$Dest, [string]$IndexUrl, [string]$Version,
+        [hashtable]$Installers = @{}, [IO.FileInfo[]]$KernelFiles = @())
     $uri = $null
-    if (-not [Uri]::TryCreate($IndexRoot, [UriKind]::Absolute, [ref]$uri) -or
+    if (-not [Uri]::TryCreate($IndexUrl, [UriKind]::Absolute, [ref]$uri) -or
         $uri.Scheme -ne 'https' -or -not $uri.Host -or $uri.UserInfo -or $uri.Query -or $uri.Fragment -or
-        $uri.AbsolutePath -cnotmatch '^/(?:[A-Za-z0-9][A-Za-z0-9._-]*/)*$') {
-        throw 'updateApiUrl 的索引目录必须是以 / 结尾的 HTTPS 地址。'
+        $uri.AbsolutePath -cnotmatch '^/(?:[A-Za-z0-9][A-Za-z0-9._-]*/)*version\.json$') {
+        throw 'R2 更新清单必须使用有效的 HTTPS version.json 地址。'
     }
     if ($Version -cnotmatch '^\d+\.\d+\.\d+$') { throw 'Invalid client update version' }
-    $sourceFile = Get-Item -LiteralPath $Source
-    if ($sourceFile.PSIsContainer -or $sourceFile.Length -le 0) { throw 'Client update installer is empty or missing' }
+    $indexBase = $uri.AbsoluteUri -creplace 'version\.json$', ''
+    $authority = $uri.GetLeftPart([UriPartial]::Authority)
+    $previous = Read-RwUpdateIndex $IndexUrl
+    if (-not $previous.tag_name -or $null -eq $previous.assets) { throw '现有 R2 更新清单无效。' }
+    $assets = [ordered]@{}
+    foreach ($asset in $previous.assets) {
+        $assetName = [string]$asset.name
+        if (-not $assetName -or -not $asset.browser_download_url) { throw '现有 R2 清单存在无效文件项。' }
+        if ($assetName -cmatch '^RWJS-Browser-[A-Za-z0-9_.+-]+\.(json|kernel\.\d{3})$' -and
+            $asset.browser_download_url -ceq "$authority/$assetName") {
+            $asset.browser_download_url = "$indexBase$assetName"
+        }
+        $assets[$assetName] = $asset
+    }
 
-    $name = if ($Platform -eq 'windows') { "RWJS-Setup-$Version.exe" } else { "RWJS-Android-$Version.apk" }
-    $uploadDir = Join-Path $Dest ('upneed' + $uri.AbsolutePath + $Platform)
-    $versionDir = Join-Path $uploadDir $Version
-    New-Item -ItemType Directory -Path $versionDir -Force | Out-Null
-    $installer = Join-Path $versionDir $name
-    Copy-Item -LiteralPath $sourceFile.FullName -Destination $installer
-    $installerSize = (Get-Item -LiteralPath $installer).Length
-    $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
-    Set-Content -LiteralPath "$installer.sha256" -Value "$hash  $name" -Encoding ASCII
-
-    $assetUrl = "$IndexRoot$Platform/$Version/$name"
-    $assets = @(
-        @{ name = $name; browser_download_url = $assetUrl; size = $installerSize }
-        @{ name = "$name.sha256"; browser_download_url = "$assetUrl.sha256"; size = (Get-Item -LiteralPath "$installer.sha256").Length }
-    )
-    $index = @{ tag_name = "v$Version"; body = ''; prerelease = $false; assets = $assets } | ConvertTo-Json -Depth 4
-    [IO.File]::WriteAllText((Join-Path $uploadDir 'latest.json'), $index)
+    $indexPath = ($uri.AbsolutePath -creplace 'version\.json$', '').Trim('/')
+    $uploadDir = Join-Path $Dest "upneed/$indexPath"
+    New-Item -ItemType Directory -Path $uploadDir -Force | Out-Null
+    $versions = [ordered]@{}
+    foreach ($platform in @('windows', 'android')) {
+        $extension = if ($platform -eq 'windows') { 'exe' } else { 'apk' }
+        $pattern = '\.' + $extension + '(\.sha256)?$'
+        if ($Installers.ContainsKey($platform)) {
+            $stem = if ($platform -eq 'windows') { 'RWJS-Setup' } else { 'RWJS-Android' }
+            $name = "$stem-$Version.$extension"
+            $installer = Join-Path $uploadDir $name
+            Copy-Item -LiteralPath $Installers[$platform] -Destination $installer
+            $size = (Get-Item -LiteralPath $installer).Length
+            if ($size -le 0) { throw 'Client update installer is empty' }
+            $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+            Set-Content -LiteralPath "$installer.sha256" -Value "$hash  $name" -Encoding ASCII
+            foreach ($key in @($assets.Keys | Where-Object { $_ -match $pattern })) { $assets.Remove($key) }
+            $assets[$name] = @{ name = $name; browser_download_url = "$indexBase$name"; size = $size }
+            $assets["$name.sha256"] = @{ name = "$name.sha256"; browser_download_url = "$indexBase$name.sha256"; size = (Get-Item -LiteralPath "$installer.sha256").Length }
+            $versions[$platform] = "v$Version"
+        } else {
+            $priorVersion = $previous.platform_versions.$platform
+            if (-not $priorVersion -and $null -eq $previous.platform_versions -and
+                @($assets.Keys | Where-Object { $_ -match ('\.' + $extension + '$') }).Count) {
+                $priorVersion = $previous.tag_name
+            }
+            if ($priorVersion) { $versions[$platform] = $priorVersion }
+        }
+    }
+    foreach ($file in $KernelFiles) {
+        Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $uploadDir $file.Name)
+        $assets[$file.Name] = @{ name = $file.Name; browser_download_url = "$indexBase$($file.Name)"; size = $file.Length }
+    }
+    $index = [ordered]@{
+        tag_name = if ($Installers.Count) { "v$Version" } else { $previous.tag_name }
+        body = [string]$previous.body
+        prerelease = (-not $Installers.Count -and [bool]$previous.prerelease)
+        platform_versions = $versions
+        assets = @($assets.Values)
+    } | ConvertTo-Json -Depth 6
+    [IO.File]::WriteAllText((Join-Path $uploadDir 'version.json'), $index)
     return $uploadDir
 }
 

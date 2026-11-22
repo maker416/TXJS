@@ -36,6 +36,7 @@ class DesktopNetworkModCache(
         val cacheRoot = encryptedRoot.apply { mkdirs() }
         val workRoot = workingRoot.apply { mkdirs() }
         entries.clear()
+        NetworkModCacheFiles.recoverInterruptedDeletes(cacheRoot, workRoot)
         cleanupWorkingCopies(workRoot)
         cacheRoot.listFiles().orEmpty().forEach { file ->
             if (file.name.endsWith(NetworkModCacheFiles.TEMP_SUFFIX) || file.name.contains(NetworkModCacheFiles.QUARANTINE_MARKER)) {
@@ -159,6 +160,26 @@ class DesktopNetworkModCache(
         prepareStartup()
         val file = runCatching { File(path).canonicalFile }.getOrNull() ?: return@synchronized null
         entries.values.firstOrNull { NetworkModCacheFiles.activeFile(workingRoot, it.descriptor).canonicalFile == file }?.descriptor
+    }
+
+    override fun deleteManagedWorkingCopy(file: File): Boolean? = synchronized(lock) {
+        val workRoot = workingRoot.canonicalFile
+        val target = file.canonicalFile
+        if (target.parentFile != workRoot || !target.name.endsWith(NetworkModCacheFiles.ACTIVE_SUFFIX)) {
+            return@synchronized null
+        }
+        val descriptor = descriptorForManagedPath(target.path) ?: return@synchronized null
+        // Startup exposes the newest remaining version with this exact name.
+        val versions = entries.values.filter { it.descriptor.name == descriptor.name }
+        val files = versions.flatMap { listOf(NetworkModCacheFiles.activeFile(workRoot, it.descriptor), it.cacheFile) }
+        try {
+            NetworkModCacheFiles.deleteAsGroup(encryptedRoot, files, workRoot)
+        } catch (error: Exception) {
+            cacheLogger.warn("Failed to delete network mod: {}", target, error)
+            return@synchronized false
+        }
+        versions.forEach { entries.remove(it.descriptor.cacheKey()) }
+        true
     }
 
     override fun cleanupWorkingCopiesOnExit() = synchronized(lock) {

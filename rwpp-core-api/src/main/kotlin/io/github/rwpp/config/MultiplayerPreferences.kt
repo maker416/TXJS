@@ -9,6 +9,7 @@ package io.github.rwpp.config
 
 import io.github.rwpp.rwpp_core_api.BuildConfig
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import org.koin.core.annotation.Single
 
 /** Default RWList service base URLs (no path); multiple mirrors separated by `;`. */
@@ -31,8 +32,8 @@ data class MultiplayerPreferences(
     var playerLimitRangeFrom: Int = 0,
     var playerLimitRangeTo: Int = 100,
     var joinServerAddress: String = "",
-    var roomListApiUrls: String = DEFAULT_ROOM_LIST_API_URLS,
-    var modSyncApiUrls: String = DEFAULT_MOD_SYNC_API_URLS,
+    @Transient @Volatile var roomListApiUrls: String = DEFAULT_ROOM_LIST_API_URLS,
+    @Transient @Volatile var modSyncApiUrls: String = DEFAULT_MOD_SYNC_API_URLS,
     var allServerConfig: MutableList<ServerConfig> = mutableListOf(),
     var roomLabelFilterSelection: List<String> = emptyList(),
 ) : Config

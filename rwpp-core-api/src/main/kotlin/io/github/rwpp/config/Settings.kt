@@ -9,6 +9,7 @@ package io.github.rwpp.config
 
 import io.github.rwpp.i18n.LanguageHelper
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import org.koin.core.annotation.Single
 
 @Single
@@ -34,7 +35,7 @@ data class Settings(
     @Volatile var showExtraButton: Boolean = false,
     /** @see unitAttackRangeTypes */
     @Volatile var showAttackRangeUnit: String = "Never",
-    @Volatile var enableAnimations: Boolean = false,
+    @Volatile var enableAnimations: Boolean = true,
     var maxDisplayUnitGroupCount: Int = 7,
     var displayUnitGroupXOffset: Int = 0,
     var changeGameTheme: Boolean = false,
@@ -73,24 +74,22 @@ data class Settings(
      * 配置版本号，用于迁移旧配置。null 表示旧版本配置（迁移前）。
      */
     var configVersion: Int? = null,
-    var openPlatformApiUrl: String = "",
+    @Transient var openPlatformApiUrl: String = "",
 ) : Config {
     companion object {
         val unitAttackRangeTypes = listOf("Never", "Land", "Air", "All")
     }
 
     override fun migrate() {
-        if (configVersion == null) {
-            // v1: enableAnimations 默认值由 true 改为 false，重置旧配置中由旧默认值写入的值
-            enableAnimations = false
-            configVersion = 1
+        val version = configVersion ?: 0
+        // v2: language 成为唯一真相源；旧版仅有 forceEnglish=true 时迁移为英文
+        if (version < 2 && forceEnglish && language == "zh") {
+            language = "en"
         }
-        if (configVersion!! < 2) {
-            // v2: language 成为唯一真相源；旧版仅有 forceEnglish=true 时迁移为英文
-            if (forceEnglish && language == "zh") {
-                language = "en"
-            }
-            configVersion = 2
+        if (version < 3) {
+            // v3: 纠正旧版关闭动画的默认值，之后保留玩家的选择。
+            enableAnimations = true
+            configVersion = 3
         }
         // 每次加载都让 Settings.forceEnglish 与 language（含 auto）解析结果对齐
         LanguageHelper.applyToSettings(this)

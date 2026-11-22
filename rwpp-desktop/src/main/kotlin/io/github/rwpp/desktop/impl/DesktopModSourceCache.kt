@@ -12,12 +12,16 @@ import com.corrodinggames.rts.gameFramework.e.g as EngineFileCache
 import com.corrodinggames.rts.gameFramework.i.a as EngineModManager
 import com.corrodinggames.rts.gameFramework.i.b as EngineMod
 import com.corrodinggames.rts.gameFramework.utility.ag as EngineZipCache
+import com.corrodinggames.rts.gameFramework.utility.ah as EngineZip
 import io.github.rwpp.game.mod.ModSourceTracker
 import io.github.rwpp.game.mod.archiveFile
 import io.github.rwpp.game.mod.archivePath
 import io.github.rwpp.game.mod.pathBelongsToSource
 import java.io.File
+import java.io.IOException
 import java.util.WeakHashMap
+import java.util.concurrent.TimeUnit
+import java.util.zip.ZipFile
 
 /** 在原扫描线程上使变动的模组来源失效；扫描阶段只摘除资源 key，不销毁 GL 资源。 */
 internal class DesktopModSourceCache(
@@ -30,6 +34,60 @@ internal class DesktopModSourceCache(
     private data class Selection(val disabled: Boolean, val saved: Boolean)
     private val selections = WeakHashMap<EngineModManager, Map<String, Selection>>()
     private val pendingChanges = linkedMapOf<String, MutableSet<String>>()
+
+    /** Run on IO after validating the target. The file operation may be retried while Windows releases the archive. */
+    fun deleteWithArchiveReleased(target: File, delete: () -> Boolean): Boolean {
+        if (!target.extension.equals("rwmod", ignoreCase = true)) return delete()
+        val archive = target.canonicalFile
+        // ag.e unlinks the cache entry now, then closes the ZipFile 1500 ms later.
+        // A preceding scan may have already unlinked another handle on this archive.
+        val windows = File.separatorChar == '\\'
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
+        while (true) {
+            val closing = releaseArchiveHandles(archive)
+            if (windows) {
+                while (closing.any(::isZipOpen)) {
+                    val remaining = deadline - System.nanoTime()
+                    if (remaining <= 0L) break
+                    TimeUnit.NANOSECONDS.sleep(minOf(remaining, TimeUnit.MILLISECONDS.toNanos(50)))
+                }
+            }
+            if (delete()) return true
+            val remaining = deadline - System.nanoTime()
+            if (!windows || remaining <= 0L || !archive.exists()) return false
+            // Handles already detached by a different engine scan aren't in the table.
+            // Give their closer a full grace period before retrying the file operation.
+            TimeUnit.NANOSECONDS.sleep(minOf(remaining, TimeUnit.MILLISECONDS.toNanos(1550)))
+        }
+    }
+
+    private fun isZipOpen(zip: ZipFile): Boolean = try {
+        zip.size()
+        true
+    } catch (_: IllegalStateException) {
+        false
+    }
+
+    private fun releaseArchiveHandles(archive: File): List<ZipFile> {
+        val cache = zipMap()
+        val snapshot = synchronized(cache) { cache.toMap() }
+        val closing = mutableListOf<ZipFile>()
+        for ((key, handle) in snapshot) {
+            val zip = openZipField.get(handle) as? ZipFile ?: continue
+            val physicalFile = try {
+                File(zip.name).canonicalFile
+            } catch (_: IOException) {
+                continue
+            }
+            if (physicalFile == archive) {
+                synchronized(cache) {
+                    if (cache[key] === handle) EngineZipCache.e(key, false)
+                }
+                closing.add(zip)
+            }
+        }
+        return closing
+    }
 
     fun beforeScan(manager: EngineModManager) {
         val mods = mods(manager).toList()
@@ -131,12 +189,13 @@ internal class DesktopModSourceCache(
         val instance = DesktopModSourceCache()
         private val modsField = EngineModManager::class.java.getDeclaredField("e").apply { isAccessible = true }
         private val zipField = EngineZipCache::class.java.getDeclaredField("a").apply { isAccessible = true }
+        private val openZipField = EngineZip::class.java.getDeclaredField("c").apply { isAccessible = true }
         private val CACHE_GROUPS = listOf("mods-info", "mods-dir-search", "mods-dir-music")
 
         @Suppress("UNCHECKED_CAST")
         private fun mods(manager: EngineModManager): List<EngineMod> = modsField.get(manager) as List<EngineMod>
 
         @Suppress("UNCHECKED_CAST")
-        private fun zipMap(): MutableMap<String, Any> = zipField.get(null) as MutableMap<String, Any>
+        private fun zipMap(): MutableMap<String, EngineZip> = zipField.get(null) as MutableMap<String, EngineZip>
     }
 }

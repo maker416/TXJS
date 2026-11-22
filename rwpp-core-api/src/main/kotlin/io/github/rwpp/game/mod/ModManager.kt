@@ -8,8 +8,12 @@
 package io.github.rwpp.game.mod
 
 import org.koin.core.component.KoinComponent
+import java.io.File
 
 interface ModManager : KoinComponent {
+    /** Delete a disabled mod from a worker thread, including its network download cache. */
+    fun deleteModFile(file: File): Boolean = deleteInstalledModFile(file, getKoin().get())
+
     /** Snapshot the user's persisted ordinary mod selection before a session-only source change. */
     fun captureModSettings(): ModSettingsSnapshot = error("Content profiles are unsupported")
     suspend fun restoreModSettings(snapshot: ModSettingsSnapshot) { error("Content profiles are unsupported") }

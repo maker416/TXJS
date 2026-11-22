@@ -626,8 +626,6 @@ class RoomArtThemeUiTest {
                 RoomIdentityController.clientOverride = RoomIdentityClient(listOf("https://identity-test.invalid"), http)
                 RoomIdentityController.onJoiningRoom("Q123456", null)
             }
-            runBlocking { RoomIdentityController.prefetchPlayerCards(room) }
-            assertEquals(84L, assertNotNull(RoomIdentityController.playerAccountFor(remote, room)).id)
             val config = accountAvatarCardConfig("room/default.png") + """
 
                 [room.player.card.slots."2"]
@@ -642,7 +640,11 @@ class RoomArtThemeUiTest {
                 if (profile) PlayerCardContent(remote, room) { profile = false }
                 else PlayerRows()
             }
+            waitForColor("room-player-avatar-2", defaultColor)
+            onNodeWithTag("room-player-account-avatar-2", useUnmergedTree = true).assertDoesNotExist()
+            runBlocking { RoomIdentityController.prefetchPlayerCards(room) }
             waitForColor("room-player-avatar-2", remoteColor)
+            assertEquals(84L, assertNotNull(RoomIdentityController.playerAccountFor(remote, room)).id)
             onNodeWithTag("room-player-account-avatar-2", useUnmergedTree = true).assertIsDisplayed()
             waitForColor("room-player-avatar-1", defaultColor)
             waitForColor("room-player-avatar-3", defaultColor)

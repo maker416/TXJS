@@ -1,6 +1,6 @@
 # 浏览器组件分发
 
-浏览器组件来源为 `maker416/TXJS` 的最新 Gitee Release，运行时只查询 `releases/latest`，不依赖历史 tag。每次进入论坛或赛事页先检查已验证的本地组件，再检查最新发行版；存在兼容的新组件时显示当前版本、目标版本和下载量，用户选择下载或继续使用当前版本。组件可用后才创建原生浏览器并申请论坛 handoff。
+正式版浏览器组件从 R2 的 `update/version.json` 读取下载地址。每次进入论坛或赛事页先检查已验证的本地组件，再检查最新索引。存在兼容的新组件时显示当前版本、目标版本和下载量，用户选择下载或继续使用当前版本。组件可用后才创建原生浏览器并申请论坛 handoff。
 
 ## 发布
 
@@ -12,13 +12,13 @@ powershell -NoProfile -File packaging/build.ps1 installer -Channel official
 powershell -NoProfile -File packaging/build.ps1 browser-kernels -GeckoComponentVersion 1.1.0 -JcefComponentVersion 1.0.0
 ```
 
-组件附件收集到 `build/artifacts/browser-kernels/`，上传其中的 `RWJS-Browser-*.json`、`*.kernel.001/.002/...`。不要上传中间 AAR、输入 classes.jar。脚本不上传附件，也不创建或修改发行版。
+Windows 和 Linux 打包脚本把正式版待上传文件集中到 `build/artifacts/release-<版本>/upneed/update/`。目录包含 `RWJS-Browser-*.json`、对应分卷和共用的 `version.json`。打包脚本读入桶上已发布的清单，保留客户端安装包及其他内核条目。先将新组件清单和分卷上传到 `update/`，最后上传 `version.json`。组件文件全名包含独立版本号。
 
 `packaging/browser-kernels.properties` 分别维护 `gecko.componentVersion` 和 `jcef.componentVersion`，初始均为 `1.0.0`。它们独立于客户端版本和完整上游引擎版本。组件未变化时原样复用文件，不提升组件版本、不重新打包；组件内容变化时提升对应组件版本。同一个版本不可替换成不同内容。
 
 例如 Android arm64 文件名为 `RWJS-Browser-gecko-android-arm64-v8a-v1.0.0.json` 和 `RWJS-Browser-gecko-android-arm64-v8a-v1.0.0.kernel.001`。客户端从清单文件名解析数字版本，按 `major.minor.patch` 比较；所有分卷必须使用相同版本前缀、从 001 连续编号。文件名版本与清单不一致时拒绝下载。
 
-每次发布新 Release 时，将仍需支持的组件清单和全部分卷原样带到最新发行版。仓库可以只保留这一个 Release；但如果只保留新客户端所需的组件，旧客户端没有可复用的本地组件时将需要先升级客户端。历史上固定 tag 的测试产物不支持删除来源 tag 后转查最新发行版，本轮新版客户端才支持此机制。
+在桶里保留支持中的组件清单和全部分卷。仍使用 Gitee 的客户端从最新 Release 获取这些文件，历史上固定 tag 的测试包需要保留对应发行版。
 
 `KernelReleaseTag` 参数已停用，兼容旧命令时只输出说明，不再决定下载来源。客户端正式发布仍应提升应用版本，并避免混留旧安装包的多余分卷。本次保留工作区原有应用版本，不自动发布。
 
@@ -26,7 +26,7 @@ Gitee 单附件限制按 100M 处理，分卷上限为 95 MiB。附件内容是�
 
 ## 信任与安装
 
-按用户确认的信任方式，主包保留兼容基线及其清单哈希，远端新版本则信任我们最新 Gitee Release 的清单，不新增签名密钥。清单中的每卷、完整 ZIP 和解压文件 SHA-256 仍逐项校验。此方案检查传输及安装内容的一致性，不能抵御 Release 清单和附件被一起替换；它取代了此前所有远端清单必须命中主包固定哈希的方案。
+主包保留兼容基线及其清单哈希，远端新版本信任所配置的发布索引。清单中的每卷、完整 ZIP 和解压文件 SHA-256 逐项校验。
 
 客户端只选择与主包 Java API 对应的完整引擎版本、适配格式、平台、架构一致且不低于兼容基线的组件。遇到不兼容的新内核会提示更新客户端。最新发行版低于本地版本时不降级；检查失败或离线时继续使用已验证的兼容本地组件。检查与下载使用同一份发行版快照，不在下载中途混用新发行版的分卷。
 

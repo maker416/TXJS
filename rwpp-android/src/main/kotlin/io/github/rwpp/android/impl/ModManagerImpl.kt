@@ -22,7 +22,6 @@ import io.github.rwpp.game.mod.ContentProfile
 import io.github.rwpp.game.mod.ContentProfiles
 import io.github.rwpp.game.mod.ModSettingsSnapshot
 import io.github.rwpp.game.mod.ReloadAbortToVanilla
-import io.github.rwpp.game.mod.deleteModFileSafely
 import io.github.rwpp.io.calculateSize
 import io.github.rwpp.internalModDir
 import io.github.rwpp.logger
@@ -376,6 +375,15 @@ class ModManagerImpl : ModManager {
         return getAllMods().firstOrNull { it.name == name }
     }
 
+    override fun deleteModFile(file: File): Boolean {
+        if (!isReloadingMods.compareAndSet(false, true)) return false
+        return try {
+            super.deleteModFile(file)
+        } finally {
+            isReloadingMods.set(false)
+        }
+    }
+
     @Suppress("unchecked_cast")
     override fun getAllMods(): List<Mod> {
         val mods = GameEngine.t().bW.e as ArrayList<com.corrodinggames.rts.gameFramework.i.b>
@@ -399,9 +407,11 @@ class ModManagerImpl : ModManager {
                     override val path: String
                         // APK assets 没有 File 实体，选择身份须保留引擎路径以匹配扫描注入。
                         get() = if (it.x) it.e() else modFile().path
+                    // 删除仅认引擎选中的存储来源，避免回退到另一个目录里的同名文件。
+                    override val deletionPath: String get() = it.e()
 
                     override fun tryDelete(): Boolean {
-                        return deleteModFileSafely(modFile())
+                        return !it.x && deleteModFile(File(deletionPath))
                     }
 
                     override fun getRamUsed(): String {

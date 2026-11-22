@@ -45,10 +45,12 @@ class GamePortalClientTest {
         assertFailsWith<GamePortalException> { GamePortalClient("http://public.example/", "key") }
         assertFalse(isOnlineGamePortalUrl("https://user:pass@game.example/"))
         assertFalse(isOnlineGamePortalUrl("javascript:alert(1)"))
-        assertFalse(isOnlineGamePortalUrl("http://192.168.1.1/"))
+        assertFalse(isOnlineGamePortalUrl("http://public.example:65536/"))
         assertEquals("https://game.example:8443", onlineGamePortalOrigin("https://game.example:8443/play?a=b"))
         assertTrue(isOnlineGamePortalUrl("http://127.0.0.1:18081/portal"))
         assertTrue(isOnlineGamePortalUrl("http://127.20.30.40:18082/portal?lang=zh#queue"))
+        assertTrue(isOnlineGamePortalUrl("http://203.0.113.10:5195/#lobby"))
+        assertEquals("http://203.0.113.10:5195", onlineGamePortalOrigin("http://203.0.113.10:5195/?x=1#lobby"))
         assertTrue(isOnlineGamePortalUrl("https://game.example/portal#servers"))
         MockWebServer().use { server ->
             val client = GamePortalClient("http://127.0.0.1:${server.port}", "key")

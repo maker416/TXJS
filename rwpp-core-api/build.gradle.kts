@@ -101,7 +101,13 @@ buildConfig {
         providers.gradleProperty("feedbackApiUrl").orNull?.trim() ?: profileString("feedbackApiUrl"),
         "feedbackApiUrl").trimEnd('/'))
     buildConfigField("UPDATE_API_URL", profileUrl("updateApiUrl", secure = true))
-    buildConfigField("BROWSER_KERNEL_API_URL", profileUrl("browserKernelApiUrl", secure = true))
+    val browserKernelUrl = profileUrl("browserKernelApiUrl", secure = true)
+    val browserKernelUri = URI(browserKernelUrl)
+    val useDefaultKernelPath = browserKernelUri.scheme.equals("https", ignoreCase = true) &&
+        browserKernelUri.rawPath in setOf("", "/", "/latest.json")
+    buildConfigField("BROWSER_KERNEL_API_URL", if (useDefaultKernelPath) {
+        "https://${browserKernelUri.rawAuthority}/update/latest.json"
+    } else browserKernelUrl)
     buildConfigField("ESPORTS_SITE_URL", profileUrl("esportsSiteUrl"))
     buildConfigField("RTS_BOX_SITE_URL", profileUrl("rtsBoxSiteUrl").trimEnd('/'))
     buildConfigField("RTS_BOX_SEARCH_API_URL", profileUrl("rtsBoxSearchApiUrl", secure = true))

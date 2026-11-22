@@ -31,12 +31,18 @@ class OnlineGameClientTest {
 
     @Test fun directoryAndFreshDetailsArePublicAndPreserveBinding() {
         MockWebServer().use { server ->
-            server.enqueue(response("""{"games":[${game()}]}"""))
-            server.enqueue(response(game()))
+            val cover = "http://203.0.113.10:5195/cover.png#main"
+            val portal = "http://203.0.113.10:5195/?lang=zh#lobby"
+            val published = game().trim().removeSuffix("}") +
+                """, "cover_url":"$cover","portal_url":"$portal","portal_revision":1}"""
+            server.enqueue(response("""{"games":[$published]}"""))
+            server.enqueue(response(published))
             val client = OnlineGameClient("http://127.0.0.1:${server.port}")
             val listed = client.games().single()
             assertEquals(app, listed.appId)
             assertEquals(pack, listed.artBinding?.packId)
+            assertEquals(cover, listed.coverUrl)
+            assertEquals(portal, listed.portalUrl)
             assertEquals("a".repeat(64), listed.artBinding?.catalogHash)
             assertTrue(listed.servers.single().online)
             assertEquals(listed, client.game(app))

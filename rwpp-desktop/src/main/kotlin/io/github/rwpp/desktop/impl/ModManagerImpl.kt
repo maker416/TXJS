@@ -22,6 +22,7 @@ import io.github.rwpp.game.mod.KeepConnectedReload
 import io.github.rwpp.game.mod.Mod
 import io.github.rwpp.game.mod.ModLoadSafety
 import io.github.rwpp.game.mod.ModManager
+import io.github.rwpp.game.mod.deleteInstalledModFile
 import io.github.rwpp.game.mod.ModReloadSelection
 import io.github.rwpp.game.mod.ContentProfile
 import io.github.rwpp.game.mod.ContentProfiles
@@ -55,6 +56,15 @@ private typealias DetachedResources = io.github.rwpp.game.mod.DetachedModResourc
 class ModManagerImpl : ModManager {
     private val game: Game = get()
     private val isReloadingMods = AtomicBoolean(false)
+
+    override fun deleteModFile(file: File): Boolean {
+        if (!isReloadingMods.compareAndSet(false, true)) return false
+        try {
+            return deleteInstalledModFile(file, get(), DesktopModSourceCache.instance::deleteWithArchiveReleased)
+        } finally {
+            isReloadingMods.set(false)
+        }
+    }
 
     private val gameThreadDispatcher by lazy {
         DesktopGameThreadDispatcher(game::post, DesktopReloadGlContext::isOwnerThread)
@@ -444,6 +454,8 @@ class ModManagerImpl : ModManager {
                         set(value) { it.f = !value }
                     override val path: String
                         get() = it.h()
+
+                    override fun tryDelete(): Boolean = deleteModFile(File(path))
 
 //                    override var isNetworkMod: Boolean
 //                        get() = it.c.contains(".network")

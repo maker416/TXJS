@@ -64,7 +64,6 @@ import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.CoreImplModule
 import io.github.rwpp.config.ConfigModule
 import io.github.rwpp.config.Settings
-import io.github.rwpp.config.initializeOpenPlatformUrl
 import io.github.rwpp.core.StartupTiming
 import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.event.GlobalEventChannel
@@ -198,7 +197,6 @@ fun main(array: Array<String>) {
 
     StartupTiming.measure("desktop.config") {
         appKoin.get<ConfigIO>().readAllConfig()
-        initializeOpenPlatformUrl(appKoin.get<Settings>().openPlatformApiUrl)
     }
     Builder.outputDir = generatedLibDir
     Builder.logger = defaultBuildLogger

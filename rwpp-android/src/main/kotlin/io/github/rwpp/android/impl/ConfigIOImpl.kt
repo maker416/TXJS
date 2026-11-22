@@ -13,6 +13,7 @@ import io.github.rwpp.config.Config
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.ModPlaytimePreferences
 import io.github.rwpp.config.FeedbackPreferences
+import io.github.rwpp.config.decodeSavedConfig
 import io.github.rwpp.core.Initialization
 import kotlinx.serialization.InternalSerializationApi
 import kotlinx.serialization.KSerializer
@@ -61,7 +62,6 @@ class ConfigIOImpl : ConfigIO {
         editor.commit()
     }
 
-    @OptIn(InternalSerializationApi::class)
     override fun <T : Config> readConfig(clazz: KClass<T>): T? {
         val name = clazz.qualifiedName
 
@@ -69,7 +69,7 @@ class ConfigIOImpl : ConfigIO {
         val src = preferences.getString("src", "")
         if(src.isNullOrBlank()) return null
 
-        return Toml.decodeFromString(clazz.serializer(), src)
+        return decodeSavedConfig(clazz, src)
     }
 
     override fun <T : Config> deleteConfig(clazz: KClass<T>) {

@@ -62,6 +62,7 @@ import io.github.rwpp.game.mod.snapshotModSelection
 import io.github.rwpp.i18n.I18nType
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.io.copyToWithProgress
+import io.github.rwpp.logger
 import io.github.rwpp.modDir
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.platform.analyzeRwmodFileDrop
@@ -353,16 +354,28 @@ fun ModsView(
     onExit: () -> Unit,
     selectedTab: ModsMapsTab = ModsMapsTab.Mods,
     onTabChange: ((ModsMapsTab) -> Unit)? = null,
-    /** 嵌入 [ModsAndMapsView] 共用外壳时为 true：不渲染 ExpandedCard / 关闭按钮。 */
+    /** 嵌入 [ModsAndMapsView] 时使用外层的 ExpandedCard。 */
     embedded: Boolean = false,
 ) {
     val shellCache = LocalLocalContentSessionCache.current
     if (io.github.rwpp.content.ExpansionPackages.activeSha != null) {
-        LocalContentEmptyState(
-            message = readI18n("expansion.modManagementLocked"),
-            iconPainter = painterResource(Res.drawable.extension_30),
-            modifier = Modifier.fillMaxSize(),
-        )
+        if (shellCache == null) {
+            BackHandler(!embedded || selectedTab == ModsMapsTab.Mods) { onExit() }
+            Box(Modifier.fillMaxSize()) {
+                LocalContentEmptyState(
+                    message = readI18n("expansion.modManagementLocked"),
+                    iconPainter = painterResource(Res.drawable.extension_30),
+                    modifier = Modifier.fillMaxSize(),
+                )
+                ExitButton(onExit)
+            }
+        } else {
+            LocalContentEmptyState(
+                message = readI18n("expansion.modManagementLocked"),
+                iconPainter = painterResource(Res.drawable.extension_30),
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
         return
     }
     val modManager = koinInject<ModManager>()
@@ -397,9 +410,9 @@ fun ModsView(
     val scope = rememberCoroutineScope()
     var updated by remember { mutableStateOf(false) }
     var enabledChanged by remember { mutableStateOf(false) }
-    var isClosingAfterDelete by remember { mutableStateOf(false) }
     var importProgress by remember { mutableStateOf<ModImportProgress?>(null) }
     var pendingDeleteMod by remember { mutableStateOf<Mod?>(null) }
+    var isDeleting by remember { mutableStateOf(false) }
     var failedModsAfterReload by remember { mutableStateOf<List<FailedModLoadInfo>?>(null) }
     // OOM 元凶模组名单（空列表 = 引擎未能归因到具体模组）；与对话框可见性分离，
     // 拦截后续重载时可带着名单重弹对话框
@@ -413,6 +426,7 @@ fun ModsView(
         appContext.isDesktop() &&
         fileLoad.isReady &&
         !isReloading &&
+        !isDeleting &&
         importProgress == null
 
     ModImportProgressDialog(importProgress)
@@ -458,11 +472,7 @@ fun ModsView(
     LaunchedEffect(modManager) {
         if (fileLoad.value == null) loadModFiles(modManager.getAllMods())
     }
-    val modsBusy = isReloading || isClosingAfterDelete || importProgress != null
-    SideEffect { shellCache?.modsBusy = modsBusy }
-    DisposableEffect(Unit) {
-        onDispose { shellCache?.modsBusy = false }
-    }
+    val modsBusy = isReloading || isDeleting || importProgress != null
 
     suspend fun reloadMods(knownStates: Map<String, Boolean>): List<FailedModLoadInfo> {
         // Only this explicit Apply commits the temporary startup choice as the user's new selection.
@@ -481,7 +491,7 @@ fun ModsView(
 
     /** 进程内重载。OOM 由平台 runReloadCore 捕获并置位全局标志，此处负责归因与弹窗。 */
     fun doReloadInProcess() {
-        if (!fileLoad.isReady || isReloading || importProgress != null) return
+        if (!fileLoad.isReady || isReloading || isDeleting || importProgress != null) return
         // 点击时立即固定选择，防止协程启动/引擎扫描期间开关发生变化。
         val selection = snapshotModSelection(mods.toList())
         isReloading = true
@@ -525,16 +535,16 @@ fun ModsView(
         doReloadInProcess()
     }
 
-    fun exit() {
-        if (isClosingAfterDelete || isReloading) return
+    fun leaveMods(then: () -> Unit) {
+        if (isDeleting || isReloading) return
 
         // 堆已耗尽时跳过删除后的重载：文件已删，下次启动引擎会干净重建，直接退出即可。
         if (!deletedMod || UI.modReloadMemoryExhausted) {
-            onExit()
+            then()
             return
         }
 
-        isClosingAfterDelete = true
+        isReloading = true
         val selection = snapshotModSelection(mods.toList())
         scope.launch {
             // 删除后的重建同样要全量解析所有启用模组；若中途撞 OOM 由平台 catch 兜底
@@ -546,9 +556,20 @@ fun ModsView(
             } catch (e: Throwable) {
                 UI.showWarning(e.message ?: "Unknown error")
             } finally {
-                isClosingAfterDelete = false
+                isReloading = false
             }
-            onExit()
+            then()
+        }
+    }
+
+    SideEffect {
+        shellCache?.modsBusy = modsBusy
+        shellCache?.leaveModsGuard = ::leaveMods
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            shellCache?.modsBusy = false
+            shellCache?.leaveModsGuard = null
         }
     }
 
@@ -593,7 +614,7 @@ fun ModsView(
     }
 
     fun importModFile(file: File, ignoredRwmods: Int = 0) {
-        if (!fileLoad.isReady || isReloading || importProgress?.stage == ModImportStage.Importing) return
+        if (!fileLoad.isReady || isReloading || isDeleting || importProgress?.stage == ModImportStage.Importing) return
 
         // 全局提示只有一个槽位，忽略数量必须随本次导入的最终结果一起显示。
         fun showImportResult(message: String) {
@@ -668,15 +689,11 @@ fun ModsView(
         }
     }
 
-    if (!embedded) {
-        BackHandler(true) {
-            exit()
-        }
-    }
+    BackHandler(shellCache == null && (!embedded || selectedTab == ModsMapsTab.Mods)) { leaveMods(onExit) }
 
     DisposableEffect(Unit) {
         onDispose {
-            // 嵌入模式下切换 tab 会 dispose，勿广播关闭；由外壳统一处理。
+            // 切换标签也会 dispose，嵌入时由外壳统一广播关闭。
             if (!embedded) {
                 CloseUIPanelEvent("mods").broadcastIn()
             }
@@ -684,24 +701,42 @@ fun ModsView(
     }
 
     fun changeModEnabled(mod: Mod, enabled: Boolean) {
-        if (!fileLoad.isReady || isReloading) return
+        if (!fileLoad.isReady || isReloading || isDeleting) return
         if (mod.isEnabled == enabled) return
         mod.isEnabled = enabled
         enabledChanged = !enabledChanged
     }
 
     fun deleteMod(mod: Mod) {
-        if (!fileLoad.isReady || isReloading) return
+        if (!fileLoad.isReady || isReloading || isDeleting) return
         if (mod.isEnabled) {
+            pendingDeleteMod = null
             UI.showWarning(readI18n("mod.removeEnabledInfo"))
-        } else if (mod.tryDelete()) {
-            mods.remove(mod)
-            deletedMod = true
-            shellCache?.modFiles?.let { existing ->
-                shellCache.modFiles = existing.copy(allMods = mods.toList())
+            return
+        }
+        val file = File(mod.deletionPath)
+        isDeleting = true
+        scope.launch {
+            try {
+                if (withContext(Dispatchers.IO) { modManager.deleteModFile(file) }) {
+                    mods.remove(mod)
+                    deletedMod = true
+                    shellCache?.modFiles?.let { existing ->
+                        shellCache.modFiles = existing.copy(allMods = mods.toList())
+                    }
+                } else {
+                    logger.warn("Could not delete mod at {}", file)
+                    UI.showWarning(readI18n("mod.removeInfo", I18nType.RWPP, file.name))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logger.warn("Could not delete mod at $file", e)
+                UI.showWarning(readI18n("mod.removeInfo", I18nType.RWPP, file.name))
+            } finally {
+                isDeleting = false
+                pendingDeleteMod = null
             }
-        } else {
-            UI.showWarning(readI18n("mod.removeInfo"))
         }
     }
 
@@ -723,7 +758,7 @@ fun ModsView(
                 if (onTabChange != null) {
                     ModsMapsSegmentedControl(
                         selected = selectedTab,
-                        onSelect = onTabChange,
+                        onSelect = { tab -> if (tab != selectedTab) leaveMods { onTabChange(tab) } },
                         enabled = !modsBusy,
                         compact = shortViewport,
                         modifier = if (wide) {
@@ -772,9 +807,9 @@ fun ModsView(
                     compactWidth = true,
                 )
             },
-            onClose = if (!embedded) ({ exit() }) else null,
+            onClose = { leaveMods(onExit) },
             closeEnabled = !modsBusy,
-            reserveTrailingCloseSpace = embedded,
+            reserveTrailingCloseSpace = false,
             busy = modsBusy,
         )
     }
@@ -1073,7 +1108,7 @@ fun ModsView(
                         ) { file -> importModFile(file) }
                     }
                 },
-                enabled = fileLoad.isReady && !isReloading && importProgress == null,
+                enabled = fileLoad.isReady && !isReloading && !isDeleting && importProgress == null,
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.heightIn(min = 48.dp),
                 contentPadding = PaddingValues(horizontal = 10.dp),
@@ -1093,7 +1128,7 @@ fun ModsView(
                 DropdownMenu(expanded = moreExpanded && LocalDialogInteractive.current, onDismissRequest = { moreExpanded = false }) {
                     DropdownMenuItem(
                         text = { Text(readI18n("mod.disableAll")) },
-                        enabled = fileLoad.isReady && !isReloading && enabledTotal > 0,
+                        enabled = fileLoad.isReady && !isReloading && !isDeleting && enabledTotal > 0,
                         onClick = {
                             moreExpanded = false
                             mods.forEach { it.isEnabled = false }
@@ -1106,14 +1141,14 @@ fun ModsView(
             LocalContentPrimaryButton(
                 text = readI18n("mod.reload"),
                 leadingIcon = Icons.Default.Refresh,
-                enabled = fileLoad.isReady && !isReloading && importProgress == null,
+                enabled = fileLoad.isReady && !isReloading && !isDeleting && importProgress == null,
                 minHeight = 48.dp,
                 onClick = { reload() },
                 modifier = Modifier.testTag("mods-reload"),
             )
             LocalContentSecondaryButton(
                 text = readI18n("mod.apply"),
-                enabled = fileLoad.isReady && !isReloading && !isClosingAfterDelete && importProgress == null,
+                enabled = fileLoad.isReady && !isReloading && !isDeleting && importProgress == null,
                 minHeight = 48.dp,
                 onClick = {
                     val enabledNotLoaded = mods.filter { mod ->
@@ -1222,8 +1257,8 @@ fun ModsView(
     fun DeleteModConfirmDialog() {
         AnimatedAlertDialog(
             visible = pendingDeleteMod != null,
-            onDismissRequest = { pendingDeleteMod = null },
-            enableDismiss = true
+            onDismissRequest = { if (!isDeleting) pendingDeleteMod = null },
+            enableDismiss = !isDeleting
         ) { dismiss ->
             val mod = pendingDeleteMod ?: return@AnimatedAlertDialog
             BorderCard(
@@ -1270,7 +1305,9 @@ fun ModsView(
                         color = MaterialTheme.colorScheme.onSurface
                     )
 
-                    Row(
+                    if (isDeleting) {
+                        UiLinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    } else Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                         verticalAlignment = Alignment.CenterVertically
@@ -1286,7 +1323,6 @@ fun ModsView(
                             containerColor = MaterialTheme.colorScheme.error,
                             contentColor = MaterialTheme.colorScheme.onError,
                             onClick = {
-                                pendingDeleteMod = null
                                 deleteMod(mod)
                             },
                         )

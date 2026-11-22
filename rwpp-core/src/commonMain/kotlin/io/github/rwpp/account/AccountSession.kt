@@ -14,6 +14,7 @@ import androidx.compose.runtime.setValue
 import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.config.AccountPreferences
 import io.github.rwpp.config.ConfigIO
+import io.github.rwpp.config.DEFAULT_ACCOUNT_API_URL
 import io.github.rwpp.config.resolveAccountApiUrl
 import io.github.rwpp.config.resolveAccountAppKey
 import io.github.rwpp.core.ModPlaytimeController
@@ -119,6 +120,23 @@ object AccountSession : KoinComponent {
         )
     }
 
+    @Synchronized
+    internal fun setApiUrlForSession(value: String) {
+        val prefs = prefsOrNull() ?: return
+        val address = value.trim().ifBlank { DEFAULT_ACCOUNT_API_URL }
+        if (resolveAccountApiUrl(address) != resolveAccountApiUrl(prefs.apiUrl)) {
+            clearSession(persist = false)
+            avatarVersion++
+            prefs.apiUrl = address
+            if (!usesTemporaryApi(prefs)) heartbeatScope.launch { restoreIfNeeded() }
+        } else {
+            prefs.apiUrl = address
+        }
+    }
+
+    private fun usesTemporaryApi(prefs: AccountPreferences): Boolean =
+        resolveAccountApiUrl(prefs.apiUrl) != resolveAccountApiUrl(DEFAULT_ACCOUNT_API_URL)
+
     fun requireToken(): String {
         val t = token
         if (t.isBlank()) throw AccountApiException(AccountErrorCode.UNAUTHORIZED, "missing bearer token", 401)
@@ -148,6 +166,7 @@ object AccountSession : KoinComponent {
         val attempt = synchronized(this) {
             if (!networkEnabled || loggedIn || restoring || authenticationEpoch != null) return
             val prefs = prefsOrNull() ?: return
+            if (usesTemporaryApi(prefs)) return
             lastUsername = prefs.lastUsername
             if (prefs.token.isBlank()) return
             restoring = true
@@ -456,7 +475,7 @@ object AccountSession : KoinComponent {
         lastUsername = newUser.username
         profileError = ""
         if (persist) {
-            prefsOrNull()?.let { prefs ->
+            prefsOrNull()?.takeUnless(::usesTemporaryApi)?.let { prefs ->
                 prefs.token = newToken
                 prefs.lastUsername = newUser.username
                 savePrefs(prefs)
@@ -494,7 +513,7 @@ object AccountSession : KoinComponent {
         points = emptyList()
         FriendsSession.clear()
         if (persist) {
-            prefsOrNull()?.let { prefs ->
+            prefsOrNull()?.takeUnless(::usesTemporaryApi)?.let { prefs ->
                 prefs.token = ""
                 savePrefs(prefs)
             }

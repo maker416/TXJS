@@ -104,22 +104,31 @@ try {
     Assert-True (Test-Path -LiteralPath (Join-Path $ArtifactsDir 'installer-test_cn/RWJS-Setup-1.20.63.exe')) 'PC installer missing'
     Assert-True (Test-Path -LiteralPath (Join-Path $ArtifactsDir 'android-release-test_cn/rwpp-android-release-1.20.63.apk')) 'Release APK missing'
 
-    Write-Fixture 'build/client-api-official.json' '{"updateApiUrl":"https://r2.example.com/client-update/"}'
+    Write-Fixture 'build/client-api-official.json' '{"updateApiUrl":"https://r2.example.com/update/version.json"}'
+    function Read-RwUpdateIndex ([string]$IndexUrl) {
+        Assert-True ($IndexUrl -eq 'https://r2.example.com/update/version.json') 'Incorrect R2 index URL'
+        '{"tag_name":"v1.20.62","assets":[{"name":"RWJS-Browser-gecko-android-arm64-v8a-v1.0.0.json","browser_download_url":"https://r2.example.com/RWJS-Browser-gecko-android-arm64-v8a-v1.0.0.json"},{"name":"RWJS-Android.apk","browser_download_url":"https://r2.example.com/update/RWJS-Android.apk"}]}' | ConvertFrom-Json
+    }
     $Script:Channel = 'official'
     Invoke-CollectArtifacts 'release-all'
+    $uploadDir = Join-Path $ArtifactsDir 'release-1.20.63/upneed/update'
+    $index = Get-Content -LiteralPath (Join-Path $uploadDir 'version.json') -Raw | ConvertFrom-Json
+    Assert-True ($index.tag_name -eq 'v1.20.63' -and $index.assets.Count -eq 5) 'Incorrect unified R2 metadata'
+    $kernel = $index.assets | Where-Object { $_.name -like 'RWJS-Browser-*' }
+    Assert-True ($kernel.browser_download_url -eq ('https://r2.example.com/update/' + $kernel.name)) 'Published kernel was lost or points to the root'
     foreach ($item in @(
-        @{ Target = 'installer'; Platform = 'windows'; File = 'RWJS-Setup-1.20.63.exe' },
-        @{ Target = 'android-release'; Platform = 'android'; File = 'RWJS-Android-1.20.63.apk' }
+        @{ Platform = 'windows'; File = 'RWJS-Setup-1.20.63.exe' },
+        @{ Platform = 'android'; File = 'RWJS-Android-1.20.63.apk' }
     )) {
-        $uploadDir = Join-Path $ArtifactsDir "$($item.Target)-official/upneed/client-update/$($item.Platform)"
-        $index = Get-Content -LiteralPath (Join-Path $uploadDir 'latest.json') -Raw | ConvertFrom-Json
-        $installer = Get-Item -LiteralPath (Join-Path $uploadDir "1.20.63/$($item.File)")
+        $installer = Get-Item -LiteralPath (Join-Path $uploadDir $item.File)
         $hash = (Get-FileHash -LiteralPath $installer.FullName).Hash.ToLowerInvariant()
         $checksum = Get-Content -LiteralPath "$($installer.FullName).sha256" -Raw
-        $expectedUrl = "https://r2.example.com/client-update/$($item.Platform)/1.20.63/$($item.File)"
-        Assert-True ($index.tag_name -eq 'v1.20.63' -and $index.assets.Count -eq 2) 'Incorrect R2 release metadata'
-        Assert-True ($index.assets[0].browser_download_url -eq $expectedUrl -and $index.assets[0].size -eq $installer.Length) 'Incorrect R2 installer URL or length'
-        Assert-True ($index.assets[1].browser_download_url -eq "$expectedUrl.sha256" -and $checksum.Split(' ')[0] -eq $hash) 'Incorrect R2 checksum'
+        $expectedUrl = "https://r2.example.com/update/$($item.File)"
+        $asset = $index.assets | Where-Object { $_.name -eq $item.File }
+        $shaAsset = $index.assets | Where-Object { $_.name -eq "$($item.File).sha256" }
+        Assert-True ($index.platform_versions.($item.Platform) -eq 'v1.20.63') 'Incorrect platform version'
+        Assert-True ($asset.browser_download_url -eq $expectedUrl -and $asset.size -eq $installer.Length) 'Incorrect R2 installer URL or length'
+        Assert-True ($shaAsset.browser_download_url -eq "$expectedUrl.sha256" -and $checksum.Split(' ')[0] -eq $hash) 'Incorrect R2 checksum'
     }
     $Script:Channel = 'test_cn'
 

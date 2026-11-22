@@ -146,22 +146,28 @@ class ReleaseAllTests(unittest.TestCase):
         self.jdk = self.root / "jdk"
         self.source = self.root / "game.zip"
 
-    def test_android_release_stages_r2_index_with_original_apk_and_checksum(self):
-        write(self.root / "build/client-api-official.json", '{"updateApiUrl":"https://r2.example.com/client-update/"}')
+    def test_android_release_merges_the_shared_index_without_bumping_windows(self):
+        write(self.root / "build/client-api-official.json", '{"updateApiUrl":"https://r2.example.com/update/version.json"}')
         apk = self.root / "rwpp-android/build/outputs/apk/release/app-release.apk"
         write(apk, "signed APK fixture")
         args = argparse.Namespace(channel="official", api_profile="official")
-        build.collect(self.root, "android-release", args, self.jdk, None)
-        upload = self.root / "build/artifacts/android-release-official/upneed/client-update/android"
-        index = json.loads((upload / "latest.json").read_text(encoding="utf-8"))
+        windows = {"name": "RWJS-Setup.exe", "browser_download_url": "https://r2.example.com/update/RWJS-Setup.exe"}
+        kernel = {"name": "RWJS-Browser-jcef-windows-amd64-v1.0.0.json",
+                  "browser_download_url": "https://r2.example.com/RWJS-Browser-jcef-windows-amd64-v1.0.0.json"}
+        with patch.object(build, "read_update_index", return_value={"tag_name": "v1.2.2", "assets": [windows, kernel]}):
+            build.collect(self.root, "android-release", args, self.jdk, None)
+        upload = self.root / "build/artifacts/release-1.2.3/upneed/update"
+        index = json.loads((upload / "version.json").read_text(encoding="utf-8"))
         name = "RWJS-Android-1.2.3.apk"
-        installer = upload / "1.2.3" / name
+        installer = upload / name
         checksum = installer.with_suffix(".apk.sha256")
         self.assertEqual(index["tag_name"], "v1.2.3")
+        self.assertEqual(index["platform_versions"], {"windows": "v1.2.2", "android": "v1.2.3"})
         self.assertEqual(installer.read_bytes(), apk.read_bytes())
         self.assertEqual(checksum.read_text().split()[0], build.file_hash(apk))
-        self.assertEqual(index["assets"], [
-            {"name": path.name, "browser_download_url": f"https://r2.example.com/client-update/android/1.2.3/{path.name}",
+        self.assertEqual(index["assets"][:2], [windows, dict(kernel, browser_download_url="https://r2.example.com/update/" + kernel["name"])])
+        self.assertEqual(index["assets"][2:], [
+            {"name": path.name, "browser_download_url": f"https://r2.example.com/update/{path.name}",
              "size": path.stat().st_size} for path in (installer, checksum)
         ])
 

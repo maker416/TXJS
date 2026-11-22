@@ -38,7 +38,7 @@ class LanguageHelperTest {
         settings.migrate()
         assertEquals("en", settings.language)
         assertTrue(settings.forceEnglish)
-        assertEquals(2, settings.configVersion)
+        assertEquals(3, settings.configVersion)
     }
 
     @Test

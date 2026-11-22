@@ -163,8 +163,9 @@ object RoomIdentityController {
         val name = player.name.trim()
         val connectionId = player.connectHexId
         return synchronized(playerAccountsLock) {
-            val binding = playerAccountBindings[name] ?: return@synchronized null
+            // Observe the empty cache as well, so a composed slot updates after prefetch completes.
             val user = playerAccounts[name] ?: return@synchronized null
+            val binding = playerAccountBindings[name] ?: return@synchronized null
             user.takeIf {
                 !featureUnavailable && binding.roomEpoch == cardEpoch.get() && binding.session == session &&
                     binding.room === room && binding.player === player && binding.connectionId == connectionId &&

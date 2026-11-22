@@ -11,6 +11,7 @@ import io.github.rwpp.config.Config
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.ModPlaytimePreferences
 import io.github.rwpp.config.FeedbackPreferences
+import io.github.rwpp.config.decodeSavedConfig
 import io.github.rwpp.desktop.AbstractConfigIO
 import io.github.rwpp.io.AtomicFileWrite
 import kotlinx.serialization.InternalSerializationApi
@@ -54,14 +55,13 @@ class ConfigIOImpl : AbstractConfigIO() {
         file.writeText(Toml.encodeToString(clazz.serializer() as KSerializer<Any>, config))
     }
 
-    @OptIn(InternalSerializationApi::class)
     override fun <T : Config> readConfig(clazz: KClass<T>): T? {
         val name = clazz.qualifiedName
         val file = File(System.getProperty("user.dir") + "/$name.toml")
         if(!file.exists()) file.createNewFile()
         val src = file.readText()
         if(src.isBlank()) return null
-        return Toml.decodeFromString(clazz.serializer(), src)
+        return decodeSavedConfig(clazz, src)
     }
 
     override fun <T : Config> deleteConfig(clazz: KClass<T>) {

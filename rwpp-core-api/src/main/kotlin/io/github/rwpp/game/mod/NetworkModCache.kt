@@ -14,9 +14,11 @@ import java.io.File
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.Locale
+import java.util.UUID
 
 private val SHA256_REGEX = Regex("^[0-9a-f]{64}$")
 
@@ -85,6 +87,9 @@ interface NetworkModCache {
     /** Returns the descriptor for a managed engine-visible path, if this cache owns it. */
     fun descriptorForManagedPath(path: String): NetworkModDescriptor?
 
+    /** Remove the selected working file and its restorable versions. Null means this file is unmanaged. */
+    fun deleteManagedWorkingCopy(file: File): Boolean? = null
+
     /** Best-effort cleanup of runtime plaintext copies. */
     fun cleanupWorkingCopiesOnExit() {}
 }
@@ -96,6 +101,8 @@ object NetworkModCacheFiles {
     const val ACTIVE_SUFFIX = ".network.rwmod"
     const val TEMP_SUFFIX = ".tmp"
     const val QUARANTINE_MARKER = ".quarantine-"
+    private const val DELETE_MARKER_PREFIX = ".rwjs-pending-delete-"
+    private val deleteIdPattern = Regex("[0-9a-f]{12}")
 
     fun cacheKey(descriptor: NetworkModDescriptor): String {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -163,6 +170,69 @@ object NetworkModCacheFiles {
         val quarantine = File(target.parentFile, target.name.removeSuffix(".rwmod") + QUARANTINE_MARKER + System.currentTimeMillis())
         val safeQuarantine = requireInside(root, quarantine)
         return target.renameTo(safeQuarantine)
+    }
+
+    /** A pending marker rolls staged renames back on startup. Removing it commits the deletion. */
+    fun deleteAsGroup(cacheRoot: File, files: List<File>, workingRoot: File = cacheRoot) {
+        recoverInterruptedDeletes(cacheRoot, workingRoot)
+        val roots = setOf(cacheRoot.canonicalFile, workingRoot.canonicalFile)
+        val targets = files.distinct().filter { file ->
+            require(file.parentFile.canonicalFile in roots) { "Refusing to remove unmanaged file: $file" }
+            if (Files.notExists(file.toPath(), LinkOption.NOFOLLOW_LINKS)) return@filter false
+            if (!Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS)) {
+                throw IOException("Invalid cache file for deletion: $file")
+            }
+            true
+        }
+        if (targets.isEmpty()) return
+        // Leave room for the suffix even with a 48-character CJK mod name on a 255-byte filesystem.
+        val id = UUID.randomUUID().toString().substringAfterLast('-')
+        val marker = File(cacheRoot, DELETE_MARKER_PREFIX + id)
+        Files.createFile(marker.toPath())
+        val suffix = QUARANTINE_MARKER + id
+        val staged = mutableListOf<File>()
+        try {
+            for (original in targets) {
+                val temp = File(original.parentFile, original.name + suffix)
+                Files.move(original.toPath(), temp.toPath())
+                staged += temp
+            }
+            Files.delete(marker.toPath())
+        } catch (error: Exception) {
+            try {
+                restoreStagedFiles(marker, staged, suffix)
+            } catch (rollbackError: Exception) {
+                error.addSuppressed(rollbackError)
+            }
+            throw error
+        }
+        // Files that cannot be unlinked yet have quarantine names and are retried on startup.
+        staged.forEach { it.delete() }
+    }
+
+    fun recoverInterruptedDeletes(cacheRoot: File, workingRoot: File = cacheRoot) {
+        val roots = setOf(cacheRoot.canonicalFile, workingRoot.canonicalFile)
+        for (marker in cacheRoot.listFiles().orEmpty()) {
+            if (!marker.name.startsWith(DELETE_MARKER_PREFIX) || !marker.isFile) continue
+            val id = marker.name.removePrefix(DELETE_MARKER_PREFIX)
+            if (!deleteIdPattern.matches(id)) continue
+            val suffix = QUARANTINE_MARKER + id
+            val staged = roots.flatMap { root ->
+                root.listFiles { file -> file.name.endsWith(suffix) }?.toList()
+                    ?: throw IOException("Cannot list cache files for rollback in $root")
+            }
+            restoreStagedFiles(marker, staged, suffix)
+        }
+    }
+
+    private fun restoreStagedFiles(marker: File, staged: List<File>, suffix: String) {
+        for (temp in staged.asReversed()) {
+            val name = temp.name.removeSuffix(suffix)
+            if (name.isEmpty() || name == "." || name == "..") throw IOException("Invalid staged filename: $temp")
+            val original = File(temp.parentFile, name)
+            Files.move(temp.toPath(), original.toPath())
+        }
+        Files.delete(marker.toPath())
     }
 
     fun atomicWrite(file: File, bytes: ByteArray, root: File): File =

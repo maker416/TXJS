@@ -14,6 +14,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
@@ -105,7 +106,7 @@ class OnlineGameClient(baseUrl: String, http: OkHttpClient = OkHttpClient()) {
         if (!UUID.matches(game.appId) || game.name.isBlank() || game.name.codePointCount(0, game.name.length) > 128 ||
             game.description.codePointCount(0, game.description.length) > 4000 || game.servers.size > 256 ||
             game.servers.map { it.serverId }.distinct().size != game.servers.size ||
-            game.coverUrl.isNotEmpty() && !isOnlineGameAssetUrl(game.coverUrl)) invalid()
+            game.coverUrl.length > 2048 || game.coverUrl.isNotEmpty() && parseOnlineGameWebUrl(game.coverUrl) == null) invalid()
         if (game.portalUrl.isNotEmpty() && (!isOnlineGamePortalUrl(game.portalUrl) || game.portalRevision <= 0) ||
             game.portalRevision < 0) invalid()
         game.servers.forEach {
@@ -139,19 +140,15 @@ class OnlineGameClient(baseUrl: String, http: OkHttpClient = OkHttpClient()) {
     }
 }
 
-/** An approved portal has one HTTP origin; only loopback development may use cleartext. */
-fun isOnlineGamePortalUrl(value: String): Boolean {
-    val url = value.toHttpUrlOrNull() ?: return false
-    val loopback = url.host in setOf("localhost", "::1") || url.host.split('.').let { octets ->
-        octets.size == 4 && octets.first() == "127" && octets.all { part ->
-            part.matches(Regex("[0-9]{1,3}")) && part.toInt() in 0..255
-        }
-    }
-    return value.length <= 2048 && value.none { it.code < 32 || it.code == 127 } &&
-        url.username.isEmpty() && url.password.isEmpty() && (url.isHttps || url.scheme == "http" && loopback)
+private fun parseOnlineGameWebUrl(value: String): HttpUrl? {
+    if (value.any(Char::isISOControl)) return null
+    return value.toHttpUrlOrNull()?.takeIf { it.username.isEmpty() && it.password.isEmpty() }
 }
 
-fun onlineGamePortalOrigin(value: String): String? = value.takeIf(::isOnlineGamePortalUrl)?.toHttpUrlOrNull()?.let {
+/** The published portal may use an HTTP or HTTPS origin. */
+fun isOnlineGamePortalUrl(value: String): Boolean = value.length <= 2048 && parseOnlineGameWebUrl(value) != null
+
+fun onlineGamePortalOrigin(value: String): String? = parseOnlineGameWebUrl(value)?.let {
     it.newBuilder().encodedPath("/").query(null).fragment(null).build().toString().removeSuffix("/")
 }
 

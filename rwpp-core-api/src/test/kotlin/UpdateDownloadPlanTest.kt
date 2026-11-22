@@ -17,29 +17,39 @@ import kotlin.test.assertTrue
 
 class UpdateDownloadPlanTest {
 
-    @Test fun `R2 index selects each platform and requires a verifiable installer`() {
+    @Test fun `shared R2 index selects each platform version and verifiable installer`() {
         MockWebServer().use { server ->
             val client = OkHttpClient()
-            val root = server.url("/client-update/").toString()
-            for ((platform, filename) in listOf(
+            val url = server.url("/update/version.json").toString()
+            val version = mapOf(ClientUpdatePlatform.WINDOWS to "v1.20.108", ClientUpdatePlatform.ANDROID to "v1.20.109")
+            val installers = mapOf(
                 ClientUpdatePlatform.WINDOWS to "RWJS-Setup-1.20.108.exe",
-                ClientUpdatePlatform.ANDROID to "RWJS-Android-1.20.108.apk",
-            )) {
-                val fileUrl = "https://r2.example.com/client-update/${platform.directory}/1.20.108/$filename"
-                val asset = """{"name":"$filename","browser_download_url":"$fileUrl","size":1024}"""
-                val sha = """{"name":"$filename.sha256","browser_download_url":"$fileUrl.sha256","size":98}"""
-                server.enqueue(MockResponse().setBody("""{"tag_name":"v1.20.108","assets":[$asset,$sha]}"""))
-                val profile = fetchClientUpdate(client, root, platform)!!
+                ClientUpdatePlatform.ANDROID to "RWJS-Android-1.20.109.apk",
+            )
+            val assets = installers.values.flatMap { listOf(it, "$it.sha256") }.joinToString(",") {
+                """{"name":"$it","browser_download_url":"https://r2.example.com/update/$it","size":1024}"""
+            }
+            val manifest = """{"tag_name":"v1.20.109","platform_versions":{"windows":"v1.20.108","android":"v1.20.109"},"assets":[$assets]}"""
+            for ((platform, filename) in installers) {
+                val fileUrl = "https://r2.example.com/update/$filename"
+                server.enqueue(MockResponse().setBody(manifest))
+                val profile = fetchClientUpdate(client, url, platform)!!
                 val plan = if (platform == ClientUpdatePlatform.WINDOWS) profile.resolveDesktopUpdatePlan()!!
                     else profile.resolveAndroidUpdatePlan()!!
-                assertEquals("v1.20.108", profile.version)
+                assertEquals(version[platform], profile.version)
                 assertEquals(UpdateDownloadPlan(listOf(fileUrl), "$fileUrl.sha256", false, listOf(1024L)), plan)
-                assertEquals("/client-update/${platform.directory}/latest.json", server.takeRequest().path)
-                server.enqueue(MockResponse().setBody("""{"tag_name":"v1.20.108","assets":[$asset]}"""))
-                assertNull(fetchClientUpdate(client, root, platform))
-                server.takeRequest()
+                assertEquals("/update/version.json", server.takeRequest().path)
             }
-            assertNull(fetchClientUpdate(client, root, null))
+            val legacy = installers.getValue(ClientUpdatePlatform.ANDROID)
+            val asset = """{"name":"$legacy","browser_download_url":"https://r2.example.com/update/$legacy"}"""
+            val sha = """{"name":"$legacy.sha256","browser_download_url":"https://r2.example.com/update/$legacy.sha256"}"""
+            server.enqueue(MockResponse().setBody("""{"tag_name":"v1.20.99","assets":[$asset,$sha]}"""))
+            assertEquals("v1.20.99", fetchClientUpdate(client, url, ClientUpdatePlatform.ANDROID)?.version)
+            server.takeRequest()
+            server.enqueue(MockResponse().setBody("""{"tag_name":"v1.20.99","assets":[$asset]}"""))
+            assertNull(fetchClientUpdate(client, url, ClientUpdatePlatform.ANDROID))
+            server.takeRequest()
+            assertNull(fetchClientUpdate(client, url, null))
             assertEquals(4, server.requestCount)
             server.enqueue(MockResponse().setBody("""{"tag_name":"v1.20.62","assets":[]}"""))
             assertEquals("v1.20.62", fetchClientUpdate(client, server.url("/releases/latest").toString(), null)?.version)

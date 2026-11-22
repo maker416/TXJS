@@ -43,7 +43,7 @@ class OpenPlatformConfigTest {
     }
 
     @Test
-    fun savedAddressLoadsAtStartupAndClearingItRestoresTheDefault() {
+    fun addressAppliesToTheCurrentRunAndClearingItRestoresTheDefault() {
         val property = "rwjs.openPlatform.url"
         val before = System.getProperty(property)
         try {
@@ -52,21 +52,27 @@ class OpenPlatformConfigTest {
             val environmentUrl = environment?.let { normalizeOpenPlatformUrl(it) ?: BuildConfig.OPEN_PLATFORM_URL }
             val settings = Settings(openPlatformApiUrl = "https://stage.example.com/platform/")
             val persisted = Toml.encodeToString(Settings.serializer(), settings)
-            initializeOpenPlatformUrl(Toml.decodeFromString(Settings.serializer(), persisted).openPlatformApiUrl)
+            assertEquals("", decodeSavedConfig(Settings::class, persisted).openPlatformApiUrl)
+            setOpenPlatformUrlForSession(settings.openPlatformApiUrl)
             assertEquals(environmentUrl ?: "https://stage.example.com/platform", resolveOpenPlatformUrl())
 
             System.setProperty(property, "http://127.0.0.1:8092")
             assertEquals("http://127.0.0.1:8092", resolveOpenPlatformUrl())
             System.clearProperty(property)
 
-            initializeOpenPlatformUrl("http://stage.example.com")
+            setOpenPlatformUrlForSession("http://stage.example.com")
             assertEquals(environmentUrl ?: BuildConfig.OPEN_PLATFORM_URL, resolveOpenPlatformUrl())
 
-            val oldSettings = Toml.decodeFromString(Settings.serializer(), "language = \"zh\"")
-            initializeOpenPlatformUrl(oldSettings.openPlatformApiUrl)
+            val oldSettings = decodeSavedConfig(Settings::class, """
+                language = "en"
+                openPlatformApiUrl = "https://stage.example.com"
+            """.trimIndent())
+            assertEquals("en", oldSettings.language)
+            assertEquals("", oldSettings.openPlatformApiUrl)
+            setOpenPlatformUrlForSession(oldSettings.openPlatformApiUrl)
             assertEquals(environmentUrl ?: BuildConfig.OPEN_PLATFORM_URL, resolveOpenPlatformUrl())
         } finally {
-            initializeOpenPlatformUrl("")
+            setOpenPlatformUrlForSession("")
             if (before == null) System.clearProperty(property) else System.setProperty(property, before)
         }
     }

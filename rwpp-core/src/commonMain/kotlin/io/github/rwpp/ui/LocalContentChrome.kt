@@ -107,6 +107,7 @@ internal class LocalContentSessionCache {
     var modsSearchExpanded: Boolean by mutableStateOf(false)
     var modsListFilter: ModListFilter by mutableStateOf(ModListFilter.All)
     var modsBusy: Boolean by mutableStateOf(false)
+    var leaveModsGuard: (((() -> Unit) -> Unit)?) by mutableStateOf(null)
 
     var customMaps: List<ManagedCustomMap>? by mutableStateOf(null)
     var mapsFilter: String by mutableStateOf("")

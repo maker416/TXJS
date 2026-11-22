@@ -8,12 +8,13 @@ package io.github.rwpp.config
 
 import io.github.rwpp.rwpp_core_api.BuildConfig
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import org.koin.core.annotation.Single
 
 @Single
 @Serializable
 data class FeedbackPreferences(
-    var apiUrl: String = "",
+    @Transient @Volatile var apiUrl: String = "",
     /** 仅保存回执编号和身份分组，不保存正文、日志、账号密码或 Token。 */
     var history: List<FeedbackHistoryEntry> = emptyList(),
 ) : Config

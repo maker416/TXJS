@@ -201,7 +201,8 @@ fun ModsMapsSegmentedControl(
  * 本地内容管理页：模组、自定义地图和存档。
  *
  * 共用常驻顶栏（分段导航、上下文工具、关闭按钮）与会话级缓存；
- * 切换标签时顶栏位置与尺寸完全稳定，仅内容区平滑过渡且回访已加载标签无闪烁。
+ * 切换标签时顶栏位置与尺寸完全稳定，仅内容区平滑过渡且回访已加载标签无闪烁；
+ * 离开模组页前通过 leaveModsGuard 刷新已删除的引擎条目。
  */
 @Composable
 fun ModsAndMapsView(onLoadSavedGame: suspend (GameMap) -> Unit, onExit: () -> Unit) {
@@ -211,13 +212,21 @@ fun ModsAndMapsView(onLoadSavedGame: suspend (GameMap) -> Unit, onExit: () -> Un
         UI.pendingModsMapsTab = null
         mutableStateOf(initial)
     }
+    fun guardModsLeave(then: () -> Unit) {
+        if (cache.anyBusy) return
+        if (tab == ModsMapsTab.Mods) {
+            cache.leaveModsGuard?.invoke(then) ?: then()
+        } else {
+            then()
+        }
+    }
     LaunchedEffect(UI.pendingModsMapsTab) {
         val pending = UI.pendingModsMapsTab ?: return@LaunchedEffect
         UI.pendingModsMapsTab = null
-        if (!cache.anyBusy) tab = pending
+        if (pending != tab) guardModsLeave { tab = pending }
     }
 
-    BackHandler(true) { if (!cache.anyBusy) onExit() }
+    BackHandler(true) { guardModsLeave(onExit) }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -254,7 +263,7 @@ fun ModsAndMapsView(onLoadSavedGame: suspend (GameMap) -> Unit, onExit: () -> Un
                         navigation = { navModifier ->
                             ModsMapsSegmentedControl(
                                 selected = tab,
-                                onSelect = { target -> if (!cache.anyBusy) tab = target },
+                                onSelect = { target -> if (target != tab) guardModsLeave { tab = target } },
                                 enabled = !cache.anyBusy,
                                 compact = shortViewport,
                                 modifier = if (wide) {
@@ -378,7 +387,7 @@ fun ModsAndMapsView(onLoadSavedGame: suspend (GameMap) -> Unit, onExit: () -> Un
                                 }
                             }
                         },
-                        onClose = { if (!cache.anyBusy) onExit() },
+                        onClose = { guardModsLeave(onExit) },
                         closeEnabled = !cache.anyBusy,
                         busy = cache.anyBusy,
                     )

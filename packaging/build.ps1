@@ -128,9 +128,9 @@ $Script:NoChannelTargets = @('test', 'clean', 'browser-kernels')
 # ---------------------------------------------------------------------------
 $Script:Targets = [ordered]@{
     'browser-kernels' = @{
-        Name          = 'Browser kernel Release attachments'
+        Name          = 'Browser kernel upload files'
         Tasks         = @('browserKernels')
-        Subdir        = 'browser-kernels'
+        Subdir        = 'release-<version>\upneed\update'
         Collect       = 'browser-kernels'
         Aliases       = @('7', 'kernels')
     }
@@ -318,9 +318,9 @@ function Show-Menu {
     Write-Host '  [6] Safe clean (保留 build 下脚本 / ZIP / key / artifacts)'
     Write-Host '      Task:   clean'
     Write-Host ''
-    Write-Host '  [7] Browser kernels (Gitee Release 附件)'
+    Write-Host '  [7] Browser kernels (浏览器内核上传文件)'
     Write-Host '      Task:   browserKernels'
-    Write-Host '      Output: build\artifacts\browser-kernels\'
+    Write-Host '      Output: build\artifacts\release-<version>\upneed\update\'
     Write-Host ''
     Write-Host '  [8] 一键打包 PC + Android 发行版（同一版本、同一渠道）'
     Write-Host '      Tasks:  :rwpp-desktop:packageInnoDistribution :rwpp-android:assembleRelease'
@@ -341,7 +341,7 @@ function Show-Usage {
     Write-Host '  build.ps1 test            运行核心测试'
     Write-Host '  build.ps1 android-debug   构建 Android Debug APK'
     Write-Host '  build.ps1 android-release 构建 Android Release APK'
-    Write-Host '  build.ps1 browser-kernels 生成浏览器内核附件和清单'
+    Write-Host '  build.ps1 browser-kernels 收集浏览器内核上传文件到 upneed\update'
     Write-Host '  build.ps1 clean           运行受保护的 Gradle clean'
     Write-Host ''
     Write-Host 'Channel（打包渠道，test/clean/browser-kernels 无需指定）:'
@@ -567,10 +567,11 @@ function Write-BuildInfo ([string]$Dest, [string]$Key) {
     Set-Content -LiteralPath (Join-Path $Dest 'build-info.txt') -Value $lines -Encoding UTF8
 }
 
-function Invoke-CollectArtifacts ([string]$Key) {
+function Invoke-CollectArtifacts ([string]$Key, [switch]$SkipUpdateBundle) {
     $def = $Targets[$Key]
     if ($def.Members) {
-        foreach ($member in $def.Members) { Invoke-CollectArtifacts $member }
+        foreach ($member in $def.Members) { Invoke-CollectArtifacts $member -SkipUpdateBundle }
+        Collect-ClientUpdateFiles $def.Members
         return
     }
     Write-Host ''
@@ -585,26 +586,68 @@ function Invoke-CollectArtifacts ([string]$Key) {
             'android-release' { Copy-Apk $Key 'rwpp-android\build\outputs\apk\release' 'rwpp-android-release' }
             default           { }
     }
+    if (-not $SkipUpdateBundle -and $Key -in @('installer', 'android-release')) {
+        Collect-ClientUpdateFiles @($Key)
+    }
 }
 
 function Copy-BrowserKernelFiles {
-    $dest = Reset-Destination 'browser-kernels'
-    foreach ($platform in @('android', 'desktop')) {
+    $files = @(foreach ($platform in @('android', 'desktop')) {
         $source = Join-Path $BuildDir "browser-kernels/$platform"
-        Get-ChildItem -LiteralPath $source -File | Where-Object { $_.Name -like 'RWJS-Browser-*' } |
-            ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $dest $_.Name) -Force }
+        Get-ChildItem -LiteralPath $source -File |
+            Where-Object { $_.Name -cmatch '^RWJS-Browser-.+\.(json|kernel\.[0-9]{3})$' }
+    })
+    if ($files.Count -eq 0) { throw '浏览器内核附件未生成。' }
+
+    $profilePath = Join-Path $BuildDir "client-api-$(Get-ApiProfile 'browser-kernels').json"
+    $indexBase = $null
+    if (Test-Path -LiteralPath $profilePath -PathType Leaf) {
+        $profile = Get-Content -LiteralPath $profilePath -Encoding UTF8 -Raw | ConvertFrom-Json
+        $indexUrl = ([string]$profile.browserKernelApiUrl).Trim()
+        if ($indexUrl.EndsWith('/version.json', [StringComparison]::Ordinal)) {
+            $uploadDir = Write-RwUpdateBundle -Dest (Join-Path $ArtifactsDir "release-$Version") -IndexUrl $indexUrl -Version $Version -KernelFiles $files
+            Write-Step "R2 待上传文件: $uploadDir"
+            return
+        }
+        $uri = $null
+        $hasUri = [Uri]::TryCreate($indexUrl, [UriKind]::Absolute, [ref]$uri)
+        $useDefaultPath = $hasUri -and $uri.Scheme -eq 'https' -and $uri.AbsolutePath -cin @('/', '/latest.json')
+        if ($useDefaultPath -or $indexUrl.EndsWith('/latest.json', [StringComparison]::Ordinal)) {
+            if (-not $hasUri -or
+                $uri.Scheme -ne 'https' -or -not $uri.Host -or $uri.UserInfo -or $uri.Query -or $uri.Fragment) {
+                throw 'browserKernelApiUrl 的静态索引必须是有效的 HTTPS 地址。'
+            }
+            $indexBase = if ($useDefaultPath) {
+                $uri.GetLeftPart([UriPartial]::Authority) + '/update/'
+            } else {
+                $uri.AbsoluteUri -creplace 'latest\.json$', ''
+            }
+        }
+    }
+
+    $dest = Reset-Destination 'browser-kernels'
+    $uploadDir = Join-Path $dest 'needup/update'
+    New-Item -ItemType Directory -Path $uploadDir | Out-Null
+    foreach ($file in $files) {
+        Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $uploadDir $file.Name)
+    }
+    if ($indexBase) {
+        $assets = @($files | Sort-Object Name | ForEach-Object {
+            @{ name = $_.Name; browser_download_url = "$indexBase$($_.Name)" }
+        })
+        $index = @{ tag_name = 'latest'; assets = $assets } | ConvertTo-Json -Depth 4
+        [IO.File]::WriteAllText((Join-Path $uploadDir 'latest.json'), $index)
     }
     $notes = @(
-        '将全部 RWJS-Browser-*.json 和 *.kernel.001/.002/... 上传到最新 Gitee Release。',
-        '客户端只查询最新 Release，按文件名中的独立版本选择兼容组件。',
-        'packaging/browser-kernels.properties 分别维护 Gecko/JCEF 独立组件版本，与客户端版本无关。',
-        '每次发布新 Release，原样携带仍受支持的内核清单和全部分卷；未变更的组件不用重新打包。',
-        '版本号不变时不可替换组件内容。内核 API/适配格式改变时，还需发布匹配的新版客户端。',
-        '不要上传 gecko-thin.aar 和 gecko-input-classes.jar。',
-        '本脚本仅生成产物，不上传或修改 Gitee Release。'
+        '待上传文件在 needup/update/。',
+        'R2 默认将清单和分卷上传到桶根目录下的 update/，最后上传 update/latest.json。',
+        '将 browserKernelApiUrl 设为桶的公开 HTTPS 域名，可自动生成 update/latest.json。',
+        '如果配置了其他完整的索引地址，上传到该索引所在的对象前缀。',
+        '发布索引前，保留仍需支持的其他平台和旧兼容版本条目。',
+        '使用 Gitee 时，将清单和分卷上传至最新 Release，并原样携带仍受支持的组件。'
     )
     Set-Content -LiteralPath (Join-Path $dest '发布说明.txt') -Value $notes -Encoding UTF8
-    Write-Step "浏览器内核附件已收集到: $dest"
+    Write-Step "待上传的浏览器内核文件: $uploadDir"
 }
 
 function Copy-DesktopJar ([string]$Key) {
@@ -643,7 +686,6 @@ function Copy-InstallerFiles ([string]$Key) {
     $destSetupExe = Join-Path $dest 'RWJS-Setup.exe'
     Copy-Item -LiteralPath $setupExe -Destination $destSetupExe -Force
     Split-SetupPackage $destSetupExe $dest
-    Collect-ClientUpdateFiles $Key 'windows' $destSetupExe $dest
     Write-BuildInfo $dest $Key
     Write-Step "Inno Setup 安装包已复制到: $dest"
     Get-ChildItem -LiteralPath $dest -Filter 'RWJS*' | ForEach-Object { Write-Host "  $($_.Name)" }
@@ -652,14 +694,22 @@ function Split-SetupPackage ([string]$SourceExe, [string]$Dest) {
     Split-UpdatePackage -Source $SourceExe -Dest $Dest -BaseName 'RWJS-Setup'
 }
 
-function Collect-ClientUpdateFiles ([string]$Key, [string]$Platform, [string]$Source, [string]$Dest) {
-    if ($Script:Channel -ne 'official' -or (Get-ApiProfile $Key) -ne 'official') { return }
+function Collect-ClientUpdateFiles ([string[]]$Keys) {
+    if ($Script:Channel -ne 'official' -or (Get-ApiProfile $Keys[0]) -ne 'official') { return }
     $profile = Get-Content -LiteralPath (Join-Path $BuildDir 'client-api-official.json') -Encoding UTF8 -Raw | ConvertFrom-Json
-    $indexRoot = ([string]$profile.updateApiUrl).Trim()
-    if ($indexRoot.EndsWith('/')) {
-        $uploadDir = Write-RwClientUpdateFiles -Source $Source -Dest $Dest -IndexRoot $indexRoot -Platform $Platform -Version $Version
-        Write-Step "R2 待上传文件: $uploadDir"
+    $indexUrl = ([string]$profile.updateApiUrl).Trim()
+    if (-not $indexUrl.EndsWith('/version.json', [StringComparison]::Ordinal)) { return }
+    $installers = @{}
+    foreach ($key in $Keys) {
+        $artifactDir = Join-Path $ArtifactsDir (Get-OutputSubdir $key)
+        if ($key -eq 'installer') {
+            $installers.windows = Join-Path $artifactDir "RWJS-Setup-$Version.exe"
+        } elseif ($key -eq 'android-release') {
+            $installers.android = Join-Path $artifactDir "rwpp-android-release-$Version.apk"
+        }
     }
+    $uploadDir = Write-RwUpdateBundle -Dest (Join-Path $ArtifactsDir "release-$Version") -IndexUrl $indexUrl -Version $Version -Installers $installers
+    Write-Step "R2 待上传文件: $uploadDir"
 }
 
 function Copy-TestReports ([string]$Key) {
@@ -706,9 +756,6 @@ function Copy-Apk ([string]$Key, [string]$RelDir, [string]$BaseName) {
     }
     Write-BuildInfo $dest $Key
     Split-UpdatePackage -Source $apks[0].FullName -Dest $dest -BaseName 'RWJS-Android'
-    if ($Key -eq 'android-release') {
-        Collect-ClientUpdateFiles $Key 'android' $apks[0].FullName $dest
-    }
     Set-Content -LiteralPath (Join-Path $dest '发布说明.txt') -Encoding UTF8 -Value 'Gitee Release 上传全部 RWJS-Android.zip.001/.002/... 和 RWJS-Android.zip.sha256。完整 APK 供本地安装，不需要上传。分卷不是 Android split APK，客户端合并解出完整签名 APK。Debug 包只供测试；正式更新必须使用 android-release 并保持同一签名和渠道。'
     Write-Step "APK 及发布分卷已复制到: $dest"
     Get-ChildItem -LiteralPath $dest -Filter '*.apk' | ForEach-Object { Write-Host "  $($_.Name)" }

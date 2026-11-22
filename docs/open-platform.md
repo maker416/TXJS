@@ -4,11 +4,11 @@
 `https://fopenapi.铁壳锈世纪.com`，测试版默认使用 `https://topenapi.铁壳锈世纪.com`。
 
 开发联调可在客户端的「设置 → 开发人员／调试 → 管理员调试」填写「开放平台 API 地址」。
-填写平台根地址，保存后重启客户端，玩法大厅、网页入服和专属美术会使用该地址。
-清空地址并保存、重启可以恢复默认地址。
+填写平台根地址并保存后，玩法大厅、网页入服和专属美术会在本次运行中使用该地址。
+清空地址并保存，或重启客户端，即可恢复默认地址。
 
 客户端按 JVM 系统属性 `rwjs.openPlatform.url`、环境变量 `RWJS_OPEN_PLATFORM_URL`、
-客户端保存的地址、构建时默认地址的顺序取值。修改
+本次运行设置的地址、构建时默认地址的顺序取值。修改
 `build/client-api-official.json` 或 `build/client-api-test.json` 的 `openPlatformUrl` 可改变打包默认值。单次构建也可用
 `-PopenPlatformUrl=https://你的平台域名` 临时覆盖。调试时应填写可信的开放平台，
 玩家身份核验会通过 API 请求头发送登录凭据。

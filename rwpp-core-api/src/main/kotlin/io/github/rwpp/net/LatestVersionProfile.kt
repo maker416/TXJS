@@ -26,20 +26,24 @@ data class LatestVersionProfile(
     val assets: List<ReleaseAsset> = emptyList(),
 )
 
-internal enum class ClientUpdatePlatform(val directory: String) {
+internal enum class ClientUpdatePlatform(val key: String) {
     WINDOWS("windows"), ANDROID("android"),
 }
 
-/** An index directory serves a separate signed-installer manifest for each platform. */
+/** R2 shares one release manifest with the browser kernels. */
 internal fun fetchClientUpdate(client: OkHttpClient, apiUrl: String, platform: ClientUpdatePlatform?): LatestVersionProfile? {
-    val staticIndex = apiUrl.endsWith('/')
-    val indexUrl = if (staticIndex) "${apiUrl}${platform?.directory ?: return null}/latest.json" else apiUrl
+    val staticIndex = apiUrl.endsWith("/version.json")
+    if (staticIndex && platform == null) return null
     return runCatching {
-        val request = Request.Builder().url(indexUrl).build()
+        val request = Request.Builder().url(apiUrl).build()
         client.newBuilder().callTimeout(12, TimeUnit.SECONDS).build().newCall(request).execute().use { response ->
             if (!response.isSuccessful) return null
             val json = Json.parse(response.body?.string() ?: return null).asObject()
-            val version = json.getString("tag_name", "")
+            val releaseVersion = json.getString("tag_name", "")
+            val version = if (staticIndex && platform != null) {
+                json.get("platform_versions")?.asObject()?.getString(platform.key, "")
+                    ?: releaseVersion
+            } else releaseVersion
             require(version.matches(Regex("[vV]?\\d+(?:\\.\\d+)+(?:[-+].*)?"))) { "Invalid release version" }
             val assets = json.get("assets")?.asArray()?.map {
                 val obj = it.asObject()
@@ -53,7 +57,7 @@ internal fun fetchClientUpdate(client: OkHttpClient, apiUrl: String, platform: C
                     null -> null
                 } ?: return null
                 // Never require an update from a static index without a complete, verifiable installer.
-                if (plan.partSizes.any { it <= 0 } || plan.sha256Url?.toHttpUrlOrNull()?.isHttps != true ||
+                if (plan.partSizes.any { it < 0 } || plan.sha256Url?.toHttpUrlOrNull()?.isHttps != true ||
                     plan.partUrls.any { it.toHttpUrlOrNull()?.isHttps != true }) return null
             }
             profile

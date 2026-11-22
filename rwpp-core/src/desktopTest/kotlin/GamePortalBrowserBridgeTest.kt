@@ -21,8 +21,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class GamePortalBrowserBridgeTest {
-    private class Binding : GamePortalBridge {
-        override val origin = "https://game.example"
+    private class Binding(override val origin: String = "https://game.example") : GamePortalBridge {
         override val generation = "page-session-1"
         var active = true
         var calls = 0
@@ -41,16 +40,16 @@ class GamePortalBrowserBridgeTest {
         assertEquals("https://game.example", gamePortalOrigin("https://GAME.EXAMPLE:443/portal?x=1#game"))
         assertEquals("http://[::1]:18082", gamePortalOrigin("http://[::1]:18082/game"))
         assertEquals("http://127.1.2.3:18082", gamePortalOrigin("http://127.1.2.3:18082/game"))
-        assertNull(gamePortalOrigin("http://127.attacker.example/"))
-        assertNull(gamePortalOrigin("http://public.example/"))
         assertNull(gamePortalOrigin("https://user:password@game.example/"))
-        val binding = Binding(); val dispatcher = GamePortalBrowserDispatcher(binding)
-        val epoch = dispatcher.beginDocument("https://game.example/portal?x=1#view")
-        assertNull(dispatcher.dispatch(request, "https://evil.example/", true, epoch))
-        assertNull(dispatcher.dispatch(request, "https://game.example/", false, epoch))
-        assertNull(dispatcher.dispatch(request, "https://game.example:444/", true, epoch))
+        val origin = "http://203.0.113.10:5195"
+        val binding = Binding(origin); val dispatcher = GamePortalBrowserDispatcher(binding)
+        val epoch = dispatcher.beginDocument("$origin/portal?x=1#view")
+        assertNull(dispatcher.dispatch(request, "http://127.attacker.example/", true, epoch))
+        assertNull(dispatcher.dispatch(request, "https://203.0.113.10:5195/", true, epoch))
+        assertNull(dispatcher.dispatch(request, "$origin/", false, epoch))
+        assertNull(dispatcher.dispatch(request, "http://203.0.113.10:5196/", true, epoch))
         assertEquals(0, binding.calls)
-        assertTrue(dispatcher.dispatch(request, "https://game.example/portal", true, epoch)!!.contains("\"account_id\":\"101\""))
+        assertTrue(dispatcher.dispatch(request, "$origin/portal", true, epoch)!!.contains("\"account_id\":\"101\""))
     }
     @Test fun navigationAndLogoutDiscardLateIdentityCodes() = runTest {
         val binding = Binding(); val dispatcher = GamePortalBrowserDispatcher(binding)

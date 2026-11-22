@@ -10,17 +10,18 @@ package io.github.rwpp.config
 import io.github.rwpp.net.playtime.PendingModPlaytimeReport
 import io.github.rwpp.rwpp_core_api.BuildConfig
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.koin.core.annotation.Single
 
-/** 模组云端游玩时长服务基址；本地配置、环境变量或系统属性可以覆盖，不在玩家设置页展示。 */
+/** 模组云端游玩时长服务基址。可通过管理员调试、环境变量或系统属性覆盖。 */
 const val DEFAULT_MOD_PLAYTIME_API_URL = BuildConfig.MOD_PLAYTIME_API_URL
 
 @Single
 @Serializable
 data class ModPlaytimePreferences(
     /** 默认连接云端统计服务；显式空值关闭云端统计。 */
-    @Volatile var apiUrl: String = DEFAULT_MOD_PLAYTIME_API_URL,
+    @Transient @Volatile var apiUrl: String = DEFAULT_MOD_PLAYTIME_API_URL,
     @Volatile var pendingReports: List<PendingModPlaytimeReport> = emptyList(),
 ) : Config
 

@@ -23,7 +23,7 @@
 | LWJGL | — | 桌面端 OpenGL 渲染（`lib/lwjgl.jar` 等） |
 | Javassist | 3.30.2-GA | 运行时字节码操作与注入 |
 | OkHttp | 4.12.0 | 网络请求 |
-| GeckoView | 157.0.20260924084938 | Android 内置浏览器内核，从 Gitee Release 按需下载，不依赖系统 WebView；详见 `docs/android-browser.md`、`docs/browser-kernel-distribution.md` |
+| GeckoView | 157.0.20260924084938 | Android 内置浏览器内核，正式版从 R2 按需下载；详见 `docs/android-browser.md`、`docs/browser-kernel-distribution.md` |
 | kotlinx.serialization | — | 序列化（通过 Gradle plugin 引入） |
 | markdown renderer | 0.29.0 | `multiplatform-markdown-renderer` 用于渲染更新日志 |
 | reorderable | 2.4.3 | Compose 拖拽排序 |
@@ -235,10 +235,10 @@ Linux 使用 `./build/build.sh linux --channel official`（本机入口）或 `.
 
 ### 自动更新（R2 与旧版 Gitee Release）
 
-浏览器组件与客户端更新分开：组件独立版本在 `packaging/browser-kernels.properties` 中维护，文件名携带版本；运行时只检查最新 Release 并选择兼容的组件。每个新 Release 必须携带仍受支持的组件清单和完整分卷。按用户确认信任最新 Release 清单，校验分卷/完整 ZIP/文件 SHA-256；已有内核的进程不热替换，升级安装后提示重启。详见 `docs/browser-kernel-distribution.md`。
+浏览器组件独立版本在 `packaging/browser-kernels.properties` 中维护，运行时从共享索引选择兼容的组件。保留仍受支持的组件清单和完整分卷，校验分卷、完整 ZIP 和解压文件的 SHA-256。升级安装后提示重启。详见 `docs/browser-kernel-distribution.md`。
 
-- `Net.getLatestVersionProfile()` 为正式版从 `updateApiUrl` 的 R2 目录读取 `windows/latest.json` 或 `android/latest.json`。静态清单需包含对应平台的完整安装包、大小和 HTTPS SHA-256 校验地址。其他平台没有 R2 自动安装目标。
-- 正式渠道的 Windows 安装包和 Android Release APK 打包后，在各自 `build/artifacts/<目标>-official/upneed/` 生成 R2 上传文件。先上传版本目录中的原始安装包和 SHA-256，再上传平台清单。详见 `packaging/README.md`。
+- 正式版的 `Net.getLatestVersionProfile()` 和浏览器组件共读 R2 的 `update/version.json`。客户端从 `platform_versions` 选择 Windows 或 Android 的版本，兼容只提供 `tag_name` 的既有清单，安装包和 SHA-256 下载地址取自 `assets`。
+- 正式渠道的 R2 上传文件集中在 `build/artifacts/release-<版本>/upneed/update/`。先上传安装包、SHA-256 和新内核文件，再上传 `version.json`。打包脚本保留已发布的其他条目。详见 `packaging/README.md`。
 - 旧客户端沿用 Gitee Release 和 ZIP 分卷。`UpdatePackageDownloader` 共用流式下载及校验。Windows 用 `/RWJS_UPDATE=1 /SILENT /SP- /NORESTART /LOG` 启动 Inno 安装器，Android 使用系统安装器并沿用原签名。
 
 ## 平台抽象模式

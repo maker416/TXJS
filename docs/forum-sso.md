@@ -4,7 +4,7 @@
 
 ## 配置
 
-设置页的论坛地址默认为 `https://zyz.xn--rhqr8xvr4ahqsgka.com/`。支持 `RWJS_FORUM_URL` 环境变量或 `rwjs.forum.url` JVM 属性覆盖，优先级高于保存的设置。
+设置页的论坛地址默认为 `https://zyz.xn--rhqr8xvr4ahqsgka.com/`。支持 `RWJS_FORUM_URL` 环境变量或 `rwjs.forum.url` JVM 属性覆盖，优先级高于开发者在本次运行中设置的地址。
 
 UAS 地址、AppKey 仍使用账号设置；也支持 `RWJS_ACCOUNT_API_URL` / `rwjs.account.apiUrl` 和 `RWJS_ACCOUNT_APP_KEY` / `rwjs.account.appKey`。AppKey 必须属于实际的 TXJS 应用，论坛集成 Secret 永远不放入客户端。
 

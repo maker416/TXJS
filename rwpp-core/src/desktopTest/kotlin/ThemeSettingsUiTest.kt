@@ -100,6 +100,7 @@ class ThemeSettingsUiTest {
 
     @AfterTest
     fun teardown() {
+        setOpenPlatformUrlForSession("")
         ArtThemeController.apply(null)
         ArtThemeController.themeRootOverride = null
         stopKoin()
@@ -275,7 +276,11 @@ class ThemeSettingsUiTest {
         address.performTextReplacement("https://stage.example.com/platform/")
         runOnIdle { assertEquals("", settings.openPlatformApiUrl) }
         save.assertIsEnabled().performClick()
-        runOnIdle { assertEquals("https://stage.example.com/platform", assertNotNull(saved).openPlatformApiUrl) }
+        runOnIdle {
+            assertEquals("https://stage.example.com/platform", resolveOpenPlatformUrl())
+            val savedSettings = Toml.encodeToString(Settings.serializer(), assertNotNull(saved))
+            assertEquals("", decodeSavedConfig(Settings::class, savedSettings).openPlatformApiUrl)
+        }
 
         address.performTextClearance()
         save.performClick()

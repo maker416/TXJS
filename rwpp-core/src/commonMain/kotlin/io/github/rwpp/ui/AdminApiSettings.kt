@@ -13,22 +13,67 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import io.github.rwpp.account.AccountSession
+import io.github.rwpp.appKoin
 import io.github.rwpp.config.*
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.net.OnlinePresenceTracker
 import org.koin.compose.koinInject
+
+internal class AdminApiDraft(
+    private val settings: Settings,
+    private val account: AccountPreferences,
+    private val multiplayer: MultiplayerPreferences,
+    private val playtime: ModPlaytimePreferences,
+    private val feedback: FeedbackPreferences,
+    private val onlinePresence: OnlinePresencePreferences,
+) {
+    var accountApiUrl by mutableStateOf(account.apiUrl)
+    var forumUrl by mutableStateOf(account.forumUrl)
+    var roomListApiUrls by mutableStateOf(multiplayer.roomListApiUrls)
+    var openPlatformApiUrl by mutableStateOf(settings.openPlatformApiUrl)
+    var modSyncApiUrls by mutableStateOf(multiplayer.modSyncApiUrls)
+    var playtimeApiUrl by mutableStateOf(playtime.apiUrl)
+    var onlinePresenceApiUrl by mutableStateOf(onlinePresence.apiUrl)
+    var feedbackApiUrl by mutableStateOf(feedback.apiUrl)
+
+    val invalidOpenPlatformUrl: Boolean
+        get() = openPlatformApiUrl.isNotBlank() && normalizeOpenPlatformUrl(openPlatformApiUrl) == null
+
+    fun apply() {
+        AccountSession.setApiUrlForSession(accountApiUrl)
+        account.forumUrl = forumUrl.trim()
+        multiplayer.roomListApiUrls = roomListApiUrls.trim().ifBlank { DEFAULT_ROOM_LIST_API_URLS }
+        multiplayer.modSyncApiUrls = modSyncApiUrls.trim().ifBlank { DEFAULT_MOD_SYNC_API_URLS }
+        playtime.apiUrl = playtimeApiUrl.trim()
+        feedback.apiUrl = feedbackApiUrl.trim()
+        onlinePresence.apiUrl = onlinePresenceApiUrl.trim()
+        appKoin.getOrNull<OnlinePresenceTracker>()?.refreshEndpoint()
+        settings.openPlatformApiUrl = normalizeOpenPlatformUrl(openPlatformApiUrl).orEmpty()
+        setOpenPlatformUrlForSession(settings.openPlatformApiUrl)
+    }
+}
+
+@Composable
+internal fun rememberAdminApiDraft(): AdminApiDraft {
+    val settings = koinInject<Settings>()
+    val account = koinInject<AccountPreferences>()
+    val multiplayer = koinInject<MultiplayerPreferences>()
+    val playtime = koinInject<ModPlaytimePreferences>()
+    val feedback = koinInject<FeedbackPreferences>()
+    val onlinePresence = koinInject<OnlinePresencePreferences>()
+    return remember { AdminApiDraft(settings, account, multiplayer, playtime, feedback, onlinePresence) }
+}
 
 @Composable
 internal fun AdminApiSettings(
-    unlocked: Boolean,
-    openPlatformApiUrl: String,
-    onOpenPlatformApiUrlChange: (String) -> Unit,
-    invalidOpenPlatformUrl: Boolean,
+    draft: AdminApiDraft?,
     onUnlock: () -> Unit,
 ) {
     var showPassword by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
     var incorrect by remember { mutableStateOf(false) }
-    TextButton(onClick = { showPassword = true }, enabled = !unlocked) {
+    TextButton(onClick = { showPassword = true }, enabled = draft == null) {
         Text(readI18n("settings.adminApi"))
     }
     if (showPassword) {
@@ -61,42 +106,36 @@ internal fun AdminApiSettings(
             },
         )
     }
-    if (!unlocked) return
-    val account = koinInject<AccountPreferences>()
-    val multiplayer = koinInject<MultiplayerPreferences>()
-    val playtime = koinInject<ModPlaytimePreferences>()
-    val feedback = koinInject<FeedbackPreferences>()
-    val onlinePresence = koinInject<OnlinePresencePreferences>()
+    if (draft == null) return
     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(readI18n("settings.adminApiHint"), style = MaterialTheme.typography.bodySmall)
-        ApiAddressField(readI18n("settings.adminAccountApi"), account.apiUrl) { account.apiUrl = it }
-        ApiAddressField(readI18n("settings.adminForumUrl"), account.forumUrl) { account.forumUrl = it }
-        ApiAddressField(readI18n("settings.adminRoomListApi"), multiplayer.roomListApiUrls) { multiplayer.roomListApiUrls = it }
+        ApiAddressField(readI18n("settings.adminAccountApi"), draft.accountApiUrl) { draft.accountApiUrl = it }
+        ApiAddressField(readI18n("settings.adminForumUrl"), draft.forumUrl) { draft.forumUrl = it }
+        ApiAddressField(readI18n("settings.adminRoomListApi"), draft.roomListApiUrls) { draft.roomListApiUrls = it }
         OutlinedTextField(
-            value = openPlatformApiUrl,
-            onValueChange = onOpenPlatformApiUrlChange,
+            value = draft.openPlatformApiUrl,
+            onValueChange = { draft.openPlatformApiUrl = it },
             label = { Text(readI18n("settings.adminOpenPlatformApi")) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
-            isError = invalidOpenPlatformUrl,
+            isError = draft.invalidOpenPlatformUrl,
             supportingText = {
-                val key = if (invalidOpenPlatformUrl) "settings.adminOpenPlatformApiInvalid" else "settings.adminOpenPlatformApiHint"
+                val key = if (draft.invalidOpenPlatformUrl) "settings.adminOpenPlatformApiInvalid" else "settings.adminOpenPlatformApiHint"
                 Text(readI18n(key))
             },
         )
-        ApiAddressField(readI18n("settings.adminModSyncApi"), multiplayer.modSyncApiUrls) { multiplayer.modSyncApiUrls = it }
-        ApiAddressField(readI18n("settings.adminPlaytimeApi"), playtime.apiUrl) { playtime.apiUrl = it }
-        ApiAddressField(readI18n("settings.adminOnlinePresenceApi"), onlinePresence.apiUrl) { onlinePresence.apiUrl = it }
-        ApiAddressField(readI18n("settings.adminFeedbackApi"), feedback.apiUrl) { feedback.apiUrl = it }
+        ApiAddressField(readI18n("settings.adminModSyncApi"), draft.modSyncApiUrls) { draft.modSyncApiUrls = it }
+        ApiAddressField(readI18n("settings.adminPlaytimeApi"), draft.playtimeApiUrl) { draft.playtimeApiUrl = it }
+        ApiAddressField(readI18n("settings.adminOnlinePresenceApi"), draft.onlinePresenceApiUrl) { draft.onlinePresenceApiUrl = it }
+        ApiAddressField(readI18n("settings.adminFeedbackApi"), draft.feedbackApiUrl) { draft.feedbackApiUrl = it }
     }
 }
 
 @Composable
-private fun ApiAddressField(label: String, initial: String, onChange: (String) -> Unit) {
-    var value by remember { mutableStateOf(initial) }
+private fun ApiAddressField(label: String, value: String, onChange: (String) -> Unit) {
     OutlinedTextField(
         value = value,
-        onValueChange = { value = it; onChange(it.trim()) },
+        onValueChange = onChange,
         label = { Text(label) },
         modifier = Modifier.fillMaxWidth(),
         singleLine = true,

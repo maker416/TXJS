@@ -55,6 +55,52 @@ class AndroidNetworkModCacheTest {
         assertFalse(File(units, "broken.meta").exists())
     }
 
+    @Test fun deletingTheVisibleNetworkModAlsoRemovesItsCachedVersionsAcrossRestart() = withRoot { root, context ->
+        val cache = AndroidNetworkModCache(context)
+        fun install(name: String, text: String): NetworkModDescriptor {
+            val bytes = text.toByteArray()
+            val descriptor = NetworkModDescriptor.fromBytes(name, bytes)
+            cache.storeVerified(descriptor, bytes)
+            cache.activate(descriptor)
+            return descriptor
+        }
+        val old = install("Same mod", "old")
+        val current = install("Same mod", "new")
+        val other = install("Same_mod", "new") // Same sanitized prefix, different cache identity.
+        val units = File(root, "units")
+        val visible = NetworkModCacheFiles.activeFile(units, current)
+        assertNull(cache.deleteManagedWorkingCopy(File(root, visible.name)))
+        assertEquals(true, cache.deleteManagedWorkingCopy(visible))
+        for (descriptor in listOf(old, current)) {
+            assertNull(cache.find(descriptor))
+            assertFalse(NetworkModCacheFiles.activeFile(units, descriptor).exists())
+            assertFalse(NetworkModCacheFiles.inactiveFile(units, descriptor).exists())
+            assertFalse(NetworkModCacheFiles.metadataFile(units, descriptor).exists())
+        }
+        val restarted = AndroidNetworkModCache(context)
+        restarted.prepareStartup()
+        assertNull(restarted.find(old))
+        assertNull(restarted.find(current))
+        assertNotNull(restarted.find(other))
+        assertEquals("new", NetworkModCacheFiles.activeFile(units, other).readText())
+    }
+
+    @Test fun failedDeletionKeepsTheVisibleModAndCanBeRetried() = withRoot { root, context ->
+        val cache = AndroidNetworkModCache(context)
+        val bytes = "current".toByteArray()
+        val descriptor = NetworkModDescriptor.fromBytes("example", bytes)
+        cache.storeVerified(descriptor, bytes)
+        val active = cache.activate(descriptor).payloadFile
+        val invalidSibling = NetworkModCacheFiles.inactiveFile(File(root, "units"), descriptor)
+        assertTrue(invalidSibling.mkdir())
+        assertEquals(false, cache.deleteManagedWorkingCopy(active))
+        assertNotNull(cache.find(descriptor))
+        assertContentEquals(bytes, active.readBytes())
+        assertTrue(invalidSibling.delete())
+        assertEquals(true, cache.deleteManagedWorkingCopy(active))
+        assertNull(cache.find(descriptor))
+    }
+
     private fun withRoot(test: (File, AppContext) -> Unit) {
         val scratch = File("build/tmp/network-cache-test").apply { mkdirs() }.canonicalFile
         val root = Files.createTempDirectory(scratch.toPath(), "cache-").toFile()

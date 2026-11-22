@@ -13,7 +13,9 @@ import io.github.rwpp.game.mod.NetworkModCacheEntry
 import io.github.rwpp.game.mod.NetworkModCacheFiles
 import io.github.rwpp.game.mod.NetworkModDescriptor
 import org.koin.core.annotation.Single
+import org.slf4j.LoggerFactory
 import java.io.File
+import java.io.IOException
 
 @Single([NetworkModCache::class])
 class AndroidNetworkModCache(
@@ -28,6 +30,7 @@ class AndroidNetworkModCache(
         if (prepared) return@synchronized
         val now = System.currentTimeMillis()
         val cacheRoot = root.apply { mkdirs() }
+        NetworkModCacheFiles.recoverInterruptedDeletes(cacheRoot)
         entries.clear()
 
         // 一次快照、一次解析；不能为每个活动模组重新扫描并解析全部 .meta（O(n²)）。
@@ -130,6 +133,34 @@ class AndroidNetworkModCache(
         prepareStartup()
         val file = runCatching { File(path).canonicalFile }.getOrNull() ?: return@synchronized null
         entries.values.firstOrNull { it.payloadFile.canonicalFile == file }?.descriptor
+    }
+
+    override fun deleteManagedWorkingCopy(file: File): Boolean? = synchronized(lock) {
+        if (!file.name.endsWith(NetworkModCacheFiles.ACTIVE_SUFFIX)) return@synchronized null
+        val cacheRoot = root.canonicalFile
+        val active = file.canonicalFile
+        if (active.parentFile != cacheRoot) return@synchronized null
+        prepareStartup()
+        val selected = entries.values.firstOrNull {
+            NetworkModCacheFiles.activeFile(cacheRoot, it.descriptor) == active
+        } ?: return@synchronized null
+        // 启动时会从同名缓存中选出最新版本。删除界面上的一项也要移除它的休眠版本。
+        val versions = entries.values.filter { it.descriptor.name == selected.descriptor.name }
+        val files = versions.flatMap { entry ->
+            listOf(
+                NetworkModCacheFiles.metadataFile(cacheRoot, entry.descriptor),
+                NetworkModCacheFiles.inactiveFile(cacheRoot, entry.descriptor),
+                NetworkModCacheFiles.activeFile(cacheRoot, entry.descriptor),
+            )
+        }
+        try {
+            NetworkModCacheFiles.deleteAsGroup(cacheRoot, files)
+            versions.forEach { entries.remove(it.descriptor.cacheKey()) }
+            true
+        } catch (e: IOException) {
+            LoggerFactory.getLogger(AndroidNetworkModCache::class.java).warn("Failed to delete network mod: {}", active, e)
+            false
+        }
     }
 
     private fun demoteSameName(cacheRoot: File, descriptor: NetworkModDescriptor) {

@@ -8,6 +8,7 @@
 package io.github.rwpp.config
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import org.koin.core.annotation.Single
 import io.github.rwpp.net.account.ForumClientRevocation
 import io.github.rwpp.rwpp_core_api.BuildConfig
@@ -26,14 +27,14 @@ const val DEFAULT_ACCOUNT_API_URL = BuildConfig.ACCOUNT_API_URL
 @Single
 @Serializable
 data class AccountPreferences(
-    var apiUrl: String = DEFAULT_ACCOUNT_API_URL,
+    @Transient @Volatile var apiUrl: String = DEFAULT_ACCOUNT_API_URL,
     /** 空则使用出厂默认；可用本地配置、环境变量或系统属性覆盖。 */
     var appKey: String = "",
     var token: String = "",
     var lastUsername: String = "",
     /** 消息变更确认的稳定设备标识，首次同步时生成并保存，不随登出清除。 */
     var chatClientId: String = "",
-    var forumUrl: String = DEFAULT_FORUM_URL,
+    @Transient @Volatile var forumUrl: String = DEFAULT_FORUM_URL,
     /** 仅用于撤销本客户端创建的论坛会话；离线退出时保留队列，下次联网重试。 */
     var forumRevocations: List<ForumClientRevocation> = emptyList(),
 ) : Config

@@ -13,5 +13,6 @@ import io.github.rwpp.core.Initialization
  * Reports client online status to the presence service (register session + periodic heartbeat).
  */
 interface OnlinePresenceTracker : Initialization {
+    fun refreshEndpoint()
     fun stop()
 }

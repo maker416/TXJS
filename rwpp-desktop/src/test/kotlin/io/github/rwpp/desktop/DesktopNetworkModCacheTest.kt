@@ -121,6 +121,72 @@ class DesktopNetworkModCacheTest {
         assertFalse(NetworkModCacheFiles.activeFile(work, newest).exists())
     }
 
+    @Test fun deletingNetworkModKeepsItDeletedAcrossRestart() = withRoot { root, context ->
+        val cache = DesktopNetworkModCache(context)
+        val old = NetworkModDescriptor.fromBytes("foo/bar", byteArrayOf(1))
+        val current = NetworkModDescriptor.fromBytes("foo/bar", byteArrayOf(2))
+        // Same filename prefix, different original mod name.
+        val other = NetworkModDescriptor.fromBytes("foo:bar", byteArrayOf(3))
+        listOf(old, current, other).forEachIndexed { index, descriptor ->
+            cache.storeVerified(descriptor, byteArrayOf((index + 1).toByte()))
+        }
+        val target = cache.activate(current).payloadFile
+        val otherFile = cache.activate(other).payloadFile
+        val external = File(root, target.name).apply { writeText("unmanaged") }
+        assertNull(cache.deleteManagedWorkingCopy(external))
+        assertEquals("unmanaged", external.readText())
+        assertEquals(true, cache.deleteManagedWorkingCopy(target))
+        assertFalse(target.exists())
+        assertNull(cache.find(old))
+        assertNull(cache.find(current))
+        assertContentEquals(byteArrayOf(3), otherFile.readBytes())
+
+        val restarted = DesktopNetworkModCache(context)
+        restarted.prepareStartup()
+        assertFalse(target.exists())
+        assertNull(restarted.find(old))
+        assertNull(restarted.find(current))
+        assertNotNull(restarted.find(other))
+        assertContentEquals(byteArrayOf(3), otherFile.readBytes())
+    }
+
+    @Test fun lockedEnvelopeLeavesWorkingCopyAndIndexAvailableForRetry() = withRoot { _, context ->
+        org.junit.Assume.assumeTrue(System.getProperty("os.name").startsWith("Windows"))
+        val cache = DesktopNetworkModCache(context)
+        val bytes = byteArrayOf(1)
+        val descriptor = NetworkModDescriptor.fromBytes("locked", bytes)
+        val envelope = cache.storeVerified(descriptor, bytes).payloadFile
+        val target = cache.activate(descriptor).payloadFile
+        // FileInputStream opens without FILE_SHARE_DELETE on Windows.
+        envelope.inputStream().use {
+            assertEquals(false, cache.deleteManagedWorkingCopy(target))
+            assertContentEquals(bytes, target.readBytes())
+            assertNotNull(cache.find(descriptor))
+        }
+        assertEquals(true, cache.deleteManagedWorkingCopy(target))
+        assertFalse(envelope.exists())
+        assertFalse(target.exists())
+    }
+
+    @Test fun startupRollsBackInterruptedNetworkModDeletion() = withRoot { _, context ->
+        val cache = DesktopNetworkModCache(context)
+        val bytes = "recover me".toByteArray()
+        val descriptor = NetworkModDescriptor.fromBytes("fixture", bytes)
+        val envelope = cache.storeVerified(descriptor, bytes).payloadFile
+        val target = cache.activate(descriptor).payloadFile
+        val id = "123456789abc"
+        val marker = File(envelope.parentFile, ".rwjs-pending-delete-$id")
+        assertTrue(marker.createNewFile())
+        for (file in listOf(envelope, target)) {
+            Files.move(file.toPath(), File(file.parent, file.name + NetworkModCacheFiles.QUARANTINE_MARKER + id).toPath())
+        }
+        val restarted = DesktopNetworkModCache(context)
+        restarted.prepareStartup()
+        assertNotNull(restarted.find(descriptor))
+        assertContentEquals(bytes, target.readBytes())
+        assertFalse(marker.exists())
+    }
+
     @Test fun corruptNewestFallsBackAndExpiredEntriesAreRemoved() = withRoot { root, context ->
         val now = System.currentTimeMillis()
         val cache = DesktopNetworkModCache(context)

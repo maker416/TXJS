@@ -5,6 +5,7 @@
  * https://github.com/Minxyzgo/RWPP/blob/main/LICENSE
  */
 import io.github.rwpp.config.FeedbackPreferences
+import io.github.rwpp.config.decodeSavedConfig
 import io.github.rwpp.net.feedback.FeedbackHistoryStore
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -54,9 +55,12 @@ class FeedbackHistoryStoreTest {
         val prefs = FeedbackPreferences("https://feedback.example")
         FeedbackHistoryStore(prefs) {}.record(prefs.apiUrl, "", first)
         val encoded = Toml.encodeToString(FeedbackPreferences.serializer(), prefs)
-        val restored = Toml.decodeFromString(FeedbackPreferences.serializer(), encoded)
-        assertEquals(prefs, restored)
-        assertTrue(Toml.decodeFromString(FeedbackPreferences.serializer(), "apiUrl = \"https://feedback.example\"").history.isEmpty())
+        val restored = decodeSavedConfig(FeedbackPreferences::class, encoded)
+        assertEquals(prefs.history, restored.history)
+        assertEquals("", restored.apiUrl)
+        val old = decodeSavedConfig(FeedbackPreferences::class, "apiUrl = \"https://feedback.example\"")
+        assertTrue(old.history.isEmpty())
+        assertEquals("", old.apiUrl)
     }
 
     @Test fun boundsRetainedReceiptsAndRejectsInvalidIdsBeforePersisting() {

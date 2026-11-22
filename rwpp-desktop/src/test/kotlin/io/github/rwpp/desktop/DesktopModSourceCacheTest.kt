@@ -24,6 +24,53 @@ import java.util.zip.ZipOutputStream
 import kotlin.test.*
 
 class DesktopModSourceCacheTest {
+    @Test fun deletionReleasesEveryEngineHandleOnThePhysicalArchive() = fixture { root ->
+        val archive = File(root, "download.network.rwmod")
+        val neighbour = File(root, "download.network-2.rwmod")
+        writeArchive(archive, "root", "target")
+        writeArchive(neighbour, "root", "kept")
+        val handle = assertNotNull(EngineZipCache.d(archive.path, true))
+        val other = assertNotNull(EngineZipCache.d(neighbour.path, true))
+        val alias = File(root, "virtual-name.rwmod").path
+        val aliasedHandle = EngineZip(alias, archive.path)
+        synchronized(zipMap) { zipMap[alias] = aliasedHandle }
+
+        var attempts = 0
+        assertTrue(cache(root).deleteWithArchiveReleased(archive) {
+            attempts++
+            if (File.separatorChar == '\\') {
+                assertTrue(closed(handle) && closed(aliasedHandle))
+            }
+            archive.delete()
+        })
+        assertEquals(1, attempts)
+        assertFalse(synchronized(zipMap) { archive.path in zipMap || alias in zipMap })
+        assertFalse(archive.exists())
+        assertEquals("kept", read(other))
+        assertSame(other, EngineZipCache.d(neighbour.path, true))
+    }
+
+    @Test fun deletionWaitsForAnAlreadyScheduledEngineClose() = fixture { root ->
+        val archive = File(root, "pending.rwmod")
+        writeArchive(archive, "root", "target")
+        val handle = assertNotNull(EngineZipCache.d(archive.path, true))
+        EngineZipCache.e(archive.path, false)
+        var attempts = 0
+        assertTrue(cache(root).deleteWithArchiveReleased(archive) {
+            attempts++
+            (File.separatorChar != '\\' || closed(handle)) && archive.delete()
+        })
+        assertTrue(attempts <= 3)
+        assertFalse(archive.exists())
+    }
+
+    private fun closed(handle: EngineZip): Boolean = try {
+        (zipFile.get(handle) as ZipFile).size()
+        false
+    } catch (_: IllegalStateException) {
+        true
+    }
+
     @Test fun replacementReopensTheRealEngineZipAndUnchangedScanKeepsItsHandle() = fixture { root ->
         val archive = File(root, "same.rwmod")
         writeArchive(archive, "old-root", "aaaa")
@@ -211,7 +258,6 @@ class DesktopModSourceCacheTest {
         // 仅将测试句柄转向旧包快照，保留真实引擎的索引和缓存表项；生产逻辑不作此处理。
         val snapshot = File(archive.parentFile, "old-handle.zip")
         Files.copy(archive.toPath(), snapshot.toPath())
-        val zipFile = EngineZip::class.java.getDeclaredField("c").apply { isAccessible = true }
         (zipFile.get(engineZip) as ZipFile).close()
         zipFile.set(engineZip, ZipFile(snapshot))
     }
@@ -246,6 +292,7 @@ class DesktopModSourceCacheTest {
         private val unsafe = sun.misc.Unsafe::class.java.getDeclaredField("theUnsafe")
             .apply { isAccessible = true }.get(null) as sun.misc.Unsafe
         private val modsField = EngineModManager::class.java.getDeclaredField("e").apply { isAccessible = true }
+        private val zipFile = EngineZip::class.java.getDeclaredField("c").apply { isAccessible = true }
         @Suppress("UNCHECKED_CAST")
         private val zipMap = EngineZipCache::class.java.getDeclaredField("a").apply { isAccessible = true }
             .get(null) as MutableMap<String, EngineZip>

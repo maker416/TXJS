@@ -9,20 +9,17 @@ package io.github.rwpp.config
 
 import io.github.rwpp.rwpp_core_api.BuildConfig
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import org.koin.core.annotation.Single
 
-/**
- * 在线人数/会话 Presence 服务 base URL（不含路径）。
- *
- * 注意子域是 **`oline`**（不是 `online`）：线上即按此主机名部署，属有意拼写，勿「纠正」为 online。
- */
+/** 在线人数/会话 Presence 服务的构建时默认地址。 */
 const val DEFAULT_ONLINE_PRESENCE_API_URL = BuildConfig.ONLINE_PRESENCE_API_URL
 
 @Single
 @Serializable
 data class OnlinePresencePreferences(
-    /** 在线上报服务基址；保存后重启生效，留空使用默认地址。 */
-    var apiUrl: String = DEFAULT_ONLINE_PRESENCE_API_URL,
+    /** 本次运行的在线上报地址，留空使用默认地址。 */
+    @Transient @Volatile var apiUrl: String = DEFAULT_ONLINE_PRESENCE_API_URL,
 ) : Config
 
 /**
