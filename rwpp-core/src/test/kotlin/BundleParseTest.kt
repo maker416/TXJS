@@ -159,7 +159,8 @@ class BundleParseTest {
             val root = Toml.parseToTomlTable(File(bundleDir, name).readText())
             val roomList = (root["multiplayer"] as TomlTable)["roomList"] as TomlTable
             listOf(
-                "unnamedRoom", "mapNotProvided", "modCount", "currentPlayers", "statusUnknown",
+                "unnamedRoom", "mapNotProvided", "modCount", "currentPlayers",
+                "statusUnavailable", "statusInGame", "statusUnknown",
                 "loadingBadge", "loadingTitle", "loadingHintConnect", "loadingHintPreview",
                 "loadingHintModSync", "loadingHintFilter", "loadingHintShortcut", "loadingHintHost",
                 "retry",

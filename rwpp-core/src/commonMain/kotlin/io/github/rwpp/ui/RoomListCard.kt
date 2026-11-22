@@ -46,7 +46,8 @@ internal fun roomListStatusI18nKey(room: RoomDescription): String? {
     val key = if (!room.listAvailabilityKnown) {
         "statusUnknown"
     } else when (room.listDegradeReason()) {
-        RoomListDegradeReason.Unavailable -> "statusUnavailable"
+        RoomListDegradeReason.Unavailable ->
+            if (room.closedMessage.isNotBlank()) "statusUnavailable" else "statusInGame"
         RoomListDegradeReason.Full -> "statusFull"
         RoomListDegradeReason.VersionMismatch -> "statusVersionMismatch"
         else -> return null

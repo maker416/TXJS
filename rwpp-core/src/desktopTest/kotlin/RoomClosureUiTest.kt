@@ -65,12 +65,13 @@ class RoomClosureUiTest {
         }
         onNodeWithText(message).assertIsDisplayed()
         onNodeWithText("暂不可加入").assertIsDisplayed()
+        onNodeWithText("已开始对局").assertDoesNotExist()
         onNodeWithText("加入房间").assertDoesNotExist()
         onNodeWithText("加入").assertDoesNotExist()
     }
 
     @Test
-    fun legacyUnavailableRoomKeepsGenericStatus() = runDesktopComposeUiTest(width = 520, height = 720) {
+    fun unavailableRoomWithoutClosureMessageShowsInGameStatus() = runDesktopComposeUiTest(width = 520, height = 720) {
         setContent {
             KoinContext(appKoin) {
                 MaterialTheme(colorScheme = defaultRWPPColorScheme) {
@@ -78,7 +79,8 @@ class RoomClosureUiTest {
                 }
             }
         }
-        onNodeWithText("暂不可加入").assertIsDisplayed()
+        onNodeWithText("已开始对局").assertIsDisplayed()
+        onNodeWithText("暂不可加入").assertDoesNotExist()
         onNodeWithText("加入房间").assertDoesNotExist()
         onNodeWithText("加入").assertDoesNotExist()
     }

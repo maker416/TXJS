@@ -130,6 +130,23 @@ class RoomListCardUiTest {
         }
 
     @Test
+    fun unavailableCardShowsInGameUnlessClosedMessageIsProvided() =
+        runDesktopComposeUiTest(width = 360, height = 420) {
+            val startedRoom = publicRoom.copy(
+                uuid = "started", creator = "已开局房间", mapName = "峡谷.tmx",
+                label = "休闲", listAvailable = false,
+            )
+            val closedRoom = publicRoom.copy(
+                uuid = "closed", creator = "维护房间", mapName = "峡谷.tmx",
+                label = "休闲", listAvailable = false, closedMessage = "服务器维护中",
+            )
+            setContent { TestList(listOf(startedRoom, closedRoom)) }
+            waitForIdle()
+            assertTextFits("已开始对局")
+            assertTextFits("暂不可加入")
+        }
+
+    @Test
     fun englishLargeFontRetainsSyncFlagAndClickWhenNameAndMapAreMissing() =
         runDesktopComposeUiTest(width = 320, height = 500) {
             loadLanguage("en")
