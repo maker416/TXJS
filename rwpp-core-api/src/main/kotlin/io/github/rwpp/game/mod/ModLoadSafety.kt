@@ -50,7 +50,7 @@ class ModLoadJournal(private val file: File) {
     }
 }
 
-/** Actual Java heap headroom, never compressed archive size or physical RAM. */
+/** Java heap headroom at which to log a warning during a resource load. */
 fun modLoadReserveBytes(maxHeap: Long): Long = (maxHeap / 10).coerceIn(32L shl 20, 128L shl 20)
 
 /** Recovery lists containers only. It deliberately does not inflate archives or initialize the engine. */
@@ -61,6 +61,7 @@ fun recoveryModFiles(roots: List<File>): List<File> = roots.flatMap { root ->
 }.distinctBy { it.canonicalPath }.sortedBy { it.name.lowercase() }
 
 object ModLoadSafety {
+    const val OOM_FAILURE = "oom"
     private val session = UUID.randomUUID().toString()
     @Volatile private var journal: ModLoadJournal? = null
     @Volatile private var active: ModLoadJournalEntry? = null
@@ -89,24 +90,33 @@ object ModLoadSafety {
             journal?.write(updated)
         }
         val runtime = Runtime.getRuntime()
-        peakUsed = maxOf(peakUsed, runtime.totalMemory() - runtime.freeMemory())
-        val reserve = modLoadReserveBytes(runtime.maxMemory())
-        fun remaining() = runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())
-        if (remaining() >= reserve) return
-        // Every low-water crossing can be temporary parser garbage. A once-per-load GC would
-        // falsely reject small live registries during long or repeated parses.
-        System.gc()
-        if (remaining() < reserve) abortMemory()
+        val used = runtime.totalMemory() - runtime.freeMemory()
+        if (used <= peakUsed) return
+        val previousPeak = peakUsed
+        peakUsed = used
+        val max = runtime.maxMemory()
+        val warningLevel = max - modLoadReserveBytes(max)
+        if ((previousPeak == 0L || previousPeak <= warningLevel) && used > warningLevel) {
+            runCatching {
+                io.github.rwpp.logger.warn("[MODMEM] stage={} event=low-headroom used={} max={}", current.stage, used, max)
+            }
+        }
     }
 
     fun onEngineError(error: Throwable) {
+        if (hasMemoryCause(error)) abortMemory()
+        if (GameStartSafety.requiresRestart) throw StopModLoading
+    }
+
+    private fun hasMemoryCause(error: Throwable): Boolean {
         var cause: Throwable? = error
         repeat(16) {
-            if (cause is OutOfMemoryError || cause === StopModLoading) abortMemory()
+            if (cause is OutOfMemoryError || (cause as? ModLoadFailure)?.memoryExhausted == true) return true
             val next = cause?.cause
-            if (next === cause) return
-            cause = next ?: return
+            if (next === cause) return false
+            cause = next ?: return false
         }
+        return false
     }
 
     fun abortMemory(): Nothing {
@@ -119,7 +129,7 @@ object ModLoadSafety {
         GameStartSafety.markMemoryExhausted()
         runCatching {
             val entry = active ?: ModLoadJournalEntry(UUID.randomUUID().toString(), session, stage, "", "")
-            journal?.write(entry.copy(failure = "memory"))
+            journal?.write(entry.copy(failure = OOM_FAILURE))
         }
     }
 
@@ -149,14 +159,13 @@ object ModLoadSafety {
                 journal?.complete(entry.attempt)
                 throw error
             }
-            val memory = error is OutOfMemoryError || error === StopModLoading ||
-                error is ModLoadFailure && error.memoryExhausted || GameStartSafety.memoryExhausted
+            val memory = GameStartSafety.memoryExhausted || hasMemoryCause(error)
             if (memory) GameStartSafety.markMemoryExhausted() else GameStartSafety.markLoadFailed()
             reportHeap(stage, if (memory) "memory-stop" else "failed", before)
             // This evidence is best effort; the prewritten unfinished marker already protects next startup.
-            runCatching { journal?.write((active ?: entry).copy(failure = if (memory) "memory" else "load")) }
-            if (!memory && error !is Exception) throw error
-            throw ModLoadFailure(memory, if (memory) "内存余量不足，已停止资源加载。请重启并减少启用的模组。"
+            runCatching { journal?.write((active ?: entry).copy(failure = if (memory) OOM_FAILURE else "load")) }
+            if (!memory && error !is Exception && error !== StopModLoading) throw error
+            throw ModLoadFailure(memory, if (memory) "资源加载时内存分配失败，已停止加载。请重启并减少启用的模组。"
                 else "资源加载失败，请重启后调整模组。${error.message.orEmpty().take(160)}")
         } finally { active = null }
     }

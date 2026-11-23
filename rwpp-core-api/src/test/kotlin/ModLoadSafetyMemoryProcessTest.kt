@@ -44,7 +44,7 @@ class ModLoadSafetyMemoryProcessTest {
             assertTrue(GameStartSafety.requiresRestart)
             assertTrue(ModLoadSafety.suppressSelectionSave)
             assertFalse(ModLoadSafety.loading)
-            assertEquals("memory", ModLoadSafety.previousFailure()?.failure)
+            assertEquals("oom", ModLoadSafety.previousFailure()?.failure)
             assertEquals("heavy", ModLoadSafety.previousFailure()?.mod)
             assertFailsWith<ModLoadFailure> { ModLoadSafety.run("must-not-retry") { fail("must not execute") } }
             assertEquals("room-reload", ModLoadSafety.previousFailure()?.stage)

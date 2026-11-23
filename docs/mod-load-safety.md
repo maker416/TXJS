@@ -20,9 +20,9 @@ v2 存放在 `.rwpp/network-mod-cache-v2/`。旧 v1 加密缓存留在原位置�
 
 实际旧版“安绒宁静”包含 1,539 层 select。Android 压力快照中约 350 MiB 是字符数组；优化后该模组单独启动和重载通过。原版客户端也能加载此模组，因此不能把所有峰值失败归因于文件太大。完整实测和边界见[验证报告](mod-memory-recovery-validation.md)。
 
-`ModLoadSafety` 包住启动、普通重载、保连接重载和辅助重载。在单位与表达式解析入口检查实际 Java 堆余量，保留 `maxHeap / 10`，下限 32 MiB、上限 128 MiB。达到阈值先执行 GC 再判断；每次低余量都重新判断，不能把整轮只允许一次 GC 当作预算，否则长期解析产生的可回收对象会造成误拦。
+`ModLoadSafety` 包住启动、普通重载、保连接重载和辅助重载。单位与表达式解析入口采样 Java 堆余量。告警阈值为 `maxHeap / 10`，下限 32 MiB、上限 128 MiB。每轮加载首次进入低余量区间时记录一次告警并继续解析。检查点不主动触发 GC，由运行时根据后续分配需求回收临时对象。
 
-仍无足够余量时用预分配、无堆栈的内部信号中止解析，外层转成 `ModLoadFailure(memoryExhausted=true)`。原引擎包装的 OOM 也检查 cause 链。普通资源加载失败使用不同失败类型。失败不允许继续刷新地图、校验损坏注册表或上报同步成功，等待解析退出后关闭连接并清理 Presence，不再进行第二次原版回落加载。
+分配实际抛出 `OutOfMemoryError` 时，外层转成 `ModLoadFailure(memoryExhausted=true)`。引擎包装的 OOM 通过异常 cause 链识别。普通资源加载失败使用不同失败类型。失败不允许继续刷新地图、校验损坏注册表或上报同步成功，等待解析退出后关闭连接并清理 Presence，不再进行第二次原版回落加载。
 
 `GameStartSafety` 是进程级闸门，退房不清除此状态。失败界面只提供退出；退出路径不遍历或保存损坏的引擎对象。普通的模组格式错误如果由引擎正常记录并完成注册表，仍沿用原有模组错误提示。
 
@@ -48,7 +48,7 @@ Android 使用原生控件、PC 使用 Swing，在解析引擎单位前读取恢
 .\gradlew.bat :rwpp-android:assembleRelease
 ```
 
-`resourceLoadSafetyTest` 每个测试类独立 JVM、96 MiB 堆，验证保护状态不可在同一进程内解除、包装 OOM、普通失败、恢复选择与实际分配压力。`lowMemoryModTransferTest` 在 96 MiB 堆中流式下载、上传、加解密 60 MiB 文件。另覆盖 Range、中途取消、认证破坏、交换块、发布失败保留旧文件、PC 连接回调先于句柄返回、重复打开加载框后取消、Android 文档 URI 真实文件名识别和原子导入。
+`resourceLoadSafetyTest` 每个测试类独立 JVM、96 MiB 堆。验证低余量下仍能完成加载、实际 OOM 会锁定本进程后续加载，同时覆盖包装 OOM、普通失败和恢复选择。`lowMemoryModTransferTest` 在 96 MiB 堆中流式下载、上传、加解密 60 MiB 文件。另覆盖 Range、中途取消、认证破坏、交换块、发布失败保留旧文件、PC 连接回调先于句柄返回、重复打开加载框后取消、Android 文档 URI 真实文件名识别和原子导入。
 
 Android `ResourceFailureFrameTest` 直接调用真实帧注入函数：队列内设置失败后，同一帧必须返回中断，不能接触引擎或继续单位更新。PC 注入测试将生成的预算/恢复配置应用到真实游戏 JAR 并验证字节码。
 
