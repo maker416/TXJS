@@ -10,7 +10,12 @@ package io.github.rwpp.content
 import io.github.rwpp.appKoin
 import io.github.rwpp.AppContext
 import io.github.rwpp.config.Settings
+import io.github.rwpp.core.DirectJoinSyncResult
+import io.github.rwpp.core.DirectModSyncController
+import io.github.rwpp.core.DirectModSyncControllerTest.FakeEnvironment
+import io.github.rwpp.core.DirectModSyncControllerTest.FakeTransport
 import io.github.rwpp.core.GameSessionController
+import io.github.rwpp.core.LoadingContext
 import io.github.rwpp.event.broadcast
 import io.github.rwpp.event.events.DisconnectEvent
 import io.github.rwpp.expansion.ExpansionPackageInstaller
@@ -28,6 +33,8 @@ import io.github.rwpp.expansion.EXPANSION_MEDIA_TYPE
 import io.github.rwpp.net.sync.direct.DIRECT_SYNC_ONLY_CAPABILITY
 import io.github.rwpp.net.sync.direct.DirectContentArtifact
 import io.github.rwpp.net.sync.direct.DirectModManifest
+import io.github.rwpp.net.ConnectionFailureStage
+import io.github.rwpp.net.appearance.VerifiedGameServer
 import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.theme.personalizedThemeCatalog
 import io.github.rwpp.theme.validateThemeToml
@@ -42,6 +49,9 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.async
 import kotlinx.coroutines.supervisorScope
+import kotlinx.serialization.json.Json
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
 import org.koin.dsl.module
@@ -116,6 +126,7 @@ class ExpansionContentControllerTest {
         val game = Proxy.newProxyInstance(Game::class.java.classLoader, arrayOf(Game::class.java)) { _, method, _ ->
             when (method.name) {
                 "isGameCouldContinue" -> singlePlayerPaused
+                "getUnitsChecksum" -> 1
                 else -> error("Unexpected game method ${method.name}")
             }
         } as Game
@@ -243,6 +254,53 @@ class ExpansionContentControllerTest {
         assertFailsWith<PortalExpansionPausedGameException> { ExpansionContentController.activate(current) }
         assertEquals(0, loads)
         assertNull(ExpansionContentController.activeSha)
+    }
+
+    @Test fun directRoomVerifiesThePreloadedPackageWithoutApplyingContentAgain() = runBlocking {
+        val current = ExpansionContentController.prepareForPortal(installed, gameId).also { token = it }
+        ExpansionContentController.activate(current)
+        val handle = PortalExpansionHandle(PortalExpansionKey(gameId, installed.binding, "8.8.8.8:5125"), current, 1)
+        val artifact = DirectContentArtifact(installed.name, EXPANSION_MEDIA_TYPE, installed.version, installed.size, installed.sha256)
+        val manifest = DirectModManifest(4, gameVersion.toString(), "scope", "ready", true, 1, emptyList(),
+            "server-instance", "lobby", 3, installed.sha256, artifact)
+        val transport = FakeTransport(peerEndpoint = "127.0.0.1:5123")
+        val environment = FakeEnvironment().also { it.checksum = 1 }
+        val direct = DirectModSyncController(environment) { _, _ -> transport }
+        val expected = ExpansionJoinExpectation(gameId, installed.binding)
+        suspend fun join(serverId: String) = direct.preJoinSync("127.0.0.1:5123", LoadingContext {},
+            expectedExpansion = expected, preloadedExpansion = handle, expectedServerId = serverId)
+
+        MockWebServer().use { platform ->
+            platform.start(java.net.InetAddress.getByName("127.0.0.1"), 0)
+            val identity = Json.encodeToString(VerifiedGameServer.serializer(), VerifiedGameServer("server", gameId, expansionBinding = installed.binding))
+            repeat(2) { platform.enqueue(MockResponse().setBody("""{"data":$identity}""")) }
+            val property = "rwjs.openPlatform.url"
+            val previous = System.setProperty(property, "http://127.0.0.1:${platform.port}")
+            try {
+                // A rejected join leaves the same loaded package available for the next room attempt.
+                transport.manifestResults += { manifest }
+                val rejected = assertIs<DirectJoinSyncResult.Failed>(join("other-server"))
+                assertEquals(1, platform.requestCount)
+                assertEquals(ConnectionFailureStage.SYNC_MANIFEST, rejected.failure.stage)
+                assertTrue(handle.isReady())
+                assertEquals(0, transport.readyCalls)
+                repeat(3) { transport.manifestResults += { manifest } }
+                val joined = assertIs<DirectJoinSyncResult.Applied>(join("server"))
+                try {
+                    assertEquals(current, joined.expansionToken)
+                    assertEquals(1, transport.readyCalls)
+                    assertTrue(environment.refreshed)
+                    assertTrue(environment.applied.isEmpty())
+                    assertEquals(0, environment.expansionLoads)
+                    assertEquals(1, loads)
+                    assertEquals(2, platform.requestCount)
+                } finally {
+                    joined.reservation!!.close()
+                }
+            } finally {
+                if (previous == null) System.clearProperty(property) else System.setProperty(property, previous)
+            }
+        }
     }
 
     @Test fun syncOnlyManifestMustMatchThePublishedArtifactAndHaveNoRoom() {

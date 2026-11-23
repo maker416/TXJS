@@ -559,7 +559,7 @@ class DirectModSyncControllerTest {
 
     private fun lease() = DirectModLease("scope", 90_000, 30_000, "reserved", 1, 10, 1)
 
-    private class FakeTransport : DirectModSyncTransport {
+    internal class FakeTransport(override val peerEndpoint: String? = null) : DirectModSyncTransport {
         val manifestResults = mutableListOf<() -> DirectModManifest>()
         val downloads = mutableListOf<NetworkModDescriptor>()
         var manifestCalls = 0
@@ -599,7 +599,7 @@ class DirectModSyncControllerTest {
         }
     }
 
-    private class FakeEnvironment : DirectModSyncEnvironment {
+    internal class FakeEnvironment : DirectModSyncEnvironment {
         override val cache: NetworkModCache = EmptyCache
         val applied = mutableListOf<List<NetworkModDescriptor>>()
         var checksum = 0

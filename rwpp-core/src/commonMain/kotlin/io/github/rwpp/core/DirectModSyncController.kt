@@ -188,14 +188,18 @@ class DirectModSyncController(
                 loadingContext.message(readI18n("modSync.directChecking", I18nType.RWPP))
                 val artifact = first.artifact
                 if (artifact != null) {
-                    stage = ConnectionFailureStage.SYNC_APPLY
-                    applyingMods.value = true
-                    try {
-                        expansionToken = preloadedExpansion?.validateRoom(first, transport, expectedExpansion, expectedServerId)
-                            ?: environment.applyExpansion(artifact, transport, expectedExpansion, true) { progress ->
+                    expansionToken = if (preloadedExpansion != null) {
+                        preloadedExpansion.validateRoom(first, transport, expectedExpansion, expectedServerId)
+                    } else {
+                        stage = ConnectionFailureStage.SYNC_APPLY
+                        applyingMods.value = true
+                        try {
+                            environment.applyExpansion(artifact, transport, expectedExpansion, true) { progress ->
                                 loadingContext.message(directDownloadMessage(1, 1, artifact.name, progress))
                             }
-                    } finally { applyingMods.value = false }
+                        } finally { applyingMods.value = false }
+                    }
+                    stage = ConnectionFailureStage.SYNC_MANIFEST
                     val after = transport.getManifest()
                     prepare(after); requireSameContent(first, after)
                     if (after.hostUnitsChecksum == -1L || after.hostUnitsChecksum != environment.getUnitsChecksum().toLong()) {

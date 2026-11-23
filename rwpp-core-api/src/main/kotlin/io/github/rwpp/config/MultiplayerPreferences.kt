@@ -7,6 +7,7 @@
 
 package io.github.rwpp.config
 
+import io.github.rwpp.expansion.ExpansionBinding
 import io.github.rwpp.rwpp_core_api.BuildConfig
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
@@ -36,4 +37,6 @@ data class MultiplayerPreferences(
     @Transient @Volatile var modSyncApiUrls: String = DEFAULT_MOD_SYNC_API_URLS,
     var allServerConfig: MutableList<ServerConfig> = mutableListOf(),
     var roomLabelFilterSelection: List<String> = emptyList(),
+    /** Last expansion accepted on this device for each open-platform URL and game ID. */
+    var acceptedPortalExpansions: Map<String, ExpansionBinding> = emptyMap(),
 ) : Config

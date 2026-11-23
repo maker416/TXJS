@@ -58,6 +58,7 @@ import io.github.rwpp.config.CoreData
 import io.github.rwpp.config.Settings
 import io.github.rwpp.core.GameSessionController
 import io.github.rwpp.core.DirectModSyncController
+import io.github.rwpp.content.ExpansionContentController
 import io.github.rwpp.core.MatchStartController
 import io.github.rwpp.core.ModPlaytimeController
 import io.github.rwpp.core.ModSyncController
@@ -208,7 +209,7 @@ fun App(
 
     LaunchedEffect(game) { io.github.rwpp.theme.PersonalizedAppearanceController.run(game) }
     LaunchedEffect(Unit) { io.github.rwpp.theme.OnlineGameThemeController.init() }
-    LaunchedEffect(Unit) { io.github.rwpp.content.ExpansionContentController.init() }
+    LaunchedEffect(Unit) { ExpansionContentController.init() }
 
     // 房间状态快照的唯一采样入口：RefreshUIEvent 是引擎→UI 的既有刷新漏斗，
     // 在 Main 上重采样 RoomSnapshot，房间 UI 只采集不可变快照
@@ -782,7 +783,10 @@ fun App(
                         // 清除启动阶段残留的最后一个引擎加载消息（如 "init complete"），
                         // 避免重载弹窗一直显示陈旧文本。
                         if (!DirectModSyncController.shared.isApplyingMods.value) loadingMessage = ""
-                        reloadingModViewVisible = true
+                        // The portal already displays its expansion reload above the browser.
+                        val portalReload = launcherPage is LauncherPage.GamePortal &&
+                            ExpansionContentController.portalToken != null && ExpansionContentController.switching
+                        reloadingModViewVisible = !portalReload
                     }
                 }
 
