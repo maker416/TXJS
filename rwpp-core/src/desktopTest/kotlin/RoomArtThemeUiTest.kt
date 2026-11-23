@@ -134,6 +134,7 @@ class RoomArtThemeUiTest {
     private val sentMessages = mutableListOf<String>()
     private val networkAttempts = AtomicInteger()
     private var authority = true
+    private var maxPlayerCount = 8
     private var starts = 0
     private var additions = 0
     private var locked = false
@@ -158,7 +159,7 @@ class RoomArtThemeUiTest {
                 "getPlayers" -> players
                 "getAllPlayers" -> players.toTypedArray()
                 "getLocalPlayer" -> localPlayer
-                "getMaxPlayerCount" -> 8
+                "getMaxPlayerCount" -> maxPlayerCount
                 "isHost" -> authority
                 "isHostServer", "isSinglePlayerGame", "isConnecting", "isStartGame", "isStartingGame" -> false
                 "getSelectedMap" -> gameMap
@@ -283,6 +284,58 @@ class RoomArtThemeUiTest {
     @Test fun narrowRoomKeepsCommittedGeometryAcrossArtworkChanges() = geometry(360, 900, WindowManager.Small)
     @Test fun middleRoomKeepsCommittedGeometryAcrossArtworkChanges() = geometry(800, 600, WindowManager.Middle)
     @Test fun largeRoomKeepsCommittedGeometryAcrossArtworkChanges() = geometry(1280, 1000, WindowManager.Large)
+
+    @Test fun listDetectorKeepsCompactPlayerSlotsStable() = listDetectorKeepsSlotsStable(800, 900, WindowManager.Middle)
+    @Test fun listDetectorKeepsDesktopPlayerSlotsStable() = listDetectorKeepsSlotsStable(1280, 1000, WindowManager.Large)
+
+    private fun listDetectorKeepsSlotsStable(width: Int, height: Int, mode: WindowManager) =
+        runDesktopComposeUiTest(width = width, height = height) {
+            val regularPlayers = players.take(3)
+            val detectorName = "列表探测器-b7fe8ce0e2b"
+            val detector = player(detectorName, spawn = 3, team = 0)
+            runOnIdle {
+                maxPlayerCount = 4
+                players = regularPlayers
+                RoomSnapshotStore.resample(game)
+            }
+            showRoom(mode)
+            val hostRow = onNodeWithTag("room-player-1", useUnmergedTree = true)
+            val detectorRow = onNodeWithTag("room-player-4", useUnmergedTree = true)
+            val inviteRow = onNodeWithText("邀请好友", useUnmergedTree = true)
+            val hostBounds = hostRow.assertIsDisplayed().getUnclippedBoundsInRoot()
+            val inviteBounds = inviteRow.assertIsDisplayed().getUnclippedBoundsInRoot()
+
+            fun assertStableSlots() {
+                detectorRow.assertDoesNotExist()
+                assertEquals(hostBounds, hostRow.assertIsDisplayed().getUnclippedBoundsInRoot())
+                assertEquals(inviteBounds, inviteRow.assertIsDisplayed().getUnclippedBoundsInRoot())
+            }
+
+            runOnIdle {
+                players = listOf(detector) + regularPlayers
+                RoomSnapshotStore.resample(game)
+            }
+            assertStableSlots()
+
+            runOnIdle {
+                detector.name = "Visiting commander"
+                RoomSnapshotStore.resample(game)
+            }
+            detectorRow.assertIsDisplayed()
+            inviteRow.assertDoesNotExist()
+
+            runOnIdle {
+                detector.name = detectorName
+                RoomSnapshotStore.resample(game)
+            }
+            assertStableSlots()
+
+            runOnIdle {
+                players = regularPlayers
+                RoomSnapshotStore.resample(game)
+            }
+            assertStableSlots()
+        }
 
     private fun geometry(width: Int, height: Int, mode: WindowManager) = runDesktopComposeUiTest(width = width, height = height) {
         showRoom(mode)
@@ -1623,8 +1676,10 @@ class RoomArtThemeUiTest {
 
     private fun player(name: String, spawn: Int, team: Int, ai: Boolean = false, host: Boolean = false, ready: Boolean = true): Player {
         val data = PlayerData(ready).also(readiness::add)
-        return stub(Player::class.java) { method, _ -> when (method) {
-            "getName" -> name
+        var playerName = name
+        return stub(Player::class.java) { method, args -> when (method) {
+            "getName" -> playerName
+            "setName" -> { playerName = args!![0] as String; Unit }
             "getSpawnPoint" -> spawn
             "getTeam" -> team
             "getColor" -> team

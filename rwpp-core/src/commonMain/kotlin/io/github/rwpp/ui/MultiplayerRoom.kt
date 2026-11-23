@@ -378,7 +378,8 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
 
 // （旧协议内同步的残留占位已随重构移除）
     val players = snapshot.players
-    var selectedPlayer by remember { mutableStateOf(players.firstOrNull() ?: ConnectingPlayer) }
+    val visiblePlayers = snapshot.visiblePlayers
+    var selectedPlayer by remember { mutableStateOf(visiblePlayers.firstOrNull() ?: ConnectingPlayer) }
     var playerOverrideVisible by remember { mutableStateOf(false) }
     var playerCardVisible by remember { mutableStateOf(false) }
     var listDetectorVisible by remember { mutableStateOf(false) }
@@ -830,7 +831,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                 ) {
                                     CompactPlayerPanel(
                                         modifier = Modifier.fillMaxWidth(),
-                                        players = players,
+                                        players = visiblePlayers,
                                         room = room,
                                         game = game,
                                         update = update,
@@ -886,7 +887,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                         modifier = Modifier
                                             .weight(0.55f)
                                             .fillMaxHeight(),
-                                        players = players,
+                                        players = visiblePlayers,
                                         room = room,
                                         game = game,
                                         update = update,
@@ -1019,7 +1020,7 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                             }
 
                             val state = rememberLazyListState()
-                            val playerListKeys = remember { RoomPlayerKeyStore() }.keysFor(players)
+                            val playerListKeys = remember { RoomPlayerKeyStore() }.keysFor(visiblePlayers)
 
                             Column(
                                 modifier = Modifier.weight(.52f).padding(10.dp).then(
@@ -1045,11 +1046,11 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                             state = state,
                                         ) {
                                             items(
-                                                count = players.size,
+                                                count = visiblePlayers.size,
                                                 key = { playerListKeys[it] },
                                             ) { index ->
                                                 RoomPlayerTableRow(
-                                                    player = players[index],
+                                                    player = visiblePlayers[index],
                                                     room = room,
                                                     game = game,
                                                     update = update,
@@ -1063,9 +1064,9 @@ fun MultiplayerRoomView(isSandboxGame: Boolean = false, onExit: () -> Unit) {
                                                 )
                                             }
                                             // 空槽位：追加最多 2 个「邀请好友」占位行
-                                            if (!isSandboxGame && canInvite && players.size < room.maxPlayerCount) {
+                                            if (!isSandboxGame && canInvite && visiblePlayers.size < room.maxPlayerCount) {
                                                 items(
-                                                    count = (room.maxPlayerCount - players.size).coerceAtMost(2),
+                                                    count = (room.maxPlayerCount - visiblePlayers.size).coerceAtMost(2),
                                                     key = { "invite_slot_$it" },
                                                 ) {
                                                     RoomInviteSlotRow(onClick = { inviteDialogVisible = true })

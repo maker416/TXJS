@@ -37,6 +37,16 @@ class ListDetectorPlayersTest {
     }
 
     @Test
+    fun hidesDisconnectsOnlyWhenThePlayerNameContainsTheProbeMarker() {
+        assertTrue(ListDetectorPlayers.hideChatMessage("", "player '列表探测器_b7fe8ce0e2b' disconnected"))
+        assertTrue(ListDetectorPlayers.hideChatMessage("", "Player '我的列表探测器' disconnected (Team 1)"))
+        assertTrue(ListDetectorPlayers.hideChatMessage("", "spectator '列表探测器_abc' disconnected"))
+        assertFalse(ListDetectorPlayers.hideChatMessage("", "player 'maker2' disconnected (列表探测器卡住了)"))
+        assertFalse(ListDetectorPlayers.hideChatMessage("maker2", "player '列表探测器_abc' disconnected"))
+        assertFalse(ListDetectorPlayers.hideChatMessage("列表探测器爱好者", "hello"))
+    }
+
+    @Test
     fun incomingProbeMessagesNeverEnterTheVisibleChatHistory() {
         runCatching { stopKoin() }
         appKoin = startKoin { modules(module { single { Settings() } }) }.koin
@@ -45,6 +55,7 @@ class ListDetectorPlayersTest {
             UI.chatMessages = AnnotatedString("已有聊天\n")
             UI.onReceiveChatMessage("", "'列表探测器' reconnected.", 0)
             UI.onReceiveChatMessage("", "player '列表探测器' disconnected  (123456)", 0)
+            UI.onReceiveChatMessage("", "player '列表探测器_b7fe8ce0e2b' disconnected", 0)
             UI.onReceiveChatMessage("列表探测器", "hello", 0)
             assertEquals("已有聊天\n", UI.chatMessages.text)
         } finally {

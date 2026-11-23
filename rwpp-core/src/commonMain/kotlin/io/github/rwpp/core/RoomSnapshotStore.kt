@@ -41,6 +41,7 @@ data class RoomSnapshot(
     val mapType: MapType = MapType.SkirmishMap,
     /** `isHost || isHostServer`（本地服务器掌管者）。 */
     val isHost: Boolean = false,
+    val visiblePlayers: List<Player> = emptyList(),
 )
 
 object RoomSnapshotStore {
@@ -65,16 +66,18 @@ object RoomSnapshotStore {
     fun resample(game: Game) {
         if (!shouldSample(game)) return
         val room = game.gameRoom
+        // 引擎玩家数组里 connectHexId 不保证唯一（缺省值/握手占位/正式槽位可能撞车），
+        // 按引用去重、按队伍排序，保证 LazyColumn key 稳定。
+        val players = runCatching { room.getPlayers() }.getOrDefault(emptyList())
+            .distinctBy { System.identityHashCode(it) }
+            .sortedBy { it.team }
         _snapshot.value = RoomSnapshot(
-            // 引擎玩家数组里 connectHexId 不保证唯一（缺省值/握手占位/正式槽位可能撞车），
-            // 这里与 UI 列表同规则：按引用去重、按队伍排序，保证 LazyColumn key 稳定
-            players = runCatching { room.getPlayers() }.getOrDefault(emptyList())
-                .distinctBy { System.identityHashCode(it) }
-                .sortedBy { it.team },
+            players = players,
             selectedMap = runCatching { room.selectedMap }.getOrNull(),
             displayMapName = runCatching { room.displayMapName }.getOrDefault(""),
             mapType = runCatching { room.mapType }.getOrDefault(MapType.SkirmishMap),
             isHost = runCatching { room.isHost || room.isHostServer }.getOrDefault(false),
+            visiblePlayers = players.filterNot { ListDetectorPlayers.hasDetectorMarker(it.name) },
         )
     }
 }

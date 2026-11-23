@@ -11,19 +11,29 @@ import io.github.rwpp.game.GameRoom
 import io.github.rwpp.game.Player
 import java.util.IdentityHashMap
 
-/** 列表探测器仍占真实玩家槽位，仅在本地隐藏其聊天和进出提示。 */
+/** 列表探测器仍占真实玩家槽位，房间界面会过滤玩家行和相关提示。 */
 object ListDetectorPlayers {
     private const val NAME = "列表探测器"
     private val systemMessageSubject = Regex(
         """^(?:player\s+)?(?:['"]列表探测器['"]|列表探测器)(?:\s|$)""",
         RegexOption.IGNORE_CASE,
     )
+    private val disconnectNotice = Regex(
+        """^(?:player|spectator)\s+(['"])([^\r\n]+?)\1\s+disconnected\b""",
+        RegexOption.IGNORE_CASE,
+    )
 
     fun isDetector(name: String): Boolean = name.trim() == NAME
 
-    fun hideChatMessage(sender: String, message: String): Boolean =
-        isDetector(sender) ||
-            (sender.isBlank() && systemMessageSubject.containsMatchIn(message.trimStart()))
+    fun hasDetectorMarker(name: String): Boolean = name.contains(NAME)
+
+    fun hideChatMessage(sender: String, message: String): Boolean {
+        if (sender.isNotBlank()) return isDetector(sender)
+        val body = message.trimStart()
+        if (systemMessageSubject.containsMatchIn(body)) return true
+        val playerName = disconnectNotice.find(body)?.groupValues?.get(2) ?: return false
+        return hasDetectorMarker(playerName)
+    }
 
     fun canKick(room: GameRoom, player: Player): Boolean =
         (room.isHost || room.isHostServer) && !room.isSinglePlayerGame && !room.isStartGame &&
