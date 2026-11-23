@@ -580,4 +580,27 @@ class BundleParseTest {
         }
     }
 
+    @Test
+    fun publishToListDialogKeysExistInAllBundles() {
+        bundleNames.forEach { name ->
+            val root = Toml.parseToTomlTable(File(bundleDir, name).readText())
+            val room = assertNotNull((root["multiplayer"] as? TomlTable)?.get("room") as? TomlTable, "$name: missing multiplayer.room")
+            listOf(
+                "publishToList", "publishLoading", "publishFetchingTypes", "publishSubmitting", "cancelPublish",
+                "publishSuccess", "publishSuccessHint", "publishFailed", "publishFetchTypesFailed", "publishFailedDetail",
+                "publishSelectType", "publishRoomNameLabel", "publishRoomNameHint", "publishSelectTypeHint",
+                "publishSelectedType", "publishSelectedTypes", "publishTypeRequired", "publishTypeDefault",
+                "publishBadgeConnecting", "publishBadgeBroadcasting", "publishBadgeReady",
+                "publishStepConnect", "publishStepConfigure", "publishStepVerify",
+                "publishBeaconHint", "publishBeaconPinged", "publishBeaconPingCount",
+                "publishWaitTipConnect1", "publishWaitTipConnect2", "publishWaitTipConnect3",
+                "publishWaitTipSubmit1", "publishWaitTipSubmit2", "publishWaitTipSubmit3", "publishWaitTipSubmit4",
+                "publishNameLockedBadge", "publishNameEditableBadge", "publishModSyncTagBadge",
+                "publishModSyncAutoHint", "publishModSyncTypeMissing",
+            ).forEach { key ->
+                assertTrue((room[key] as? TomlLiteral)?.content?.isNotBlank() == true, "$name: missing multiplayer.room.$key")
+            }
+        }
+    }
+
 }
