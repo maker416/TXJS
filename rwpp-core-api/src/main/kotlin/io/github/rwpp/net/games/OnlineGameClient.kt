@@ -57,6 +57,7 @@ data class OnlineGame(
     @SerialName("expansion_binding") val expansionBinding: ExpansionBinding? = null,
     @SerialName("portal_url") val portalUrl: String = "",
     @SerialName("portal_revision") val portalRevision: Long = 0,
+    @SerialName("expansion_sync_endpoint") val expansionSyncEndpoint: String? = null,
 )
 
 /** Public directory only: never accepts, stores or sends UAS tokens or developer credentials. */
@@ -125,6 +126,9 @@ class OnlineGameClient(baseUrl: String, http: OkHttpClient = OkHttpClient()) {
             if (art.packId != expansion.artBinding.packId || art.version != expansion.artBinding.version ||
                 art.catalogHash != expansion.artBinding.catalogHash || art.downloadUrl.isNotEmpty() || art.archiveSha256.isNotEmpty()) invalid()
         }
+        game.expansionSyncEndpoint?.let { endpoint ->
+            if (game.expansionBinding == null || !isPublicExpansionSyncEndpoint(endpoint)) invalid()
+        }
     }
 
     private fun invalid(): Nothing = throw IOException("Invalid game directory")
@@ -166,6 +170,27 @@ fun isOnlineGameEndpoint(endpoint: String): Boolean {
     return host.split('.').let { octets ->
         octets.size == 4 && octets.all { it.matches(Regex("[0-9]{1,3}")) && it.toInt() in 0..255 }
     }
+}
+
+/** Only public literal addresses may receive automatic connections from the portal. */
+fun isPublicExpansionSyncEndpoint(endpoint: String): Boolean {
+    if (!isOnlineGameEndpoint(endpoint)) return false
+    val host = endpoint.substringBeforeLast(':').removeSurrounding("[", "]")
+    val address = runCatching { InetAddress.getByName(host) }.getOrNull() ?: return false
+    if (address.isAnyLocalAddress || address.isLoopbackAddress || address.isLinkLocalAddress ||
+        address.isSiteLocalAddress || address.isMulticastAddress) return false
+    val bytes = address.address.map { it.toInt() and 255 }
+    val (first, second, third) = bytes
+    if (bytes.size == 4) {
+        return first != 0 && first < 224 &&
+            !(first == 100 && second in 64..127) &&
+            !(first == 192 && (second == 0 && third in setOf(0, 2) || second == 88 && third == 99)) &&
+            !(first == 198 && (second in 18..19 || second == 51 && third == 100)) &&
+            !(first == 203 && second == 0 && third == 113)
+    }
+    return first in 0x20..0x3f &&
+        !(first == 0x20 && second == 0x01 && third == 0x0d && bytes[3] == 0xb8) &&
+        !(first == 0x20 && second == 0x02)
 }
 
 /** HTTPS assets, with literal loopback HTTP permitted for local verification. No credentials or fragment. */

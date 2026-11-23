@@ -63,6 +63,7 @@ internal suspend fun LoadingContext.joinNativeRoom(
         io.github.rwpp.content.ExpansionJoinExpectation(request.onlineGame.appId, it)
     }
     val onlineGameAppId = request.onlineGame?.appId
+    val preloadedExpansion = request.onlineGame?.preloadedExpansion
     return run {
         var address = request.address
         var onlineGameOpened = false
@@ -73,7 +74,10 @@ internal suspend fun LoadingContext.joinNativeRoom(
             game.acquireMultiplayerKeepAlive()
         }
         try {
-            GameSessionController.beginSession(allowExpansion = !hostSession) {
+            GameSessionController.beginSession(
+                allowExpansion = !hostSession,
+                portalExpansionToken = preloadedExpansion?.token,
+            ) {
                 if (!withContext(Dispatchers.Main.immediate) {
                     if (!isCurrent()) false else {
                         GameSessionController.multiplayerReturnPage = request.returnPage
@@ -127,7 +131,9 @@ internal suspend fun LoadingContext.joinNativeRoom(
                         }
                     } else {
                         // Direct 在原版连接前完成下载、普通重载与校验；只有未识别协议才回落旧 relay。
-                        when (val direct = io.github.rwpp.core.DirectModSyncController.shared.preJoinSync(address, this, onlineGameExpansion, onlineGameAppId)) {
+                        when (val direct = DirectModSyncController.shared.preJoinSync(
+                            address, this, onlineGameExpansion, onlineGameAppId, preloadedExpansion, request.onlineGame?.serverId,
+                        )) {
                             is io.github.rwpp.core.DirectJoinSyncResult.Applied -> {
                                 directReservation = direct.reservation
                                 directResume = direct.resume
@@ -234,7 +240,7 @@ internal suspend fun LoadingContext.joinNativeRoom(
                         if (hostSession && !opened) ModSyncController.discardPreparedHostSession()
                         directReservation?.close()
                         directResume?.close()
-                        if (!opened) expansionToken?.let { token ->
+                        if (!opened && preloadedExpansion == null) expansionToken?.let { token ->
                             withContext(NonCancellable + Dispatchers.Main.immediate) { io.github.rwpp.content.ExpansionContentController.cancel(token) }
                         }
                         // 成功时为空操作；被踢重试已排定时保留 Presence。

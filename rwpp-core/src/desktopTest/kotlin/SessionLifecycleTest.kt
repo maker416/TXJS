@@ -12,10 +12,15 @@ import io.github.rwpp.event.GlobalEventChannel
 import io.github.rwpp.event.broadcast
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -26,6 +31,77 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionLifecycleTest {
     private class DisconnectForTest : AbstractEvent()
+
+    @Test
+    fun joinAfterPortalExitWaitsOutsideEngineLockForPortalRestoration() = runTest {
+        val lifecycle = SessionLifecycle(StandardTestDispatcher(testScheduler))
+        var current = true
+        val restoring = CompletableDeferred<Unit>()
+        val allowRestore = CompletableDeferred<Unit>()
+        var restored = false
+        val portal = launch {
+            lifecycle.withPortalContent({ current }) {
+                try {
+                    awaitCancellation()
+                } finally {
+                    withContext(NonCancellable) {
+                        lifecycle.withStartLock {
+                            restoring.complete(Unit)
+                            allowRestore.await()
+                            restored = true
+                        }
+                    }
+                }
+            }
+        }
+        runCurrent()
+
+        current = false
+        val invite = async { lifecycle.beginSession { assertTrue(restored); "joined" } }
+        runCurrent()
+        assertFalse(invite.isCompleted)
+        assertNull(lifecycle.beginSession { error("duplicate while restoring portal content") })
+        portal.cancel()
+        runCurrent()
+        assertTrue(restoring.isCompleted)
+        assertFalse(invite.isCompleted)
+        allowRestore.complete(Unit)
+        assertEquals("joined", invite.await())
+    }
+
+    @Test
+    fun inviteWaitsForThePreviousPortalJoinToCancel() = runTest {
+        val lifecycle = SessionLifecycle(StandardTestDispatcher(testScheduler))
+        var current = true
+        var restored = false
+        val joining = CompletableDeferred<Unit>()
+        val portal = launch {
+            lifecycle.withPortalContent({ current }) {
+                val native = launch {
+                    lifecycle.beginSession(waitForPortalContent = false) {
+                        joining.complete(Unit)
+                        awaitCancellation()
+                    }
+                }
+                try {
+                    awaitCancellation()
+                } finally {
+                    withContext(NonCancellable) {
+                        native.cancelAndJoin()
+                        lifecycle.withStartLock { restored = true }
+                    }
+                }
+            }
+        }
+        joining.await()
+
+        current = false
+        val invite = async { lifecycle.beginSession { assertTrue(restored); "joined" } }
+        runCurrent()
+        assertFalse(invite.isCompleted)
+        portal.cancel()
+        assertEquals("joined", invite.await())
+    }
 
     @Test
     fun duplicateStartIsIgnoredThroughoutCloseWaitAndSetup() = runTest {

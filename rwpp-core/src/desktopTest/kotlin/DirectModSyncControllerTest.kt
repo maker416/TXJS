@@ -13,6 +13,7 @@ import io.github.rwpp.game.mod.NetworkModCacheEntry
 import io.github.rwpp.game.mod.NetworkModDescriptor
 import io.github.rwpp.net.ConnectionFailureReason
 import io.github.rwpp.net.ConnectionFailureStage
+import io.github.rwpp.net.sync.direct.DIRECT_SYNC_ONLY_CAPABILITY
 import io.github.rwpp.net.sync.direct.DirectJoinEndpoint
 import io.github.rwpp.net.sync.direct.DirectModManifest
 import io.github.rwpp.net.sync.direct.DirectModDownloadPhase
@@ -152,6 +153,19 @@ class DirectModSyncControllerTest {
         val failure = assertIs<DirectJoinSyncResult.Failed>(result).failure
         assertEquals(ConnectionFailureReason.NOT_LOBBY, failure.reason)
         assertEquals(ConnectionFailureStage.SYNC_MANIFEST, failure.stage)
+    }
+
+    @Test
+    fun syncOnlyEndpointRejectsNativeJoinBeforeReservationOrContentChanges() = runBlocking<Unit> {
+        val manifest = expansionManifest().copy(lobby = false, phase = "unavailable", hostUnitsChecksum = -1,
+            capabilities = DIRECT_SYNC_ONLY_CAPABILITY)
+        val transport = FakeTransport().also { it.manifestResults += { manifest } }
+        val environment = FakeEnvironment()
+        val result = controller(environment, transport).preJoinSync("127.0.0.1:5125", LoadingContext {})
+        assertEquals(ConnectionFailureReason.NOT_LOBBY, assertIs<DirectJoinSyncResult.Failed>(result).failure.reason)
+        assertEquals(0, transport.reserveCalls)
+        assertEquals(0, transport.resumeChecks)
+        assertEquals(0, environment.expansionLoads)
     }
 
     @Test

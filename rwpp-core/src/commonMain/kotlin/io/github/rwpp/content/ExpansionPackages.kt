@@ -13,6 +13,7 @@ import androidx.compose.runtime.setValue
 import io.github.rwpp.AppContext
 import io.github.rwpp.appKoin
 import io.github.rwpp.expansion.ExpansionPackageInstaller
+import io.github.rwpp.expansion.ExpansionBinding
 import io.github.rwpp.expansion.InstalledExpansion
 import io.github.rwpp.game.mod.ContentProfiles
 import kotlinx.coroutines.Dispatchers
@@ -39,10 +40,16 @@ object ExpansionPackages {
         withContext(Dispatchers.Main.immediate) { installed = packages }
     }
 
-    suspend fun import(archive: File): InstalledExpansion = storage.withLock {
+    suspend fun import(archive: File): InstalledExpansion = install(archive)
+
+    internal suspend fun install(
+        archive: File,
+        gameAppId: String? = null,
+        binding: ExpansionBinding? = null,
+    ): InstalledExpansion = storage.withLock {
         val packageFile = withContext(Dispatchers.IO) {
             val operation = currentCoroutineContext()
-            ExpansionPackageInstaller.install(archive, rootDir, checkCancelled = operation::ensureActive)
+            ExpansionPackageInstaller.install(archive, rootDir, gameAppId, binding, operation::ensureActive)
         }
         val packages = withContext(Dispatchers.IO) { ExpansionPackageInstaller.scan(rootDir) }
         withContext(Dispatchers.Main.immediate) { installed = packages }

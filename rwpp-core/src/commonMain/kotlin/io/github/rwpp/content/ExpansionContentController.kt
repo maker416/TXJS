@@ -18,6 +18,7 @@ import io.github.rwpp.event.events.DisconnectEvent
 import io.github.rwpp.expansion.ExpansionPackageInstaller
 import io.github.rwpp.expansion.InstalledExpansion
 import io.github.rwpp.game.GameStartSafety
+import io.github.rwpp.game.Game
 import io.github.rwpp.game.mod.ContentModSource
 import io.github.rwpp.game.mod.ContentProfile
 import io.github.rwpp.game.mod.ContentProfiles
@@ -42,7 +43,12 @@ import java.io.IOException
 
 /** A game-only content transaction; visible theme and active package commit only after native loading succeeds. */
 object ExpansionContentController {
-    private class Session(val token: Long, val installed: InstalledExpansion, val theme: ArtThemeController.LoadedTheme) {
+    private class Session(
+        val token: Long,
+        val installed: InstalledExpansion,
+        val theme: ArtThemeController.LoadedTheme,
+        var portalOwned: Boolean,
+    ) {
         var settings: ModSettingsSnapshot? = null
         var selection: Map<String, Boolean>? = null
         var previousTheme: ArtThemeController.LoadedTheme? = null
@@ -61,6 +67,7 @@ object ExpansionContentController {
         private set
     val currentToken: Long? get() = session?.token
     val switching: Boolean get() = session?.applying == true
+    internal val portalToken: Long? get() = session?.takeIf { it.portalOwned }?.token
 
     fun init() {
         if (eventsBound) return
@@ -78,7 +85,13 @@ object ExpansionContentController {
 
     fun isReserved(installedSha: String): Boolean = session?.installed?.sha256 == installedSha
 
-    suspend fun prepare(installed: InstalledExpansion, gameAppId: String): Long {
+    suspend fun prepare(installed: InstalledExpansion, gameAppId: String): Long =
+        prepare(installed, gameAppId, portalOwned = false)
+
+    internal suspend fun prepareForPortal(installed: InstalledExpansion, gameAppId: String): Long =
+        prepare(installed, gameAppId, portalOwned = true)
+
+    private suspend fun prepare(installed: InstalledExpansion, gameAppId: String, portalOwned: Boolean): Long {
         if (installed.gameAppId != gameAppId) throw IOException("Expansion belongs to another game")
         var publishedToken: Long? = null
         try {
@@ -90,12 +103,12 @@ object ExpansionContentController {
             return withContext(Dispatchers.Main.immediate) {
                 val previous = session
                 if (previous?.settings != null) {
-                    if (isActive(installed.sha256)) return@withContext previous.token
+                    if (!portalOwned && !previous.portalOwned && isActive(installed.sha256)) return@withContext previous.token
                     throw IOException("Leave the current game before preparing another expansion")
                 }
                 ExpansionPackages.rootDir // Establish the independent source root before the first scan.
                 val token = ++generation
-                session = Session(token, installed, loaded)
+                session = Session(token, installed, loaded, portalOwned)
                 publishedToken = token
                 token
             }
@@ -117,10 +130,13 @@ object ExpansionContentController {
         transaction.withLock {
             val attempt = session?.takeIf { it.token == token } ?: throw IOException("Expansion preparation expired")
             if (isActive(attempt.installed.sha256)) return@withLock
-            check(GameSessionController.sessionPhase == GameSessionController.SessionPhase.STARTING) {
+            val phase = GameSessionController.sessionPhase
+            check(if (attempt.portalOwned) phase == GameSessionController.SessionPhase.IDLE
+                else phase == GameSessionController.SessionPhase.STARTING) {
                 "Expansion packages can only be activated while joining their game"
             }
             waitForArt()
+            if (attempt.portalOwned && appKoin.get<Game>().isGameCouldContinue()) throw PortalExpansionPausedGameException()
             GameStartSafety.requireCanReload()
             val manager = appKoin.get<ModManager>()
             val baseline = manager.captureModSettings()
@@ -161,7 +177,10 @@ object ExpansionContentController {
 
     fun onRoomOpened(token: Long) {
         checkUiThread()
-        session?.takeIf { it.token == token && activeSha == it.installed.sha256 }?.opened = true
+        session?.takeIf { it.token == token && activeSha == it.installed.sha256 }?.let {
+            it.portalOwned = false
+            it.opened = true
+        }
     }
 
     suspend fun cancel(token: Long) = withContext(Dispatchers.Main.immediate) {

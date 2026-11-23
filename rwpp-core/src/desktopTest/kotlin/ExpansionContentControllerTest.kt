@@ -15,6 +15,7 @@ import io.github.rwpp.event.broadcast
 import io.github.rwpp.event.events.DisconnectEvent
 import io.github.rwpp.expansion.ExpansionPackageInstaller
 import io.github.rwpp.expansion.InstalledExpansion
+import io.github.rwpp.game.Game
 import io.github.rwpp.game.mod.ContentProfile
 import io.github.rwpp.game.mod.ContentProfiles
 import io.github.rwpp.game.mod.Mod
@@ -22,6 +23,11 @@ import io.github.rwpp.game.mod.ModManager
 import io.github.rwpp.game.mod.ModSettingsSnapshot
 import io.github.rwpp.koinInit
 import io.github.rwpp.logger
+import io.github.rwpp.gameVersion
+import io.github.rwpp.expansion.EXPANSION_MEDIA_TYPE
+import io.github.rwpp.net.sync.direct.DIRECT_SYNC_ONLY_CAPABILITY
+import io.github.rwpp.net.sync.direct.DirectContentArtifact
+import io.github.rwpp.net.sync.direct.DirectModManifest
 import io.github.rwpp.theme.ArtThemeController
 import io.github.rwpp.theme.personalizedThemeCatalog
 import io.github.rwpp.theme.validateThemeToml
@@ -61,6 +67,7 @@ class ExpansionContentControllerTest {
     private var loads = 0
     private var failExpansion = false
     private var recoveryBlocked = false
+    private var singlePlayerPaused = false
     private var token: Long? = null
     private val gameId = "11111111-1111-1111-1111-111111111111"
 
@@ -106,7 +113,20 @@ class ExpansionContentControllerTest {
                 else -> error("Unexpected context method ${method.name}")
             }
         } as AppContext
-        appKoin = startKoin { modules(module { single { settings }; single<ModManager> { manager }; single<AppContext> { context } }) }.koin
+        val game = Proxy.newProxyInstance(Game::class.java.classLoader, arrayOf(Game::class.java)) { _, method, _ ->
+            when (method.name) {
+                "isGameCouldContinue" -> singlePlayerPaused
+                else -> error("Unexpected game method ${method.name}")
+            }
+        } as Game
+        appKoin = startKoin {
+            modules(module {
+                single { settings }
+                single<ModManager> { manager }
+                single<AppContext> { context }
+                single<Game> { game }
+            })
+        }.koin
         koinInit = true
         ExpansionPackages.rootOverride = File(root, "expansions")
         ArtThemeController.themeRootOverride = File(root, "themes")
@@ -189,6 +209,52 @@ class ExpansionContentControllerTest {
         assertFailsWith<IllegalStateException> { ExpansionContentController.activate(current) }
         assertEquals(0, loads)
         assertNull(ExpansionContentController.activeSha)
+    }
+
+    @Test fun portalPreloadStaysIdleAndTransfersToRoomWithoutReloadingAgain() = runBlocking {
+        val original = ArtThemeController.activeTheme
+        val current = ExpansionContentController.prepareForPortal(installed, gameId).also { token = it }
+        ExpansionContentController.activate(current)
+        val handle = PortalExpansionHandle(PortalExpansionKey(gameId, installed.binding, "8.8.8.8:5125"), current, 1)
+        assertEquals(GameSessionController.SessionPhase.IDLE, GameSessionController.sessionPhase)
+        assertTrue(handle.isReady())
+        assertEquals(1, loads)
+        GameSessionController.beginSession(allowExpansion = true, portalExpansionToken = current) {
+            assertTrue(handle.isReady())
+        }
+        assertTrue(handle.isReady(), "Failed room entry must leave the portal's preload in place")
+        GameSessionController.beginSession(allowExpansion = true, portalExpansionToken = current) {
+            withContext(Dispatchers.Main) {
+                ExpansionContentController.onRoomOpened(current)
+                GameSessionController.onRoomOpened()
+            }
+        }
+        handle.close()
+        assertTrue(ExpansionContentController.isActive(installed.sha256))
+        assertEquals(1, loads)
+        DisconnectEvent("test").broadcast()
+        assertEquals(2, loads)
+        assertSame(original, ArtThemeController.activeTheme)
+    }
+
+    @Test fun portalCannotReplaceAPausedSinglePlayerScene() = runBlocking {
+        val current = ExpansionContentController.prepareForPortal(installed, gameId).also { token = it }
+        singlePlayerPaused = true
+        assertFailsWith<PortalExpansionPausedGameException> { ExpansionContentController.activate(current) }
+        assertEquals(0, loads)
+        assertNull(ExpansionContentController.activeSha)
+    }
+
+    @Test fun syncOnlyManifestMustMatchThePublishedArtifactAndHaveNoRoom() {
+        val key = PortalExpansionKey(gameId, installed.binding, "8.8.8.8:5125")
+        val artifact = DirectContentArtifact(installed.name, EXPANSION_MEDIA_TYPE, installed.version, installed.size, installed.sha256)
+        val manifest = DirectModManifest(4, gameVersion.toString(), "expansion", "ready", false, -1, emptyList(),
+            capabilities = DIRECT_SYNC_ONLY_CAPABILITY, contentRevision = installed.sha256, artifact = artifact)
+        assertEquals(artifact, requirePortalExpansionManifest(manifest, key))
+        for (changed in listOf(manifest.copy(capabilities = 0), manifest.copy(lobby = true),
+            manifest.copy(hostUnitsChecksum = 1), manifest.copy(artifact = artifact.copy(size = artifact.size + 1)))) {
+            assertFailsWith<IOException> { requirePortalExpansionManifest(changed, key) }
+        }
     }
 
     @Test fun recoveryStorageFailureNeverTouchesTheEngineOrLeavesAStaleRestoreAttempt() = runBlocking {

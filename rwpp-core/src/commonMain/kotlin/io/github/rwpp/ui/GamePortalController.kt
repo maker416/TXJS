@@ -7,6 +7,8 @@
 
 package io.github.rwpp.ui
 
+import io.github.rwpp.content.PortalExpansionHandle
+import io.github.rwpp.content.PortalExpansionKey
 import io.github.rwpp.net.ConnectionFailure
 import io.github.rwpp.net.games.*
 import io.github.rwpp.platform.GamePortalBridge
@@ -50,6 +52,10 @@ internal class GamePortalController(
     private val cancelPrepared: suspend (Long) -> Unit,
     private val cancelNative: () -> Unit,
     private val scope: CoroutineScope,
+    private val expansionJoinBlock: () -> String? = { null },
+    private val preloadedExpansion: () -> PortalExpansionHandle? = { null },
+    private val onExpansionJoinBlocked: (String) -> Unit = {},
+    private val onExpansionChanged: () -> Unit = {},
 ) : GamePortalBridge {
     override val origin: String = requireNotNull(onlineGamePortalOrigin(approved.portalUrl))
     override val generation: String = UUID.randomUUID().toString()
@@ -57,6 +63,7 @@ internal class GamePortalController(
     private val document = AtomicLong()
     private var cleanup: Job? = null
     private var emit: (String, JsonObject) -> Unit = { _, _ -> }
+    private val expansionKey = PortalExpansionKey.from(approved)
     private data class Receipt(val serverId: String, val state: String, val message: String? = null)
     private val receipts = LinkedHashMap<Pair<Long, String>, Receipt>()
     private val mutable = MutableStateFlow(GamePortalUiState())
@@ -136,6 +143,11 @@ internal class GamePortalController(
         receipts.keys.removeAll { it.first != document.get() }
         if (receipts.size >= 256) throw GamePortalException("too_many_requests")
         val attempt = PortalJoinAttempt(requestId, serverId, document.get())
+        expansionJoinBlock()?.let { reason ->
+            onExpansionJoinBlocked(reason)
+            event(attempt, "failed", reason)
+            return requireNotNull(receipts[key]).json(requestId)
+        }
         mutable.value = GamePortalUiState(attempt = attempt)
         event(attempt, "preparing")
         attempt.preparingJob = scope.launch {
@@ -143,6 +155,7 @@ internal class GamePortalController(
             try {
                 cleanup?.join()
                 val game = fresh()
+                validateExpansion(game)
                 if (!game.available || game.servers.none { it.serverId == serverId && it.available }) throw GamePortalException("server_unavailable")
                 var useArt = true
                 if (needsConsent(game)) {
@@ -152,7 +165,8 @@ internal class GamePortalController(
                     if (!useArt && consent.required) throw GamePortalException("content_declined")
                     mutable.value = mutable.value.copy(consent = null)
                 }
-                val ready = prepareOnlineGameJoin(game, serverId, useArt, { fresh() }, prepare)
+                val ready = prepareOnlineGameJoin(game, serverId, useArt, { fresh().also(::validateExpansion) }, prepare)
+                    .copy(preloadedExpansion = preloadedExpansion())
                 token = ready.themeToken
                 checkActive()
                 if (!isCurrent(attempt)) throw CancellationException("Portal join superseded")
@@ -170,13 +184,21 @@ internal class GamePortalController(
                         else -> "join_failed"
                     }
                     event(attempt, if (code == "content_declined") "cancelled" else "failed", code)
-                    mutable.value = GamePortalUiState(error = code)
+                    mutable.value = if (code == "expansion_sync_required") GamePortalUiState() else GamePortalUiState(error = code)
                 }
             } finally {
                 if (attempt.ready == null && token != null) withContext(NonCancellable) { cancelPrepared(token) }
             }
         }
         return requireNotNull(receipts[key]).json(requestId)
+    }
+
+    private fun validateExpansion(game: OnlineGame) {
+        if (expansionKey != PortalExpansionKey.from(game)) {
+            onExpansionChanged()
+            throw GamePortalException("expansion_sync_required")
+        }
+        expansionJoinBlock()?.let { throw GamePortalException(it) }
     }
 
     suspend fun attachNative(attempt: PortalJoinAttempt, job: Job) = withContext(Dispatchers.Main.immediate) {
@@ -189,6 +211,7 @@ internal class GamePortalController(
         val ready = attempt.ready ?: throw GamePortalException("join_not_active")
         val game = fresh()
         if (!isCurrent(attempt)) throw CancellationException("Portal join superseded")
+        validateExpansion(game)
         if (!game.available || game.servers.singleOrNull { it.serverId == attempt.serverId && it.available }?.endpoint != ready.endpoint ||
             game.expansionBinding != expected.expansionBinding || attempt.useArt && game.artBinding != expected.artBinding) {
             throw GamePortalException("game_changed")
@@ -233,6 +256,12 @@ internal class GamePortalController(
         active = false
         cancelJoin()
         emit = { _, _ -> }
+    }
+
+    suspend fun awaitJoinCleanup() {
+        val native = mutable.value.attempt?.nativeJob
+        cleanup?.join()
+        native?.join()
     }
 
     private fun event(attempt: PortalJoinAttempt, status: String, message: String? = null) {

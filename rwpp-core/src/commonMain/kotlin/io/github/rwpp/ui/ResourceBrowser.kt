@@ -95,6 +95,7 @@ internal fun BrowserPage(
     browser: EmbeddedBrowserState,
     onExit: () -> Unit,
     nativeBusy: Boolean = false,
+    topContent: @Composable () -> Unit = {},
     clientLogin: (suspend () -> Unit)?,
 ) {
     val settings = koinInject<Settings>()
@@ -147,54 +148,57 @@ internal fun BrowserPage(
         orientation = orientation.takeIf { active },
         modifier = Modifier.fillMaxSize(),
     ) {
-        BoxWithConstraints(Modifier.fillMaxSize()) {
-            // 选择完成后才创建原生浏览器，让首次弹窗拥有完整的输入焦点。
-            if (orientation != null) {
-                BrowserKernelGate(active, showNotice = overlaysAvailable, onReady = { kernelReady = it }) {
-                    key(browser) { EmbeddedBrowser(browser, Modifier.fillMaxSize()) }
-                }
-            }
-
-            if (kernelReady && browser.isLoading && orientation != null && overlaysAvailable) {
-                Popup(alignment = Alignment.TopStart, properties = PopupProperties(focusable = false)) {
-                    val progress = browser.progress
-                    if (progress == null) {
-                        UiLinearProgressIndicator(modifier = Modifier.width(maxWidth).height(3.dp))
-                    } else {
-                        LinearProgressIndicator(
-                            progress = { progress },
-                            modifier = Modifier.width(maxWidth).height(3.dp),
-                        )
+        Column(Modifier.fillMaxSize()) {
+            if (active) topContent()
+            BoxWithConstraints(Modifier.weight(1f).fillMaxSize()) {
+                // 选择完成后才创建原生浏览器，让首次弹窗拥有完整的输入焦点。
+                if (orientation != null) {
+                    BrowserKernelGate(active, showNotice = overlaysAvailable, onReady = { kernelReady = it }) {
+                        key(browser) { EmbeddedBrowser(browser, Modifier.fillMaxSize()) }
                     }
                 }
-            }
 
-            (browser.clientLoginError ?: browser.error)?.takeIf { overlaysAvailable }?.let { error ->
-                // 独立浮层，避免被桌面 Chromium 的原生窗口遮住。
-                Popup(alignment = Alignment.TopCenter, properties = PopupProperties(focusable = false)) {
-                    Surface(color = MaterialTheme.colorScheme.surface) {
-                        Column(
-                            modifier = Modifier.widthIn(max = minOf(maxWidth, 440.dp)).padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            val loginFailed = clientLogin != null && browser.clientLoginError != null
-                            Text(readI18n(if (loginFailed) "browser.loginFailedTitle" else "browser.loadFailed"), color = MaterialTheme.colorScheme.error)
-                            Text(error, style = MaterialTheme.typography.bodySmall)
-                            Row {
-                                if (clientLogin != null) {
-                                    TextButton(onClick = { attempt++ }) { Text(readI18n("browser.retryLogin")) }
-                                    TextButton(onClick = browser::openAsGuest) { Text(readI18n("browser.guest")) }
-                                } else {
-                                    TextButton(onClick = browser::retryLoad) { Text(readI18n("browser.refresh")) }
+                if (kernelReady && browser.isLoading && orientation != null && overlaysAvailable) {
+                    Popup(alignment = Alignment.TopStart, properties = PopupProperties(focusable = false)) {
+                        val progress = browser.progress
+                        if (progress == null) {
+                            UiLinearProgressIndicator(modifier = Modifier.width(maxWidth).height(3.dp))
+                        } else {
+                            LinearProgressIndicator(
+                                progress = { progress },
+                                modifier = Modifier.width(maxWidth).height(3.dp),
+                            )
+                        }
+                    }
+                }
+
+                (browser.clientLoginError ?: browser.error)?.takeIf { overlaysAvailable }?.let { error ->
+                    // 独立浮层，避免被桌面 Chromium 的原生窗口遮住。
+                    Popup(alignment = Alignment.TopCenter, properties = PopupProperties(focusable = false)) {
+                        Surface(color = MaterialTheme.colorScheme.surface) {
+                            Column(
+                                modifier = Modifier.widthIn(max = minOf(maxWidth, 440.dp)).padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                val loginFailed = clientLogin != null && browser.clientLoginError != null
+                                Text(readI18n(if (loginFailed) "browser.loginFailedTitle" else "browser.loadFailed"), color = MaterialTheme.colorScheme.error)
+                                Text(error, style = MaterialTheme.typography.bodySmall)
+                                Row {
+                                    if (clientLogin != null) {
+                                        TextButton(onClick = { attempt++ }) { Text(readI18n("browser.retryLogin")) }
+                                        TextButton(onClick = browser::openAsGuest) { Text(readI18n("browser.guest")) }
+                                    } else {
+                                        TextButton(onClick = browser::retryLoad) { Text(readI18n("browser.refresh")) }
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            if (orientation != null && overlaysAvailable) {
-                ResourceBrowserFloatingExit(onExit)
+                if (orientation != null && overlaysAvailable) {
+                    ResourceBrowserFloatingExit(onExit)
+                }
             }
         }
     }

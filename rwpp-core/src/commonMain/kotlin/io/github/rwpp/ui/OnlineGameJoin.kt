@@ -9,12 +9,14 @@ package io.github.rwpp.ui
 
 import io.github.rwpp.net.games.OnlineGame
 import io.github.rwpp.expansion.ExpansionBinding
+import io.github.rwpp.content.PortalExpansionHandle
 import java.io.IOException
 
 /** One approved endpoint and one prepared appearance generation, consumed by the existing join flow. */
 data class OnlineGameJoinRequest(
     val appId: String, val serverId: String, val endpoint: String, val themeToken: Long?,
     val expansionBinding: ExpansionBinding? = null,
+    val preloadedExpansion: PortalExpansionHandle? = null,
 )
 
 internal class OnlineGameChangedException(val game: OnlineGame) : IOException("Game details changed")

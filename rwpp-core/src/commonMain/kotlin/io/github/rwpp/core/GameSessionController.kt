@@ -15,6 +15,7 @@ import io.github.rwpp.game.Game
 import io.github.rwpp.ui.LauncherPage
 import io.github.rwpp.ui.resetNavigation
 import io.github.rwpp.logger
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -25,6 +26,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -43,20 +45,35 @@ object GameSessionController {
         internal set
 
     /** 返回 null 表示已有开始请求；action 只会在旧退房完整结束后执行。 */
-    suspend fun <T> beginSession(allowExpansion: Boolean = false, action: suspend () -> T): T? {
+    suspend fun <T> beginSession(
+        allowExpansion: Boolean = false,
+        portalExpansionToken: Long? = null,
+        action: suspend () -> T,
+    ): T? {
         if (!MatchStartController.ensureCanStart()) return null
         suspend fun expansionBlocked(): Boolean = withContext(Dispatchers.Main.immediate) {
-            if (!allowExpansion && io.github.rwpp.game.mod.ContentProfiles.expansionActive) {
+            val portalToken = io.github.rwpp.content.ExpansionContentController.portalToken
+            if (portalToken != portalExpansionToken ||
+                !allowExpansion && io.github.rwpp.game.mod.ContentProfiles.expansionActive) {
                 io.github.rwpp.ui.UI.showWarning(io.github.rwpp.i18n.readI18n("expansion.localGameUnavailable"))
                 true
             } else false
         }
-        // Do not replace IN_ROOM by STARTING when rejecting a local game. A real close still owns its barrier.
-        if (sessionPhase != SessionPhase.CLOSING && expansionBlocked()) return null
-        return lifecycle.beginSession {
+        return lifecycle.beginSession(waitForPortalContent = portalExpansionToken == null, canStart = {
+            // Do not replace IN_ROOM by STARTING when rejecting a local game. A real close still owns its barrier.
+            sessionPhase == SessionPhase.CLOSING || !expansionBlocked()
+        }) {
             if (expansionBlocked()) null else action()
         }
     }
+
+    internal suspend fun <T> withContentSessionLock(action: suspend () -> T): T =
+        lifecycle.withStartLock(action)
+
+    internal suspend fun withPortalContent(isCurrent: () -> Boolean, action: suspend () -> Unit) =
+        lifecycle.withPortalContent(isCurrent, action)
+
+    internal suspend fun awaitSessionClose() = lifecycle.awaitClose()
 
     fun attachRoomView(disposed: Deferred<Unit>) {
         checkUiThread()
@@ -134,37 +151,86 @@ internal class SessionLifecycle(private val mainDispatcher: CoroutineDispatcher)
     var sessionPhase by mutableStateOf(GameSessionController.SessionPhase.IDLE)
         private set
 
+    private val nonPortalStartMutex = Mutex()
     private val startMutex = Mutex()
     private var closeJob: Deferred<Unit>? = null
+    private class PortalContent(val isCurrent: () -> Boolean) {
+        val released = CompletableDeferred<Unit>()
+    }
+    private var portalContent: PortalContent? = null
     // 必要退房清理不随 App 重建取消；action 不应依赖已销毁组合的 frame clock。
     private val closeScope = CoroutineScope(SupervisorJob() + mainDispatcher)
 
-    suspend fun <T> beginSession(action: suspend () -> T): T? {
-        if (!startMutex.tryLock()) return null
+    suspend fun <T> withStartLock(action: suspend () -> T): T = startMutex.withLock { action() }
+
+    // Wait outside startMutex because the previous portal takes it to restore the engine.
+    private suspend fun awaitInactivePortalContent() = withContext(mainDispatcher) {
+        while (true) {
+            val current = portalContent ?: break
+            if (current.isCurrent()) break
+            current.released.await()
+        }
+    }
+
+    suspend fun withPortalContent(isCurrent: () -> Boolean, action: suspend () -> Unit) {
+        val owner = PortalContent(isCurrent)
         try {
             withContext(mainDispatcher) {
-                while (true) {
-                    val closing = closeJob ?: break
-                    // await 会传播取消/失败：未完成的清理不能被当成成功屏障。
-                    closing.await()
-                    if (closeJob === closing) {
-                        closeJob = null
-                        break
-                    }
-                }
-                sessionPhase = GameSessionController.SessionPhase.STARTING
+                awaitInactivePortalContent()
+                if (!isCurrent()) return@withContext
+                check(portalContent == null) { "Another portal still owns the expansion" }
+                portalContent = owner
+                action()
             }
-            return action()
         } finally {
-            try {
-                withContext(NonCancellable + mainDispatcher) {
-                    if (sessionPhase == GameSessionController.SessionPhase.STARTING) {
-                        sessionPhase = GameSessionController.SessionPhase.IDLE
-                    }
-                }
-            } finally {
-                startMutex.unlock()
+            withContext(NonCancellable + mainDispatcher) {
+                if (portalContent === owner) portalContent = null
+                owner.released.complete(Unit)
             }
+        }
+    }
+
+    suspend fun awaitClose() = withContext(mainDispatcher) {
+        while (true) {
+            val closing = closeJob ?: break
+            // await propagates failures before another operation can touch the engine.
+            closing.await()
+            if (closeJob === closing) {
+                closeJob = null
+                break
+            }
+        }
+    }
+
+    suspend fun <T> beginSession(
+        waitForPortalContent: Boolean = true,
+        canStart: suspend () -> Boolean = { true },
+        action: suspend () -> T,
+    ): T? {
+        // A join leaving the portal waits for disposal; the portal's own join must be able to finish first.
+        if (waitForPortalContent && !nonPortalStartMutex.tryLock()) return null
+        try {
+            if (waitForPortalContent) awaitInactivePortalContent()
+            if (!canStart() || !startMutex.tryLock()) return null
+            try {
+                withContext(mainDispatcher) {
+                    awaitClose()
+                    sessionPhase = GameSessionController.SessionPhase.STARTING
+                }
+                return action()
+            } finally {
+                try {
+                    withContext(NonCancellable + mainDispatcher) {
+                        if (sessionPhase == GameSessionController.SessionPhase.STARTING) {
+                            sessionPhase = GameSessionController.SessionPhase.IDLE
+                        }
+                    }
+                } finally {
+                    startMutex.unlock()
+                }
+            }
+        } finally {
+            if (waitForPortalContent) nonPortalStartMutex.unlock()
         }
     }
 

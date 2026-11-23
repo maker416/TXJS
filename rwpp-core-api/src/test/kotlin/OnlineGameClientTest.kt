@@ -8,6 +8,7 @@
 import io.github.rwpp.net.games.OnlineGameClient
 import io.github.rwpp.net.games.isOnlineGameAssetUrl
 import io.github.rwpp.net.games.isOnlineGameEndpoint
+import io.github.rwpp.net.games.isPublicExpansionSyncEndpoint
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import java.io.IOException
@@ -141,10 +142,25 @@ class OnlineGameClientTest {
             val client = OnlineGameClient("http://127.0.0.1:${server.port}")
             server.enqueue(response(valid))
             assertEquals("2.0", client.game(app)?.expansionBinding?.version)
+            val sync = valid.removeSuffix("}") + """, "expansion_sync_endpoint":"[2606:4700::1111]:5125"}"""
+            server.enqueue(response(sync))
+            assertEquals("[2606:4700::1111]:5125", client.game(app)?.expansionSyncEndpoint)
+            server.enqueue(response(sync.replace("[2606:4700::1111]:5125", "127.0.0.1:5125")))
+            assertFailsWith<IOException> { client.game(app) }
             server.enqueue(response(valid.replace("\"size\":4096", "\"size\":1073741825")))
             assertFailsWith<IOException> { client.game(app) }
             server.enqueue(response(valid.replace("\"art_binding\":$art,", "\"art_binding\":null,")))
             assertFailsWith<IOException> { client.game(app) }
+        }
+    }
+
+    @Test fun syncEndpointsAllowOnlyPublicLiteralInternetAddresses() {
+        assertTrue(isPublicExpansionSyncEndpoint("8.8.8.8:5125"))
+        assertTrue(isPublicExpansionSyncEndpoint("[2606:4700::1111]:5125"))
+        for (endpoint in listOf("8.8.8.8", "example.org:5125", "10.0.0.1:80", "100.64.0.1:5125",
+            "127.0.0.1:5125", "169.254.169.254:80", "203.0.113.1:5125", "[::ffff:10.0.0.1]:5125",
+            "[fc00::1]:5125", "[2001:db8::1]:5125", "[2002::1]:5125")) {
+            assertFalse(isPublicExpansionSyncEndpoint(endpoint), endpoint)
         }
     }
 }

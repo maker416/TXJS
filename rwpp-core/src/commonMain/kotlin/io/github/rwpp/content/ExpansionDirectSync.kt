@@ -9,15 +9,12 @@ package io.github.rwpp.content
 
 import io.github.rwpp.config.resolveOpenPlatformUrl
 import io.github.rwpp.expansion.ExpansionBinding
-import io.github.rwpp.expansion.ExpansionPackageInstaller
 import io.github.rwpp.net.appearance.AppearanceClient
 import io.github.rwpp.net.sync.direct.DirectContentArtifact
 import io.github.rwpp.net.sync.direct.DirectModDownloadProgress
 import io.github.rwpp.net.sync.direct.DirectModSyncTransport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.IOException
 
@@ -25,46 +22,47 @@ data class ExpansionJoinExpectation(val gameAppId: String, val binding: Expansio
 
 /** Direct bytes alone cannot grant a game identity: approval is looked up by the actual TCP peer. */
 internal object ExpansionDirectSync {
+    internal suspend fun authorize(
+        artifact: DirectContentArtifact,
+        transport: DirectModSyncTransport,
+        expected: ExpansionJoinExpectation?,
+        serverId: String? = null,
+    ) = withContext(Dispatchers.IO) {
+        val peer = transport.peerEndpoint ?: throw IOException("Missing actual Direct peer")
+        val identity = AppearanceClient(resolveOpenPlatformUrl()).lookupServerInfo(peer)
+            ?: throw IOException("This endpoint has no approved game expansion")
+        val appId = identity.gameAppId
+        val binding = identity.expansionBinding
+        if (appId == null || binding == null || !binding.valid() ||
+            artifact.sha256 != binding.sha256 || artifact.version != binding.version || artifact.size != binding.size ||
+            expected != null && (appId != expected.gameAppId || binding != expected.binding) ||
+            serverId != null && identity.serverId != serverId) {
+            throw IOException("Direct content does not match the approved game release")
+        }
+        identity
+    }
+
     suspend fun prepareAndActivate(artifact: DirectContentArtifact, transport: DirectModSyncTransport,
         expected: ExpansionJoinExpectation?, allowDownload: Boolean,
         progress: suspend (DirectModDownloadProgress) -> Unit): Long {
-        val peer = transport.peerEndpoint ?: throw IOException("Missing actual Direct peer")
-        val client = AppearanceClient(resolveOpenPlatformUrl())
-        suspend fun authorize() = withContext(Dispatchers.IO) {
-            client.lookupServerInfo(peer)?.takeIf { it.gameAppId != null && it.expansionBinding != null }
-                ?: throw IOException("This endpoint has no approved game expansion")
-        }
-        val identity = authorize()
+        val identity = authorize(artifact, transport, expected)
         val appId = requireNotNull(identity.gameAppId)
         val binding = requireNotNull(identity.expansionBinding)
-        if (!binding.valid() || artifact.sha256 != binding.sha256 || artifact.version != binding.version || artifact.size != binding.size ||
-            expected != null && (appId != expected.gameAppId || binding != expected.binding)) {
-            throw IOException("Direct content does not match the approved game release")
-        }
         ExpansionPackages.refresh()
         var installed = ExpansionPackages.installed.singleOrNull { it.gameAppId == appId && it.binding == binding }
         if (installed == null) {
             if (!allowDownload) throw IOException("The original expansion is not installed for recovery")
             val archive = transport.downloadArtifact(artifact, ExpansionPackages.rootDir.resolve(".transfers"), progress)
             try {
-                installed = withContext(Dispatchers.IO) {
-                    val operation = currentCoroutineContext()
-                    ExpansionPackageInstaller.install(archive, ExpansionPackages.rootDir, appId, binding) { operation.ensureActive() }
-                }
+                installed = ExpansionPackages.install(archive, appId, binding)
             } finally { archive.delete() }
-            ExpansionPackages.refresh()
         }
-        val after = authorize()
-        if (after.serverId != identity.serverId || after.gameAppId != appId || after.expansionBinding != binding) {
-            throw IOException("Game expansion approval changed during synchronization")
-        }
+        val authorization = ExpansionJoinExpectation(appId, binding)
+        authorize(artifact, transport, authorization, identity.serverId)
         val token = ExpansionContentController.prepare(requireNotNull(installed), appId)
         try {
             ExpansionContentController.activate(token)
-            val finalApproval = authorize()
-            if (finalApproval.serverId != identity.serverId || finalApproval.gameAppId != appId || finalApproval.expansionBinding != binding) {
-                throw IOException("Game expansion approval changed during content loading")
-            }
+            authorize(artifact, transport, authorization, identity.serverId)
             return token
         } catch (error: Throwable) {
             withContext(NonCancellable) { ExpansionContentController.cancel(token) }

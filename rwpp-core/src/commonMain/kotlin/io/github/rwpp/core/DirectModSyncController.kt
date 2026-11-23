@@ -7,6 +7,9 @@
 
 package io.github.rwpp.core
 
+import io.github.rwpp.content.PortalExpansionHandle
+import io.github.rwpp.net.sync.direct.DIRECT_SYNC_ONLY_CAPABILITY
+
 import io.github.rwpp.appKoin
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.GameStartSafety
@@ -124,7 +127,10 @@ class DirectModSyncController(
 
     suspend fun preJoinSync(address: String, loadingContext: LoadingContext,
         expectedExpansion: io.github.rwpp.content.ExpansionJoinExpectation? = null,
-        expectedOnlineGameId: String? = expectedExpansion?.gameAppId): DirectJoinSyncResult {
+        expectedOnlineGameId: String? = expectedExpansion?.gameAppId,
+        preloadedExpansion: PortalExpansionHandle? = null,
+        expectedServerId: String? = null,
+    ): DirectJoinSyncResult {
         val endpoint = DirectJoinEndpoint.parseOrNull(address) ?: return DirectJoinSyncResult.Unsupported
         val transport = transportFactory(endpoint, environment.cache)
         val first = try {
@@ -145,6 +151,9 @@ class DirectModSyncController(
         var handedOff = false
         return try {
             validateManifest(first)
+            if (first.capabilities and DIRECT_SYNC_ONLY_CAPABILITY != 0) {
+                throw DirectModSyncServerException(DirectModSyncErrorCode.NOT_LOBBY)
+            }
             if (first.gameVersion != environment.gameVersion) throw DirectSyncFailure(ConnectionFailure(
                 ConnectionFailureReason.DATA_MISMATCH, ConnectionFailureStage.SYNC_MANIFEST,
                 details = "Direct game protocol version mismatch (client ${environment.gameVersion} / server ${first.gameVersion})"))
@@ -156,8 +165,11 @@ class DirectModSyncController(
                 resumed = DirectResumeSessions.open(peer, first, transport)
                     ?: throw DirectModSyncServerException(DirectModSyncErrorCode.RESUME_INVALID)
                 val artifact = first.artifact
-                if (artifact != null) expansionToken = environment.applyExpansion(artifact, transport, expectedExpansion, false) { progress ->
-                    loadingContext.message(directDownloadMessage(1, 1, artifact.name, progress))
+                if (artifact != null) {
+                    expansionToken = preloadedExpansion?.validateRoom(first, transport, expectedExpansion, expectedServerId)
+                        ?: environment.applyExpansion(artifact, transport, expectedExpansion, false) { progress ->
+                            loadingContext.message(directDownloadMessage(1, 1, artifact.name, progress))
+                        }
                 } else if (!environment.isLoadedModSetExact(first.mods)) throw java.io.IOException("Recovery content is not loaded")
                 if (first.hostUnitsChecksum != environment.getUnitsChecksum().toLong()) throw java.io.IOException("Recovery content checksum mismatch")
                 environment.refreshHandshakeChecksumCache()
@@ -179,9 +191,10 @@ class DirectModSyncController(
                     stage = ConnectionFailureStage.SYNC_APPLY
                     applyingMods.value = true
                     try {
-                        expansionToken = environment.applyExpansion(artifact, transport, expectedExpansion, true) { progress ->
-                            loadingContext.message(directDownloadMessage(1, 1, artifact.name, progress))
-                        }
+                        expansionToken = preloadedExpansion?.validateRoom(first, transport, expectedExpansion, expectedServerId)
+                            ?: environment.applyExpansion(artifact, transport, expectedExpansion, true) { progress ->
+                                loadingContext.message(directDownloadMessage(1, 1, artifact.name, progress))
+                            }
                     } finally { applyingMods.value = false }
                     val after = transport.getManifest()
                     prepare(after); requireSameContent(first, after)
@@ -267,7 +280,9 @@ class DirectModSyncController(
             if (!handedOff) {
                 reservation?.close()
                 resumed?.close()
-                expansionToken?.let { token -> kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { environment.cancelExpansion(token) } }
+                if (preloadedExpansion == null) {
+                    expansionToken?.let { token -> kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { environment.cancelExpansion(token) } }
+                }
             }
         }
     }

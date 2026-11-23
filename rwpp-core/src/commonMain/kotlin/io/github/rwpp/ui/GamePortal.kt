@@ -18,6 +18,14 @@ import io.github.rwpp.account.AccountSession
 import io.github.rwpp.appKoin
 import io.github.rwpp.config.*
 import io.github.rwpp.content.ExpansionPackages
+import io.github.rwpp.content.PortalExpansionChangedException
+import io.github.rwpp.content.PortalExpansionHandle
+import io.github.rwpp.content.PortalExpansionKey
+import io.github.rwpp.content.PortalExpansionPausedGameException
+import io.github.rwpp.content.PortalExpansionProgress
+import io.github.rwpp.content.PortalExpansionStage
+import io.github.rwpp.content.PortalExpansionSync
+import io.github.rwpp.core.GameSessionController
 import io.github.rwpp.core.ModSyncController
 import io.github.rwpp.game.Game
 import io.github.rwpp.i18n.readI18n
@@ -30,8 +38,12 @@ import io.github.rwpp.widget.AnimatedAlertDialog
 import io.github.rwpp.widget.ConnectionFailureCard
 import io.github.rwpp.widget.LoadingView
 import io.github.rwpp.widget.UiCircularProgressIndicator
+import io.github.rwpp.widget.UiLinearProgressIndicator
 import kotlinx.coroutines.*
 import org.koin.compose.koinInject
+import org.slf4j.LoggerFactory
+
+private val portalLogger = LoggerFactory.getLogger("GamePortal")
 
 /** The website selects a server ID; approval, downloads, engine connection and admission stay native. */
 @Composable
@@ -74,18 +86,36 @@ internal fun GamePortalView(appId: String, onExit: () -> Unit, onOpenRoom: () ->
     val scope = rememberCoroutineScope()
     val platformUrl = resolveOpenPlatformUrl()
     val appKey = resolveAccountAppKey(prefs.appKey)
+    val expansionKey = remember(approved) { PortalExpansionKey.from(approved) }
+    var consented by remember(expansionKey, approved.portalUrl, approved.portalRevision, session, platformUrl, appKey) {
+        mutableStateOf(false)
+    }
+    if (expansionKey != null && !consented) {
+        BackHandler(active, onExit)
+        if (active) PortalExpansionConsentDialog(approved, onDecline = onExit, onAccept = { consented = true })
+        return
+    }
+
+    var expansion by remember(approved, session, platformUrl, appKey) {
+        mutableStateOf<PortalExpansionState?>(expansionKey?.let { PortalExpansionState.Syncing() })
+    }
+    var syncRetry by remember(approved, session, platformUrl, appKey) { mutableIntStateOf(0) }
+    val refresh = remember(platformUrl, appId) {
+        suspend { withContext(Dispatchers.IO) { OnlineGameClient(platformUrl).game(appId) } }
+    }
     val controller = remember(approved, session, platformUrl, appKey) {
         val client = GamePortalClient(platformUrl, appKey, AccountSession.httpOverride ?: appKoin.get<Net>().client)
         GamePortalController(
             approved = approved,
             currentSession = { launcherPage == route && AccountSession.isCurrentSession(session) &&
                 resolveOpenPlatformUrl() == platformUrl && resolveAccountAppKey(prefs.appKey) == appKey },
-            refresh = { withContext(Dispatchers.IO) { OnlineGameClient(platformUrl).game(appId) } },
+            refresh = refresh,
             player = { client.player(session.token, appId, approved.portalRevision) },
             authorize = { client.authorize(session.token, appId, approved.portalRevision, it) },
             needsConsent = { current ->
                 val expansion = current.expansionBinding
-                if (expansion != null) {
+                if (expansionKey != null) false
+                else if (expansion != null) {
                     ExpansionPackages.refresh()
                     ExpansionPackages.installed.none { it.gameAppId == appId && it.binding == expansion }
                 } else OnlineGameThemeController.requiresDownload(current)
@@ -94,6 +124,19 @@ internal fun GamePortalView(appId: String, onExit: () -> Unit, onOpenRoom: () ->
             cancelPrepared = { OnlineGameThemeController.cancelPrepared(it) },
             cancelNative = { ModSyncController.cancelJoinEntry(); game.cancelJoinServer() },
             scope = scope,
+            expansionJoinBlock = { expansion?.joinRejection() },
+            preloadedExpansion = { (expansion as? PortalExpansionState.Ready)?.handle },
+            onExpansionJoinBlocked = { code ->
+                if (code == "expansion_sync_required") expansion = PortalExpansionState.Failed(PortalExpansionFailure.CHANGED)
+                UI.showWarning(readI18n(when (code) {
+                    "expansion_sync_in_progress" -> "gamePortal.expansionSyncWait"
+                    "expansion_sync_required" -> "gamePortal.expansionSyncChanged"
+                    else -> "gamePortal.expansionSyncFailed"
+                }))
+            },
+            onExpansionChanged = {
+                expansion = PortalExpansionState.Failed(PortalExpansionFailure.CHANGED)
+            },
         )
     }
     val browser = remember(controller) { EmbeddedBrowserState(approved.portalUrl, gamePortalBridge = controller) }
@@ -102,9 +145,71 @@ internal fun GamePortalView(appId: String, onExit: () -> Unit, onOpenRoom: () ->
         onDispose { controller.close() }
     }
     LaunchedEffect(active) { if (!active) controller.close() }
+    val invalidated = (expansion as? PortalExpansionState.Failed)?.reason == PortalExpansionFailure.CHANGED
+    LaunchedEffect(controller, active, syncRetry, invalidated) {
+        if (!active || invalidated || expansionKey == null) return@LaunchedEffect
+        GameSessionController.withPortalContent(controller::isActive) {
+            expansion = PortalExpansionState.Syncing()
+            var handle: PortalExpansionHandle? = null
+            try {
+                val loaded = PortalExpansionSync.load(approved, controller::isActive, refresh) { progress ->
+                    withContext(Dispatchers.Main.immediate) {
+                        expansion = PortalExpansionState.Syncing(progress)
+                        if (progress.stage == PortalExpansionStage.RELOADING) repeat(2) { withFrameNanos {} }
+                    }
+                }
+                handle = loaded
+                expansion = PortalExpansionState.Ready(loaded)
+                awaitCancellation()
+            } catch (error: CancellationException) {
+                currentCoroutineContext().ensureActive()
+                expansion = PortalExpansionState.Failed(PortalExpansionFailure.SYNC)
+            } catch (error: OutOfMemoryError) {
+                io.github.rwpp.game.mod.ModLoadSafety.recordMemoryFailure("portal-expansion")
+                expansion = PortalExpansionState.Failed(PortalExpansionFailure.SYNC)
+            } catch (error: Exception) {
+                expansion = PortalExpansionState.Failed(when (error) {
+                    is PortalExpansionChangedException -> PortalExpansionFailure.CHANGED
+                    is PortalExpansionPausedGameException -> PortalExpansionFailure.PAUSED_GAME
+                    else -> PortalExpansionFailure.SYNC
+                })
+            } finally {
+                handle?.let { loaded ->
+                    withContext(NonCancellable) {
+                        if ((expansion as? PortalExpansionState.Failed)?.reason == PortalExpansionFailure.CHANGED) {
+                            controller.cancelJoin()
+                        } else {
+                            controller.close()
+                        }
+                        controller.awaitJoinCleanup()
+                        try {
+                            loaded.close()
+                        } catch (error: Exception) {
+                            portalLogger.error("Could not restore game content after closing the portal", error)
+                            UI.showWarning(readI18n("gamePortal.cleanupFailed"))
+                        }
+                    }
+                }
+            }
+        }
+    }
     val state by controller.state.collectAsState()
-    BrowserPage(route, browser, onExit = { controller.close(); onExit() }, clientLogin = null,
-        nativeBusy = state.attempt != null || state.error != null)
+    BrowserPage(
+        route, browser, onExit = { controller.close(); onExit() }, clientLogin = null,
+        nativeBusy = state.attempt != null || state.error != null,
+        topContent = {
+            PortalExpansionStatus(expansion, onRetry = {
+                if (invalidated) {
+                    consented = false
+                    gameInfo = null
+                    retry++
+                } else {
+                    expansion = PortalExpansionState.Syncing()
+                    syncRetry++
+                }
+            })
+        },
+    )
 
     state.consent?.let { consent -> PortalContentConsentDialog(consent) }
     if (active && state.cancelling) {
@@ -189,23 +294,113 @@ internal fun GamePortalView(appId: String, onExit: () -> Unit, onOpenRoom: () ->
 
 @Composable
 internal fun PortalContentConsentDialog(consent: PortalContentConsent) {
-    AnimatedAlertDialog(true, onDismissRequest = { consent.decision.complete(false) }) { _ ->
+    PortalContentConsentDialog(
+        game = consent.game,
+        description = readI18n(if (consent.required) "gamePortal.expansionConsent" else "gamePortal.artConsent"),
+        declineText = readI18n(if (consent.required) "gamePortal.cancel" else "gamePortal.useDefault"),
+        acceptText = readI18n("gamePortal.download"),
+        onDecline = { consent.decision.complete(false) },
+        onAccept = { consent.decision.complete(true) },
+    )
+}
+
+@Composable
+internal fun PortalExpansionConsentDialog(game: OnlineGame, onDecline: () -> Unit, onAccept: () -> Unit) {
+    PortalContentConsentDialog(
+        game = game,
+        description = readI18n("gamePortal.expansionPreloadConsent"),
+        declineText = readI18n("common.cancel"),
+        acceptText = readI18n("gamePortal.expansionPreloadAccept"),
+        onDecline = onDecline,
+        onAccept = onAccept,
+    )
+}
+
+@Composable
+private fun PortalContentConsentDialog(
+    game: OnlineGame,
+    description: String,
+    declineText: String,
+    acceptText: String,
+    onDecline: () -> Unit,
+    onAccept: () -> Unit,
+) {
+    AnimatedAlertDialog(true, onDismissRequest = onDecline) { _ ->
         Surface {
             Column(Modifier.widthIn(max = 500.dp).padding(24.dp).testTag("game-portal-content-consent"),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(consent.game.name, style = MaterialTheme.typography.titleLarge)
-                Text(readI18n(if (consent.required) "gamePortal.expansionConsent" else "gamePortal.artConsent"))
-                consent.game.expansionBinding?.let { Text("${it.version} · ${expansionDisplaySize(it.size)}") }
-                    ?: consent.game.artBinding?.let { Text(it.version) }
+                Text(game.name, style = MaterialTheme.typography.titleLarge)
+                Text(description)
+                game.expansionBinding?.let { Text("${it.version} · ${expansionDisplaySize(it.size)}") }
+                    ?: game.artBinding?.let { Text(it.version) }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = { consent.decision.complete(false) }, modifier = Modifier.testTag("portal-content-decline")) {
-                        Text(readI18n(if (consent.required) "gamePortal.cancel" else "gamePortal.useDefault"))
+                    TextButton(onClick = onDecline, modifier = Modifier.testTag("portal-content-decline")) {
+                        Text(declineText)
                     }
-                    Button(onClick = { consent.decision.complete(true) }, modifier = Modifier.testTag("portal-content-accept")) {
-                        Text(readI18n("gamePortal.download"))
+                    Button(onClick = onAccept, modifier = Modifier.testTag("portal-content-accept")) {
+                        Text(acceptText)
                     }
                 }
             }
         }
+    }
+}
+
+internal enum class PortalExpansionFailure { SYNC, CHANGED, PAUSED_GAME }
+
+internal sealed interface PortalExpansionState {
+    data class Syncing(val progress: PortalExpansionProgress = PortalExpansionProgress(PortalExpansionStage.CHECKING)) : PortalExpansionState
+    data class Ready(val handle: PortalExpansionHandle) : PortalExpansionState
+    data class Failed(val reason: PortalExpansionFailure) : PortalExpansionState
+
+    fun joinRejection(): String? = when (this) {
+        is Syncing -> "expansion_sync_in_progress"
+        is Ready -> if (handle.isReady()) null else "expansion_sync_required"
+        is Failed -> if (reason == PortalExpansionFailure.CHANGED) "expansion_sync_required" else "expansion_sync_failed"
+    }
+}
+
+@Composable
+internal fun PortalExpansionStatus(state: PortalExpansionState?, onRetry: () -> Unit) {
+    when (state) {
+        is PortalExpansionState.Syncing -> {
+            val progress = state.progress
+            val label = readI18n(when (progress.stage) {
+                PortalExpansionStage.CHECKING -> "gamePortal.expansionSyncChecking"
+                PortalExpansionStage.DOWNLOADING -> "gamePortal.expansionSyncDownloading"
+                PortalExpansionStage.VERIFYING -> "gamePortal.expansionSyncVerifying"
+                PortalExpansionStage.INSTALLING -> "gamePortal.expansionSyncInstalling"
+                PortalExpansionStage.RELOADING -> "gamePortal.expansionSyncReloading"
+            })
+            val fraction = if (progress.stage == PortalExpansionStage.DOWNLOADING && progress.total > 0) {
+                (progress.bytes.toDouble() / progress.total).coerceIn(0.0, 1.0).toFloat()
+            } else null
+            Surface(Modifier.fillMaxWidth().testTag("portal-expansion-sync"), color = MaterialTheme.colorScheme.surface) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(if (fraction == null) label else "$label · ${(fraction * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelMedium)
+                    val bar = Modifier.fillMaxWidth().height(3.dp)
+                    if (fraction == null) UiLinearProgressIndicator(modifier = bar)
+                    else LinearProgressIndicator(progress = { fraction }, modifier = bar)
+                }
+            }
+        }
+        is PortalExpansionState.Failed -> {
+            val label = readI18n(when (state.reason) {
+                PortalExpansionFailure.SYNC -> "gamePortal.expansionSyncFailed"
+                PortalExpansionFailure.CHANGED -> "gamePortal.expansionSyncChanged"
+                PortalExpansionFailure.PAUSED_GAME -> "gamePortal.expansionSyncPaused"
+            })
+            Surface(Modifier.fillMaxWidth().testTag("portal-expansion-failed"), color = MaterialTheme.colorScheme.errorContainer) {
+                Row(Modifier.padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(label, Modifier.weight(1f), color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = onRetry, modifier = Modifier.testTag("portal-expansion-retry")) {
+                        Text(readI18n(if (state.reason == PortalExpansionFailure.CHANGED) "browser.refresh" else "gamePortal.expansionSyncRetry"))
+                    }
+                }
+            }
+        }
+        else -> Unit
     }
 }

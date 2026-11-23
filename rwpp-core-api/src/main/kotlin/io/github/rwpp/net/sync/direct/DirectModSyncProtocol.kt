@@ -327,6 +327,8 @@ data class DirectContentArtifact(val name: String, val mediaType: String, val ve
     fun descriptor() = NetworkModDescriptor(name, size, sha256)
 }
 
+const val DIRECT_SYNC_ONLY_CAPABILITY = 1 shl 2
+
 class DirectResumeGrant(val serverInstance: String, val secret: ByteArray) {
     override fun toString() = "DirectResumeGrant(<redacted>)"
 }

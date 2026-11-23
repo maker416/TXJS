@@ -33,10 +33,14 @@ class GamePortalControllerTest {
     @AfterTest fun teardown() { Dispatchers.resetMain() }
 
     private fun controller(scope: CoroutineScope, readPlayer: suspend () -> JsonObject = { buildJsonObject { put("account_id", "200") } },
-                           prepare: suspend (OnlineGame, Boolean) -> Long = { _, useArt -> art = useArt; prepares++; 7 }) =
+                           prepare: suspend (OnlineGame, Boolean) -> Long = { _, useArt -> art = useArt; prepares++; 7 },
+                           expansionJoinBlock: () -> String? = { null },
+                           onExpansionChanged: () -> Unit = {}) =
         GamePortalController(original, { current }, { game }, readPlayer,
             { buildJsonObject { put("code", "a".repeat(64)) } }, { consent }, prepare,
-            { cancelledTokens += it }, { cancelNative++ }, scope).also { it.bindEvents { _, data -> events += data } }
+            { cancelledTokens += it }, { cancelNative++ }, scope,
+            expansionJoinBlock = expansionJoinBlock, onExpansionChanged = onExpansionChanged)
+            .also { it.bindEvents { _, data -> events += data } }
 
     private fun join(id: String = "request-one", server: String = "main") = buildJsonObject { put("server_id", server); put("request_id", id) }
 
@@ -154,6 +158,40 @@ class GamePortalControllerTest {
         assertEquals("joined", subject.request("joinServer", join())["state"]!!.jsonPrimitive.content)
         assertEquals(1, prepares)
         assertFailsWith<GamePortalException> { subject.request("joinServer", join(server = "foreign")) }
+    }
+
+    @Test fun joiningDuringExpansionSyncReturnsTerminalReceiptAndNeverQueuesAdmission() = runTest {
+        var rejection: String? = "expansion_sync_in_progress"
+        val subject = controller(this, expansionJoinBlock = { rejection })
+        val earlyResult = subject.request("joinServer", join())
+        assertEquals("failed", earlyResult["state"]!!.jsonPrimitive.content)
+        assertEquals("expansion_sync_in_progress", earlyResult["message"]!!.jsonPrimitive.content)
+        assertEquals(earlyResult, events.single())
+        assertNull(subject.state.value.attempt)
+
+        rejection = null
+        advanceUntilIdle()
+        assertEquals(0, prepares)
+        assertEquals(earlyResult, subject.request("joinServer", join()))
+        subject.request("joinServer", join("new-id"))
+        advanceUntilIdle()
+        assertEquals(1, prepares)
+        assertEquals("new-id", subject.state.value.attempt?.requestId)
+    }
+
+    @Test fun newlyPublishedExpansionSyncRequiresRefreshingBeforeAdmission() = runTest {
+        var changed = false
+        val subject = controller(this, onExpansionChanged = { changed = true })
+        game = original.copy(expansionBinding = ExpansionBinding("1.0", "a".repeat(64), 4096,
+            ExpansionArtBinding("22222222-2222-2222-2222-222222222222", "1.0", "b".repeat(64))),
+            expansionSyncEndpoint = "sync.example:5123")
+        subject.request("joinServer", join())
+        advanceUntilIdle()
+        assertTrue(changed)
+        assertEquals("failed", events.last()["state"]!!.jsonPrimitive.content)
+        assertEquals("expansion_sync_required", events.last()["message"]!!.jsonPrimitive.content)
+        assertNull(subject.state.value.attempt)
+        assertEquals(0, prepares)
     }
 
     @Test fun cancellationIsFinalOnlyAfterNativeCleanupCompletes() = runTest {
