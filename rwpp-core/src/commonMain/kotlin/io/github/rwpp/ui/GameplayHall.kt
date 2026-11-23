@@ -8,7 +8,6 @@
 package io.github.rwpp.ui
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -27,8 +26,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -93,10 +90,7 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.BlurredEdgeTreatment
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
@@ -107,13 +101,9 @@ import androidx.compose.ui.graphics.Canvas as GraphicsCanvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -121,7 +111,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -468,42 +457,6 @@ private fun adaptiveHallColumns(itemCount: Int, availableWidth: Dp, narrow: Bool
     }
 }
 
-internal const val HALL_DEV_UNLOCK_TAP_COUNT = 5
-internal const val HALL_DEV_UNLOCK_WINDOW_MS = 4_000L
-
-/**
- * 开发者测试解锁状态机：第二主界面默认由全屏毛玻璃遮罩覆盖，
- * 连续点击 5 下「开发中」徽章后放行，供开发与测试验证实际大厅内容（PC 与移动端通用）。
- */
-internal class HallDevUnlockTracker(
-    private val requiredCount: Int = HALL_DEV_UNLOCK_TAP_COUNT,
-    private val timeoutMillis: Long = HALL_DEV_UNLOCK_WINDOW_MS,
-    private val nowMillis: () -> Long = { System.currentTimeMillis() },
-) {
-    private var count = 0
-    private var lastTapMs = Long.MIN_VALUE
-
-    fun onBadgeTap(): Boolean {
-        val now = nowMillis()
-        count = if (lastTapMs != Long.MIN_VALUE && now - lastTapMs <= timeoutMillis) {
-            count + 1
-        } else {
-            1
-        }
-        lastTapMs = now
-        if (count >= requiredCount) {
-            reset()
-            return true
-        }
-        return false
-    }
-
-    fun reset() {
-        count = 0
-        lastTapMs = Long.MIN_VALUE
-    }
-}
-
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun GameplayHallView(
@@ -517,11 +470,8 @@ internal fun GameplayHallView(
     },
     loggedIn: Boolean = AccountSession.loggedIn,
     onLogin: () -> Unit = { UI.showAccountView = true },
-    initialDevUnlocked: Boolean = false,
-    devUnlockClockMillis: () -> Long = { System.currentTimeMillis() },
 ) {
     val animated = uiAnimationsEnabled()
-    val interactive = LocalDialogInteractive.current
     val pageScope = LocalPageAnimatedVisibilityScope.current
     val motionConfig = LocalGameplayHallMotionConfig.current ?: GameplayHallMotionConfig(
         animated = animated,
@@ -539,7 +489,6 @@ internal fun GameplayHallView(
     var availableOnly by rememberSaveable { mutableStateOf(false) }
     var favorites by rememberSaveable { mutableStateOf(listOf<String>()) }
     var featuredIndex by rememberSaveable { mutableIntStateOf(0) }
-    var devUnlocked by rememberSaveable { mutableStateOf(initialDevUnlocked) }
     val contentListState = rememberLazyListState()
     var pendingPortal by remember { mutableStateOf<String?>(null) }
     var games by remember { mutableStateOf(cachedInitial) }
@@ -547,8 +496,7 @@ internal fun GameplayHallView(
     var loadFailed by remember { mutableStateOf(false) }
     var retry by remember { mutableIntStateOf(0) }
     val latestLoad by rememberUpdatedState(loadGames)
-    LaunchedEffect(devUnlocked, retry, platformUrl) {
-        if (!devUnlocked) return@LaunchedEffect
+    LaunchedEffect(retry, platformUrl) {
         LauncherVisibility.visible.pollWhileVisible(30_000) {
             try {
                 val loaded = latestLoad()
@@ -576,8 +524,7 @@ internal fun GameplayHallView(
     }
 
     val expansionUnavailableText = hallText("expansionUnavailable")
-    LaunchedEffect(devUnlocked, UI.pendingExpansionGameAppId) {
-        if (!devUnlocked) return@LaunchedEffect
+    LaunchedEffect(UI.pendingExpansionGameAppId) {
         val appId = UI.pendingExpansionGameAppId ?: return@LaunchedEffect
         try {
             val approved = refreshGame(appId)
@@ -672,7 +619,7 @@ internal fun GameplayHallView(
                 },
         )
 
-        if (devUnlocked) Column(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
             // 顶部极简指挥栏
             Column(
                 Modifier
@@ -708,27 +655,16 @@ internal fun GameplayHallView(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(1.dp),
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text(
-                                text = hallText("title"),
-                                color = HallInkPrimary,
-                                fontSize = if (compact || narrow) 20.sp else 23.sp,
-                                lineHeight = if (compact || narrow) 24.sp else 28.sp,
-                                letterSpacing = (-0.3).sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f, fill = false),
-                            )
-                            HallDevStatusPill(
-                                expanded = false,
-                                compact = compact || narrow,
-                                onClick = { devUnlocked = false },
-                            )
-                        }
+                        Text(
+                            text = hallText("title"),
+                            color = HallInkPrimary,
+                            fontSize = if (compact || narrow) 20.sp else 23.sp,
+                            lineHeight = if (compact || narrow) 24.sp else 28.sp,
+                            letterSpacing = (-0.3).sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                         if (!compact) {
                             Text(
                                 text = hallText("subtitle"),
@@ -1002,24 +938,6 @@ internal fun GameplayHallView(
                 }
             }
         }
-
-        AnimatedVisibility(
-            visible = !devUnlocked,
-            enter = if (animated) fadeIn(tween(180, easing = StandardDecelerateEasing)) else EnterTransition.None,
-            exit = if (animated) fadeOut(tween(220, easing = StandardDecelerateEasing)) else ExitTransition.None,
-            modifier = Modifier.matchParentSize(),
-        ) {
-            HallUnderDevelopmentOverlay(
-                active = !devUnlocked && interactive,
-                compact = compact,
-                narrow = narrow,
-                edge = edge,
-                motion = motion,
-                onExit = onExit,
-                onUnlock = { devUnlocked = true },
-                clockMillis = devUnlockClockMillis,
-            )
-        }
     }
 }
 
@@ -1090,596 +1008,6 @@ private fun HallTelemetryLabel(telemetry: OnlineGameTelemetry): String? {
         parts += hallText("playersOnline").replace("{0}", telemetry.players.toString())
     }
     return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
-}
-
-@Composable
-private fun HallDevStatusPill(
-    expanded: Boolean,
-    compact: Boolean,
-    onClick: () -> Unit,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val hovered by interactionSource.collectIsHoveredAsState()
-    val pressed by interactionSource.collectIsPressedAsState()
-    val animated = uiAnimationsEnabled()
-    val scale = animateUiFloatAsState(
-        targetValue = if (animated && pressed) 0.95f else 1f,
-        animationSpec = tween(if (animated) 110 else 0, easing = StandardDecelerateEasing),
-        label = "HallDevPillScale",
-    )
-    val bgColor by animateUiColorAsState(
-        targetValue = when {
-            pressed -> HallAmber.copy(alpha = 0.24f)
-            hovered -> HallAmber.copy(alpha = 0.18f)
-            expanded -> HallAmber.copy(alpha = 0.11f)
-            else -> HallAmber.copy(alpha = 0.15f)
-        },
-        animationSpec = tween(if (animated) 150 else 0),
-        label = "HallDevPillBg",
-    )
-    val borderColor by animateUiColorAsState(
-        targetValue = when {
-            hovered || pressed -> HallAmber.copy(alpha = 0.68f)
-            expanded -> HallAmber.copy(alpha = 0.30f)
-            else -> HallAmber.copy(alpha = 0.45f)
-        },
-        animationSpec = tween(if (animated) 150 else 0),
-        label = "HallDevPillBorder",
-    )
-    val description = hallText(if (expanded) "devDismiss" else "devExpand")
-    Surface(
-        onClick = onClick,
-        interactionSource = interactionSource,
-        shape = CircleShape,
-        color = bgColor,
-        border = BorderStroke(1.dp, borderColor),
-        modifier = Modifier
-            .let {
-                if (animated) {
-                    it.graphicsLayer {
-                        val value = scale.value
-                        scaleX = value
-                        scaleY = value
-                    }
-                } else it
-            }
-            .semantics { contentDescription = description }
-            .testTag("hall-dev-badge"),
-    ) {
-        Row(
-            modifier = Modifier.padding(
-                horizontal = if (compact) 8.dp else 9.dp,
-                vertical = if (compact) 2.5.dp else 3.dp,
-            ),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-        ) {
-            Box(Modifier.size(7.dp), contentAlignment = Alignment.Center) {
-                Box(Modifier.size(7.dp).background(HallAmber.copy(alpha = 0.28f), CircleShape))
-                Box(Modifier.size(3.5.dp).background(HallAmber, CircleShape))
-            }
-            Text(
-                text = hallText("devBadge"),
-                color = HallAmber,
-                fontSize = if (compact) 10.sp else 10.5.sp,
-                lineHeight = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                softWrap = false,
-            )
-        }
-    }
-}
-
-@Composable
-private fun HallUnderDevelopmentOverlay(
-    active: Boolean,
-    compact: Boolean,
-    narrow: Boolean,
-    edge: Dp,
-    motion: GameplayHallMotionStates,
-    onExit: () -> Unit,
-    onUnlock: () -> Unit,
-    clockMillis: () -> Long,
-) {
-    val badgeInteraction = remember { MutableInteractionSource() }
-    val unlockTracker = remember(clockMillis) { HallDevUnlockTracker(nowMillis = clockMillis) }
-    val latestOnUnlock by rememberUpdatedState(onUnlock)
-
-    LaunchedEffect(active) {
-        unlockTracker.reset()
-    }
-
-    val frostGrainBrush = remember {
-        ShaderBrush(ImageShader(cachedHallFrostGrainBitmap(), TileMode.Repeated, TileMode.Repeated))
-    }
-    val cardShape = RoundedCornerShape(if (compact) 20.dp else 26.dp)
-    val cardBorder = remember {
-        Brush.linearGradient(
-            listOf(
-                Color.White.copy(alpha = 0.32f),
-                HallAmber.copy(alpha = 0.36f),
-                HallAccent.copy(alpha = 0.22f),
-                Color.White.copy(alpha = 0.12f),
-            ),
-        )
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(active, unlockTracker) {
-                if (!active) return@pointerInput
-                // 未被子控件（「开发中」徽章或返回按钮）消费的点击在此拦截，既防止穿透底层又重置连击计数，
-                // 且不触发 clickable 的语义节点合并。
-                detectTapGestures { unlockTracker.reset() }
-            }
-            .testTag("hall-dev-overlay"),
-    ) {
-        // 第 1 层：强高斯模糊的抽象氛围光场（不含任何真实大厅内容，确保 Android 8-11 无 RenderEffect 也不泄露底层界面）
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .clipToBounds()
-                .blur(radius = 48.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
-                .drawBehind {
-                    drawRect(
-                        Brush.linearGradient(
-                            colors = listOf(Color(0xE80C151B), Color(0xEC091116), Color(0xEA0C141A)),
-                            start = Offset.Zero,
-                            end = Offset(size.width, size.height),
-                        ),
-                    )
-                    // 抽象柔光色斑：经大半径模糊后呈现真实厚毛玻璃的色散透光感
-                    drawRect(
-                        Brush.radialGradient(
-                            colors = listOf(HallAccent.copy(alpha = 0.34f), Color(0x1A1A5E42), Color.Transparent),
-                            center = Offset(size.width * 0.16f, size.height * 0.18f),
-                            radius = (size.maxDimension * 0.44f).coerceAtLeast(180.dp.toPx()),
-                        ),
-                    )
-                    drawRect(
-                        Brush.radialGradient(
-                            colors = listOf(HallAmber.copy(alpha = 0.28f), Color(0x16594218), Color.Transparent),
-                            center = Offset(size.width * 0.56f, size.height * 0.42f),
-                            radius = (size.maxDimension * 0.40f).coerceAtLeast(160.dp.toPx()),
-                        ),
-                    )
-                    drawRect(
-                        Brush.radialGradient(
-                            colors = listOf(HallCyan.copy(alpha = 0.28f), Color(0x16164961), Color.Transparent),
-                            center = Offset(size.width * 0.84f, size.height * 0.82f),
-                            radius = (size.maxDimension * 0.46f).coerceAtLeast(180.dp.toPx()),
-                        ),
-                    )
-                    drawRect(
-                        Brush.radialGradient(
-                            colors = listOf(Color(0x28DCEEE8), Color(0x0E9BB5AE), Color.Transparent),
-                            center = Offset(size.width * 0.28f, size.height * 0.80f),
-                            radius = (size.maxDimension * 0.36f).coerceAtLeast(140.dp.toPx()),
-                        ),
-                    )
-                    // 纯抽象柔边散射光晕（使用径向渐变自然衰减，确保 Android 8-11 无 RenderEffect 时同样柔和无生硬边缘）
-                    drawRect(
-                        Brush.radialGradient(
-                            colors = listOf(Color.White.copy(alpha = 0.11f), Color.White.copy(alpha = 0.03f), Color.Transparent),
-                            center = Offset(size.width * 0.24f, size.height * 0.34f),
-                            radius = (size.maxDimension * 0.34f).coerceAtLeast(130.dp.toPx()),
-                        ),
-                    )
-                    drawRect(
-                        Brush.radialGradient(
-                            colors = listOf(HallAccent.copy(alpha = 0.16f), HallCyan.copy(alpha = 0.08f), Color.Transparent),
-                            center = Offset(size.width * 0.74f, size.height * 0.64f),
-                            radius = (size.maxDimension * 0.38f).coerceAtLeast(150.dp.toPx()),
-                        ),
-                    )
-                },
-        )
-
-        // 第 2 层：全屏磨砂玻璃介质（半透明冰雾面 + 斜向玻璃反光 + 细微磨砂颗粒 + 四周柔暗晕）
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .drawBehind {
-                    drawRect(
-                        Brush.linearGradient(
-                            colors = listOf(
-                                Color(0x6E17252D),
-                                Color(0x62111C23),
-                                Color(0x720E171D),
-                            ),
-                            start = Offset.Zero,
-                            end = Offset(size.width, size.height),
-                        ),
-                    )
-                    drawRect(
-                        Brush.linearGradient(
-                            colors = listOf(
-                                Color.White.copy(alpha = 0.12f),
-                                Color(0x14E3F2EE),
-                                Color.White.copy(alpha = 0.03f),
-                                Color.White.copy(alpha = 0.08f),
-                            ),
-                            start = Offset.Zero,
-                            end = Offset(size.width * 0.92f, size.height),
-                        ),
-                    )
-                    drawRect(brush = frostGrainBrush)
-                    drawRect(
-                        Brush.radialGradient(
-                            colors = listOf(Color.Transparent, Color(0x4604080B)),
-                            center = Offset(size.width * 0.5f, size.height * 0.5f),
-                            radius = (size.maxDimension * 0.72f).coerceAtLeast(200.dp.toPx()),
-                        ),
-                    )
-                    drawLine(
-                        brush = Brush.horizontalGradient(
-                            listOf(Color.Transparent, Color.White.copy(alpha = 0.20f), Color.Transparent),
-                        ),
-                        start = Offset(0f, 0.75.dp.toPx()),
-                        end = Offset(size.width, 0.75.dp.toPx()),
-                        strokeWidth = 1.dp.toPx(),
-                    )
-                },
-        )
-
-        // 中央悬浮毛玻璃提示卡片（无关闭入口、无开发者触发提示）
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(
-                    start = if (narrow) 18.dp else 32.dp,
-                    end = if (narrow) 18.dp else 32.dp,
-                    top = if (compact) 54.dp else 72.dp,
-                    bottom = if (compact) 20.dp else 44.dp,
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(
-                modifier = Modifier
-                    .hallBodyMotion(motion)
-                    .widthIn(max = if (compact) 440.dp else 500.dp)
-                    .fillMaxWidth()
-                    .clip(cardShape)
-                    .drawBehind {
-                        drawRect(
-                            Brush.linearGradient(
-                                colors = listOf(
-                                    Color(0xC2192831),
-                                    Color(0xB2121D24),
-                                    Color(0xBE0F1920),
-                                ),
-                                start = Offset.Zero,
-                                end = Offset(size.width, size.height),
-                            ),
-                        )
-                        drawRect(
-                            Brush.linearGradient(
-                                colors = listOf(
-                                    Color.White.copy(alpha = 0.16f),
-                                    Color.White.copy(alpha = 0.045f),
-                                    Color.Transparent,
-                                    Color.White.copy(alpha = 0.06f),
-                                ),
-                                start = Offset.Zero,
-                                end = Offset(size.width, size.height),
-                            ),
-                        )
-                        drawRect(
-                            Brush.radialGradient(
-                                colors = listOf(HallAmber.copy(alpha = 0.18f), Color.Transparent),
-                                center = Offset(size.width * 0.5f, size.height * 0.16f),
-                                radius = (size.maxDimension * 0.56f).coerceAtLeast(160.dp.toPx()),
-                            ),
-                        )
-                        drawRect(
-                            Brush.radialGradient(
-                                colors = listOf(HallAccent.copy(alpha = 0.11f), Color.Transparent),
-                                center = Offset(size.width * 0.86f, size.height * 0.92f),
-                                radius = (size.maxDimension * 0.42f).coerceAtLeast(120.dp.toPx()),
-                            ),
-                        )
-                        drawRect(brush = frostGrainBrush, alpha = 0.72f)
-                        drawLine(
-                            brush = Brush.horizontalGradient(
-                                listOf(
-                                    Color.Transparent,
-                                    Color.White.copy(alpha = 0.38f),
-                                    HallAmber.copy(alpha = 0.46f),
-                                    Color.White.copy(alpha = 0.24f),
-                                    Color.Transparent,
-                                ),
-                            ),
-                            start = Offset(24.dp.toPx(), 0.75.dp.toPx()),
-                            end = Offset(size.width - 24.dp.toPx(), 0.75.dp.toPx()),
-                            strokeWidth = 1.dp.toPx(),
-                        )
-                    }
-                    .border(1.dp, cardBorder, cardShape)
-                    .testTag("hall-dev-notice"),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(
-                            horizontal = when {
-                                narrow -> 24.dp
-                                compact -> 28.dp
-                                else -> 38.dp
-                            },
-                            vertical = if (compact) 22.dp else 34.dp,
-                        ),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(if (compact) 11.dp else 15.dp),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Box(
-                            Modifier
-                                .size(if (compact) 68.dp else 86.dp)
-                                .drawBehind {
-                                    drawCircle(
-                                        brush = Brush.radialGradient(
-                                            listOf(HallAmber.copy(alpha = 0.24f), HallAccent.copy(alpha = 0.08f), Color.Transparent),
-                                        ),
-                                    )
-                                },
-                        )
-                        HallDevSparkEmblem(size = if (compact) 44.dp else 54.dp)
-                    }
-
-                    // 开发者测试入口：外观保持静态状态徽章（无波纹/无提示），连续点击 5 次关闭遮罩进入大厅。
-                    Row(
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(HallAmber.copy(alpha = 0.14f), CircleShape)
-                            .border(1.dp, HallAmber.copy(alpha = 0.34f), CircleShape)
-                            .then(
-                                if (active) {
-                                    Modifier.clickable(
-                                        interactionSource = badgeInteraction,
-                                        indication = null,
-                                        onClick = {
-                                            if (unlockTracker.onBadgeTap()) {
-                                                latestOnUnlock()
-                                            }
-                                        },
-                                    )
-                                } else {
-                                    Modifier
-                                },
-                            )
-                            .padding(horizontal = 11.dp, vertical = 4.dp)
-                            .testTag("hall-dev-badge"),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Box(Modifier.size(7.dp), contentAlignment = Alignment.Center) {
-                            Box(Modifier.size(7.dp).background(HallAmber.copy(alpha = 0.30f), CircleShape))
-                            Box(Modifier.size(3.5.dp).background(HallAmber, CircleShape))
-                        }
-                        Text(
-                            text = hallText("devBadge"),
-                            color = HallAmberSoft,
-                            fontSize = 11.sp,
-                            lineHeight = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            softWrap = false,
-                        )
-                    }
-
-                    Text(
-                        text = hallText("devTitle"),
-                        color = HallInkPrimary,
-                        fontSize = when {
-                            compact -> 19.sp
-                            narrow -> 21.sp
-                            else -> 24.sp
-                        },
-                        lineHeight = when {
-                            compact -> 25.sp
-                            narrow -> 28.sp
-                            else -> 32.sp
-                        },
-                        letterSpacing = (-0.2).sp,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center,
-                    )
-
-                    Text(
-                        text = hallText("devSubtitle"),
-                        color = HallInkSecondary,
-                        fontSize = if (compact) 12.5.sp else 13.5.sp,
-                        lineHeight = if (compact) 19.sp else 21.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.widthIn(max = 400.dp),
-                    )
-
-                    Box(
-                        Modifier
-                            .fillMaxWidth(0.72f)
-                            .padding(top = if (compact) 2.dp else 4.dp)
-                            .height(1.dp)
-                            .background(
-                                Brush.horizontalGradient(
-                                    listOf(Color.Transparent, HallHairlineStrong, Color.Transparent),
-                                ),
-                            ),
-                    )
-
-                    HallFrostedReturnButton(
-                        text = hallText("back"),
-                        compact = compact,
-                        onClick = onExit,
-                    )
-                }
-            }
-        }
-
-        // 顶部返回按钮置于滚动容器之上，保持左上固定命中区不被遮挡。
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .hallHeaderMotion(motion)
-                .padding(horizontal = edge, vertical = if (compact) 8.dp else 14.dp),
-        ) {
-            HallIconButton(onExit, "back", compact = compact) {
-                Icon(
-                    Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = hallText("back"),
-                    tint = HallInkPrimary,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun HallFrostedReturnButton(
-    text: String,
-    compact: Boolean,
-    onClick: () -> Unit,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val hovered by interactionSource.collectIsHoveredAsState()
-    val pressed by interactionSource.collectIsPressedAsState()
-    val animated = uiAnimationsEnabled()
-    val scale = animateUiFloatAsState(
-        targetValue = if (animated && pressed) 0.96f else 1f,
-        animationSpec = tween(if (animated) 110 else 0, easing = StandardDecelerateEasing),
-        label = "HallFrostedReturnScale",
-    )
-    val bgColor by animateUiColorAsState(
-        targetValue = when {
-            pressed -> Color.White.copy(alpha = 0.22f)
-            hovered -> Color.White.copy(alpha = 0.15f)
-            else -> Color.White.copy(alpha = 0.10f)
-        },
-        animationSpec = tween(if (animated) 140 else 0),
-        label = "HallFrostedReturnBg",
-    )
-    val borderColor by animateUiColorAsState(
-        targetValue = when {
-            hovered || pressed -> Color.White.copy(alpha = 0.42f)
-            else -> Color.White.copy(alpha = 0.22f)
-        },
-        animationSpec = tween(if (animated) 140 else 0),
-        label = "HallFrostedReturnBorder",
-    )
-    Surface(
-        onClick = onClick,
-        interactionSource = interactionSource,
-        shape = CircleShape,
-        color = bgColor,
-        border = BorderStroke(1.dp, borderColor),
-        modifier = Modifier
-            .let {
-                if (animated) {
-                    it.graphicsLayer {
-                        val value = scale.value
-                        scaleX = value
-                        scaleY = value
-                    }
-                } else it
-            }
-            .heightIn(min = if (compact) 38.dp else 44.dp)
-            .testTag("hall-dev-back"),
-    ) {
-        Row(
-            modifier = Modifier.padding(
-                horizontal = if (compact) 18.dp else 22.dp,
-                vertical = if (compact) 8.dp else 10.dp,
-            ),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Icon(
-                Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = null,
-                tint = HallInkPrimary,
-                modifier = Modifier.size(16.dp),
-            )
-            Text(
-                text = text,
-                color = HallInkPrimary,
-                fontSize = if (compact) 13.sp else 13.5.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                softWrap = false,
-            )
-        }
-    }
-}
-
-@Composable
-private fun HallDevSparkEmblem(size: Dp) {
-    val shape = RoundedCornerShape(size * 0.30f)
-    Box(
-        modifier = Modifier
-            .size(size)
-            .clip(shape)
-            .background(
-                Brush.linearGradient(
-                    listOf(HallAmber.copy(alpha = 0.22f), HallAccent.copy(alpha = 0.12f)),
-                ),
-            )
-            .border(
-                1.dp,
-                Brush.linearGradient(
-                    listOf(HallAmber.copy(alpha = 0.56f), HallAccent.copy(alpha = 0.26f)),
-                ),
-                shape,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Canvas(Modifier.size(size * 0.58f)) {
-            val w = this.size.width
-            val h = this.size.height
-            val cx = w * 0.45f
-            val cy = h * 0.54f
-            val r = minOf(w, h) * 0.38f
-            drawArc(
-                color = HallAmber.copy(alpha = 0.42f),
-                startAngle = 140f,
-                sweepAngle = 215f,
-                useCenter = false,
-                topLeft = Offset(cx - r * 1.18f, cy - r * 1.18f),
-                size = Size(r * 2.36f, r * 2.36f),
-                style = Stroke(width = 1.2.dp.toPx(), cap = StrokeCap.Round),
-            )
-            val star = Path().apply {
-                moveTo(cx, cy - r)
-                quadraticTo(cx + r * 0.18f, cy - r * 0.18f, cx + r, cy)
-                quadraticTo(cx + r * 0.18f, cy + r * 0.18f, cx, cy + r)
-                quadraticTo(cx - r * 0.18f, cy + r * 0.18f, cx - r, cy)
-                quadraticTo(cx - r * 0.18f, cy - r * 0.18f, cx, cy - r)
-                close()
-            }
-            drawPath(
-                path = star,
-                brush = Brush.radialGradient(
-                    colors = listOf(HallAmberSoft, HallAmber),
-                    center = Offset(cx, cy),
-                    radius = r,
-                ),
-            )
-            val sx = w * 0.78f
-            val sy = h * 0.24f
-            val sr = minOf(w, h) * 0.17f
-            val miniStar = Path().apply {
-                moveTo(sx, sy - sr)
-                quadraticTo(sx + sr * 0.22f, sy - sr * 0.22f, sx + sr, sy)
-                quadraticTo(sx + sr * 0.22f, sy + sr * 0.22f, sx, sy + sr)
-                quadraticTo(sx - sr * 0.22f, sy + sr * 0.22f, sx - sr, sy)
-                quadraticTo(sx - sr * 0.22f, sy - sr * 0.22f, sx, sy - sr)
-                close()
-            }
-            drawPath(path = miniStar, color = HallAccent)
-        }
-    }
 }
 
 @Composable
@@ -3824,56 +3152,6 @@ private fun HallStar(selected: Boolean, description: String?, color: Color, modi
     else Icon(painterResource(Res.drawable.gameplay_favorite_outline), description, iconModifier, tint = color)
 }
 
-private const val FROST_GRAIN_TILE_SIZE = 96
-private val hallFrostGrainLock = Any()
-private var hallFrostGrainBitmap: ImageBitmap? = null
-
-/** 离屏缓存的可平铺细磨砂颗粒纹理，只生成一次，为全屏毛玻璃提供跨平台一致的微颗粒质感。 */
-private fun cachedHallFrostGrainBitmap(): ImageBitmap {
-    synchronized(hallFrostGrainLock) {
-        hallFrostGrainBitmap?.let { return it }
-    }
-    val bitmap = ImageBitmap(FROST_GRAIN_TILE_SIZE, FROST_GRAIN_TILE_SIZE)
-    CanvasDrawScope().draw(
-        density = Density(1f),
-        layoutDirection = LayoutDirection.Ltr,
-        canvas = GraphicsCanvas(bitmap),
-        size = Size(FROST_GRAIN_TILE_SIZE.toFloat(), FROST_GRAIN_TILE_SIZE.toFloat()),
-    ) {
-        for (y in 0 until FROST_GRAIN_TILE_SIZE) {
-            for (x in 0 until FROST_GRAIN_TILE_SIZE) {
-                var h = (x * 374761393) xor (y * 668265263) xor 0x5BF03635
-                h = (h xor (h ushr 13)) * 1274126177
-                h = h xor (h ushr 16)
-                val bucket = h and 0xFF
-                when {
-                    bucket < 56 -> {
-                        val alpha = 0.022f + (bucket / 56f) * 0.036f
-                        drawRect(
-                            color = Color.White.copy(alpha = alpha),
-                            topLeft = Offset(x.toFloat(), y.toFloat()),
-                            size = Size(1f, 1f),
-                        )
-                    }
-                    bucket > 210 -> {
-                        val alpha = 0.018f + ((bucket - 210) / 45f) * 0.030f
-                        drawRect(
-                            color = Color.Black.copy(alpha = alpha),
-                            topLeft = Offset(x.toFloat(), y.toFloat()),
-                            size = Size(1f, 1f),
-                        )
-                    }
-                }
-            }
-        }
-    }
-    synchronized(hallFrostGrainLock) {
-        hallFrostGrainBitmap?.let { return it }
-        hallFrostGrainBitmap = bitmap
-        return bitmap
-    }
-}
-
 private const val BATTLEFIELD_BITMAP_WIDTH = 960
 private const val BATTLEFIELD_BITMAP_HEIGHT = 336
 private val hallBattlefieldCacheLock = Any()
@@ -3903,7 +3181,6 @@ private fun cachedHallBattlefieldBitmap(scene: Int): ImageBitmap {
 }
 
 internal fun prewarmHallBattlefieldBitmaps() {
-    cachedHallFrostGrainBitmap()
     for (scene in 0..2) cachedHallBattlefieldBitmap(scene)
 }
 

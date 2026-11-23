@@ -7,31 +7,23 @@
 
 package io.github.rwpp.ui
 
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Text
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.toAwtImage
-import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.pointer.PointerEventType
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.use
@@ -45,7 +37,6 @@ import io.github.rwpp.net.games.OnlineGameArtBinding
 import io.github.rwpp.net.games.OnlineGameServer
 import io.github.rwpp.widget.UiMotionTheme
 import io.github.rwpp.widget.WindowManager
-import io.github.rwpp.widget.launcherKeyboardEvents
 import io.github.rwpp.widget.setUiAnimationsEnabled
 import kotlinx.coroutines.CompletableDeferred
 import net.peanuuutz.tomlkt.Toml
@@ -184,7 +175,6 @@ class GameplayHallUiTest {
                             onOpenPage = { navigateTo(it) },
                             loadGames = { listOf(published, offline) },
                             loggedIn = true,
-                            initialDevUnlocked = true,
                         )
                     }
                 }
@@ -246,7 +236,6 @@ class GameplayHallUiTest {
                         login++
                         UI.showAccountView = true
                     },
-                    initialDevUnlocked = true,
                 )
             }
         }
@@ -304,7 +293,7 @@ class GameplayHallUiTest {
         runDesktopComposeUiTest(width = 960, height = 720) {
             setContent {
                 UiMotionTheme(darkColorScheme(), Typography()) {
-                    GameplayHallView({}, {}, loadGames = { listOf(published, offline) }, initialDevUnlocked = true)
+                    GameplayHallView({}, {}, loadGames = { listOf(published, offline) })
                 }
             }
             waitForIdle()
@@ -327,7 +316,6 @@ class GameplayHallUiTest {
                             onExit = { closePage(LauncherPage.GameplayHall) },
                             onOpenPage = { navigateTo(it) },
                             loadGames = { listOf(published, offline) },
-                            initialDevUnlocked = true,
                         )
                     }
                 }
@@ -398,7 +386,6 @@ class GameplayHallUiTest {
                                 if (failLoad) error("directory down")
                                 listOf(published)
                             },
-                            initialDevUnlocked = true,
                         )
                     }
                 }
@@ -449,240 +436,22 @@ class GameplayHallUiTest {
     }
 
     @Test
-    fun underDevelopmentFrostedOverlayBlocksContentAndUnlocksAfterFiveBadgeTaps() = runDesktopComposeUiTest(width = 1280, height = 720) {
+    fun opensDirectlyWithoutUnderDevelopmentOverlay() = runDesktopComposeUiTest(width = 1280, height = 720) {
         var loads = 0
         show(
             load = {
                 loads++
                 listOf(published, offline)
             },
-            devUnlocked = false,
         )
-        waitForIdle()
-        onNodeWithTag("hall-dev-overlay").assertIsDisplayed()
-        onNodeWithTag("hall-dev-notice").assertIsDisplayed()
-        onNodeWithTag("hall-dev-badge").assertIsDisplayed()
-        onNodeWithTag("hall-back").assertIsDisplayed()
-        onNodeWithTag("hall-dev-back").assertIsDisplayed()
-        onNodeWithText("正在开发中，敬请期待").assertIsDisplayed()
-
-        // 没有普通关闭按钮，也不暴露开发者解锁说明。
-        onNodeWithTag("hall-dev-notice-dismiss").assertDoesNotExist()
-        assertTrue(onAllNodesWithText("Q", substring = true, ignoreCase = true).fetchSemanticsNodes().isEmpty())
-        assertTrue(onAllNodesWithText("5", substring = true).fetchSemanticsNodes().isEmpty())
-
-        // 底层第二主界面完全不可见且不发起目录轮询。
-        onNodeWithTag("hall-featured").assertDoesNotExist()
-        onNodeWithTag("hall-card-game-$gameId").assertDoesNotExist()
-        onNodeWithTag("hall-search").assertDoesNotExist()
-        onNodeWithTag("hall-category-all").assertDoesNotExist()
-        onNodeWithTag("hall-directory-status").assertDoesNotExist()
-        runOnIdle { assertEquals(0, loads) }
-        save("dev-frosted-desktop.png")
-
-        // 连续点击空白遮罩不会关闭提示。
-        repeat(6) {
-            onNodeWithTag("hall-dev-overlay").performTouchInput { click(Offset(200f, 120f)) }
-        }
-        onNodeWithTag("hall-dev-overlay").assertIsDisplayed()
-
-        // 点击 4 下「开发中」徽章仍保持锁定。
-        repeat(4) {
-            onNodeWithTag("hall-dev-badge").performClick()
-        }
-        waitForIdle()
-        onNodeWithTag("hall-dev-overlay").assertIsDisplayed()
-        onNodeWithTag("hall-featured").assertDoesNotExist()
-
-        // 点击空白遮罩重置计数，再点 4 下「开发中」仍不解锁。
-        onNodeWithTag("hall-dev-overlay").performTouchInput { click(Offset(200f, 120f)) }
-        repeat(4) {
-            onNodeWithTag("hall-dev-badge").performClick()
-        }
-        waitForIdle()
-        onNodeWithTag("hall-dev-overlay").assertIsDisplayed()
-
-        // 第 5 下点击「开发中」关闭毛玻璃遮罩，显示真实第二主界面供开发者测试。
-        onNodeWithTag("hall-dev-badge").performClick()
         waitUntil(timeoutMillis = 3_000) { loads >= 1 }
         waitForIdle()
         onNodeWithTag("hall-dev-overlay").assertDoesNotExist()
+        onNodeWithTag("hall-dev-notice").assertDoesNotExist()
+        onNodeWithTag("hall-dev-badge").assertDoesNotExist()
+        onNodeWithTag("hall-dev-back").assertDoesNotExist()
         onNodeWithTag("hall-featured").assertIsDisplayed()
         onNodeWithTag("hall-card-game-$gameId").assertIsDisplayed()
-
-        // 开发者点击顶栏「开发中」徽章可重新切回毛玻璃遮罩。
-        onNodeWithTag("hall-dev-badge").performClick()
-        waitForIdle()
-        onNodeWithTag("hall-dev-overlay").assertIsDisplayed()
-        onNodeWithTag("hall-featured").assertDoesNotExist()
-    }
-
-    @Test
-    fun underDevelopmentOverlayIgnoresQKeyAndRespectsTapTimeoutWindowAndExit() = runDesktopComposeUiTest(width = 1280, height = 720) {
-        var nowMs = 1_000L
-        var exits = 0
-        setContent {
-            val scope = rememberCoroutineScope()
-            val outerFocus = remember { FocusRequester() }
-            UiMotionTheme(darkColorScheme(), Typography()) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .focusRequester(outerFocus)
-                        .launcherKeyboardEvents(scope)
-                        .focusable()
-                        .testTag("outer-host"),
-                ) {
-                    GameplayHallView(
-                        onExit = { exits++ },
-                        onOpenPage = {},
-                        loadGames = { listOf(published) },
-                        initialDevUnlocked = false,
-                        devUnlockClockMillis = { nowMs },
-                    )
-                }
-            }
-            LaunchedEffect(Unit) {
-                outerFocus.requestFocus()
-            }
-        }
-        waitForIdle()
-        onNodeWithTag("hall-dev-overlay").assertIsDisplayed()
-
-        // 已改为点击 5 下「开发中」解锁，连按 Q 键不再触发解锁。
-        repeat(6) {
-            onNodeWithTag("outer-host").performKeyInput { pressKey(Key.Q) }
-            waitForIdle()
-        }
-        onNodeWithTag("hall-dev-overlay").assertIsDisplayed()
-
-        // 超过时间窗后计数归零重新起算。
-        repeat(3) {
-            nowMs += 200L
-            onNodeWithTag("hall-dev-badge").performClick()
-        }
-        nowMs += HALL_DEV_UNLOCK_WINDOW_MS + 100L
-        repeat(4) {
-            nowMs += 200L
-            onNodeWithTag("hall-dev-badge").performClick()
-        }
-        waitForIdle()
-        onNodeWithTag("hall-dev-overlay").assertIsDisplayed()
-
-        // 返回按钮正常退出第二主界面。
-        onNodeWithTag("hall-dev-back").performClick()
-        onNodeWithTag("hall-back").performClick()
-        runOnIdle { assertEquals(2, exits) }
-
-        // 窗口内补齐第 5 下点击「开发中」即可进入。
-        nowMs += 200L
-        onNodeWithTag("hall-dev-badge").performClick()
-        waitForIdle()
-        onNodeWithTag("hall-dev-overlay").assertDoesNotExist()
-        onNodeWithTag("hall-featured").assertIsDisplayed()
-    }
-
-    @Test
-    fun underDevelopmentFrostedOverlayLayoutsCleanlyOnLandscapeAndPortraitAndEnglish() {
-        runDesktopComposeUiTest(width = 960, height = 432) {
-            language("zh")
-            show(devUnlocked = false)
-            waitForIdle()
-            onNodeWithTag("hall-dev-overlay").assertIsDisplayed()
-            onNodeWithTag("hall-back").assertIsDisplayed()
-            onNodeWithTag("hall-dev-back").assertIsDisplayed()
-            onNodeWithText("正在开发中，敬请期待").assertIsDisplayed()
-            onNodeWithTag("hall-featured").assertDoesNotExist()
-            save("dev-frosted-landscape.png")
-        }
-        runDesktopComposeUiTest(width = 412, height = 844) {
-            language("en")
-            show(devUnlocked = false)
-            waitForIdle()
-            onNodeWithTag("hall-dev-overlay").assertIsDisplayed()
-            onNodeWithTag("hall-back").assertIsDisplayed()
-            onNodeWithTag("hall-dev-back").assertIsDisplayed()
-            onNodeWithText("In Development · Stay Tuned").assertIsDisplayed()
-            onNodeWithTag("hall-featured").assertDoesNotExist()
-            save("dev-frosted-portrait-en.png")
-        }
-    }
-
-    @OptIn(ExperimentalComposeUiApi::class)
-    @Test
-    fun underDevelopmentFrostedOverlayTransitionHasZeroPerFrameRecompositionAndIdleInvalidations() {
-        SwingUtilities.invokeAndWait { resetNavigation(LauncherPage.MainMenu) }
-        settings.setUiAnimationsEnabled(true)
-        var hallCompositions = 0
-        ImageComposeScene(width = 960, height = 720) {
-            UiMotionTheme(darkColorScheme(), Typography()) {
-                Box(Modifier.fillMaxSize()) {
-                    GameplayHallPageHost {
-                        SideEffect { hallCompositions++ }
-                        GameplayHallView(
-                            onExit = { closePage(LauncherPage.GameplayHall) },
-                            onOpenPage = { navigateTo(it) },
-                            loadGames = { listOf(published, offline) },
-                            initialDevUnlocked = false,
-                        )
-                    }
-                }
-            }
-        }.use { scene ->
-            scene.render(0L).close()
-            SwingUtilities.invokeAndWait { navigateTo(LauncherPage.GameplayHall) }
-            Snapshot.sendApplyNotifications()
-            scene.render(16_000_000L).close()
-            scene.render(32_000_000L).close()
-            val earlyPng = scene.render(48_000_000L).use { it.encodeToData()!!.bytes }
-            val startCompositions = hallCompositions
-            for (frame in 4..14) {
-                scene.render(frame * 16_000_000L).close()
-            }
-            val midPng = scene.render(240_000_000L).use { it.encodeToData()!!.bytes }
-            assertFalse(earlyPng.contentEquals(midPng), "开启动画时毛玻璃锁定页入场应随时间推进")
-            assertEquals(startCompositions, hallCompositions, "毛玻璃锁定页转场不能逐帧触发重组")
-
-            for (frame in 16..45) {
-                scene.render(frame * 16_000_000L).close()
-            }
-            assertFalse(scene.hasInvalidations(), "毛玻璃锁定页静置后不得残留持续动画调度")
-        }
-    }
-
-    @Test
-    fun hallDevUnlockTrackerUnitRules() {
-        var now = 10_000L
-        val tracker = HallDevUnlockTracker(requiredCount = 5, timeoutMillis = 4_000L, nowMillis = { now })
-
-        // 恰好在时间窗边界内累计点击 5 次触发解锁。
-        assertFalse(tracker.onBadgeTap())
-        now += 4_000L
-        assertFalse(tracker.onBadgeTap())
-        now += 100L
-        assertFalse(tracker.onBadgeTap())
-        now += 100L
-        assertFalse(tracker.onBadgeTap())
-        now += 100L
-        assertTrue(tracker.onBadgeTap())
-
-        // 解锁后自动重置，再次点 4 次不会触发。
-        repeat(4) {
-            now += 100L
-            assertFalse(tracker.onBadgeTap())
-        }
-        // 超过时间窗 1ms 即重新从 1 开始计数。
-        now += 4_001L
-        assertFalse(tracker.onBadgeTap())
-
-        // 手动重置清空计数。
-        tracker.reset()
-        repeat(4) {
-            now += 100L
-            assertFalse(tracker.onBadgeTap())
-        }
-        now += 100L
-        assertTrue(tracker.onBadgeTap())
     }
 
     @Test
@@ -796,8 +565,6 @@ class GameplayHallUiTest {
         refresh: suspend (String) -> OnlineGame? = { published },
         loggedIn: Boolean = true,
         onLogin: () -> Unit = {},
-        devUnlocked: Boolean = true,
-        devUnlockClockMillis: () -> Long = { System.currentTimeMillis() },
     ) {
         setContent {
             UiMotionTheme(darkColorScheme(), Typography()) {
@@ -809,8 +576,6 @@ class GameplayHallUiTest {
                         refreshGame = refresh,
                         loggedIn = loggedIn,
                         onLogin = onLogin,
-                        initialDevUnlocked = devUnlocked,
-                        devUnlockClockMillis = devUnlockClockMillis,
                     )
                 }
             }

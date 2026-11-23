@@ -561,12 +561,11 @@ class BundleParseTest {
     }
 
     @Test
-    fun gameplayHallDevNoticeKeysExistInAllBundles() {
+    fun gameplayHallDisplayKeysExistInAllBundles() {
         bundleNames.forEach { name ->
             val table = Toml.parseToTomlTable(File(bundleDir, name).readText())
             val hall = assertNotNull(table["gameplayHall"] as? TomlTable, "[gameplayHall] table missing in $name")
             listOf(
-                "devBadge", "devTag", "devTitle", "devSubtitle", "devCompactSubtitle", "devDismiss", "devExpand",
                 "premiereBadge", "onlineSection", "classicSection", "artPackTag", "expansionTag",
                 "serverOnlineSingle", "serversOnline", "playersOnline", "moreModesTitle", "moreModesSubtitle",
                 "intelStatusTitle", "intelContentTitle", "intelEcosystemTitle", "intelPlayersCapacity",
