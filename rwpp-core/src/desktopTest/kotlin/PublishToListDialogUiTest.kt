@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -34,6 +35,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.runDesktopComposeUiTest
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.width
 import androidx.compose.ui.use
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.appKoin
@@ -277,6 +280,110 @@ class PublishToListDialogUiTest {
             onNodeWithText("脉冲 ×1").assertIsDisplayed()
             saveCapture("10_loading_ping_ripple.png")
         }
+
+    @Test
+    fun wideDesktopViewportClampsDialogWidthToCompactModalProportions() =
+        runDesktopComposeUiTest(width = 1920, height = 1080) {
+            settings.setUiAnimationsEnabled(false)
+            var state by mutableStateOf<PublishToListUiState>(
+                PublishToListUiState.Loading(PublishStep.Publishing),
+            )
+            setContent {
+                CompositionLocalProvider(LocalWindowManager provides WindowManager.Large) {
+                    UiMotionTheme(defaultRWPPColorScheme, Typography()) {
+                        Box(
+                            modifier = Modifier.fillMaxSize().background(Color(0xFF141814)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            PublishToListDialogCard(
+                                state = state,
+                                defaultRoomName = "公开房-Q52788",
+                                roomCode = "Q52788",
+                                pendingRoomName = "公开房-Q52788",
+                                onDismiss = {},
+                                onCancel = {},
+                                onCloseButtonClick = {},
+                                onPublish = { _, _ -> },
+                                onRetry = {},
+                            )
+                        }
+                    }
+                }
+            }
+
+            waitForIdle()
+            val loadingWidth = onNodeWithTag("publish-to-list-dialog").getUnclippedBoundsInRoot().width
+            assertTrue(
+                loadingWidth in 440.dp..452.dp,
+                "Expected compact desktop modal width ~448dp on 1920x1080, got $loadingWidth",
+            )
+            saveCapture("12_desktop_1920x1080_loading.png")
+
+            state = PublishToListUiState.SelectRoomType(
+                types = listOf("1V1", "3V3", "5V5", "混战", "排位", "模组", "生存"),
+                allowCustomRoomName = true,
+                modSyncEnabled = false,
+            )
+            waitForIdle()
+            val selectWidth = onNodeWithTag("publish-to-list-dialog").getUnclippedBoundsInRoot().width
+            assertTrue(
+                selectWidth in 440.dp..452.dp,
+                "Expected compact desktop modal width ~448dp on 1920x1080 select stage, got $selectWidth",
+            )
+            saveCapture("13_desktop_1920x1080_select.png")
+        }
+
+    @Test
+    fun loadingToSuccessFadeThroughSettlesWithZeroLingeringFrames() {
+        settings.setUiAnimationsEnabled(true)
+        var dialogState by mutableStateOf<PublishToListUiState>(
+            PublishToListUiState.Loading(PublishStep.Publishing),
+        )
+        ImageComposeScene(width = 640, height = 560) {
+            CompositionLocalProvider(LocalWindowManager provides WindowManager.Large) {
+                UiMotionTheme(defaultRWPPColorScheme, Typography()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize().background(Color(0xFF141814)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        PublishToListDialogCard(
+                            state = dialogState,
+                            defaultRoomName = "公开房-Q52788",
+                            roomCode = "Q52788",
+                            pendingRoomName = "公开房-Q52788",
+                            onDismiss = {},
+                            onCancel = {},
+                            onCloseButtonClick = {},
+                            onPublish = { _, _ -> },
+                            onRetry = {},
+                        )
+                    }
+                }
+            }
+        }.use { scene ->
+            scene.frames(0)
+            scene.png(600)
+
+            dialogState = PublishToListUiState.Success(roomId = "Q52788", serverId = "srv-8842")
+            Snapshot.sendApplyNotifications()
+            // 推进 Fade-Through 过程并捕获切换中段帧（t+110ms 旧态已退场、新态刚开始柔入，无文字重影）
+            for (ms in 620L..710L step 15L) {
+                scene.render(ms * 1_000_000L).close()
+                Snapshot.sendApplyNotifications()
+            }
+            saveBytes("14_transition_fade_through_mid.png", scene.png(715))
+
+            // 确认环（90ms 延迟 + 560ms）及尺寸缓动（200ms）完全结束后必须零无效化
+            for (ms in 730L..1600L step 20L) {
+                scene.render(ms * 1_000_000L).close()
+                Snapshot.sendApplyNotifications()
+            }
+            assertFalse(
+                scene.hasInvalidations(),
+                "Loading clock and success bloom must both settle to zero invalidations after transition",
+            )
+        }
+    }
 
     @Test
     fun rendersVisualGalleryAcrossStatesThemesAndLandscapeViewport() {

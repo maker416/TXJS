@@ -154,7 +154,7 @@ private const val PUBLISH_MASTER_CYCLE_MS = 12_000
 private const val PUBLISH_TIP_ROTATE_MS = 3_800L
 private const val PUBLISH_PING_POOL_SIZE = 3
 private const val PUBLISH_PING_DURATION_MS = 920
-private const val PUBLISH_DIALOG_MAX_WIDTH_DP = 492
+private const val PUBLISH_DIALOG_MAX_WIDTH_DP = 448
 
 private data class RelayNodeSpec(
     val xFraction: Float,
@@ -285,7 +285,6 @@ internal fun PublishToListDialog(
             onCloseButtonClick = onCloseButtonClick,
             onPublish = onPublish,
             onRetry = onRetry,
-            modifier = Modifier.padding(12.dp),
         )
     }
 }
@@ -311,21 +310,12 @@ internal fun PublishToListDialogCard(
     val enableAnimations = uiAnimationsEnabled()
     val palette = rememberPublishDialogPalette(MaterialTheme.colorScheme)
     val cardShape = RoundedCornerShape(22.dp)
-
-    // 仅在 Loading 且开启动效时持有单一谐波时钟；禁用动效或离开加载态立即退出组合，零帧开销。
-    val loadingPhase: State<Float>? = if (state is PublishToListUiState.Loading && enableAnimations) {
-        val transition = rememberInfiniteTransition(label = "publishUplinkMaster")
-        transition.animateFloat(
-            initialValue = 0f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = PUBLISH_MASTER_CYCLE_MS, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart,
-            ),
-            label = "publishUplinkMasterPhase",
+    val borderBrush = remember(palette.borderTop, palette.hairlineBorder, palette.borderBottom) {
+        Brush.verticalGradient(
+            0.0f to palette.borderTop,
+            0.35f to palette.hairlineBorder,
+            1.0f to palette.borderBottom,
         )
-    } else {
-        null
     }
 
     val auraTint = when (state) {
@@ -334,71 +324,90 @@ internal fun PublishToListDialogCard(
         else -> palette.primary
     }
 
+    // 关键约束顺序：必须先 padding + widthIn(max) 再 fillMaxWidth()，
+    // 否则桌面宽屏下 fillMaxWidth 会产生紧宽度约束导致 widthIn(max) 失效。
     BoxWithConstraints(
         modifier = modifier
-            .fillMaxWidth(0.94f)
+            .padding(horizontal = 16.dp, vertical = 12.dp)
             .widthIn(max = PUBLISH_DIALOG_MAX_WIDTH_DP.dp)
+            .fillMaxWidth()
             .clip(cardShape)
             .background(palette.cardSurface)
-            .drawWithCache {
-                val topLeftAura = Brush.radialGradient(
-                    colors = listOf(auraTint.copy(alpha = if (palette.isDark) 0.13f else 0.08f), Color.Transparent),
-                    center = Offset(size.width * 0.18f, 0f),
-                    radius = (size.maxDimension * 0.62f).coerceAtLeast(160.dp.toPx()),
-                )
-                val topRightAura = Brush.radialGradient(
-                    colors = listOf(palette.secondary.copy(alpha = if (palette.isDark) 0.07f else 0.05f), Color.Transparent),
-                    center = Offset(size.width * 0.88f, size.height * 0.10f),
-                    radius = (size.maxDimension * 0.45f).coerceAtLeast(120.dp.toPx()),
-                )
-                val edgeInset = 26.dp.toPx()
-                val topCatchlight = Brush.horizontalGradient(
-                    0.00f to Color.Transparent,
-                    0.26f to auraTint.copy(alpha = if (palette.isDark) 0.62f else 0.45f),
-                    0.56f to palette.highlight.copy(alpha = if (palette.isDark) 0.80f else 0.55f),
-                    0.82f to palette.secondary.copy(alpha = if (palette.isDark) 0.42f else 0.30f),
-                    1.00f to Color.Transparent,
-                    startX = edgeInset,
-                    endX = (size.width - edgeInset).coerceAtLeast(edgeInset + 1f),
-                )
-                val borderBrush = Brush.verticalGradient(
-                    0.0f to palette.borderTop,
-                    0.35f to palette.hairlineBorder,
-                    1.0f to palette.borderBottom,
-                )
-                val strokePx = 1.dp.toPx()
-                val cornerPx = 22.dp.toPx()
-                onDrawBehind {
-                    drawRect(topLeftAura)
-                    drawRect(topRightAura)
-                    drawLine(
-                        brush = topCatchlight,
-                        start = Offset(edgeInset, strokePx),
-                        end = Offset((size.width - edgeInset).coerceAtLeast(edgeInset), strokePx),
-                        strokeWidth = strokePx,
-                    )
-                    drawRoundRect(
-                        brush = borderBrush,
-                        topLeft = Offset(strokePx / 2f, strokePx / 2f),
-                        size = Size(size.width - strokePx, size.height - strokePx),
-                        cornerRadius = CornerRadius(cornerPx, cornerPx),
-                        style = Stroke(strokePx),
-                    )
-                }
-            }
+            .border(BorderStroke(1.dp, borderBrush), cardShape)
             .testTag("publish-to-list-dialog"),
     ) {
         val compactHeight = maxHeight < 430.dp
         val compactWidth = maxWidth < 380.dp
 
+        // 固定高度顶部极光微晕与镜面细线层：半径严格小于容器高度避免底部硬切边，
+        // 且弹窗高度缓动期间尺寸恒定，drawWithCache 零逐帧重建。
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(260.dp)
+                .align(Alignment.TopCenter)
+                .drawWithCache {
+                    val leftRadius = (size.width * 0.50f).coerceAtMost(size.height * 0.94f).coerceAtLeast(120.dp.toPx())
+                    val topLeftAura = Brush.radialGradient(
+                        0.00f to auraTint.copy(alpha = if (palette.isDark) 0.14f else 0.08f),
+                        0.58f to auraTint.copy(alpha = if (palette.isDark) 0.045f else 0.025f),
+                        1.00f to Color.Transparent,
+                        center = Offset(size.width * 0.18f, 0f),
+                        radius = leftRadius,
+                    )
+                    val rightCenterY = 20.dp.toPx()
+                    val rightRadius = (size.width * 0.38f)
+                        .coerceAtMost((size.height - rightCenterY) * 0.92f)
+                        .coerceAtLeast(96.dp.toPx())
+                    val topRightAura = Brush.radialGradient(
+                        0.00f to palette.secondary.copy(alpha = if (palette.isDark) 0.07f else 0.045f),
+                        0.60f to palette.secondary.copy(alpha = if (palette.isDark) 0.02f else 0.012f),
+                        1.00f to Color.Transparent,
+                        center = Offset(size.width * 0.86f, rightCenterY),
+                        radius = rightRadius,
+                    )
+                    val edgeInset = 24.dp.toPx()
+                    val strokePx = 1.dp.toPx()
+                    val topCatchlight = Brush.horizontalGradient(
+                        0.00f to Color.Transparent,
+                        0.24f to auraTint.copy(alpha = if (palette.isDark) 0.62f else 0.45f),
+                        0.55f to palette.highlight.copy(alpha = if (palette.isDark) 0.82f else 0.55f),
+                        0.82f to palette.secondary.copy(alpha = if (palette.isDark) 0.42f else 0.30f),
+                        1.00f to Color.Transparent,
+                        startX = edgeInset,
+                        endX = (size.width - edgeInset).coerceAtLeast(edgeInset + 1f),
+                    )
+                    onDrawBehind {
+                        drawRect(topLeftAura)
+                        drawRect(topRightAura)
+                        drawLine(
+                            brush = topCatchlight,
+                            start = Offset(edgeInset, strokePx),
+                            end = Offset((size.width - edgeInset).coerceAtLeast(edgeInset), strokePx),
+                            strokeWidth = strokePx,
+                        )
+                    }
+                },
+        )
+
         AnimatedContent(
             targetState = state,
+            contentAlignment = Alignment.Center,
             transitionSpec = {
                 if (enableAnimations) {
-                    (fadeIn(tween(240, easing = StandardDecelerateEasing)) +
-                        scaleIn(tween(240, easing = EmphasizedDecelerateEasing), initialScale = 0.965f))
-                        .togetherWith(fadeOut(tween(150, easing = EmphasizedAccelerateEasing)))
-                        .using(SizeTransform(clip = false))
+                    // 编排式 Fade-Through：旧态 80ms 先快速退场，55ms 后再平滑过渡容器高度，
+                    // 75ms 后新态柔入，既避免新旧文案重影，也不在旧按钮仍清晰可见时硬切底边。
+                    (fadeIn(tween(190, delayMillis = 75, easing = StandardDecelerateEasing)) +
+                        scaleIn(
+                            tween(210, delayMillis = 75, easing = EmphasizedDecelerateEasing),
+                            initialScale = 0.985f,
+                        ))
+                        .togetherWith(fadeOut(tween(80, easing = FastOutSlowInEasing)))
+                        .using(
+                            SizeTransform(clip = true) { _, _ ->
+                                tween(durationMillis = 210, delayMillis = 55, easing = EmphasizedDecelerateEasing)
+                            },
+                        )
                 } else {
                     (EnterTransition.None togetherWith ExitTransition.None).using(null)
                 }
@@ -411,7 +420,6 @@ internal fun PublishToListDialogCard(
                     step = current.step,
                     roomCode = roomCode,
                     targetRoomName = pendingRoomName.ifBlank { defaultRoomName },
-                    phase = loadingPhase,
                     palette = palette,
                     animated = enableAnimations,
                     compactHeight = compactHeight,
@@ -457,13 +465,27 @@ private fun PublishLoadingStage(
     step: PublishStep,
     roomCode: String,
     targetRoomName: String,
-    phase: State<Float>?,
     palette: PublishDialogPalette,
     animated: Boolean,
     compactHeight: Boolean,
     compactWidth: Boolean,
     onCancel: () -> Unit,
 ) {
+    // 单一谐波时钟由加载态自身持有：退场淡出期间不断档不回弹，离场即随组合自动释放，零残留帧调度。
+    val phase: State<Float>? = if (animated) {
+        val transition = rememberInfiniteTransition(label = "publishUplinkMaster")
+        transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = PUBLISH_MASTER_CYCLE_MS, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "publishUplinkMasterPhase",
+        )
+    } else {
+        null
+    }
     val tips = remember(step) {
         if (step == PublishStep.FetchingTypes) {
             listOf(
@@ -2013,14 +2035,15 @@ private fun PublishSuccessStage(
     onClose: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    // 一次性入场扩散确认环，结束后零帧调度
+    // 一次性入场扩散确认环，等待 Fade-Through 延迟后绽放，结束后零帧调度
     val confirmWave = remember { Animatable(if (animated) 0f else 1f) }
     LaunchedEffect(animated) {
         if (animated) {
             confirmWave.snapTo(0f)
+            delay(90)
             confirmWave.animateTo(
                 targetValue = 1f,
-                animationSpec = tween(durationMillis = 620, easing = EmphasizedDecelerateEasing),
+                animationSpec = tween(durationMillis = 560, easing = EmphasizedDecelerateEasing),
             )
         } else {
             confirmWave.snapTo(1f)
