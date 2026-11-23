@@ -410,8 +410,7 @@ fun App(
                         { showMultiplayerView = false },
                         {
                             isSinglePlayerGame = false
-                            showRoomView = true
-                            GameSessionController.onRoomOpened()
+                            GameSessionController.openMultiplayerRoom()
                         },
                     )
                 }
@@ -473,9 +472,7 @@ fun App(
                             onExit = { resetNavigation(LauncherPage.GameplayHall) },
                             onOpenRoom = {
                                 isSinglePlayerGame = false
-                                resetNavigation(LauncherPage.GameplayHall)
-                                navigateTo(LauncherPage.Room)
-                                GameSessionController.onRoomOpened()
+                                GameSessionController.openMultiplayerRoom()
                             })
                     }
                 }
@@ -547,28 +544,11 @@ fun App(
                             return@MultiplayerRoomView
                         }
 
-                        val returnToMultiplayerView = !isSinglePlayerGame
                         roomExitInProgress = true
-
-                        // 返回上一级：单人房回「单人游戏」子菜单，多人房回多人列表
-                        navigateBack()
-
-                        // 等待旧页面 dispose 和断线订阅者清理；新会话独占开始请求并等待此屏障。
-                        GameSessionController.scheduleClose {
-                            try {
-                                // 等真实退出动画及页面 dispose，不能用固定延迟猜测 UI 生命周期。
-                                roomDisposed.await()
-
-                                if (returnToMultiplayerView) {
-                                    game.cancelJoinServer()
-                                }
-
-                                game.onBanUnits(listOf())
-                                game.gameRoom.disconnectAndWait()
-                            } finally {
-                                roomExitInProgress = false
-                            }
+                        GameSessionController.scheduleRoomExit(game, multiplayer = !isSinglePlayerGame) {
+                            roomExitInProgress = false
                         }
+                        navigateBack()
                     }
                 }
 
@@ -630,9 +610,8 @@ fun App(
                         warningDialogVisible = true
                         if (UI.warning?.isKicked == true && !ModSyncController.isInRoomSyncInProgress() &&
                             launcherPage !is LauncherPage.GamePortal) {
-                            // 被踢是硬跳转：放弃返回栈直达多人列表
-                            resetNavigation(GameSessionController.multiplayerReturnPage)
-                            GameSessionController.onExternalSessionEnd()
+                            // 被踢后按本次入房来源重新打开页面。
+                            GameSessionController.returnAfterExternalDisconnect(game)
                         }
                     }
                 }
@@ -689,8 +668,7 @@ fun App(
                         questionDialogVisible = false
                         UI.question?.callback?.invoke(null)
                         if (showRoomView && !ModSyncController.isInRoomSyncInProgress()) {
-                            resetNavigation(GameSessionController.multiplayerReturnPage)
-                            GameSessionController.onExternalSessionEnd()
+                            GameSessionController.returnAfterExternalDisconnect(game)
                         }
 
                         UI.question = null

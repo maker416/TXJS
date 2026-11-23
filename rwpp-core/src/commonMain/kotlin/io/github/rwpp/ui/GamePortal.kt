@@ -282,7 +282,7 @@ private fun GamePortalHomepage(
             withContext(Dispatchers.IO) {
                 loading.joinNativeRoom(
                     NativeRoomEntry(ready.endpoint, userName = AccountSession.displayName, onlineGame = ready,
-                        returnPage = LauncherPage.GameplayHall),
+                        returnPage = route),
                     game, config,
                     isCurrent = { controller.isCurrent(attempt) },
                     currentFailure = { failureAttempt.failure },

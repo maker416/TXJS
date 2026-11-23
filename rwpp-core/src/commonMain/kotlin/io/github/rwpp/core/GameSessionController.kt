@@ -13,6 +13,8 @@ import androidx.compose.runtime.setValue
 import io.github.rwpp.platform.checkUiThread
 import io.github.rwpp.game.Game
 import io.github.rwpp.ui.LauncherPage
+import io.github.rwpp.ui.launcherPage
+import io.github.rwpp.ui.navigateTo
 import io.github.rwpp.ui.resetNavigation
 import io.github.rwpp.logger
 import kotlinx.coroutines.CompletableDeferred
@@ -40,7 +42,7 @@ object GameSessionController {
     private val lifecycle = SessionLifecycle(Dispatchers.Main.immediate)
     private var roomViewDisposed: Deferred<Unit>? = null
     val sessionPhase: SessionPhase get() = lifecycle.sessionPhase
-    /** The approved portal is disposed on admission; online-game exits return to the hall. */
+    /** Entry page to reopen when a multiplayer session ends outside normal back navigation. */
     var multiplayerReturnPage: LauncherPage = LauncherPage.Multiplayer
         internal set
 
@@ -85,6 +87,33 @@ object GameSessionController {
         if (roomViewDisposed === disposed) roomViewDisposed = null
     }
 
+    internal fun scheduleRoomExit(game: Game, multiplayer: Boolean, onFinished: () -> Unit = {}) {
+        val disposed = roomViewDisposed
+        scheduleClose {
+            try {
+                disposed?.await()
+                if (multiplayer) game.cancelJoinServer()
+                game.onBanUnits(emptyList())
+                game.gameRoom.disconnectAndWait()
+            } finally {
+                onFinished()
+            }
+        }
+    }
+
+    internal fun returnAfterExternalDisconnect(game: Game) {
+        val target = multiplayerReturnPage
+        if (target is LauncherPage.GamePortal) {
+            if (launcherPage != LauncherPage.Room) return
+            // An engine kick can arrive before DisconnectEvent. The reopened portal awaits this cleanup.
+            MatchStartController.gate.reset()
+            scheduleRoomExit(game, multiplayer = true)
+        } else {
+            onExternalSessionEnd()
+        }
+        resetNavigation(target)
+    }
+
     /** 加载失败后复用真实页面销毁和断线订阅者屏障，不把提示当作退房。 */
     fun closeFailedStart(game: Game, reason: String, onFinished: () -> Unit) {
         checkUiThread()
@@ -110,6 +139,11 @@ object GameSessionController {
             }
         }
         resetNavigation(if (singlePlayer) LauncherPage.SinglePlayer else multiplayerReturnPage)
+    }
+
+    internal fun openMultiplayerRoom() {
+        navigateTo(LauncherPage.Room)
+        onRoomOpened()
     }
 
     fun onRoomOpened() {
