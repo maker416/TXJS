@@ -79,6 +79,7 @@ kotlin {
                 implementation(compose.desktop.common)
                 // 读取当前进程工作集 / RSS；与桌面应用已有 JNA 版本保持一致。
                 implementation("net.java.dev.jna:jna:5.15.0")
+                implementation("net.java.dev.jna:jna-platform:5.15.0")
                 implementation("me.friwi:jcefmaven:146.0.10")
                 // Native binaries are exported by prepareDesktopKernel, not included in the application.
                 // 主题美术包背景音乐：桌面端 OGG 解码（仓库 lib/ 已有的纯 Java 库）

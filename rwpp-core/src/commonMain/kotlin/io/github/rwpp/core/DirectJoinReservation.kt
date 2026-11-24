@@ -11,6 +11,7 @@ import io.github.rwpp.net.sync.direct.DirectJoinEndpoint
 import io.github.rwpp.net.sync.direct.DirectModLease
 import io.github.rwpp.net.sync.direct.DirectModSyncServerException
 import io.github.rwpp.net.sync.direct.DirectModSyncTransport
+import io.github.rwpp.net.sync.direct.DirectResumeGrant
 import io.github.rwpp.net.sync.direct.validateLease
 import java.io.IOException
 import java.security.SecureRandom
@@ -19,6 +20,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
@@ -47,6 +49,7 @@ class DirectJoinReservation private constructor(
     private val nowNanos: () -> Long,
     parentScope: CoroutineScope,
     private val manifest: io.github.rwpp.net.sync.direct.DirectModManifest?,
+    private val saveResume: ((DirectResumeGrant) -> Unit)?,
 ) {
     private val closed = AtomicBoolean()
     private val terminalFailure = AtomicReference<Exception?>()
@@ -143,14 +146,19 @@ class DirectJoinReservation private constructor(
     /** Issued only after the same leased connection is authoritatively admitted. */
     suspend fun captureResume() {
         val value = manifest ?: return
-        if (value.protocolVersion < 3 || value.capabilities and 1 == 0 || value.serverInstance.isBlank()) return
+        val save = saveResume ?: return
+        if (value.protocolVersion != 4 || value.capabilities and 3 != 3 || value.serverInstance.isBlank()) return
         try {
             withTimeout(5_000) {
                 while (true) {
                     try {
                         val grant = transport.issueResume(scope, token)
-                        if (grant.serverInstance != value.serverInstance) throw IOException("Direct server instance changed")
-                        DirectResumeSessions.store(endpoint, value, grant)
+                        try {
+                            if (grant.serverInstance != value.serverInstance) throw IOException("Direct server instance changed")
+                            withContext(Dispatchers.IO) { save(grant) }
+                        } finally {
+                            grant.secret.fill(0)
+                        }
                         return@withTimeout
                     } catch (error: DirectModSyncServerException) {
                         if (error.code != io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.NOT_READY) throw error
@@ -199,6 +207,15 @@ class DirectJoinReservation private constructor(
             scope: String,
             nowNanos: () -> Long = System::nanoTime,
             manifest: io.github.rwpp.net.sync.direct.DirectModManifest? = null,
+        ): DirectJoinReservation = acquire(endpoint, transport, scope, nowNanos, manifest, saveResume = null)
+
+        internal suspend fun acquire(
+            endpoint: DirectJoinEndpoint,
+            transport: DirectModSyncTransport,
+            scope: String,
+            nowNanos: () -> Long = System::nanoTime,
+            manifest: io.github.rwpp.net.sync.direct.DirectModManifest?,
+            saveResume: ((DirectResumeGrant) -> Unit)?,
         ): DirectJoinReservation {
             val token = ByteArray(32).also { SecureRandom().nextBytes(it) }
             var handedOff = false
@@ -226,7 +243,7 @@ class DirectJoinReservation private constructor(
                 if (nowNanos() >= expiresAt) throw IOException("Direct slot reservation expired before receipt")
                 currentCoroutineContext().ensureActive()
                 return DirectJoinReservation(endpoint, transport, scope, token, initial, expiresAt, nowNanos,
-                    CoroutineScope(currentCoroutineContext()), manifest).also { handedOff = true }
+                    CoroutineScope(currentCoroutineContext()), manifest, saveResume).also { handedOff = true }
             } finally {
                 if (!handedOff) withContext(NonCancellable) {
                     runCatching { withTimeout(2_000) { transport.release(scope, token) } }

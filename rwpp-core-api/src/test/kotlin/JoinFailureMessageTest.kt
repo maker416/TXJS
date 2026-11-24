@@ -105,8 +105,7 @@ class JoinFailureMessageTest {
                 ConnectionFailureStage.SYNC_MANIFEST,
             ))
             val expected = when (code) {
-                DirectModSyncErrorCode.LEASE_EXPIRED, DirectModSyncErrorCode.LEASE_INVALID,
-                DirectModSyncErrorCode.RESUME_INVALID, DirectModSyncErrorCode.RESUME_UNSUPPORTED -> ConnectionFailureReason.SYNC_FAILED
+                DirectModSyncErrorCode.LEASE_EXPIRED, DirectModSyncErrorCode.LEASE_INVALID -> ConnectionFailureReason.SYNC_FAILED
                 DirectModSyncErrorCode.UPGRADE_REQUIRED -> ConnectionFailureReason.CLIENT_OUTDATED
                 DirectModSyncErrorCode.CONTENT_MISMATCH -> ConnectionFailureReason.MANIFEST_CHANGED
                 DirectModSyncErrorCode.NOT_READY, DirectModSyncErrorCode.CONTENT_NOT_READY -> ConnectionFailureReason.PREPARING

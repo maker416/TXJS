@@ -12,60 +12,21 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeout
-import java.io.IOException
 import java.security.SecureRandom
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
-/** Process-only credentials; no account identity, address history or configuration persistence. */
-object DirectResumeSessions {
-    private class Stored(val manifest: DirectModManifest, val secret: ByteArray)
-    private val sessions = LinkedHashMap<String, Stored>()
-    private fun key(endpoint: DirectJoinEndpoint) = "${endpoint.host.lowercase()}:${endpoint.port}"
-
-    @Synchronized fun store(endpoint: DirectJoinEndpoint, manifest: DirectModManifest, grant: DirectResumeGrant) {
-        require(grant.serverInstance == manifest.serverInstance && grant.secret.size == 32)
-        sessions.remove(key(endpoint))?.secret?.fill(0)
-        while (sessions.size >= 32) sessions.remove(sessions.keys.first())?.secret?.fill(0)
-        sessions[key(endpoint)] = Stored(manifest, grant.secret.copyOf())
-        grant.secret.fill(0)
-    }
-
-    @Synchronized fun open(endpoint: DirectJoinEndpoint, manifest: DirectModManifest, transport: DirectModSyncTransport): DirectResumeConnection? {
-        val value = sessions[key(endpoint)] ?: return null
-        if (value.manifest.serverInstance != manifest.serverInstance || !sameRecoveryScope(value.manifest, manifest) ||
-            value.manifest.contentRevision != manifest.contentRevision || value.manifest.artifact != manifest.artifact ||
-            value.manifest.mods != manifest.mods || value.manifest.hostUnitsChecksum != manifest.hostUnitsChecksum) {
-            sessions.remove(key(endpoint))?.secret?.fill(0)
-            return null
-        }
-        if (manifest.protocolVersion != 4 || manifest.capabilities and 3 != 3 || manifest.phase != "match") return null
-        return DirectResumeConnection(endpoint, manifest, transport, value.secret.copyOf())
-    }
-
-    private fun sameRecoveryScope(issued: DirectModManifest, match: DirectModManifest): Boolean {
-        if (issued.scope == match.scope) return true
-        if (!issued.lobby || match.phase != "match") return false
-        // TServer keeps the room session ID and advances the generation when the match starts.
-        val separator = issued.scope.lastIndexOf(':')
-        if (separator <= 0) return false
-        val lobbyGeneration = issued.scope.substring(separator + 1).toLongOrNull() ?: return false
-        if (lobbyGeneration !in 0L until Long.MAX_VALUE) return false
-        return match.scope == "${issued.scope.substring(0, separator)}:${lobbyGeneration + 1}"
-    }
-
-    @Synchronized fun clear() { sessions.values.forEach { it.secret.fill(0) }; sessions.clear() }
-}
-
 class DirectResumeConnection internal constructor(
     val endpoint: DirectJoinEndpoint, private val manifest: DirectModManifest,
     private val transport: DirectModSyncTransport, private val secret: ByteArray,
+    private val account: DirectResumeAccount,
 ) : AutoCloseable {
     private val nonce = ByteArray(16).also(SecureRandom()::nextBytes)
     private var closed = false
 
     suspend fun openCredentials(): AutoCloseable {
         check(!closed)
+        account.ensureCurrent()
         return DirectJoinReservationCredentials.open(endpoint, secret, 4, resume = true,
             attemptNonceHex = nonce.joinToString("") { "%02x".format(it.toInt() and 255) })
     }
@@ -78,6 +39,7 @@ class DirectResumeConnection internal constructor(
                 while (true) {
                     currentCoroutineContext().ensureActive()
                     check(!closed)
+                    account.ensureCurrent()
                     try {
                         when (transport.checkResume(manifest.scope, secret, nonce).state) {
                             "admitted" -> return@withTimeout

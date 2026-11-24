@@ -37,6 +37,8 @@ data class AccountPreferences(
     @Transient @Volatile var forumUrl: String = DEFAULT_FORUM_URL,
     /** 仅用于撤销本客户端创建的论坛会话；离线退出时保留队列，下次联网重试。 */
     var forumRevocations: List<ForumClientRevocation> = emptyList(),
+    /** Rotates on account changes so a previous Direct recovery grant cannot be restored. */
+    var directResumeGeneration: String = "",
 ) : Config
 
 fun resolveForumUrl(stored: String): String =

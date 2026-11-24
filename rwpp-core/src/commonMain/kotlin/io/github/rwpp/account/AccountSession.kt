@@ -16,6 +16,8 @@ import io.github.rwpp.config.AccountPreferences
 import io.github.rwpp.config.ConfigIO
 import io.github.rwpp.config.DEFAULT_ACCOUNT_API_URL
 import io.github.rwpp.config.resolveAccountApiUrl
+import io.github.rwpp.core.DirectResumeAccount
+import io.github.rwpp.core.DirectResumeSessionStore
 import io.github.rwpp.config.resolveAccountAppKey
 import io.github.rwpp.core.ModPlaytimeController
 import io.github.rwpp.game.Game
@@ -94,6 +96,7 @@ object AccountSession : KoinComponent {
     var networkEnabled: Boolean = true
 
     // 所有异步响应按发起时的会话代次回写；切号/登出先作废旧请求。
+    @Volatile
     private var sessionEpoch = 0L
     private var authenticationEpoch: Long? = null
     private val presenceSettingsMutex = Mutex()
@@ -361,6 +364,7 @@ object AccountSession : KoinComponent {
         val attempt = synchronized(this) {
             // 登出开始就作废旧请求，迟到的登出响应也不能清掉随后登录的账号。
             sessionEpoch++
+            rotateDirectResumeOwner()
             RoomIdentityController.onAccountInvalidated()
             io.github.rwpp.theme.PersonalizedAppearanceController.onAccountInvalidated()
             ModPlaytimeController.onAccountInvalidated()
@@ -380,7 +384,7 @@ object AccountSession : KoinComponent {
             logger.warn("登出请求失败，仍清除本机会话：{}", e.message)
         } finally {
             synchronized(this) {
-                if (sessionEpoch == attempt.epoch) clearSession(persist = true)
+                if (sessionEpoch == attempt.epoch) clearSession(persist = true, rotateDirectResume = false)
             }
         }
     }
@@ -401,7 +405,7 @@ object AccountSession : KoinComponent {
         networkEnabled = true
         clientOverride = null
         httpOverride = null
-        clearSession(persist = false)
+        clearSession(persist = false, rotateDirectResume = false)
         lastUsername = ""
         profileError = ""
         restoring = false
@@ -447,6 +451,41 @@ object AccountSession : KoinComponent {
     }
 
     @Synchronized
+    internal fun directResumeAccount(): DirectResumeAccount? {
+        if (restoring || authenticationEpoch != null) return null
+        val prefs = directResumePreferences() ?: return null
+        val currentUser = user
+        // A pending automatic restoration must not replace the account's grant with a guest grant.
+        if (currentUser == null && prefs.token.isNotBlank() && !usesTemporaryApi(prefs)) return null
+        val epoch = sessionEpoch
+        val owner = directResumeOwner(prefs, currentUser)
+        return DirectResumeAccount(owner) { sessionEpoch == epoch }
+    }
+
+    private fun directResumePreferences(): AccountPreferences? =
+        if (networkEnabled && clientOverride == null) prefsOrNull() else null
+
+    private fun directResumeOwner(prefs: AccountPreferences, account: AccountUser?): String =
+        if (account == null) DirectResumeAccount.guest(prefs.directResumeGeneration)
+        else DirectResumeAccount.registered(resolveAccountApiUrl(prefs.apiUrl), account.id, prefs.directResumeGeneration)
+
+    private fun retainDirectResumeOwner(owner: String) {
+        val epoch = sessionEpoch
+        heartbeatScope.launch {
+            DirectResumeSessionStore.platform.retainOwner(owner) { sessionEpoch == epoch }
+        }
+    }
+
+    private fun rotateDirectResumeOwner() {
+        val prefs = directResumePreferences() ?: return
+        synchronized(prefs) {
+            prefs.directResumeGeneration = UUID.randomUUID().toString()
+            savePrefs(prefs)
+        }
+        retainDirectResumeOwner(directResumeOwner(prefs, null))
+    }
+
+    @Synchronized
     internal fun isCurrentSession(session: AccountSessionSnapshot): Boolean =
         sessionEpoch == session.epoch && loggedIn && token == session.token
 
@@ -458,6 +497,7 @@ object AccountSession : KoinComponent {
     }
 
     private fun applySession(newToken: String, newUser: AccountUser, persist: Boolean) {
+        val rotateDirectResume = authenticationEpoch != null && user?.id != newUser.id
         if (token != newToken || user?.id != newUser.id) {
             PaymentController.onAccountInvalidated()
             ModSyncController.onAccountInvalidated()
@@ -474,12 +514,19 @@ object AccountSession : KoinComponent {
         loggedIn = true
         lastUsername = newUser.username
         profileError = ""
-        if (persist) {
-            prefsOrNull()?.takeUnless(::usesTemporaryApi)?.let { prefs ->
-                prefs.token = newToken
-                prefs.lastUsername = newUser.username
-                savePrefs(prefs)
+        prefsOrNull()?.let { prefs ->
+            val useDirectResume = networkEnabled && clientOverride == null
+            synchronized(prefs) {
+                val rotate = useDirectResume && rotateDirectResume
+                val saveAccount = persist && !usesTemporaryApi(prefs)
+                if (rotate) prefs.directResumeGeneration = UUID.randomUUID().toString()
+                if (saveAccount) {
+                    prefs.token = newToken
+                    prefs.lastUsername = newUser.username
+                }
+                if (rotate || saveAccount) savePrefs(prefs)
             }
+            if (useDirectResume) retainDirectResumeOwner(directResumeOwner(prefs, newUser))
         }
         syncMultiplayerName()
         startPresenceHeartbeat()
@@ -494,7 +541,7 @@ object AccountSession : KoinComponent {
     }
 
     @Synchronized
-    private fun clearSession(persist: Boolean) {
+    private fun clearSession(persist: Boolean, rotateDirectResume: Boolean = true) {
         PaymentController.onAccountInvalidated()
         ModSyncController.onAccountInvalidated()
         RoomIdentityController.onAccountInvalidated()
@@ -502,6 +549,7 @@ object AccountSession : KoinComponent {
         ForumSsoSession.onAccountInvalidated()
         ModPlaytimeController.onAccountInvalidated()
         sessionEpoch++
+        if (rotateDirectResume) rotateDirectResumeOwner()
         authenticationEpoch = null
         restoring = false
         stopPresenceHeartbeat()

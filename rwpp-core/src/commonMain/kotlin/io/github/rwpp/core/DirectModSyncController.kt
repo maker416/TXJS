@@ -8,6 +8,8 @@
 package io.github.rwpp.core
 
 import io.github.rwpp.content.PortalExpansionHandle
+import io.github.rwpp.account.AccountSession
+import io.github.rwpp.config.resolveOpenPlatformUrl
 import io.github.rwpp.net.sync.direct.DIRECT_SYNC_ONLY_CAPABILITY
 
 import io.github.rwpp.appKoin
@@ -40,10 +42,12 @@ import io.github.rwpp.net.sync.direct.validateManifest
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
 
 sealed interface DirectJoinSyncResult {
     data class Applied(val reservation: DirectJoinReservation? = null, val expansionToken: Long? = null,
@@ -116,11 +120,19 @@ private object DefaultDirectModSyncEnvironment : DirectModSyncEnvironment {
  * 入房前 Direct 同步。合法 MANIFEST/ERROR 之后的一切失败都终止加入，不再尝试 relay。
  * 本控制器不创建 Presence，也不调用 relay finalize/failInRoom。
  */
-class DirectModSyncController(
+class DirectModSyncController internal constructor(
     private val environment: DirectModSyncEnvironment,
+    private val resumeSessions: DirectResumeSessionStore,
+    private val resumeAccount: () -> DirectResumeAccount? = { DirectResumeAccount(DirectResumeAccount.GUEST) { true } },
     private val transportFactory: (DirectJoinEndpoint, NetworkModCache) -> DirectModSyncTransport =
         { endpoint, cache -> DirectModSyncClient(endpoint, cache) },
 ) {
+    constructor(
+        environment: DirectModSyncEnvironment,
+        transportFactory: (DirectJoinEndpoint, NetworkModCache) -> DirectModSyncTransport =
+            { endpoint, cache -> DirectModSyncClient(endpoint, cache) },
+    ) : this(environment, DirectResumeSessionStore(), transportFactory = transportFactory)
+
     private val applyingMods = MutableStateFlow(false)
     /** The existing join loader owns progress while Direct applies mods. */
     val isApplyingMods = applyingMods.asStateFlow()
@@ -132,6 +144,9 @@ class DirectModSyncController(
         expectedServerId: String? = null,
     ): DirectJoinSyncResult {
         val endpoint = DirectJoinEndpoint.parseOrNull(address) ?: return DirectJoinSyncResult.Unsupported
+        val resumeScope = resumeAccount()?.let { account ->
+            DirectResumeScope(account, expectedOnlineGameId?.let { resolveOpenPlatformUrl() }, expectedOnlineGameId, expectedServerId)
+        }
         val transport = transportFactory(endpoint, environment.cache)
         val first = try {
             transport.getManifest()
@@ -161,27 +176,60 @@ class DirectModSyncController(
             if (expectedOnlineGameId != null && expectedExpansion == null && first.artifact != null) throw DirectSyncFailure(
                 ConnectionFailure(ConnectionFailureReason.MANIFEST_CHANGED, details = "The game now requires a new expansion; confirm its updated details before joining"))
             val peer = transport.peerEndpoint?.let(DirectJoinEndpoint::parseOrNull) ?: endpoint
+            if (!first.lobby && first.protocolVersion >= 3 &&
+                (first.protocolVersion < 4 || first.phase != "match" || first.capabilities and 3 != 3)) {
+                throw DirectModSyncServerException(DirectModSyncErrorCode.RESUME_UNSUPPORTED)
+            }
             if (!first.lobby && first.phase == "match") {
-                resumed = DirectResumeSessions.open(peer, first, transport)
-                    ?: throw DirectModSyncServerException(DirectModSyncErrorCode.RESUME_INVALID)
+                val scope = resumeScope ?: throw DirectSyncFailure(
+                    ConnectionFailure(ConnectionFailureReason.RESUME_MISSING, ConnectionFailureStage.SYNC_MANIFEST),
+                )
+                when (val recovery = withContext(Dispatchers.IO) { resumeSessions.open(scope, peer, first, transport) }) {
+                    is DirectResumeLookup.Ready -> resumed = recovery.connection
+                    is DirectResumeLookup.Unavailable -> throw DirectSyncFailure(
+                        ConnectionFailure(recovery.reason, ConnectionFailureStage.SYNC_MANIFEST),
+                    )
+                }
                 val artifact = first.artifact
+                stage = ConnectionFailureStage.SYNC_APPLY
                 if (artifact != null) {
                     expansionToken = preloadedExpansion?.validateRoom(first, transport, expectedExpansion, expectedServerId)
                         ?: environment.applyExpansion(artifact, transport, expectedExpansion, false) { progress ->
                             loadingContext.message(directDownloadMessage(1, 1, artifact.name, progress))
                         }
-                } else if (!environment.isLoadedModSetExact(first.mods)) throw java.io.IOException("Recovery content is not loaded")
-                if (first.hostUnitsChecksum != environment.getUnitsChecksum().toLong()) throw java.io.IOException("Recovery content checksum mismatch")
-                environment.refreshHandshakeChecksumCache()
+                } else if (!environment.isLoadedModSetExact(first.mods)) {
+                    val local = findMatchingModSyncKeys(environment.getAllMods(), first.mods, environment.cache)
+                    if (first.mods.any { it.cacheKey() !in local }) throw DirectSyncFailure(ConnectionFailure(
+                        ConnectionFailureReason.MISSING_MODS, stage, details = "Required match content is missing from this device"))
+                    loadingContext.message(readI18n("modSync.directApplying", I18nType.RWPP))
+                    applyingMods.value = true
+                    try {
+                        environment.applyMods(first.mods)
+                    } finally {
+                        applyingMods.value = false
+                    }
+                }
+                if (first.hostUnitsChecksum == -1L || first.hostUnitsChecksum != environment.getUnitsChecksum().toLong()) {
+                    throw DirectSyncFailure(ConnectionFailure(ConnectionFailureReason.CHECKSUM_MISMATCH, stage,
+                        details = "Recovery content checksum mismatch"))
+                }
+                stage = ConnectionFailureStage.SYNC_MANIFEST
                 val checked = transport.getManifest()
+                validateManifest(checked)
                 requireSameContent(first, checked)
+                environment.refreshHandshakeChecksumCache()
                 handedOff = true
                 return DirectJoinSyncResult.Applied(expansionToken = expansionToken, pinnedAddress = transport.peerEndpoint, resume = resumed)
             }
             prepare(first)
+            if (resumeScope != null && first.protocolVersion == 4 && first.serverInstance.isNotBlank() &&
+                withContext(Dispatchers.IO) { resumeSessions.observeLobby(resumeScope, peer, first) }) {
+                throw DirectSyncFailure(ConnectionFailure(ConnectionFailureReason.RESUME_ENDED, ConnectionFailureStage.SYNC_MANIFEST))
+            }
             if (first.protocolVersion >= 2) {
                 loadingContext.message(readI18n("modSync.directReserving", I18nType.RWPP))
-                reservation = DirectJoinReservation.acquire(peer, transport, first.scope, manifest = first)
+                reservation = DirectJoinReservation.acquire(peer, transport, first.scope, manifest = first,
+                    saveResume = resumeScope?.let { scope -> { grant -> resumeSessions.store(scope, peer, first, grant) } })
             }
             suspend fun synchronize(): DirectJoinSyncResult {
                 currentCoroutineContext().ensureActive()
@@ -327,7 +375,9 @@ class DirectModSyncController(
     }
 
     companion object {
-        val shared by lazy { DirectModSyncController(DefaultDirectModSyncEnvironment) }
+        val shared by lazy {
+            DirectModSyncController(DefaultDirectModSyncEnvironment, DirectResumeSessionStore.platform, AccountSession::directResumeAccount)
+        }
     }
 }
 

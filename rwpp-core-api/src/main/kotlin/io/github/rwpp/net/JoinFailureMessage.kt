@@ -27,6 +27,8 @@ enum class ConnectionFailureReason(val key: String) {
     MISSING_UNITS("missingUnits"), DATA_MISMATCH("dataMismatch"), SYNC_FAILED("syncFailed"),
     MANIFEST_CHANGED("manifestChanged"), CHECKSUM_MISMATCH("checksumMismatch"),
     RELOAD_FAILED("reloadFailed"), RECONNECT_FAILED("reconnectFailed"),
+    RESUME_MISSING("resumeMissing"), RESUME_INVALID("resumeInvalid"), RESUME_UNSUPPORTED("resumeUnsupported"),
+    RESUME_EXPIRED("resumeExpired"), RESUME_ENDED("resumeEnded"),
     NO_ROOM("noRoom"), NOT_LOBBY("notLobby"), PREPARING("preparing"), NOT_FOUND("notFound"),
     BUSY("busy"), BAD_REQUEST("badRequest"), INTERNAL_ERROR("internalError"),
     USERNAME_TOO_LONG("usernameTooLong"), USERNAME_TOO_SHORT("usernameTooShort"),
@@ -78,9 +80,7 @@ fun connectionFailure(
         val reason = when (cause) {
             is DirectModSyncServerException -> when (cause.code) {
                 io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.LEASE_EXPIRED,
-                io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.LEASE_INVALID,
-                io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.RESUME_INVALID,
-                io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.RESUME_UNSUPPORTED -> ConnectionFailureReason.SYNC_FAILED
+                io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.LEASE_INVALID -> ConnectionFailureReason.SYNC_FAILED
                 io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.UPGRADE_REQUIRED -> ConnectionFailureReason.CLIENT_OUTDATED
                 io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.CONTENT_MISMATCH -> ConnectionFailureReason.MANIFEST_CHANGED
                 io.github.rwpp.net.sync.direct.DirectModSyncErrorCode.NOT_READY,

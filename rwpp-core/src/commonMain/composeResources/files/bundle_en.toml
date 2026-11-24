@@ -76,6 +76,26 @@ suggestion = "Check whether the room is still available and join again."
 title = "The room is no longer available"
 explanation = "The sync server reports that there is no active room."
 suggestion = "Refresh the room list or ask the host for a new address."
+[connectionError.resumeMissing]
+title = "No reconnect credential on this device"
+explanation = "The match has started. Returning to your slot requires the credential saved when you first joined."
+suggestion = "Open the same server on the device and account you originally used."
+[connectionError.resumeInvalid]
+title = "The server could not confirm your reconnection"
+explanation = "The server could not confirm your slot using this credential."
+suggestion = "Check that the original client has disconnected, then try again with the same account."
+[connectionError.resumeUnsupported]
+title = "Reconnection is currently unavailable"
+explanation = "The server is not accepting recovery requests for this match."
+suggestion = "Try joining the same server again in a moment."
+[connectionError.resumeExpired]
+title = "Your reconnect credential has expired"
+explanation = "The saved credential does not match the current room or match."
+suggestion = "Check that you selected the original server, or join before the next match starts."
+[connectionError.resumeEnded]
+title = "Your previous match has ended"
+explanation = "The server has returned to the lobby and released your previous slot."
+suggestion = "Select Join again to enter the current lobby."
 [connectionError.notLobby]
 title = "The room is not in the lobby"
 explanation = "The room is no longer accepting lobby mod synchronization."

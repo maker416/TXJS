@@ -9,6 +9,7 @@ package io.github.rwpp.desktop.impl
 
 import io.github.rwpp.config.Config
 import io.github.rwpp.config.ConfigIO
+import io.github.rwpp.config.AccountPreferences
 import io.github.rwpp.config.ModPlaytimePreferences
 import io.github.rwpp.config.FeedbackPreferences
 import io.github.rwpp.config.decodeSavedConfig
@@ -32,6 +33,13 @@ class ConfigIOImpl : AbstractConfigIO() {
     @OptIn(InternalSerializationApi::class)
     @Suppress("UNCHECKED_CAST")
     override fun saveConfig(config: Config) {
+        if (config is AccountPreferences) {
+            synchronized(config) {
+                val file = File(System.getProperty("user.dir"), "${config::class.qualifiedName}.toml")
+                AtomicFileWrite.text(file, Toml.encodeToString(AccountPreferences.serializer(), config))
+            }
+            return
+        }
         if (config is FeedbackPreferences) {
             synchronized(config) {
                 val file = File(System.getProperty("user.dir"), "${config::class.qualifiedName}.toml")

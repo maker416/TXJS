@@ -76,6 +76,26 @@ suggestion = "请确认房间仍可加入，然后重新连接。"
 title = "房间已不可用"
 explanation = "同步服务器表示当前没有可用房间。"
 suggestion = "请刷新房间列表，或向房主获取新的连接地址。"
+[connectionError.resumeMissing]
+title = "此设备没有本局重连凭证"
+explanation = "对局已开始，回到原位置需要首次进房时保存的凭证。"
+suggestion = "请在最初加入对局的设备上，使用原账号进入同一区服。"
+[connectionError.resumeInvalid]
+title = "服务器未确认重连"
+explanation = "服务器未能用当前凭证确认您在本局的位置。"
+suggestion = "请确认原客户端已断开，再用原账号重试。"
+[connectionError.resumeUnsupported]
+title = "房间暂时无法重连"
+explanation = "服务器当前未开放对局恢复。"
+suggestion = "请稍后再点同一区服重试。"
+[connectionError.resumeExpired]
+title = "原重连凭证已失效"
+explanation = "此设备保存的凭证与当前房间或对局不匹配。"
+suggestion = "请确认选择了原区服，或在下一局开始前加入。"
+[connectionError.resumeEnded]
+title = "原对局已结束"
+explanation = "区服已经回到大厅，上一局的位置已释放。"
+suggestion = "再次点击加入区服即可进入当前大厅。"
 [connectionError.notLobby]
 title = "房间已不在等待阶段"
 explanation = "房间已不再接受等待阶段的模组同步。"

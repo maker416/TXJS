@@ -23,6 +23,7 @@ import io.github.rwpp.net.sync.direct.DirectModSyncErrorCode
 import io.github.rwpp.net.sync.direct.DirectModSyncServerException
 import io.github.rwpp.net.sync.direct.DirectModSyncTransport
 import io.github.rwpp.net.sync.direct.DirectModSyncUnsupportedException
+import io.github.rwpp.net.sync.direct.DirectResumeGrant
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -34,6 +35,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 
 class DirectModSyncControllerTest {
+    private val resumeSessions = DirectResumeSessionStore()
+    private val guestScope = DirectResumeScope(DirectResumeAccount(DirectResumeAccount.GUEST) { true }, null, null, null)
+
     @Test
     fun loadedContentSkipsParsingButStillRechecksManifestAndChecksum() = runBlocking<Unit> {
         val value = manifest(emptyList()).copy(hostUnitsChecksum = 123)
@@ -165,6 +169,17 @@ class DirectModSyncControllerTest {
         assertEquals(ConnectionFailureReason.NOT_LOBBY, assertIs<DirectJoinSyncResult.Failed>(result).failure.reason)
         assertEquals(0, transport.reserveCalls)
         assertEquals(0, transport.resumeChecks)
+        assertEquals(0, environment.expansionLoads)
+    }
+
+    @Test
+    fun unavailableGameRoomReportsRecoveryStatusBeforeLobbySync() = runBlocking<Unit> {
+        val room = expansionManifest().copy(lobby = false, phase = "unavailable")
+        val transport = FakeTransport().apply { manifestResults += { room } }
+        val environment = FakeEnvironment()
+        val result = controller(environment, transport).preJoinSync("localhost", LoadingContext {})
+        assertEquals(ConnectionFailureReason.RESUME_UNSUPPORTED, assertIs<DirectJoinSyncResult.Failed>(result).failure.reason)
+        assertEquals(0, transport.reserveCalls)
         assertEquals(0, environment.expansionLoads)
     }
 
@@ -506,7 +521,7 @@ class DirectModSyncControllerTest {
     fun sameProcessRecoveryUsesCachedExpansionWithoutANewSeatOrOrdinaryModDownload() = runBlocking<Unit> {
         val value = expansionManifest().copy(scope = "official-room:8")
         val endpoint = DirectJoinEndpoint("localhost", 5123)
-        DirectResumeSessions.store(endpoint, value, io.github.rwpp.net.sync.direct.DirectResumeGrant(value.serverInstance, ByteArray(32) { 7 }))
+        resumeSessions.store(guestScope, endpoint, value, DirectResumeGrant(value.serverInstance, ByteArray(32) { 7 }))
         val inMatch = value.copy(scope = "official-room:9", lobby = false, phase = "match")
         val transport = FakeTransport().also { fake ->
             repeat(2) { fake.manifestResults += { inMatch } }
@@ -526,7 +541,7 @@ class DirectModSyncControllerTest {
             checkNotNull(result.resume).use { it.awaitAdmission() }
             assertEquals(2, transport.resumeChecks)
         } finally {
-            DirectResumeSessions.clear()
+            resumeSessions.clear()
         }
     }
 
@@ -536,8 +551,7 @@ class DirectModSyncControllerTest {
         val endpoint = DirectJoinEndpoint("localhost", 5123)
         try {
             for (scope in listOf("other-room:9", "official-room:10")) {
-                DirectResumeSessions.store(endpoint, lobby,
-                    io.github.rwpp.net.sync.direct.DirectResumeGrant(lobby.serverInstance, ByteArray(32) { 7 }))
+                resumeSessions.store(guestScope, endpoint, lobby, DirectResumeGrant(lobby.serverInstance, ByteArray(32) { 7 }))
                 val match = lobby.copy(scope = scope, lobby = false, phase = "match")
                 val transport = FakeTransport().also { it.manifestResults += { match } }
                 val environment = FakeEnvironment()
@@ -546,14 +560,52 @@ class DirectModSyncControllerTest {
                 assertEquals(0, transport.reserveCalls)
             }
         } finally {
-            DirectResumeSessions.clear()
+            resumeSessions.clear()
+        }
+    }
+
+    @Test
+    fun recoveryReloadsVerifiedLocalModsAfterRestartWithoutReservingOrDownloading() = runBlocking<Unit> {
+        val mod = NetworkModDescriptor.fromBytes("original-mod", byteArrayOf(9))
+        val lobby = expansionManifest().copy(scope = "room:8", artifact = null, contentRevision = "", mods = listOf(mod))
+        val match = lobby.copy(scope = "room:9", phase = "match", lobby = false)
+        val transport = FakeTransport().apply { repeat(2) { manifestResults += { match } } }
+        val environment = FakeEnvironment().apply {
+            checksum = 123
+            cache = object : NetworkModCache by EmptyCache {
+                override fun find(descriptor: NetworkModDescriptor) =
+                    if (descriptor == mod) NetworkModCacheEntry(mod, File("verified"), null, 0) else null
+            }
+        }
+        try {
+            resumeSessions.store(guestScope, DirectJoinEndpoint("localhost", 5123), lobby,
+                DirectResumeGrant(lobby.serverInstance, ByteArray(32) { 7 }))
+            val result = controller(environment, transport).preJoinSync("localhost", LoadingContext {})
+            checkNotNull(assertIs<DirectJoinSyncResult.Applied>(result).resume).close()
+            assertEquals(listOf(listOf(mod)), environment.applied)
+            assertTrue(environment.refreshed)
+            assertTrue(transport.downloads.isEmpty())
+            assertEquals(0, transport.reserveCalls)
+            assertEquals(2, transport.manifestCalls)
+
+            environment.refreshed = false
+            environment.cache = EmptyCache
+            transport.manifestResults += { match }
+            val failed = controller(environment, transport).preJoinSync("localhost", LoadingContext {})
+            assertEquals(ConnectionFailureReason.MISSING_MODS, assertIs<DirectJoinSyncResult.Failed>(failed).failure.reason)
+            assertFalse(environment.refreshed)
+            assertTrue(transport.downloads.isEmpty())
+            assertEquals(0, transport.reserveCalls)
+        } finally {
+            resumeSessions.clear()
         }
     }
 
     private fun expansionManifest() = DirectModManifest(4, "176", "scope", "ready", true, 123, emptyList(), "server-instance", "lobby", 3,
         "a".repeat(64), io.github.rwpp.net.sync.direct.DirectContentArtifact("Expansion", io.github.rwpp.expansion.EXPANSION_MEDIA_TYPE, "1.0", 123, "a".repeat(64)))
 
-    private fun controller(environment: FakeEnvironment, transport: FakeTransport) = DirectModSyncController(environment) { _, _ -> transport }
+    private fun controller(environment: FakeEnvironment, transport: FakeTransport) =
+        DirectModSyncController(environment, resumeSessions) { _, _ -> transport }
 
     private fun manifest(mods: List<NetworkModDescriptor>) = DirectModManifest(1, "176", "scope", "ready", true, -1, mods)
 
@@ -600,7 +652,7 @@ class DirectModSyncControllerTest {
     }
 
     internal class FakeEnvironment : DirectModSyncEnvironment {
-        override val cache: NetworkModCache = EmptyCache
+        override var cache: NetworkModCache = EmptyCache
         val applied = mutableListOf<List<NetworkModDescriptor>>()
         var checksum = 0
         var refreshed = false
