@@ -97,7 +97,7 @@ object ExpansionContentController {
         try {
             val loaded = withContext(Dispatchers.IO) {
                 val operation = currentCoroutineContext()
-                ExpansionPackageInstaller.verify(installed, operation::ensureActive)
+                ExpansionPackageInstaller.verifyForActivation(installed, ::expansionFileChangeToken, operation::ensureActive)
                 ArtThemeController.loadTheme(installed.themeDir) ?: throw IOException("Expansion theme is invalid")
             }
             return withContext(Dispatchers.Main.immediate) {

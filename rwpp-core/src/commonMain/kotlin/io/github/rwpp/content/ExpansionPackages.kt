@@ -63,6 +63,7 @@ object ExpansionPackages {
             val root = rootDir.canonicalFile.toPath()
             val path = candidate.dir.canonicalFile.toPath()
             check(path != root && path.startsWith(root)) { "Expansion package is outside its storage root" }
+            ExpansionPackageInstaller.forgetActivationVerification(candidate)
             // Files.walk does not follow links, including a link inserted after validation.
             Files.walk(path).use { files -> files.sorted(Comparator.reverseOrder()).forEach(Files::delete) }
         }

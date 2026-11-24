@@ -63,6 +63,83 @@ class ExpansionPackageInstallerTest {
         assertFailsWith<IOException> { ExpansionPackageInstaller.verify(installed) }
     }
 
+    @Test fun reusesPersistedActivationVerificationAfterRescanAndRebuildsAnInvalidRecord() {
+        val root = File(work, "expansions")
+        val installed = ExpansionPackageInstaller.install(build(), root)
+        val changeToken: (File) -> String = { "stable" }
+        assertFalse(ExpansionPackageInstaller.verifyForActivation(installed, changeToken))
+        val record = File(installed.dir.parentFile, ".${installed.sha256}.verified-v1")
+        assertEquals(32L, record.length())
+        val rescanned = ExpansionPackageInstaller.scan(root).single()
+        assertTrue(ExpansionPackageInstaller.verifyForActivation(rescanned, changeToken))
+        for (invalid in listOf(byteArrayOf(1), ByteArray(32))) {
+            record.writeBytes(invalid)
+            assertFalse(ExpansionPackageInstaller.verifyForActivation(rescanned, changeToken))
+            assertTrue(ExpansionPackageInstaller.verifyForActivation(rescanned, changeToken))
+        }
+        Files.delete(record.toPath())
+        assertFalse(ExpansionPackageInstaller.verifyForActivation(rescanned, changeToken))
+    }
+
+    @Test fun changedFileTokenRechecksSameSizeRewritesWithRestoredModificationTime() {
+        val archive = build()
+        for (path in listOf("content.zip", "mods/sample.rwmod", "theme/default.png")) {
+            val root = File(work, "expansions-${File(path).name}")
+            val installed = ExpansionPackageInstaller.install(archive, root)
+            val changed = installed.dir.resolve(path)
+            var generation = 0
+            val changeToken: (File) -> String = { if (it == changed) generation.toString() else "stable" }
+            assertFalse(ExpansionPackageInstaller.verifyForActivation(installed, changeToken))
+            assertTrue(ExpansionPackageInstaller.verifyForActivation(installed, changeToken))
+            generation++
+            assertFalse(ExpansionPackageInstaller.verifyForActivation(installed, changeToken))
+            assertTrue(ExpansionPackageInstaller.verifyForActivation(installed, changeToken))
+
+            val modified = Files.getLastModifiedTime(changed.toPath())
+            val bytes = changed.readBytes()
+            bytes[0] = (bytes[0].toInt() xor 1).toByte()
+            changed.writeBytes(bytes)
+            Files.setLastModifiedTime(changed.toPath(), modified)
+            generation++
+            repeat(2) {
+                assertFailsWith<IOException>(path) { ExpansionPackageInstaller.verifyForActivation(installed, changeToken) }
+            }
+        }
+    }
+
+    @Test fun activationRechecksAddedAndMissingFilesWithStableTokens() {
+        val installed = ExpansionPackageInstaller.install(build(), File(work, "expansions"))
+        val changeToken: (File) -> String = { "stable" }
+        assertFalse(ExpansionPackageInstaller.verifyForActivation(installed, changeToken))
+        val extra = installed.themeDir.resolve("unexpected.png")
+        extra.writeText("extra")
+        assertFailsWith<IOException> { ExpansionPackageInstaller.verifyForActivation(installed, changeToken) }
+        Files.delete(extra.toPath())
+        Files.delete(installed.themeDir.resolve("default.png").toPath())
+        assertFailsWith<IOException> { ExpansionPackageInstaller.verifyForActivation(installed, changeToken) }
+    }
+
+    @Test fun unavailableChangeTokenRequiresDeepVerificationEveryTime() {
+        val installed = ExpansionPackageInstaller.install(build(), File(work, "expansions"))
+        val changeToken: (File) -> String? = { if (it.name == "content.zip") null else "stable" }
+        repeat(2) { assertFalse(ExpansionPackageInstaller.verifyForActivation(installed, changeToken)) }
+        installed.themeDir.resolve("default.png").writeText("damaged")
+        assertFailsWith<IOException> { ExpansionPackageInstaller.verifyForActivation(installed, changeToken) }
+    }
+
+    @Test fun cancelledActivationVerificationLeavesNoReusableRecord() {
+        val installed = ExpansionPackageInstaller.install(build(), File(work, "expansions"))
+        val changeToken: (File) -> String = { "stable" }
+        var checks = 0
+        assertFailsWith<InterruptedException> {
+            ExpansionPackageInstaller.verifyForActivation(installed, changeToken) {
+                if (++checks == 3) throw InterruptedException("cancel")
+            }
+        }
+        assertFalse(ExpansionPackageInstaller.verifyForActivation(installed, changeToken))
+        assertTrue(ExpansionPackageInstaller.verifyForActivation(installed, changeToken))
+    }
+
     @Test fun installsBaseThemeWithoutPersonalizedVariants() {
         val installed = ExpansionPackageInstaller.install(build(withVariants = false), File(work, "base-theme"))
         val spec = validateThemeToml(File(installed.themeDir, "theme.toml").readText()).first!!

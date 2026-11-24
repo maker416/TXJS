@@ -7,6 +7,7 @@
 
 package io.github.rwpp.expansion
 
+import io.github.rwpp.io.AtomicFileWrite
 import io.github.rwpp.theme.isSafePersonalizedThemeAssetPath
 import io.github.rwpp.theme.personalizedThemeCatalog
 import io.github.rwpp.theme.validateThemeToml
@@ -14,6 +15,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import net.peanuuutz.tomlkt.Toml
+import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
 import java.io.IOException
@@ -21,6 +23,7 @@ import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.BasicFileAttributes
 import java.security.DigestOutputStream
 import java.security.MessageDigest
 import java.util.zip.CRC32
@@ -179,6 +182,73 @@ object ExpansionPackageInstaller {
             validateFiles(installed, Budget(), staging, checkCancelled)
         }
         finally { staging.deleteRecursively() }
+    }
+
+    // Store client-generated receipts beside the immutable package, outside the ZIP namespace.
+    private fun activationRecord(installed: InstalledExpansion) =
+        File(installed.dir.parentFile, ".${installed.dir.name}.verified-v1")
+
+    fun forgetActivationVerification(installed: InstalledExpansion) {
+        activationRecord(installed).delete()
+    }
+
+    /** Returns true when a previous complete verification still covers this installation. */
+    fun verifyForActivation(installed: InstalledExpansion, changeToken: (File) -> String?,
+        checkCancelled: () -> Unit = {}): Boolean {
+        val before = installationFingerprint(installed, changeToken, checkCancelled)
+        val record = activationRecord(installed)
+        if (before != null && realFile(record) && record.length() == before.size.toLong()) {
+            val matches = try {
+                DataInputStream(record.inputStream()).use { input ->
+                    val saved = ByteArray(before.size)
+                    input.readFully(saved)
+                    saved.contentEquals(before) && input.read() == -1
+                }
+            } catch (_: IOException) { false }
+            checkCancelled()
+            if (matches) return true
+        }
+
+        verify(installed, checkCancelled)
+        if (before == null) return false
+        val after = installationFingerprint(installed, changeToken, checkCancelled)
+        if (!before.contentEquals(after)) invalid("Expansion changed during verification")
+        checkCancelled()
+        try {
+            AtomicFileWrite.write(record) { it.write(before) }
+        } catch (_: IOException) {
+            // Read-only installations can still use the completed verification.
+        }
+        return false
+    }
+
+    private fun installationFingerprint(installed: InstalledExpansion, changeToken: (File) -> String?,
+        checkCancelled: () -> Unit): ByteArray? {
+        val digest = MessageDigest.getInstance("SHA-256")
+        fun field(value: String) {
+            digest.update(value.toByteArray(Charsets.UTF_8))
+            digest.update(0.toByte())
+        }
+        field(installed.sha256)
+        field(installed.size.toString())
+        field(installed.version)
+        field(json.encodeToString(ExpansionManifest.serializer(), installed.manifest))
+
+        fun visit(file: File): Boolean {
+            checkCancelled()
+            val attrs = Files.readAttributes(file.toPath(), BasicFileAttributes::class.java, NOFOLLOW_LINKS)
+            if (!attrs.isDirectory && !attrs.isRegularFile) invalid("Expansion contains links or special files")
+            field(file.relativeTo(installed.dir).invariantSeparatorsPath)
+            field(if (attrs.isDirectory) "dir" else "file")
+            field(changeToken(file) ?: return false)
+            if (attrs.isRegularFile) {
+                field(attrs.size().toString())
+                return true
+            }
+            val children = file.listFiles() ?: invalid("Cannot read expansion directory")
+            return children.sortedBy { it.name }.all(::visit)
+        }
+        return if (visit(installed.dir)) digest.digest() else null
     }
 
     private fun read(dir: File, marker: Marker): InstalledExpansion {
