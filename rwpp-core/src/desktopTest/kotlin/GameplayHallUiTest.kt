@@ -25,7 +25,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.use
 import io.github.rwpp.LocalWindowManager
 import io.github.rwpp.appKoin
@@ -102,7 +104,11 @@ class GameplayHallUiTest {
     fun desktopCategoriesSearchFavoritesAndNoClassicModes() = runDesktopComposeUiTest(width = 1280, height = 720) {
         var destination: LauncherPage? = null
         show(onOpen = { destination = it })
-        onNodeWithTag("hall-featured").assertIsDisplayed()
+        val list = onNodeWithTag("hall-list").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val details = onNodeWithTag("hall-details").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertTrue(list.right <= details.left)
+        assertTrue(details.width > list.width)
+        onNodeWithTag("hall-description").assertTextEquals(published.description)
         // 不再显示原版玩法入口与原版分类
         onNodeWithTag("hall-category-original").assertDoesNotExist()
         onNodeWithTag("hall-card-multiplayer").assertDoesNotExist()
@@ -119,10 +125,12 @@ class GameplayHallUiTest {
         onNodeWithTag("hall-category-all").performClick()
         onNodeWithTag("hall-search").performTextInput("边境探索")
         onNodeWithTag("hall-card-game-$otherId").assertIsDisplayed().performClick()
-        runOnIdle { assertEquals(LauncherPage.GamePortal(otherId), destination) }
+        onNodeWithTag("hall-description").assertTextEquals(offline.description)
+        runOnIdle { assertNull(destination) }
 
         onNodeWithTag("hall-search").performTextReplacement("nothing-matches")
         onNodeWithText("没有找到匹配的玩法，试试其他关键词或筛选。").assertIsDisplayed()
+        onNodeWithTag("hall-details").assertDoesNotExist()
         onNodeWithTag("hall-reset").performClick()
         onNodeWithTag("hall-card-game-$gameId").assertIsDisplayed()
 
@@ -133,38 +141,67 @@ class GameplayHallUiTest {
     }
 
     @Test
-    fun phoneLandscapeAndPreviewStayUsable() = runDesktopComposeUiTest(width = 960, height = 432) {
+    fun phoneLandscapeShowsListAndReadableDetailsTogether() = runDesktopComposeUiTest(width = 960, height = 432) {
         var closed = 0
         var destination: LauncherPage? = null
-        show(onExit = { closed++ }, onOpen = { destination = it })
+        show(onExit = { closed++ }, onOpen = { destination = it }, load = { listOf(published, offline.copy(available = true)) })
         onNodeWithTag("hall-back").assertIsDisplayed()
-        onNodeWithTag("hall-featured-open").assertIsDisplayed()
+        onNodeWithTag("hall-description").assertIsDisplayed()
+        onNodeWithTag("hall-open").assertIsDisplayed()
         save("landscape.png")
-        onNodeWithTag("hall-featured-1").performClick()
-        onNodeWithTag("hall-featured-open").performClick()
+        onNodeWithTag("hall-card-game-$otherId").performClick()
+        onNodeWithTag("hall-description").assertTextEquals(offline.description)
+        runOnIdle { assertNull(destination) }
+        onNodeWithTag("hall-open").performClick()
         runOnIdle { assertEquals(LauncherPage.GamePortal(otherId), destination) }
-        onNodeWithTag("hall-detail").assertDoesNotExist()
         onNodeWithTag("hall-server-closed").assertDoesNotExist()
         onNodeWithTag("hall-back").performClick()
         runOnIdle { assertEquals(1, closed) }
     }
 
     @Test
-    fun portraitAndEnglishHaveReachableContent() = runDesktopComposeUiTest(width = 412, height = 844) {
-        language("en")
+    fun smallLandscapeKeepsBothPanesAndTheGameEntryReachable() = runDesktopComposeUiTest(width = 568, height = 320) {
         show()
-        onNodeWithTag("hall-back").assertIsDisplayed()
-        onNodeWithTag("hall-search").assertIsDisplayed()
-        onNodeWithTag("hall-featured-open").assertIsDisplayed()
-        save("portrait-en.png")
-        onNodeWithTag("hall-search").performTextInput("边境探索")
-        onNodeWithTag("hall-content").performScrollToNode(hasTestTag("hall-card-game-$otherId"))
-        onNodeWithTag("hall-card-game-$otherId").assertIsDisplayed()
+        val list = onNodeWithTag("hall-list").assertIsDisplayed()
+        val details = onNodeWithTag("hall-details").assertIsDisplayed()
+        assertTrue(list.fetchSemanticsNode().boundsInRoot.right <= details.fetchSemanticsNode().boundsInRoot.left)
+        onNodeWithTag("hall-open").assertIsDisplayed().assertIsEnabled()
+        list.performScrollToNode(hasTestTag("hall-card-game-$otherId"))
+        onNodeWithTag("hall-card-game-$otherId").performClick()
+        onNodeWithTag("hall-description").performScrollTo().assertIsDisplayed().assertTextEquals(offline.description)
     }
 
     @Test
-    fun hallNavigationRestoresFiltersAndRespectsLiveAnimationToggle() = runDesktopComposeUiTest(width = 960, height = 640) {
-        mainClock.autoAdvance = false
+    fun portraitReturnsFromFullWidthDetailsToTheSameListPosition() = runDesktopComposeUiTest(width = 412, height = 844) {
+        language("en")
+        var exits = 0
+        val games = (1..35).map { number ->
+            published.copy(appId = "11111111-1111-1111-1111-${number.toString().padStart(12, '0')}", name = "Game $number")
+        }
+        show(onExit = { exits++ }, load = { games })
+        onNodeWithTag("hall-back").assertIsDisplayed()
+        onNodeWithTag("hall-search").assertIsDisplayed()
+        onNodeWithTag("hall-details").assertDoesNotExist()
+        save("portrait-en.png")
+        onNodeWithTag("hall-search").performTextInput("Game")
+        val tag = "hall-card-game-${games.last().appId}"
+        onNodeWithTag("hall-list").performScrollToNode(hasTestTag(tag))
+        val row = onNodeWithTag(tag)
+        val rowTop = row.fetchSemanticsNode().boundsInRoot.top
+        row.assertIsDisplayed().performClick()
+        onNodeWithTag("hall-list").assertDoesNotExist()
+        onNodeWithTag("hall-description").assertIsDisplayed().assertTextEquals(published.description)
+        save("portrait-detail-en.png")
+        onNodeWithTag("hall-back").performClick()
+        runOnIdle { assertEquals(0, exits) }
+        onNodeWithTag("hall-search").assertTextContains("Game")
+        assertEquals(rowTop, row.assertIsDisplayed().fetchSemanticsNode().boundsInRoot.top, 2f)
+        onNodeWithTag("hall-back").performClick()
+        runOnIdle { assertEquals(1, exits) }
+    }
+
+    @Test
+    fun hallNavigationRestoresSelectionAndRespectsLiveAnimationToggle() = runDesktopComposeUiTest(width = 960, height = 640) {
         setContent {
             UiMotionTheme(darkColorScheme(), Typography()) {
                 Box(Modifier.fillMaxSize()) {
@@ -173,7 +210,7 @@ class GameplayHallUiTest {
                         GameplayHallView(
                             onExit = { closePage(LauncherPage.GameplayHall) },
                             onOpenPage = { navigateTo(it) },
-                            loadGames = { listOf(published, offline) },
+                            loadGames = { listOf(published, offline.copy(available = true)) },
                             loggedIn = true,
                         )
                     }
@@ -181,21 +218,17 @@ class GameplayHallUiTest {
             }
         }
         runOnIdle { navigateTo(LauncherPage.GameplayHall) }
-        mainClock.advanceTimeByFrame()
-        onNodeWithTag("gameplay-hall").assertIsDisplayed()
-        onNodeWithTag("hall-category-all").performClick()
-        mainClock.advanceTimeByFrame()
-        onNodeWithTag("hall-card-game-$gameId").performSemanticsAction(SemanticsActions.OnClick) { it() }
-        mainClock.advanceTimeBy(48)
-        runOnIdle { assertEquals(LauncherPage.GamePortal(gameId), launcherPage) }
+        onNodeWithTag("hall-card-game-$otherId").performClick()
+        onNodeWithTag("hall-description").assertTextEquals(offline.description)
+        onNodeWithTag("hall-open").performSemanticsAction(SemanticsActions.OnClick) { it() }
+        runOnIdle { assertEquals(LauncherPage.GamePortal(otherId), launcherPage) }
         onNodeWithTag("gameplay-hall").assertDoesNotExist()
         runOnIdle { navigateBack() }
-        mainClock.advanceTimeBy(48)
-        onNodeWithTag("hall-featured").assertDoesNotExist()
-        onNodeWithTag("hall-card-game-$gameId").assertIsDisplayed()
+        onNodeWithTag("hall-card-game-$otherId").assertIsSelected()
+        onNodeWithTag("hall-description").assertTextEquals(offline.description)
         onNodeWithTag("hall-back").performSemanticsAction(SemanticsActions.OnClick) { it() }
-        mainClock.advanceTimeBy(48)
         onNodeWithText("home").assertIsDisplayed()
+        mainClock.autoAdvance = false
         runOnIdle {
             settings.setUiAnimationsEnabled(true)
             navigateTo(LauncherPage.GameplayHall)
@@ -211,16 +244,6 @@ class GameplayHallUiTest {
     }
 
     @Test
-    fun approvedGameOpensItsWebsiteWithoutNativeServerSelection() = runDesktopComposeUiTest(width = 412, height = 844) {
-        var destination: LauncherPage? = null
-        show(onOpen = { destination = it })
-        onNodeWithTag("hall-featured-open").performClick()
-        runOnIdle { assertEquals(LauncherPage.GamePortal(gameId), destination) }
-        onNodeWithTag("hall-detail").assertDoesNotExist()
-        onNodeWithTag("hall-server-main").assertDoesNotExist()
-    }
-
-    @Test
     fun portalRequiresLoginAndResumesIntoTheWebsiteAfterAuthentication() = runDesktopComposeUiTest(width = 960, height = 640) {
         var destination: LauncherPage? = null
         var loggedIn by mutableStateOf(false)
@@ -230,7 +253,7 @@ class GameplayHallUiTest {
                 GameplayHallView(
                     onExit = {},
                     onOpenPage = { destination = it },
-                    loadGames = { listOf(published) },
+                    loadGames = { listOf(published, offline.copy(available = true)) },
                     loggedIn = loggedIn,
                     onLogin = {
                         login++
@@ -239,7 +262,13 @@ class GameplayHallUiTest {
                 )
             }
         }
-        onNodeWithTag("hall-featured-open").performClick()
+        onNodeWithTag("hall-card-game-$otherId").performClick()
+        onNodeWithTag("hall-description").assertTextEquals(offline.description)
+        runOnIdle {
+            assertEquals(0, login)
+            assertNull(destination)
+        }
+        onNodeWithTag("hall-open").performClick()
         runOnIdle {
             assertEquals(1, login)
             assertNull(destination)
@@ -247,10 +276,10 @@ class GameplayHallUiTest {
         }
         waitUntil { destination != null }
         runOnIdle {
-            assertEquals(LauncherPage.GamePortal(gameId), destination)
+            assertEquals(LauncherPage.GamePortal(otherId), destination)
             assertFalse(UI.showAccountView)
         }
-        onNodeWithTag("hall-detail").assertDoesNotExist()
+        onNodeWithTag("hall-server-main").assertDoesNotExist()
     }
 
     @Test
@@ -258,6 +287,7 @@ class GameplayHallUiTest {
         var fail by mutableStateOf(true)
         show(load = { if (fail) error("unavailable") else emptyList() })
         onNodeWithTag("hall-directory-status").assertTextContains("暂时无法获取网游目录", substring = true)
+        onNodeWithTag("hall-details").assertDoesNotExist()
         onNodeWithTag("hall-card-game-$gameId").assertDoesNotExist()
         onNodeWithTag("hall-card-royale").assertDoesNotExist()
         onNodeWithTag("hall-card-multiplayer").assertDoesNotExist()
@@ -269,6 +299,7 @@ class GameplayHallUiTest {
             onAllNodesWithText("暂无已上架网游").fetchSemanticsNodes().isNotEmpty()
         }
         onNodeWithTag("hall-directory-status").assertTextContains("暂无已上架网游", substring = true)
+        onNodeWithTag("hall-details").assertDoesNotExist()
         onNodeWithTag("hall-card-multiplayer").assertDoesNotExist()
         save("empty-directory-desktop.png")
     }
@@ -276,20 +307,19 @@ class GameplayHallUiTest {
     @Test
     fun missingPortalKeepsPublicCardButCannotOpenNativeServerSelection() = runDesktopComposeUiTest(width = 960, height = 640) {
         var destination: LauncherPage? = null
-        show(load = { listOf(published.copy(portalUrl = "", portalRevision = 0)) }, onOpen = { destination = it })
-        onNodeWithTag("hall-featured-open").assertIsNotEnabled()
+        show(load = { listOf(published, offline.copy(portalUrl = "", portalRevision = 0)) }, onOpen = { destination = it })
+        onNodeWithTag("hall-card-game-$otherId").assertIsDisplayed().assertIsEnabled().performClick()
+        onNodeWithTag("hall-description").assertTextEquals(offline.description)
+        onNodeWithTag("hall-open").assertIsNotEnabled()
         runOnIdle { assertNull(destination) }
-        onNodeWithTag("hall-card-game-$gameId").assertIsDisplayed()
-        onNodeWithTag("hall-card-game-$gameId").assertIsNotEnabled()
-        onNodeWithTag("hall-detail").assertDoesNotExist()
     }
 
     @OptIn(ExperimentalComposeUiApi::class)
     @Test
     fun hallTransitionAnimatesWithoutPerFrameRecompositionAndStopsCleanlyWhenDisabled() {
-        var featuredDotPos = Offset.Zero
-        var categoryAllPos = Offset.Zero
+        var secondGamePos = Offset.Zero
         var favoriteGamePos = Offset.Zero
+        var favoritesCategoryPos = Offset.Zero
         runDesktopComposeUiTest(width = 960, height = 720) {
             setContent {
                 UiMotionTheme(darkColorScheme(), Typography()) {
@@ -297,11 +327,11 @@ class GameplayHallUiTest {
                 }
             }
             waitForIdle()
-            featuredDotPos = onNodeWithTag("hall-featured-1").fetchSemanticsNode().boundsInRoot.center
-            categoryAllPos = onNodeWithTag("hall-category-all").fetchSemanticsNode().boundsInRoot.center
-            onNodeWithTag("hall-category-all").performClick()
-            waitForIdle()
-            favoriteGamePos = onNodeWithTag("hall-favorite-game-$gameId").fetchSemanticsNode().boundsInRoot.center
+            val secondGame = onNodeWithTag("hall-card-game-$otherId")
+            secondGamePos = secondGame.fetchSemanticsNode().boundsInRoot.center
+            secondGame.performClick()
+            favoriteGamePos = onNodeWithTag("hall-favorite-game-$otherId").fetchSemanticsNode().boundsInRoot.center
+            favoritesCategoryPos = onNodeWithTag("hall-category-favorites").fetchSemanticsNode().boundsInRoot.center
         }
 
         SwingUtilities.invokeAndWait { resetNavigation(LauncherPage.MainMenu) }
@@ -359,12 +389,12 @@ class GameplayHallUiTest {
                 settleFrames(startMs + 16L)
             }
 
-            clickAt(featuredDotPos, 850L)
-            assertFalse(scene.hasInvalidations(), "关闭动画时切换精选不得请求动画帧")
-            clickAt(categoryAllPos, 950L)
-            assertFalse(scene.hasInvalidations(), "关闭动画时切换分类不得请求动画帧")
-            clickAt(favoriteGamePos, 1050L)
+            clickAt(secondGamePos, 850L)
+            assertFalse(scene.hasInvalidations(), "关闭动画时切换游戏不得请求动画帧")
+            clickAt(favoriteGamePos, 950L)
             assertFalse(scene.hasInvalidations(), "关闭动画时点击收藏不得请求动画帧")
+            clickAt(favoritesCategoryPos, 1050L)
+            assertFalse(scene.hasInvalidations(), "关闭动画时切换分类不得请求动画帧")
         }
     }
 
@@ -450,107 +480,95 @@ class GameplayHallUiTest {
         onNodeWithTag("hall-dev-notice").assertDoesNotExist()
         onNodeWithTag("hall-dev-badge").assertDoesNotExist()
         onNodeWithTag("hall-dev-back").assertDoesNotExist()
-        onNodeWithTag("hall-featured").assertIsDisplayed()
+        onNodeWithTag("hall-details").assertIsDisplayed()
         onNodeWithTag("hall-card-game-$gameId").assertIsDisplayed()
     }
 
     @Test
-    fun singleOnlineGamePremiereAndAllTabSpotlightLayout() = runDesktopComposeUiTest(width = 1280, height = 720) {
-        var destination: LauncherPage? = null
-        show(load = { listOf(published) }, onOpen = { destination = it })
-        // 仅 1 个上架网游：推荐页呈现沉浸式旗舰首发主舞台 + 三格真实情报 Bento 卡，不显示原版模式。
-        onNodeWithTag("hall-featured").assertIsDisplayed()
-        onNodeWithTag("hall-featured-0").assertDoesNotExist()
-        onNodeWithTag("hall-card-game-$gameId").assertIsDisplayed()
-        onNodeWithTag("hall-card-multiplayer").assertDoesNotExist()
-        onNodeWithText("区服态势").assertIsDisplayed()
-        onNodeWithText("玩法特性").assertIsDisplayed()
-        onNodeWithText("持续上新").assertIsDisplayed()
+    fun singleGameAutomaticallyShowsFullDetailsAndCanBeFavorited() = runDesktopComposeUiTest(width = 1280, height = 720) {
+        show(load = { listOf(published) })
+        onNodeWithTag("hall-card-game-$gameId").assertIsDisplayed().assertIsSelected()
+        onNodeWithTag("hall-description").assertIsDisplayed().assertTextEquals(published.description)
+        onNodeWithTag("hall-open").assertIsDisplayed().assertIsEnabled()
         save("single-game-desktop.png")
 
-        // 旗舰主舞台直接支持收藏，切到「全部玩法」展示全宽横版展卡与生态预告尾注。
         onNodeWithTag("hall-favorite-game-$gameId").performClick()
-        onNodeWithTag("hall-category-all").performClick()
-        onNodeWithTag("hall-card-game-$gameId").assertIsDisplayed()
-        onNodeWithText("更多创意网游正在路上").assertIsDisplayed()
-        save("single-game-all.png")
-
         onNodeWithTag("hall-category-favorites").performClick()
-        onNodeWithTag("hall-card-game-$gameId").assertIsDisplayed().performClick()
-        runOnIdle { assertEquals(LauncherPage.GamePortal(gameId), destination) }
+        onNodeWithTag("hall-card-game-$gameId").assertIsSelected()
+        onNodeWithTag("hall-favorite-game-$gameId").performClick()
+        onNodeWithTag("hall-card-game-$gameId").assertDoesNotExist()
+        onNodeWithTag("hall-details").assertDoesNotExist()
     }
 
     @Test
-    fun singleOnlineGamePortraitPremiereStaysClean() = runDesktopComposeUiTest(width = 412, height = 844) {
-        show(load = { listOf(published) })
-        onNodeWithTag("hall-featured").assertIsDisplayed()
-        onNodeWithTag("hall-card-game-$gameId").assertIsDisplayed()
-        onNodeWithTag("hall-featured-open").assertIsDisplayed()
-        onNodeWithTag("hall-card-multiplayer").assertDoesNotExist()
-        save("single-game-portrait.png")
+    fun longDescriptionCanScrollToItsLastParagraphWithoutMovingTheList() = runDesktopComposeUiTest(width = 1280, height = 720) {
+        val paragraphs = listOf(
+            "边境的最后一座中继站刚刚恢复通信。你和队友将从一辆工程车起步，在群山之间找到矿脉、铺设第一条补给线，让失去联络的据点重新亮起灯光。",
+            "峡谷里有两条通往港口的路。沿河谷推进可以很快拿下船坞，但车队会暴露在高地火力下。也可以让侦察机先探明山路，再用运输机把工程车送过河，在敌军身后建立维修站。",
+            "每周轮换的地图会改变起始资源和撤离点，给同一支小队留下不同的解法。",
+        ) + (4..60).map { number -> "第 ${number} 段。占领前哨后，运输车队会沿已修复的道路补给下一处据点。" }
+        val description = paragraphs.joinToString("\n\n")
+        val firstDescription = List(40) { published.description }.joinToString("\n\n")
+        show(load = { listOf(published.copy(description = firstDescription), offline.copy(description = description)) })
+        val firstRow = onNodeWithTag("hall-card-game-$gameId")
+        val rowTop = firstRow.fetchSemanticsNode().boundsInRoot.top
+        onNodeWithTag("hall-card-game-$otherId").performClick()
+        val layouts = mutableListOf<TextLayoutResult>()
+        val body = onNodeWithTag("hall-description").assertTextEquals(description)
+        save("desktop-long-description.png")
+        body.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        val layout = layouts.single()
+        val lastLine = layout.lineCount - 1
+        val lastOffset = layout.getLineEnd(lastLine, visibleEnd = true)
+        val measurements = "lines=${layout.lineCount}, size=${layout.size}, " +
+            "paragraph=${layout.multiParagraph.width}×${layout.multiParagraph.height}, " +
+            "widthOverflow=${layout.didOverflowWidth}, heightOverflow=${layout.didOverflowHeight}, " +
+            "lastOffset=$lastOffset/${description.length}"
+        assertEquals(description.length, lastOffset, measurements)
+        assertFalse(layout.isLineEllipsized(lastLine), measurements)
+        val details = onNodeWithTag("hall-details")
+        details.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, layout.size.height.toFloat() + 2000f) }
+        val scroll = details.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        assertTrue(scroll.maxValue() > 0f)
+        assertEquals(scroll.maxValue(), scroll.value(), 1f)
+        val finalLineY = body.fetchSemanticsNode().positionInRoot.y + layout.getLineBottom(lastLine)
+        val viewport = details.fetchSemanticsNode().boundsInRoot
+        assertTrue(finalLineY in viewport.top..(viewport.bottom + 1f), "$measurements, lastLineY=$finalLineY, viewport=$viewport")
+        assertEquals(rowTop, firstRow.assertIsDisplayed().fetchSemanticsNode().boundsInRoot.top)
+        firstRow.performClick()
+        val nextScroll = details.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        assertTrue(nextScroll.maxValue() > 0f)
+        assertEquals(0f, nextScroll.value())
+        onNodeWithTag("hall-description").assertTextEquals(firstDescription)
     }
 
     @Test
-    fun multiOnlineGamesAdaptiveGridScalesCleanly() = runDesktopComposeUiTest(width = 1280, height = 720) {
-        val g3 = OnlineGame(
-            "33333333-3333-3333-3333-333333333331",
-            "深空要塞",
-            "跨星系基地建设与实时舰队攻防对抗",
-            available = true,
-            servers = listOf(OnlineGameServer("s3", "一号星区", "127.0.0.1:5130", available = true, online = true, currentPlayers = 18, maxPlayers = 40)),
-            portalUrl = "https://g3.example/portal",
-            portalRevision = 1,
-        )
-        val g4 = OnlineGame(
-            "44444444-4444-4444-4444-444444444441",
-            "钢铁前线",
-            "重装机甲阵地拉锯战，团队协作争夺核心矿脉",
-            available = true,
-            servers = listOf(OnlineGameServer("s4", "前线服", "127.0.0.1:5131", available = true, online = true, currentPlayers = 12, maxPlayers = 24)),
-            portalUrl = "https://g4.example/portal",
-            portalRevision = 1,
-        )
-        val g5 = OnlineGame(
-            "55555555-5555-5555-5555-555555555551",
-            "裂谷突围",
-            "快节奏小队撤离与高风险资源争夺战",
-            available = true,
-            portalUrl = "https://g5.example/portal",
-            portalRevision = 1,
-        )
-        val g6 = OnlineGame(
-            "66666666-6666-6666-6666-666666666661",
-            "群岛霸权",
-            "海陆空立体登陆作战与制海权争夺",
-            available = true,
-            portalUrl = "https://g6.example/portal",
-            portalRevision = 1,
-        )
-        var currentGames by mutableStateOf(listOf(published, offline, g3, g4))
-        show(load = { currentGames })
-        onNodeWithTag("hall-featured-0").assertIsDisplayed()
-        onNodeWithTag("hall-featured-3").assertIsDisplayed()
-        onNodeWithTag("hall-category-all").performClick()
-        // 4 个网游走 2x2 对称双列网格，避免 3+1 孤卡。
-        val b1 = onNodeWithTag("hall-card-game-$gameId").fetchSemanticsNode().boundsInRoot
-        val b2 = onNodeWithTag("hall-card-game-$otherId").fetchSemanticsNode().boundsInRoot
-        val b3 = onNodeWithTag("hall-card-game-${g3.appId}").fetchSemanticsNode().boundsInRoot
-        assertEquals(b1.top, b2.top, 2f)
-        assertTrue(b3.top > b1.bottom)
-        save("multi-4-games-desktop.png")
-
-        // 切到 6 个网游后自动升级为三列画廊网格。
-        runOnIdle { currentGames = listOf(published, offline, g3, g4, g5, g6) }
+    fun refreshKeepsSelectedGameByAppIdAndFallsBackWhenRemoved() = runDesktopComposeUiTest(width = 1280, height = 720) {
+        val updated = offline.copy(description = "目录刷新后的游戏介绍")
+        val third = published.copy(appId = "33333333-3333-3333-3333-333333333333", name = "深空要塞")
+        var directory = listOf(published, offline, third)
+        var fail = false
+        show(load = { if (fail) error("directory down") else directory })
+        onNodeWithTag("hall-card-game-$otherId").performClick()
+        runOnIdle { directory = listOf(third, published, updated) }
         onNodeWithTag("hall-refresh").performClick()
-        waitUntil(timeoutMillis = 3_000) {
-            onAllNodesWithTag("hall-card-game-${g6.appId}").fetchSemanticsNodes().isNotEmpty()
-        }
-        val m1 = onNodeWithTag("hall-card-game-$gameId").fetchSemanticsNode().boundsInRoot
-        val m2 = onNodeWithTag("hall-card-game-$otherId").fetchSemanticsNode().boundsInRoot
-        val m3 = onNodeWithTag("hall-card-game-${g3.appId}").fetchSemanticsNode().boundsInRoot
-        assertEquals(m1.top, m2.top, 2f)
-        assertEquals(m2.top, m3.top, 2f)
-        save("multi-6-games-desktop.png")
+        onNodeWithTag("hall-description").assertTextEquals(updated.description)
+        onNodeWithTag("hall-card-game-$otherId").assertIsSelected()
+
+        runOnIdle { fail = true }
+        onNodeWithTag("hall-refresh").performClick()
+        onNodeWithTag("hall-details").assertDoesNotExist()
+        onNodeWithTag("hall-directory-status").assertTextContains("暂时无法获取网游目录", substring = true)
+        runOnIdle { fail = false }
+        onNodeWithTag("hall-refresh").performClick()
+        onNodeWithTag("hall-card-game-$otherId").assertIsSelected()
+        onNodeWithTag("hall-description").assertTextEquals(updated.description)
+
+        runOnIdle { directory = listOf(published) }
+        onNodeWithTag("hall-refresh").performClick()
+        onNodeWithTag("hall-card-game-$otherId").assertDoesNotExist()
+        onNodeWithTag("hall-card-game-$gameId").assertIsSelected()
+        onNodeWithTag("hall-description").assertTextEquals(published.description)
     }
 
     private fun language(code: String) {

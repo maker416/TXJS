@@ -7,7 +7,6 @@
 
 package io.github.rwpp.ui
 
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -19,11 +18,8 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -37,8 +33,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.IntrinsicSize
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -51,7 +45,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -92,14 +85,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Canvas as GraphicsCanvas
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
@@ -113,15 +104,12 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -140,10 +128,7 @@ import io.github.rwpp.rwpp_core.generated.resources.dns_30
 import io.github.rwpp.rwpp_core.generated.resources.extension_30
 import io.github.rwpp.rwpp_core.generated.resources.gameplay_favorite_outline
 import io.github.rwpp.rwpp_core.generated.resources.public_30
-import io.github.rwpp.rwpp_core.generated.resources.shield_30
-import io.github.rwpp.widget.LocalDialogInteractive
 import io.github.rwpp.widget.animateUiColorAsState
-import io.github.rwpp.widget.animateUiDpAsState
 import io.github.rwpp.widget.animateUiFloatAsState
 import io.github.rwpp.widget.uiAnimationsEnabled
 import kotlinx.coroutines.CancellationException
@@ -152,14 +137,12 @@ import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
 import kotlin.math.PI
 import kotlin.math.cos
-import kotlin.math.roundToInt
 import kotlin.math.sin
 
 // 深空黑曜石 + 翡翠微光色彩体系：以中性暗面承载画面层次，仅在焦点与主操作点亮品牌绿。
 private val HallCanvasScrim = Color(0xEB080C0F)
 private val HallSurfaceLow = Color(0xCC0F161B)
 private val HallSurfaceCard = Color(0xF0131C22)
-private val HallSurfaceCardHover = Color(0xF519252D)
 private val HallSurfaceElevated = Color(0xFF1A252C)
 private val HallGlassDark = Color(0xBD090F13)
 
@@ -176,7 +159,6 @@ private val HallCyan = Color(0xFF7ADBF0)
 private val HallCoral = Color(0xFFEE7B75)
 
 private val HallHairline = Color(0x18FFFFFF)
-private val HallHairlineSoft = Color(0x10FFFFFF)
 private val HallHairlineStrong = Color(0x2EFFFFFF)
 
 private val HallHeroShape = RoundedCornerShape(22.dp)
@@ -184,7 +166,6 @@ private val HallCardShape = RoundedCornerShape(18.dp)
 private val HallControlShape = RoundedCornerShape(12.dp)
 
 private enum class HallCategory(val key: String) {
-    Recommended("recommended"),
     All("all"),
     Favorites("favorites"),
 }
@@ -200,9 +181,7 @@ private data class HallEntry(
 
 private data class OnlineGameTelemetry(
     val onlineServers: Int,
-    val totalServers: Int,
     val players: Int,
-    val maxPlayers: Int,
     val hasExpansion: Boolean,
     val hasArtPack: Boolean,
     val artVersion: String,
@@ -213,9 +192,7 @@ private fun OnlineGame.telemetry(): OnlineGameTelemetry {
     val onlineList = servers.filter { it.online }
     return OnlineGameTelemetry(
         onlineServers = active.size,
-        totalServers = servers.size,
         players = onlineList.sumOf { it.currentPlayers },
-        maxPlayers = onlineList.sumOf { it.maxPlayers },
         hasExpansion = expansionBinding != null,
         hasArtPack = artBinding != null && expansionBinding == null,
         artVersion = artBinding?.version.orEmpty(),
@@ -443,20 +420,6 @@ private fun Modifier.hallFeedMotion(motion: GameplayHallMotionStates): Modifier 
     }
 }
 
-/** 按条目数量与可用宽度智能排布列数：1 项走全宽横版展卡，2/4 项走双列消除孤卡，3/5+ 项走三列画廊。 */
-private fun adaptiveHallColumns(itemCount: Int, availableWidth: Dp, narrow: Boolean): Int {
-    if (narrow || itemCount <= 1) return 1
-    val maxCols = when {
-        availableWidth >= 820.dp -> 3
-        availableWidth >= 480.dp -> 2
-        else -> 1
-    }
-    return when (itemCount) {
-        2, 4 -> minOf(2, maxCols)
-        else -> minOf(itemCount, maxCols)
-    }
-}
-
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun GameplayHallView(
@@ -484,11 +447,12 @@ internal fun GameplayHallView(
     val cachedInitial = remember(directoryCache, platformUrl) {
         directoryCache?.takeIf { it.platformUrl == platformUrl }?.games.orEmpty()
     }
-    var category by rememberSaveable { mutableStateOf(HallCategory.Recommended) }
+    var category by rememberSaveable { mutableStateOf(HallCategory.All) }
     var query by rememberSaveable { mutableStateOf("") }
     var availableOnly by rememberSaveable { mutableStateOf(false) }
     var favorites by rememberSaveable { mutableStateOf(listOf<String>()) }
-    var featuredIndex by rememberSaveable { mutableIntStateOf(0) }
+    var selectedAppId by rememberSaveable { mutableStateOf<String?>(null) }
+    var showMobileDetails by rememberSaveable { mutableStateOf(false) }
     val contentListState = rememberLazyListState()
     var pendingPortal by remember { mutableStateOf<String?>(null) }
     var games by remember { mutableStateOf(cachedInitial) }
@@ -544,9 +508,6 @@ internal fun GameplayHallView(
         }
     }
 
-    val featuredEntries = allEntries.take(4)
-    val selectedFeatured = if (featuredEntries.isEmpty()) 0 else featuredIndex.coerceIn(featuredEntries.indices)
-    BackHandler(true, onExit)
     val portalUnavailable = readI18n("gamePortal.unavailable")
     LaunchedEffect(loggedIn, UI.showAccountView) {
         val pending = pendingPortal ?: return@LaunchedEffect
@@ -558,7 +519,7 @@ internal fun GameplayHallView(
     }
     val open: (HallEntry) -> Unit = { entry ->
         val game = entry.game
-        if (!isOnlineGamePortalUrl(game.portalUrl) || game.portalRevision <= 0) UI.showWarning(portalUnavailable)
+        if (!entry.canOpen) UI.showWarning(portalUnavailable)
         else if (loggedIn) onOpenPage(LauncherPage.GamePortal(game.appId))
         else {
             pendingPortal = game.appId
@@ -570,20 +531,28 @@ internal fun GameplayHallView(
     }
 
     val hasFilters = query.isNotBlank() || availableOnly
+    val trimmedQuery = query.trim()
     val entries = allEntries.filter { entry ->
-        val matchesCategory = when (category) {
-            HallCategory.Favorites -> entry.id in favorites
-            else -> true
-        }
-        val trimmedQuery = query.trim()
+        val matchesCategory = category != HallCategory.Favorites || entry.id in favorites
         val matchesQuery = trimmedQuery.isEmpty() ||
             entry.game.name.contains(trimmedQuery, ignoreCase = true) ||
             entry.game.description.contains(trimmedQuery, ignoreCase = true)
         matchesCategory && (!availableOnly || entry.available) && matchesQuery
     }
 
-    val showFeatured = category == HallCategory.Recommended && !hasFilters && featuredEntries.isNotEmpty()
-    val singleOnlinePremiere = showFeatured && allEntries.size == 1
+    val selectedEntry = entries.firstOrNull { it.game.appId == selectedAppId } ?: entries.firstOrNull()
+    // 保存有效选择，目录重排或从网页返回时仍按 appId 显示同一款游戏。
+    if (!loading && !loadFailed) {
+        val visibleAppId = selectedEntry?.game?.appId
+        SideEffect {
+            selectedAppId = visibleAppId
+            if (visibleAppId == null) showMobileDetails = false
+        }
+    }
+    val triggerRefresh: () -> Unit = {
+        loading = true
+        retry++
+    }
 
     val categoryCounts = mapOf(
         HallCategory.All to allEntries.size,
@@ -591,10 +560,18 @@ internal fun GameplayHallView(
     )
 
     BoxWithConstraints(Modifier.fillMaxSize().testTag("gameplay-hall")) {
-        val narrow = maxWidth < 700.dp
         val compact = maxHeight < 500.dp
-        val mediumHeight = maxHeight < 680.dp
+        val narrow = maxWidth < 540.dp || (maxWidth < 840.dp && maxWidth < maxHeight)
         val edge = if (narrow || compact) 12.dp else 24.dp
+        val listWidth = (maxWidth * 0.25f).coerceIn(190.dp, 340.dp)
+        val coverHeight = when {
+            compact -> (maxHeight * 0.31f).coerceAtMost(140.dp)
+            narrow -> ((maxWidth - edge * 2) * 0.56f).coerceAtMost(280.dp)
+            else -> (maxHeight * 0.34f).coerceIn(154.dp, 320.dp)
+        }
+        val detailOnly = narrow && showMobileDetails && selectedEntry != null
+        val goBack: () -> Unit = { if (detailOnly) showMobileDetails = false else onExit() }
+        BackHandler(true, goBack)
 
         // 保留平台实时战场背景，叠加中性黑曜石遮罩与克制翡翠/深青氛围光，静置零动画帧。
         Box(
@@ -619,320 +596,115 @@ internal fun GameplayHallView(
                 },
         )
 
-        Column(Modifier.fillMaxSize()) {
-            // 顶部极简指挥栏
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .hallHeaderMotion(motion)
-                    .drawBehind {
-                        drawLine(
-                            color = HallHairlineSoft,
-                            start = Offset(0f, size.height - 0.5.dp.toPx()),
-                            end = Offset(size.width, size.height - 0.5.dp.toPx()),
-                            strokeWidth = 1.dp.toPx(),
-                        )
-                    }
-                    .padding(horizontal = edge),
+        Column(Modifier.fillMaxSize().padding(horizontal = edge)) {
+            Row(
+                Modifier.fillMaxWidth().hallHeaderMotion(motion).heightIn(min = if (compact) 52.dp else 64.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = if (compact) 52.dp else 60.dp)
-                        .padding(vertical = if (compact) 6.dp else 9.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 14.dp),
-                ) {
-                    HallIconButton(onExit, "back", compact = compact) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = hallText("back"),
-                            tint = HallInkPrimary,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(1.dp),
-                    ) {
-                        Text(
-                            text = hallText("title"),
-                            color = HallInkPrimary,
-                            fontSize = if (compact || narrow) 20.sp else 23.sp,
-                            lineHeight = if (compact || narrow) 24.sp else 28.sp,
-                            letterSpacing = (-0.3).sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        if (!compact) {
-                            Text(
-                                text = hallText("subtitle"),
-                                color = HallInkTertiary,
-                                fontSize = 11.5.sp,
-                                lineHeight = 15.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                    if (!narrow) {
-                        HallSearch(
-                            value = query,
-                            onChange = { query = it },
-                            compact = compact,
-                            modifier = Modifier.widthIn(min = 210.dp, max = 340.dp).weight(0.95f),
-                        )
-                    }
-                    HallIconButton(
-                        onClick = {
-                            category = if (category == HallCategory.Favorites) HallCategory.Recommended else HallCategory.Favorites
-                        },
-                        id = "favorites",
-                        active = category == HallCategory.Favorites,
-                        compact = compact,
-                    ) {
-                        val favActive = category == HallCategory.Favorites
-                        Box(contentAlignment = Alignment.Center) {
-                            HallStar(
-                                selected = favActive,
-                                description = hallText("categories.favorites"),
-                                color = if (favActive) HallAmber else HallInkSecondary,
-                                modifier = Modifier.size(19.dp),
-                            )
-                            if (!favActive && favorites.isNotEmpty()) {
-                                Box(
-                                    Modifier
-                                        .align(Alignment.TopEnd)
-                                        .size(6.dp)
-                                        .background(HallAmber, CircleShape),
-                                )
-                            }
-                        }
-                    }
-                }
-                if (narrow) {
-                    HallSearch(
-                        value = query,
-                        onChange = { query = it },
-                        compact = true,
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
+                HallBackButton(goBack, compact) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = hallText(if (detailOnly) "backToList" else "back"),
+                        tint = HallInkPrimary,
+                        modifier = Modifier.size(20.dp),
                     )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 10.dp)
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        HallCategory.entries.forEach { item ->
-                            HallCategoryChip(
-                                category = item,
-                                selected = category == item,
-                                count = categoryCounts[item],
-                                onClick = { category = item },
-                            )
-                        }
+                }
+                Text(hallText("title"), color = HallInkPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                if (allEntries.isNotEmpty() && !detailOnly) {
+                    Spacer(Modifier.weight(1f))
+                    if (narrow) {
+                        HallRefreshButton(triggerRefresh)
+                    } else {
+                        HallDirectoryStatusStrip(
+                            loading = loading, onRefresh = triggerRefresh, modifier = Modifier.widthIn(max = 360.dp),
+                        )
                     }
                 }
             }
 
-            // 主体内容区：左侧极简导轨 + 右侧全数量自适应舞台
             Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .hallBodyMotion(motion)
-                    .padding(horizontal = edge),
+                Modifier.fillMaxSize().hallBodyMotion(motion)
+                    .padding(top = 4.dp, bottom = if (compact) 8.dp else 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(if (compact) 16.dp else 22.dp),
             ) {
-                if (!narrow) {
-                    Column(
-                        modifier = Modifier
-                            .width(if (compact) 162.dp else 192.dp)
-                            .fillMaxHeight()
-                            .drawBehind {
-                                drawLine(
-                                    color = HallHairlineSoft,
-                                    start = Offset(size.width + (if (compact) 8.dp else 11.dp).toPx(), 10.dp.toPx()),
-                                    end = Offset(size.width + (if (compact) 8.dp else 11.dp).toPx(), size.height - 16.dp.toPx()),
-                                    strokeWidth = 1.dp.toPx(),
+                if (allEntries.isEmpty()) {
+                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                        HallDirectoryZeroStage(loading, loadFailed, compact, triggerRefresh)
+                    }
+                } else {
+                    if (!detailOnly) {
+                        Column(
+                            modifier = (if (narrow) Modifier.fillMaxWidth() else Modifier.width(listWidth))
+                                .fillMaxHeight(),
+                            verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp),
+                        ) {
+                            HallSearch(query, { query = it }, compact, Modifier.fillMaxWidth())
+                            Row(
+                                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                HallCategory.entries.forEach { item ->
+                                    HallCategoryChip(item, category == item, categoryCounts[item]) { category = item }
+                                }
+                            }
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                itemVerticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                HallFilterPill(
+                                    label = hallText("status"),
+                                    value = hallText(if (availableOnly) "available" else "any"),
+                                    id = "status", active = availableOnly, options = listOf(false, true),
+                                    title = { hallText(if (it) "available" else "any") },
+                                    onSelect = { availableOnly = it },
                                 )
-                            }
-                            .verticalScroll(rememberScrollState())
-                            .padding(top = if (compact) 10.dp else 14.dp, bottom = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        HallCategory.entries.forEach { item ->
-                            HallNavRailItem(
-                                category = item,
-                                selected = category == item,
-                                count = categoryCounts[item],
-                                compact = compact,
-                                onClick = { category = item },
-                            )
-                        }
-                        if (!compact) {
-                            Spacer(Modifier.height(14.dp))
-                            Box(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 6.dp)
-                                    .height(1.dp)
-                                    .background(HallHairlineSoft),
-                            )
-                            Text(
-                                text = hallText("discoveryNote"),
-                                color = HallInkTertiary.copy(alpha = 0.72f),
-                                fontSize = 11.sp,
-                                lineHeight = 16.5.sp,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 14.dp),
-                            )
-                        }
-                    }
-                }
-
-                BoxWithConstraints(Modifier.weight(1f).fillMaxHeight()) {
-                    val contentWidth = maxWidth
-                    val itemSpacing = if (compact) 10.dp else 12.dp
-                    val triggerRefresh: () -> Unit = {
-                        loading = true
-                        retry++
-                    }
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize().testTag("hall-content"),
-                        state = contentListState,
-                        verticalArrangement = Arrangement.spacedBy(itemSpacing),
-                        contentPadding = PaddingValues(
-                            top = if (compact) 10.dp else 12.dp,
-                            bottom = 24.dp,
-                        ),
-                    ) {
-                        when {
-                            // 0 个上架网游（加载中 / 拉取失败 / 暂无上架）：呈现独立黑曜石空态舞台，绝不捏造演示玩法。
-                            allEntries.isEmpty() -> {
-                                item("zero-games-stage") {
-                                    HallDirectoryZeroStage(
-                                        loading = loading,
-                                        loadFailed = loadFailed,
-                                        compact = compact,
-                                        onRefresh = triggerRefresh,
-                                        modifier = Modifier.hallFeedMotion(motion),
-                                    )
-                                }
-                            }
-
-                            // 刚开业仅 1 个网游 · 推荐页：沉浸式旗舰首发主舞台 + 三格真实态势 Bento 面板 + 极简目录尾条。
-                            singleOnlinePremiere -> {
-                                val flagship = featuredEntries.first()
-                                item("featured") {
-                                    HallFeaturedStage(
-                                        entries = featuredEntries,
-                                        index = 0,
-                                        singleOnlinePremiere = true,
-                                        isFavorite = flagship.id in favorites,
-                                        onToggleFavorite = { favorite(flagship) },
-                                        compact = compact,
-                                        mediumHeight = mediumHeight,
-                                        narrow = narrow,
-                                        onSelect = {},
-                                        onOpen = { open(flagship) },
-                                    )
-                                }
-                                item("single-intel-deck") {
-                                    HallSingleGameIntelDeck(
-                                        entry = flagship,
-                                        compact = compact,
-                                        narrow = narrow,
-                                        modifier = Modifier.hallFeedMotion(motion),
-                                    )
-                                }
-                                item("single-directory-bar") {
-                                    HallDirectoryStatusStrip(
-                                        loading = loading,
-                                        loadFailed = loadFailed,
-                                        hasOnlineGames = true,
-                                        narrow = narrow,
-                                        onRefresh = triggerRefresh,
-                                        modifier = Modifier.hallFeedMotion(motion),
-                                    )
-                                }
-                            }
-
-                            // 后续 2+ 个网游（推荐页），以及全部玩法 / 收藏 / 搜索筛选态
-                            else -> {
-                                if (showFeatured) {
-                                    item("featured") {
-                                        val currentFeatured = featuredEntries[selectedFeatured]
-                                        HallFeaturedStage(
-                                            entries = featuredEntries,
-                                            index = selectedFeatured,
-                                            singleOnlinePremiere = false,
-                                            isFavorite = currentFeatured.id in favorites,
-                                            onToggleFavorite = { favorite(currentFeatured) },
-                                            compact = compact,
-                                            mediumHeight = mediumHeight,
-                                            narrow = narrow,
-                                            onSelect = { featuredIndex = it },
-                                            onOpen = { open(currentFeatured) },
-                                        )
-                                    }
-                                }
-
-                                item("controls-header") {
-                                    val sectionTitle = when (category) {
-                                        HallCategory.Recommended -> hallText("onlineSection")
-                                        else -> hallText("categories.${category.key}")
-                                    }
-                                    HallSectionControlBar(
-                                        title = sectionTitle,
-                                        count = entries.size,
-                                        availableOnly = availableOnly,
-                                        hasFilters = hasFilters,
-                                        onSelectAvailable = { availableOnly = it },
-                                        onResetFilters = {
+                                if (hasFilters) {
+                                    Surface(
+                                        onClick = {
                                             query = ""
                                             availableOnly = false
                                         },
-                                        loading = loading,
-                                        loadFailed = loadFailed,
-                                        hasOnlineGames = games.isNotEmpty(),
-                                        onRefresh = triggerRefresh,
-                                        narrow = narrow,
-                                        compact = compact,
-                                        modifier = Modifier.hallFeedMotion(motion),
-                                    )
-                                }
-
-                                if (entries.isEmpty()) {
-                                    item("empty") {
-                                        HallEmptyStateCard(
-                                            isFavorites = category == HallCategory.Favorites && !hasFilters,
-                                            modifier = Modifier.hallFeedMotion(motion),
-                                        )
-                                    }
-                                } else {
-                                    hallAdaptiveSectionItems(
-                                        sectionKey = "online",
-                                        items = entries,
-                                        availableWidth = contentWidth,
-                                        narrow = narrow,
-                                        compact = compact,
-                                        favorites = favorites,
-                                        onFavorite = favorite,
-                                        onOpen = open,
-                                        motion = motion,
-                                    )
-                                    if (category == HallCategory.All && !hasFilters && entries.size == 1) {
-                                        item("single-all-more-coming") {
-                                            HallEcosystemFooterNote(
-                                                compact = compact,
-                                                modifier = Modifier.hallFeedMotion(motion),
-                                            )
-                                        }
+                                        color = Color.Transparent,
+                                        shape = HallControlShape,
+                                        modifier = Modifier.testTag("hall-reset"),
+                                    ) {
+                                        Text(hallText("reset"), Modifier.padding(6.dp), color = HallAccentBright, fontSize = 12.sp)
                                     }
                                 }
                             }
+                            LazyColumn(
+                                state = contentListState,
+                                modifier = Modifier.fillMaxWidth().weight(1f).testTag("hall-list"),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                items(entries, key = { it.id }) { entry ->
+                                    HallLibraryRow(entry, selected = entry.id == selectedEntry?.id) {
+                                        selectedAppId = entry.game.appId
+                                        showMobileDetails = true
+                                    }
+                                }
+                                if (entries.isEmpty() && narrow) {
+                                    item { HallEmptyStateCard(category == HallCategory.Favorites && !hasFilters) }
+                                }
+                            }
+                        }
+                    }
+                    if (!narrow || detailOnly) {
+                        if (selectedEntry != null) {
+                            key(selectedEntry.game.appId) {
+                                HallGameDetails(
+                                    entry = selectedEntry,
+                                    favorite = selectedEntry.id in favorites,
+                                    onFavorite = { favorite(selectedEntry) },
+                                    onOpen = { open(selectedEntry) },
+                                    coverHeight = coverHeight,
+                                    compact = compact,
+                                    modifier = Modifier.weight(1f).fillMaxHeight().hallFeedMotion(motion),
+                                )
+                            }
+                        } else {
+                            HallEmptyStateCard(category == HallCategory.Favorites && !hasFilters, Modifier.weight(1f))
                         }
                     }
                 }
@@ -941,54 +713,108 @@ internal fun GameplayHallView(
     }
 }
 
-private fun LazyListScope.hallAdaptiveSectionItems(
-    sectionKey: String,
-    items: List<HallEntry>,
-    availableWidth: Dp,
-    narrow: Boolean,
-    compact: Boolean,
-    favorites: List<String>,
-    onFavorite: (HallEntry) -> Unit,
-    onOpen: (HallEntry) -> Unit,
-    motion: GameplayHallMotionStates,
-) {
-    if (items.isEmpty()) return
-    // 单个条目在非窄屏下升级为全宽横版精品展卡，避免 1/3 卡片配大片空荡。
-    if (items.size == 1 && !narrow) {
-        val single = items.first()
-        item(key = "$sectionKey-spotlight-${single.id}") {
-            HallSpotlightCard(
-                entry = single,
-                favorite = single.id in favorites,
-                onFavorite = { onFavorite(single) },
-                onOpen = { onOpen(single) },
-                compact = compact,
-                modifier = Modifier.fillMaxWidth().hallFeedMotion(motion),
+@Composable
+private fun HallLibraryRow(entry: HallEntry, selected: Boolean, onSelect: () -> Unit) {
+    Surface(
+        selected = selected,
+        onClick = onSelect,
+        shape = HallControlShape,
+        color = if (selected) HallSurfaceElevated else HallSurfaceLow,
+        border = if (selected) BorderStroke(1.dp, HallAccent.copy(alpha = 0.55f)) else null,
+        modifier = Modifier.fillMaxWidth().testTag("hall-card-${entry.id}"),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 62.dp).padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            HallCover(entry, Modifier.size(60.dp, 42.dp).clip(RoundedCornerShape(6.dp)))
+            Text(
+                entry.game.name, Modifier.weight(1f), color = if (selected) HallInkPrimary else HallInkSecondary,
+                fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.SemiBold,
+                maxLines = 2, overflow = TextOverflow.Ellipsis,
             )
         }
-        return
     }
-    val columns = adaptiveHallColumns(items.size, availableWidth, narrow)
-    items(items.chunked(columns), key = { row -> "$sectionKey-" + row.joinToString("-") { it.id } }) { row ->
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(IntrinsicSize.Min)
-                .hallFeedMotion(motion),
-            horizontalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 14.dp),
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun HallGameDetails(
+    entry: HallEntry,
+    favorite: Boolean,
+    onFavorite: () -> Unit,
+    onOpen: () -> Unit,
+    coverHeight: Dp,
+    compact: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val telemetry = remember(entry.game) { entry.game.telemetry() }
+    val telemetryLabel = HallTelemetryLabel(telemetry)
+    val spacing = if (compact) 10.dp else 16.dp
+    Column(
+        modifier.testTag("hall-details").verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(spacing),
+    ) {
+        Box(Modifier.fillMaxWidth().heightIn(min = coverHeight).clip(HallCardShape)) {
+            HallCover(entry, Modifier.matchParentSize())
+            Box(Modifier.matchParentSize().background(Brush.verticalGradient(
+                listOf(Color.Transparent, Color.Black.copy(alpha = 0.84f)),
+            )))
+            Text(
+                entry.game.name,
+                Modifier.align(Alignment.BottomStart).padding(start = 18.dp, end = 18.dp, top = 54.dp, bottom = 12.dp),
+                fontSize = if (compact) 24.sp else 30.sp, lineHeight = if (compact) 29.sp else 37.sp,
+                color = HallInkPrimary, fontWeight = FontWeight.Bold,
+            )
+            HallCardFavoriteButton(favorite, entry.id, onFavorite, Modifier.align(Alignment.TopEnd).padding(8.dp))
+        }
+        FlowRow(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            itemVerticalAlignment = Alignment.CenterVertically,
         ) {
-            row.forEach { entry ->
-                HallGameCard(
-                    entry = entry,
-                    favorite = entry.id in favorites,
-                    onFavorite = { onFavorite(entry) },
-                    onOpen = { onOpen(entry) },
-                    compact = compact,
-                    wideAspect = columns == 2 && !narrow,
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
+            Surface(
+                onClick = onOpen,
+                enabled = entry.canOpen,
+                shape = HallControlShape,
+                color = if (entry.canOpen) HallAccent else HallSurfaceElevated,
+                modifier = Modifier.testTag("hall-open"),
+            ) {
+                Row(
+                    Modifier.heightIn(min = 44.dp).padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    val tint = if (entry.canOpen) HallAccentDeep else HallInkSecondary
+                    Text(
+                        if (entry.canOpen) hallText("enter") else readI18n("gamePortal.maintenance"),
+                        color = tint, fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
+                    )
+                    if (entry.canOpen) Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.size(17.dp), tint = tint)
+                }
+            }
+            if (telemetryLabel != null) HallMetaGlassChip(telemetryLabel, HallAccentBright)
+            else if (entry.game.servers.isNotEmpty()) HallMetaGlassChip(hallText("intelServerOffline"), HallAmber)
+            if (telemetry.hasExpansion) HallMetaGlassChip(hallText("expansionTag"), HallAmber)
+            if (telemetry.hasArtPack) {
+                val version = telemetry.artVersion.takeIf { it.isNotBlank() }
+                HallMetaGlassChip(listOfNotNull(hallText("artPackTag"), version).joinToString(" · "), HallCyan)
+            }
+        }
+        if (entry.game.description.isNotBlank()) {
+            Column(
+                Modifier.widthIn(max = 880.dp).fillMaxWidth().padding(bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(hallText("description"), color = HallInkPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = entry.game.description,
+                    modifier = Modifier.testTag("hall-description"),
+                    color = HallInkPrimary.copy(alpha = 0.88f), fontSize = 15.sp, lineHeight = 24.sp,
                 )
             }
-            repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
         }
     }
 }
@@ -1011,11 +837,9 @@ private fun HallTelemetryLabel(telemetry: OnlineGameTelemetry): String? {
 }
 
 @Composable
-private fun HallIconButton(
+private fun HallBackButton(
     onClick: () -> Unit,
-    id: String,
-    active: Boolean = false,
-    compact: Boolean = false,
+    compact: Boolean,
     content: @Composable () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -1029,7 +853,6 @@ private fun HallIconButton(
     )
     val bgColor by animateUiColorAsState(
         targetValue = when {
-            active -> HallAmber.copy(alpha = 0.16f)
             pressed -> Color(0x24FFFFFF)
             hovered -> Color(0x16FFFFFF)
             else -> HallSurfaceLow
@@ -1039,7 +862,6 @@ private fun HallIconButton(
     )
     val borderColor by animateUiColorAsState(
         targetValue = when {
-            active -> HallAmber.copy(alpha = 0.50f)
             hovered || pressed -> HallHairlineStrong
             else -> HallHairline
         },
@@ -1063,7 +885,7 @@ private fun HallIconButton(
             }
             .background(bgColor, HallControlShape)
             .border(1.dp, borderColor, HallControlShape)
-            .testTag("hall-$id"),
+            .testTag("hall-back"),
         content = content,
     )
 }
@@ -1157,121 +979,6 @@ private fun HallSearch(
 }
 
 @Composable
-private fun HallNavRailItem(
-    category: HallCategory,
-    selected: Boolean,
-    count: Int?,
-    compact: Boolean,
-    onClick: () -> Unit,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val hovered by interactionSource.collectIsHoveredAsState()
-    val pressed by interactionSource.collectIsPressedAsState()
-    val animated = uiAnimationsEnabled()
-    val scale = animateUiFloatAsState(
-        targetValue = if (animated && pressed) 0.985f else 1f,
-        animationSpec = tween(if (animated) 110 else 0, easing = StandardDecelerateEasing),
-        label = "HallNavScale",
-    )
-    val bgColor by animateUiColorAsState(
-        targetValue = when {
-            selected -> HallAccent.copy(alpha = 0.14f)
-            pressed -> Color(0x16FFFFFF)
-            hovered -> Color(0x0DFFFFFF)
-            else -> Color.Transparent
-        },
-        animationSpec = tween(if (animated) 160 else 0),
-        label = "HallNavBg",
-    )
-    val borderColor by animateUiColorAsState(
-        targetValue = when {
-            selected -> HallAccent.copy(alpha = 0.30f)
-            hovered -> HallHairlineSoft
-            else -> Color.Transparent
-        },
-        animationSpec = tween(if (animated) 160 else 0),
-        label = "HallNavBorder",
-    )
-    val contentColor by animateUiColorAsState(
-        targetValue = when {
-            selected -> HallInkPrimary
-            hovered -> HallInkPrimary.copy(alpha = 0.92f)
-            else -> HallInkSecondary
-        },
-        animationSpec = tween(if (animated) 160 else 0),
-        label = "HallNavText",
-    )
-    val iconColor by animateUiColorAsState(
-        targetValue = when {
-            selected -> HallAccentBright
-            hovered -> HallInkPrimary
-            else -> HallInkTertiary
-        },
-        animationSpec = tween(if (animated) 160 else 0),
-        label = "HallNavIcon",
-    )
-    Surface(
-        onClick = onClick,
-        interactionSource = interactionSource,
-        shape = HallControlShape,
-        color = bgColor,
-        border = if (borderColor == Color.Transparent) null else BorderStroke(1.dp, borderColor),
-        modifier = Modifier
-            .fillMaxWidth()
-            .let {
-                if (animated) {
-                    it.graphicsLayer {
-                        val value = scale.value
-                        scaleX = value
-                        scaleY = value
-                    }
-                } else it
-            }
-            .testTag("hall-category-${category.key}"),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = if (compact) 40.dp else 44.dp)
-                .padding(start = 8.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Box(
-                Modifier
-                    .width(3.dp)
-                    .height(if (selected) 18.dp else 0.dp)
-                    .background(if (selected) HallAccent else Color.Transparent, CircleShape),
-            )
-            HallCategoryIcon(category, selected, iconColor, Modifier.size(19.dp))
-            Text(
-                text = hallText("categories.${category.key}"),
-                color = contentColor,
-                fontSize = 13.5.sp,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            if (count != null && count > 0) {
-                Text(
-                    text = count.toString(),
-                    color = if (selected) HallAccentBright else HallInkTertiary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier
-                        .background(
-                            if (selected) HallAccent.copy(alpha = 0.18f) else Color(0x10FFFFFF),
-                            CircleShape,
-                        )
-                        .padding(horizontal = 7.dp, vertical = 1.5.dp),
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun HallCategoryChip(
     category: HallCategory,
     selected: Boolean,
@@ -1340,7 +1047,6 @@ private fun HallCategoryIcon(
     modifier: Modifier,
 ) {
     when (category) {
-        HallCategory.Recommended -> Icon(Icons.Default.Star, null, modifier, tint = tint)
         HallCategory.All -> Icon(painterResource(Res.drawable.dns_30), null, modifier, tint = tint)
         HallCategory.Favorites -> HallStar(selected, null, tint, modifier)
     }
@@ -1349,142 +1055,25 @@ private fun HallCategoryIcon(
 @Composable
 private fun HallDirectoryStatusStrip(
     loading: Boolean,
-    loadFailed: Boolean,
-    hasOnlineGames: Boolean,
-    narrow: Boolean,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val statusDotColor = when {
-        loadFailed -> HallCoral
-        loading -> HallAmber
-        hasOnlineGames -> HallAccent
-        else -> HallInkTertiary
-    }
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        Box(Modifier.size(6.dp).background(statusDotColor, CircleShape))
+        Box(Modifier.size(6.dp).background(if (loading) HallAmber else HallAccent, CircleShape))
         Text(
-            text = hallText(
-                when {
-                    loading -> "directoryLoading"
-                    loadFailed -> "directoryFailed"
-                    !hasOnlineGames -> "directoryEmpty"
-                    else -> "directoryReady"
-                },
-            ),
-            color = if (loadFailed) HallCoral.copy(alpha = 0.90f) else HallInkTertiary,
+            text = hallText(if (loading) "directoryLoading" else "directoryReady"),
+            color = HallInkTertiary,
             fontSize = 11.5.sp,
             lineHeight = 15.sp,
-            maxLines = if (narrow) 2 else 1,
+            maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f).testTag("hall-directory-status"),
         )
         HallRefreshButton(onClick = onRefresh)
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun HallSectionControlBar(
-    title: String,
-    count: Int,
-    availableOnly: Boolean,
-    hasFilters: Boolean,
-    onSelectAvailable: (Boolean) -> Unit,
-    onResetFilters: () -> Unit,
-    loading: Boolean,
-    loadFailed: Boolean,
-    hasOnlineGames: Boolean,
-    onRefresh: () -> Unit,
-    narrow: Boolean,
-    compact: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 5.dp),
-    ) {
-        FlowRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            itemVerticalAlignment = Alignment.CenterVertically,
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(9.dp),
-            ) {
-                Box(
-                    Modifier
-                        .width(3.dp)
-                        .height(17.dp)
-                        .background(
-                            Brush.verticalGradient(listOf(HallAccentBright, HallAccent)),
-                            CircleShape,
-                        ),
-                )
-                Text(
-                    text = title,
-                    color = HallInkPrimary,
-                    fontSize = if (compact) 16.sp else 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = (-0.2).sp,
-                )
-                Text(
-                    text = "$count " + hallText("entries"),
-                    color = HallInkSecondary,
-                    fontSize = 11.5.sp,
-                    modifier = Modifier
-                        .background(Color(0x12FFFFFF), CircleShape)
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
-                )
-            }
-
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                itemVerticalAlignment = Alignment.CenterVertically,
-            ) {
-                HallFilterPill(
-                    label = hallText("status"),
-                    value = hallText(if (availableOnly) "available" else "any"),
-                    id = "status",
-                    active = availableOnly,
-                    options = listOf(false, true),
-                    title = { hallText(if (it) "available" else "any") },
-                    onSelect = onSelectAvailable,
-                )
-                if (hasFilters) {
-                    Surface(
-                        onClick = onResetFilters,
-                        shape = CircleShape,
-                        color = HallAccent.copy(alpha = 0.14f),
-                        border = BorderStroke(1.dp, HallAccent.copy(alpha = 0.34f)),
-                        modifier = Modifier.testTag("hall-reset"),
-                    ) {
-                        Text(
-                            text = hallText("reset"),
-                            color = HallAccentBright,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        )
-                    }
-                }
-            }
-        }
-
-        HallDirectoryStatusStrip(
-            loading = loading,
-            loadFailed = loadFailed,
-            hasOnlineGames = hasOnlineGames,
-            narrow = narrow,
-            onRefresh = onRefresh,
-        )
     }
 }
 
@@ -1603,648 +1192,6 @@ private fun <T> HallFilterPill(
                     },
                 )
             }
-        }
-    }
-}
-
-/**
- * 顶部主视觉舞台：
- * - 单网游首发态：升级为沉浸式大画幅「旗舰首发主舞台」，完整释放封面美术，并直接承载卡片语义与收藏入口。
- * - 多网游态：紧凑影院轮播舞台 + 高可读切换胶囊，与下方自适应画廊自然衔接。
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun HallFeaturedStage(
-    entries: List<HallEntry>,
-    index: Int,
-    singleOnlinePremiere: Boolean,
-    isFavorite: Boolean,
-    onToggleFavorite: () -> Unit,
-    compact: Boolean,
-    mediumHeight: Boolean,
-    narrow: Boolean,
-    onSelect: (Int) -> Unit,
-    onOpen: () -> Unit,
-) {
-    val entry = entries[index]
-    val animated = uiAnimationsEnabled()
-    val interactive = LocalDialogInteractive.current
-    val stageInteraction = remember { MutableInteractionSource() }
-    val stageHovered by stageInteraction.collectIsHoveredAsState()
-    val openInteraction = remember { MutableInteractionSource() }
-    val openHovered by openInteraction.collectIsHoveredAsState()
-    val openPressed by openInteraction.collectIsPressedAsState()
-
-    val openScale = animateUiFloatAsState(
-        targetValue = if (animated && openPressed && entry.canOpen) 0.965f else 1f,
-        animationSpec = tween(if (animated) 110 else 0, easing = StandardDecelerateEasing),
-        label = "HallFeaturedOpenScale",
-    )
-    val coverZoom = animateUiFloatAsState(
-        targetValue = if (animated && interactive && (stageHovered || openHovered) && entry.canOpen) 1.028f else 1f,
-        animationSpec = tween(if (animated) 260 else 0, easing = StandardDecelerateEasing),
-        label = "HallFeaturedCoverZoom",
-    )
-    val arrowShift = animateUiFloatAsState(
-        targetValue = if (animated && interactive && openHovered && entry.canOpen) 1f else 0f,
-        animationSpec = tween(if (animated) 180 else 0, easing = StandardDecelerateEasing),
-        label = "HallFeaturedArrowShift",
-    )
-
-    val heroHeight = when {
-        narrow && singleOnlinePremiere -> 320.dp
-        narrow -> 244.dp
-        compact && singleOnlinePremiere -> 208.dp
-        compact -> 176.dp
-        singleOnlinePremiere && mediumHeight -> 296.dp
-        singleOnlinePremiere -> 352.dp
-        else -> 192.dp
-    }
-
-    val stageBorderBrush = remember(singleOnlinePremiere) {
-        Brush.verticalGradient(
-            listOf(
-                if (singleOnlinePremiere) HallAccent.copy(alpha = 0.44f) else Color(0x30FFFFFF),
-                Color(0x18FFFFFF),
-                Color(0x0BFFFFFF),
-            ),
-        )
-    }
-
-    val stageContent: @Composable () -> Unit = {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = heroHeight)
-                .clip(HallHeroShape)
-                .border(1.dp, stageBorderBrush, HallHeroShape),
-        ) {
-            AnimatedContent(
-                targetState = index,
-                modifier = Modifier.matchParentSize(),
-                transitionSpec = {
-                    if (!animated) {
-                        (EnterTransition.None togetherWith ExitTransition.None).using(null)
-                    } else {
-                        (fadeIn(tween(280, easing = StandardDecelerateEasing)) togetherWith fadeOut(tween(220))).using(null)
-                    }
-                },
-                label = "HallFeaturedCover",
-            ) { targetIndex ->
-                val targetEntry = entries.getOrNull(targetIndex) ?: entry
-                HallCover(
-                    entry = targetEntry,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .let {
-                            if (animated) {
-                                it.graphicsLayer {
-                                    val z = coverZoom.value
-                                    scaleX = z
-                                    scaleY = z
-                                }
-                            } else it
-                        },
-                )
-            }
-
-            // 定向暗面渐变：左侧清晰承载文案，右侧完整透出原画细节。
-            Box(
-                Modifier
-                    .matchParentSize()
-                    .drawBehind {
-                        drawRect(
-                            Brush.horizontalGradient(
-                                0.00f to Color(0xF6090F13),
-                                0.34f to Color(0xDE0A1116),
-                                0.60f to Color(0x660A1116),
-                                0.85f to Color(0x100A1116),
-                                1.00f to Color(0x34080D10),
-                            ),
-                        )
-                        drawRect(
-                            Brush.verticalGradient(
-                                0.00f to Color(0x26080D10),
-                                0.48f to Color.Transparent,
-                                1.00f to Color(0xDC080D10),
-                            ),
-                        )
-                        drawRect(
-                            Brush.radialGradient(
-                                colors = listOf(HallAccent.copy(alpha = if (singleOnlinePremiere) 0.18f else 0.11f), Color.Transparent),
-                                center = Offset(size.width * 0.08f, size.height * 0.14f),
-                                radius = (size.width * 0.46f).coerceAtLeast(140.dp.toPx()),
-                            ),
-                        )
-                        drawLine(
-                            brush = Brush.horizontalGradient(
-                                listOf(
-                                    Color.Transparent,
-                                    if (singleOnlinePremiere) HallAccentBright.copy(alpha = 0.54f) else Color(0x36FFFFFF),
-                                    Color(0x18FFFFFF),
-                                    Color.Transparent,
-                                ),
-                            ),
-                            start = Offset(22.dp.toPx(), 1.dp.toPx()),
-                            end = Offset(size.width - 22.dp.toPx(), 1.dp.toPx()),
-                            strokeWidth = 1.dp.toPx(),
-                        )
-                    },
-            )
-
-            if (singleOnlinePremiere) {
-                HallCardFavoriteButton(
-                    favorite = isFavorite,
-                    entryId = entry.id,
-                    onClick = onToggleFavorite,
-                    modifier = Modifier.align(Alignment.TopEnd).padding(if (compact) 12.dp else 18.dp),
-                )
-            }
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = heroHeight)
-                    .padding(
-                        horizontal = if (compact || narrow) 16.dp else if (singleOnlinePremiere) 28.dp else 24.dp,
-                        vertical = if (compact) 14.dp else if (singleOnlinePremiere) 24.dp else 17.dp,
-                    ),
-                verticalArrangement = Arrangement.SpaceBetween,
-            ) {
-                // 顶部眉标与在线态势
-                val currentTelemetry = entry.game.telemetry()
-                val currentTelemetryText = HallTelemetryLabel(currentTelemetry)
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(if (singleOnlinePremiere) 0.86f else 1f),
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
-                    verticalArrangement = Arrangement.spacedBy(5.dp),
-                    itemVerticalAlignment = Alignment.CenterVertically,
-                ) {
-                    HallEyebrowBadge(
-                        text = hallText(if (singleOnlinePremiere) "premiereBadge" else "onlineSection"),
-                        accent = if (singleOnlinePremiere) HallAccentBright else HallInkPrimary,
-                        highlight = singleOnlinePremiere,
-                    )
-                    if (entry.canOpen && entry.available && currentTelemetryText != null) {
-                        HallLiveTelemetryBadge(text = currentTelemetryText)
-                    } else {
-                        HallStatusGlassBadge(
-                            canOpen = entry.canOpen,
-                            available = entry.available,
-                        )
-                    }
-                }
-
-                // 中段主标题与玩法简介
-                AnimatedContent(
-                    targetState = index,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = if (singleOnlinePremiere && !compact) 14.dp else 6.dp),
-                    transitionSpec = {
-                        if (!animated) {
-                            (EnterTransition.None togetherWith ExitTransition.None).using(null)
-                        } else {
-                            val forward = targetState >= initialState
-                            val enterSlide = if (forward) 22 else -22
-                            val exitSlide = if (forward) -14 else 14
-                            (
-                                fadeIn(tween(220, delayMillis = 35, easing = StandardDecelerateEasing)) +
-                                    slideInHorizontally(tween(300, easing = EmphasizedDecelerateEasing)) { enterSlide }
-                                togetherWith
-                                fadeOut(tween(130, easing = EmphasizedAccelerateEasing)) +
-                                    slideOutHorizontally(tween(160, easing = EmphasizedAccelerateEasing)) { exitSlide }
-                            ).using(null)
-                        }
-                    },
-                    label = "HallFeaturedContent",
-                ) { targetIndex ->
-                    val targetEntry = entries.getOrNull(targetIndex) ?: entry
-                    val targetTelemetry = targetEntry.game.telemetry()
-                    Column(verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else if (singleOnlinePremiere) 10.dp else 7.dp)) {
-                        Text(
-                            text = targetEntry.game.name,
-                            color = HallInkPrimary,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = when {
-                                compact -> 26.sp
-                                singleOnlinePremiere && !narrow -> 38.sp
-                                narrow -> 30.sp
-                                else -> 30.sp
-                            },
-                            lineHeight = when {
-                                compact -> 31.sp
-                                singleOnlinePremiere && !narrow -> 44.sp
-                                narrow -> 36.sp
-                                else -> 35.sp
-                            },
-                            letterSpacing = (-0.6).sp,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.fillMaxWidth(if (narrow) 1f else 0.58f),
-                        )
-                        if (targetEntry.game.description.isNotBlank()) {
-                            Text(
-                                text = targetEntry.game.description,
-                                color = HallInkSecondary,
-                                fontSize = if (singleOnlinePremiere && !compact) 14.sp else 13.sp,
-                                lineHeight = if (singleOnlinePremiere && !compact) 21.sp else 18.5.sp,
-                                maxLines = if (singleOnlinePremiere && !compact) 3 else 2,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.fillMaxWidth(if (narrow) 1f else 0.54f),
-                            )
-                        }
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            HallMetaGlassChip(text = hallText("categories.extended"), accent = HallAccentBright)
-                            if (targetTelemetry.hasExpansion) {
-                                HallMetaGlassChip(text = hallText("expansionTag"), accent = HallAmber)
-                            } else if (targetTelemetry.hasArtPack) {
-                                HallMetaGlassChip(text = hallText("artPackTag"), accent = HallCyan)
-                            }
-                        }
-                    }
-                }
-
-                // 底部切换条与主行动按钮
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    if (entries.size > 1) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(if (narrow || compact) 2.dp else 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f, fill = false),
-                        ) {
-                            entries.forEachIndexed { dot, item ->
-                                val activeDot = index == dot
-                                val itemTitle = item.game.name
-                                if (!narrow && !compact && entries.size <= 4) {
-                                    HallHeroSwitcherTab(
-                                        index = dot,
-                                        title = itemTitle,
-                                        active = activeDot,
-                                        onClick = { onSelect(dot) },
-                                    )
-                                } else {
-                                    val dotWidth by animateUiDpAsState(
-                                        targetValue = if (activeDot) 24.dp else 7.dp,
-                                        animationSpec = tween(if (animated) 220 else 0, easing = EmphasizedDecelerateEasing),
-                                        label = "HallFeaturedDotWidth",
-                                    )
-                                    val dotColor by animateUiColorAsState(
-                                        targetValue = if (activeDot) HallAccent else Color(0x55FFFFFF),
-                                        animationSpec = tween(if (animated) 180 else 0),
-                                        label = "HallFeaturedDotColor",
-                                    )
-                                    Surface(
-                                        onClick = { onSelect(dot) },
-                                        color = Color.Transparent,
-                                        shape = CircleShape,
-                                        modifier = Modifier
-                                            .size(44.dp)
-                                            .testTag("hall-featured-$dot")
-                                            .semantics { contentDescription = itemTitle },
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Box(
-                                                Modifier
-                                                    .width(dotWidth)
-                                                    .height(6.dp)
-                                                    .background(dotColor, CircleShape),
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        // 单旗舰态左下角显示平台认证微标，平衡右下主按钮视觉重量。
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.weight(1f, fill = false),
-                        ) {
-                            Icon(
-                                painterResource(Res.drawable.shield_30),
-                                contentDescription = null,
-                                tint = HallAccentBright.copy(alpha = 0.85f),
-                                modifier = Modifier.size(15.dp),
-                            )
-                            Text(
-                                text = hallText("intelPlatformVerified"),
-                                color = HallInkSecondary,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-
-                    Spacer(Modifier.width(12.dp))
-
-                    val ctaBrush = remember(entry.canOpen, openHovered, openPressed) {
-                        when {
-                            !entry.canOpen -> SolidColor(Color(0xAA253238))
-                            openPressed -> Brush.horizontalGradient(listOf(Color(0xFF2FC475), Color(0xFF22A661)))
-                            openHovered -> Brush.horizontalGradient(listOf(Color(0xFF5CF3A3), Color(0xFF37DC85)))
-                            else -> Brush.horizontalGradient(listOf(Color(0xFF47EB95), Color(0xFF28C673)))
-                        }
-                    }
-                    Surface(
-                        onClick = onOpen,
-                        enabled = entry.canOpen,
-                        interactionSource = openInteraction,
-                        color = Color.Transparent,
-                        shape = CircleShape,
-                        border = BorderStroke(
-                            1.dp,
-                            if (entry.canOpen) Color(0x55FFFFFF) else HallHairline,
-                        ),
-                        modifier = Modifier
-                            .let {
-                                if (animated) {
-                                    it.graphicsLayer {
-                                        val value = openScale.value
-                                        scaleX = value
-                                        scaleY = value
-                                    }
-                                } else it
-                            }
-                            .background(ctaBrush, CircleShape)
-                            .testTag("hall-featured-open"),
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .heightIn(min = if (compact) 40.dp else if (singleOnlinePremiere) 48.dp else 44.dp)
-                                .padding(horizontal = if (compact) 18.dp else if (singleOnlinePremiere) 26.dp else 22.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(9.dp),
-                        ) {
-                            Text(
-                                text = if (entry.canOpen) hallText("enter") else readI18n("gamePortal.maintenance"),
-                                color = if (entry.canOpen) HallAccentDeep else HallInkSecondary,
-                                fontSize = if (compact) 13.5.sp else if (singleOnlinePremiere) 15.sp else 14.sp,
-                                fontWeight = FontWeight.Bold,
-                            )
-                            Icon(
-                                Icons.AutoMirrored.Filled.ArrowForward,
-                                contentDescription = null,
-                                modifier = Modifier
-                                    .size(18.dp)
-                                    .let {
-                                        if (animated) it.graphicsLayer { translationX = arrowShift.value * 3.dp.toPx() } else it
-                                    },
-                                tint = if (entry.canOpen) HallAccentDeep else HallInkTertiary,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Box(Modifier.fillMaxWidth().testTag("hall-featured")) {
-        if (singleOnlinePremiere) {
-            Surface(
-                onClick = onOpen,
-                enabled = entry.canOpen,
-                interactionSource = stageInteraction,
-                color = Color.Transparent,
-                shape = HallHeroShape,
-                modifier = Modifier.fillMaxWidth().testTag("hall-card-${entry.id}"),
-            ) {
-                stageContent()
-            }
-        } else {
-            stageContent()
-        }
-    }
-}
-
-/**
- * 单网游首发态三格 Bento 情报卡：全部基于真实目录数据呈现，不捏造任何演示玩法，
- * 让仅有 1 个网游的大厅在宽屏与移动端同样丰满、平衡、有高级感。
- */
-@Composable
-private fun HallSingleGameIntelDeck(
-    entry: HallEntry,
-    compact: Boolean,
-    narrow: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    val telemetry = entry.game.telemetry()
-    val statusHeadline = when {
-        !entry.canOpen -> readI18n("gamePortal.maintenance")
-        telemetry.onlineServers == 1 -> hallText("serverOnlineSingle")
-        telemetry.onlineServers > 1 -> hallText("serversOnline").replace("{0}", telemetry.onlineServers.toString())
-        telemetry.totalServers > 0 -> hallText("intelServerOffline")
-        else -> hallText("intelPortalReady")
-    }
-    val statusSubline = when {
-        !entry.canOpen -> hallText("intelPortalMaintenanceHint")
-        telemetry.onlineServers > 0 && telemetry.maxPlayers > 0 ->
-            hallText("intelPlayersCapacity")
-                .replace("{0}", telemetry.players.toString())
-                .replace("{1}", telemetry.maxPlayers.toString())
-        telemetry.onlineServers > 0 && telemetry.players > 0 ->
-            hallText("playersOnline").replace("{0}", telemetry.players.toString())
-        telemetry.onlineServers > 0 -> hallText("intelServerReady")
-        telemetry.totalServers > 0 -> hallText("intelServerOfflineHint")
-        else -> hallText("intelPortalReadyHint")
-    }
-    val statusAccent = if (entry.canOpen && (telemetry.onlineServers > 0 || telemetry.totalServers == 0)) HallAccent else HallAmber
-
-    val contentHeadline = when {
-        telemetry.hasExpansion -> hallText("expansionTag")
-        telemetry.hasArtPack && telemetry.artVersion.isNotBlank() -> hallText("artPackTag") + " · v${telemetry.artVersion}"
-        telemetry.hasArtPack -> hallText("artPackTag")
-        else -> hallText("intelPlatformVerified")
-    }
-    val contentSubline = when {
-        telemetry.hasExpansion -> hallText("intelExpansionDesc")
-        telemetry.hasArtPack -> hallText("intelArtPackDesc")
-        else -> hallText("intelPlatformVerifiedDesc")
-    }
-    val contentAccent = when {
-        telemetry.hasExpansion -> HallAmber
-        telemetry.hasArtPack -> HallCyan
-        else -> HallAccentBright
-    }
-
-    if (narrow) {
-        Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            HallIntelBentoTile(
-                eyebrow = hallText("intelStatusTitle"),
-                headline = statusHeadline,
-                subline = statusSubline,
-                accent = statusAccent,
-                iconRes = Res.drawable.public_30,
-                compact = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            HallIntelBentoTile(
-                eyebrow = hallText("intelContentTitle"),
-                headline = contentHeadline,
-                subline = contentSubline,
-                accent = contentAccent,
-                iconRes = Res.drawable.shield_30,
-                compact = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            HallIntelBentoTile(
-                eyebrow = hallText("intelEcosystemTitle"),
-                headline = hallText("moreModesTitle"),
-                subline = hallText("intelEcosystemDesc"),
-                accent = HallInkSecondary,
-                iconRes = Res.drawable.extension_30,
-                compact = true,
-                dashed = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-    } else {
-        Row(
-            modifier = modifier.fillMaxWidth().height(IntrinsicSize.Min),
-            horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 14.dp),
-        ) {
-            HallIntelBentoTile(
-                eyebrow = hallText("intelStatusTitle"),
-                headline = statusHeadline,
-                subline = statusSubline,
-                accent = statusAccent,
-                iconRes = Res.drawable.public_30,
-                compact = compact,
-                modifier = Modifier.weight(1f).fillMaxHeight(),
-            )
-            HallIntelBentoTile(
-                eyebrow = hallText("intelContentTitle"),
-                headline = contentHeadline,
-                subline = contentSubline,
-                accent = contentAccent,
-                iconRes = Res.drawable.shield_30,
-                compact = compact,
-                modifier = Modifier.weight(1f).fillMaxHeight(),
-            )
-            HallIntelBentoTile(
-                eyebrow = hallText("intelEcosystemTitle"),
-                headline = hallText("moreModesTitle"),
-                subline = hallText("intelEcosystemDesc"),
-                accent = HallAccentBright,
-                iconRes = Res.drawable.extension_30,
-                compact = compact,
-                dashed = true,
-                modifier = Modifier.weight(1f).fillMaxHeight(),
-            )
-        }
-    }
-}
-
-@Composable
-private fun HallIntelBentoTile(
-    eyebrow: String,
-    headline: String,
-    subline: String,
-    accent: Color,
-    iconRes: org.jetbrains.compose.resources.DrawableResource,
-    compact: Boolean,
-    dashed: Boolean = false,
-    modifier: Modifier = Modifier,
-) {
-    val shape = RoundedCornerShape(16.dp)
-    Box(
-        modifier = modifier
-            .clip(shape)
-            .background(if (dashed) Color(0x9E10171C) else HallSurfaceCard)
-            .drawBehind {
-                val strokeWidth = 1.dp.toPx()
-                val half = strokeWidth / 2f
-                val corner = CornerRadius(16.dp.toPx(), 16.dp.toPx())
-                if (dashed) {
-                    val dash = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 5.dp.toPx()), 0f)
-                    drawRoundRect(
-                        color = HallHairline,
-                        topLeft = Offset(half, half),
-                        size = Size(size.width - strokeWidth, size.height - strokeWidth),
-                        cornerRadius = corner,
-                        style = Stroke(width = strokeWidth, pathEffect = dash),
-                    )
-                } else {
-                    drawRect(
-                        Brush.radialGradient(
-                            colors = listOf(accent.copy(alpha = 0.10f), Color.Transparent),
-                            center = Offset(size.width * 0.14f, size.height * 0.12f),
-                            radius = (size.width * 0.72f).coerceAtLeast(100.dp.toPx()),
-                        ),
-                    )
-                    drawRoundRect(
-                        brush = Brush.verticalGradient(listOf(Color(0x22FFFFFF), Color(0x0AFFFFFF))),
-                        topLeft = Offset(half, half),
-                        size = Size(size.width - strokeWidth, size.height - strokeWidth),
-                        cornerRadius = corner,
-                        style = Stroke(width = strokeWidth),
-                    )
-                }
-            },
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(
-                    horizontal = if (compact) 13.dp else 16.dp,
-                    vertical = if (compact) 10.dp else 14.dp,
-                ),
-            verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(22.dp)
-                        .background(accent.copy(alpha = 0.13f), RoundedCornerShape(7.dp))
-                        .border(1.dp, accent.copy(alpha = 0.26f), RoundedCornerShape(7.dp)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        painterResource(iconRes),
-                        contentDescription = null,
-                        tint = accent,
-                        modifier = Modifier.size(13.dp),
-                    )
-                }
-                Text(
-                    text = eyebrow,
-                    color = HallInkTertiary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Text(
-                text = headline,
-                color = HallInkPrimary,
-                fontSize = if (compact) 14.sp else 15.5.sp,
-                lineHeight = 20.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = subline,
-                color = HallInkSecondary,
-                fontSize = 11.5.sp,
-                lineHeight = 16.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
         }
     }
 }
@@ -2370,581 +1317,6 @@ private fun HallDirectoryZeroStage(
 }
 
 @Composable
-private fun HallHeroSwitcherTab(
-    index: Int,
-    title: String,
-    active: Boolean,
-    onClick: () -> Unit,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val hovered by interactionSource.collectIsHoveredAsState()
-    val animated = uiAnimationsEnabled()
-    val bgColor by animateUiColorAsState(
-        targetValue = when {
-            active -> Color(0xCC121E24)
-            hovered -> Color(0x88101A20)
-            else -> Color(0x580B1216)
-        },
-        animationSpec = tween(if (animated) 180 else 0),
-        label = "HallSwitcherBg",
-    )
-    val borderColor by animateUiColorAsState(
-        targetValue = when {
-            active -> HallAccent.copy(alpha = 0.55f)
-            hovered -> HallHairlineStrong
-            else -> HallHairlineSoft
-        },
-        animationSpec = tween(if (animated) 180 else 0),
-        label = "HallSwitcherBorder",
-    )
-    val barWidth by animateUiDpAsState(
-        targetValue = if (active) 16.dp else 6.dp,
-        animationSpec = tween(if (animated) 220 else 0, easing = EmphasizedDecelerateEasing),
-        label = "HallSwitcherBar",
-    )
-    Surface(
-        onClick = onClick,
-        interactionSource = interactionSource,
-        shape = CircleShape,
-        color = bgColor,
-        border = BorderStroke(1.dp, borderColor),
-        modifier = Modifier
-            .heightIn(min = 34.dp)
-            .testTag("hall-featured-$index")
-            .semantics { contentDescription = title },
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
-        ) {
-            Box(
-                Modifier
-                    .width(barWidth)
-                    .height(4.dp)
-                    .background(if (active) HallAccent else Color(0x66FFFFFF), CircleShape),
-            )
-            Text(
-                text = title,
-                color = if (active) HallInkPrimary else HallInkSecondary,
-                fontSize = 11.5.sp,
-                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = 110.dp),
-            )
-        }
-    }
-}
-
-/**
- * 全宽横版精品展卡：当「全部玩法」「我的收藏」或搜索筛选结果只有 1 个网游时自动启用，
- * 以左图右文的杂志级构图填满空间，彻底消除单个小卡的空旷感。
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun HallSpotlightCard(
-    entry: HallEntry,
-    favorite: Boolean,
-    onFavorite: () -> Unit,
-    onOpen: () -> Unit,
-    compact: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val hovered by interactionSource.collectIsHoveredAsState()
-    val pressed by interactionSource.collectIsPressedAsState()
-    val animated = uiAnimationsEnabled()
-    val interactive = LocalDialogInteractive.current
-
-    val cardScale = animateUiFloatAsState(
-        targetValue = when {
-            !animated || !interactive -> 1f
-            pressed && entry.canOpen -> 0.99f
-            hovered && entry.canOpen -> 1.006f
-            else -> 1f
-        },
-        animationSpec = tween(if (animated) 160 else 0, easing = StandardDecelerateEasing),
-        label = "HallSpotlightScale",
-    )
-    val coverScale = animateUiFloatAsState(
-        targetValue = if (animated && interactive && hovered && entry.canOpen) 1.038f else 1f,
-        animationSpec = tween(if (animated) 240 else 0, easing = StandardDecelerateEasing),
-        label = "HallSpotlightCoverScale",
-    )
-    val arrowOffset = animateUiFloatAsState(
-        targetValue = if (animated && interactive && hovered && entry.canOpen) 1f else 0f,
-        animationSpec = tween(if (animated) 180 else 0, easing = StandardDecelerateEasing),
-        label = "HallSpotlightArrow",
-    )
-    val borderColor = animateUiColorAsState(
-        targetValue = if (interactive && hovered && entry.canOpen) HallAccent.copy(alpha = 0.56f) else HallHairline,
-        animationSpec = tween(if (animated) 180 else 0),
-        label = "HallSpotlightBorder",
-    )
-    val telemetry = entry.game.telemetry()
-    val cardHeight = if (compact) 172.dp else 218.dp
-
-    Surface(
-        onClick = onOpen,
-        enabled = entry.canOpen,
-        interactionSource = interactionSource,
-        color = if (interactive && hovered && entry.canOpen) HallSurfaceCardHover else HallSurfaceCard,
-        shape = HallCardShape,
-        border = if (animated) null else BorderStroke(1.dp, HallHairline),
-        modifier = modifier
-            .height(cardHeight)
-            .let {
-                if (animated) {
-                    it.graphicsLayer {
-                        val value = cardScale.value
-                        scaleX = value
-                        scaleY = value
-                    }.drawWithContent {
-                        drawContent()
-                        val strokeWidth = 1.dp.toPx()
-                        val half = strokeWidth / 2f
-                        val radius = (18.dp.toPx() - half).coerceAtLeast(0f)
-                        drawRoundRect(
-                            color = borderColor.value,
-                            topLeft = Offset(half, half),
-                            size = Size(
-                                (size.width - strokeWidth).coerceAtLeast(0f),
-                                (size.height - strokeWidth).coerceAtLeast(0f),
-                            ),
-                            cornerRadius = CornerRadius(radius, radius),
-                            style = Stroke(width = strokeWidth),
-                        )
-                    }
-                } else it
-            }
-            .testTag("hall-card-${entry.id}"),
-    ) {
-        Row(Modifier.fillMaxSize()) {
-            Box(
-                Modifier
-                    .weight(0.48f)
-                    .fillMaxHeight()
-                    .clip(RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp)),
-            ) {
-                HallCover(
-                    entry = entry,
-                    modifier = Modifier
-                        .matchParentSize()
-                        .let {
-                            if (animated) {
-                                it.graphicsLayer {
-                                    val z = coverScale.value
-                                    scaleX = z
-                                    scaleY = z
-                                }
-                            } else it
-                        },
-                )
-                Box(
-                    Modifier
-                        .matchParentSize()
-                        .background(
-                            Brush.horizontalGradient(
-                                0.0f to Color.Transparent,
-                                0.65f to Color.Transparent,
-                                1.0f to HallSurfaceCard.copy(alpha = 0.88f),
-                            ),
-                        ),
-                )
-                Box(Modifier.align(Alignment.TopStart).padding(12.dp)) {
-                    HallStatusGlassBadge(canOpen = entry.canOpen, available = entry.available)
-                }
-            }
-
-            Column(
-                modifier = Modifier
-                    .weight(0.52f)
-                    .fillMaxHeight()
-                    .padding(horizontal = if (compact) 16.dp else 24.dp, vertical = if (compact) 14.dp else 20.dp),
-                verticalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 9.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        FlowRow(
-                            modifier = Modifier.weight(1f),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            HallMetaGlassChip(text = hallText("categories.extended"), accent = HallAccentBright)
-                            if (telemetry.hasExpansion) {
-                                HallMetaGlassChip(text = hallText("expansionTag"), accent = HallAmber)
-                            } else if (telemetry.hasArtPack) {
-                                HallMetaGlassChip(text = hallText("artPackTag"), accent = HallCyan)
-                            }
-                        }
-                        HallCardFavoriteButton(
-                            favorite = favorite,
-                            entryId = entry.id,
-                            onClick = onFavorite,
-                        )
-                    }
-
-                    Text(
-                        text = entry.game.name,
-                        color = HallInkPrimary,
-                        fontSize = if (compact) 20.sp else 24.sp,
-                        lineHeight = if (compact) 24.sp else 29.sp,
-                        letterSpacing = (-0.3).sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-
-                    if (entry.game.description.isNotBlank()) {
-                        Text(
-                            text = entry.game.description,
-                            color = HallInkSecondary,
-                            fontSize = 13.sp,
-                            lineHeight = 19.sp,
-                            maxLines = if (compact) 2 else 3,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    val telemetryText = HallTelemetryLabel(telemetry)
-                    if (telemetryText != null) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.weight(1f, fill = false),
-                        ) {
-                            Box(Modifier.size(6.dp).background(HallAccent, CircleShape))
-                            Text(
-                                text = telemetryText,
-                                color = HallCyan,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    } else {
-                        Spacer(Modifier.width(4.dp))
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .background(
-                                if (entry.canOpen) HallAccent.copy(alpha = 0.16f) else Color(0x14FFFFFF),
-                                CircleShape,
-                            )
-                            .border(
-                                1.dp,
-                                if (entry.canOpen) HallAccent.copy(alpha = 0.42f) else HallHairline,
-                                CircleShape,
-                            )
-                            .padding(horizontal = 15.dp, vertical = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            text = if (entry.canOpen) hallText("enter") else readI18n("gamePortal.maintenance"),
-                            color = if (entry.canOpen) HallAccentBright else HallInkTertiary,
-                            fontSize = 12.5.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = null,
-                            modifier = Modifier
-                                .size(15.dp)
-                                .let {
-                                    if (animated) it.graphicsLayer { translationX = arrowOffset.value * 3.dp.toPx() } else it
-                                },
-                            tint = if (entry.canOpen) HallAccentBright else HallInkTertiary,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun HallGameCard(
-    entry: HallEntry,
-    favorite: Boolean,
-    onFavorite: () -> Unit,
-    onOpen: () -> Unit,
-    modifier: Modifier,
-    compact: Boolean,
-    wideAspect: Boolean = false,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val hovered by interactionSource.collectIsHoveredAsState()
-    val pressed by interactionSource.collectIsPressedAsState()
-    val animated = uiAnimationsEnabled()
-    val interactive = LocalDialogInteractive.current
-    val cardScale = animateUiFloatAsState(
-        targetValue = when {
-            !animated || !interactive -> 1f
-            pressed && entry.canOpen -> 0.984f
-            hovered && entry.canOpen -> 1.010f
-            else -> 1f
-        },
-        animationSpec = tween(if (animated) 160 else 0, easing = StandardDecelerateEasing),
-        label = "HallCardScale",
-    )
-    val coverScale = animateUiFloatAsState(
-        targetValue = if (animated && interactive && hovered && entry.canOpen) 1.042f else 1f,
-        animationSpec = tween(if (animated) 240 else 0, easing = StandardDecelerateEasing),
-        label = "HallCardCoverScale",
-    )
-    val arrowOffset = animateUiFloatAsState(
-        targetValue = if (animated && interactive && hovered && entry.canOpen) 1f else 0f,
-        animationSpec = tween(if (animated) 180 else 0, easing = StandardDecelerateEasing),
-        label = "HallCardArrowOffset",
-    )
-    val borderColor = animateUiColorAsState(
-        targetValue = if (interactive && hovered && entry.canOpen) HallAccent.copy(alpha = 0.56f) else HallHairline,
-        animationSpec = tween(if (animated) 180 else 0),
-        label = "HallCardBorder",
-    )
-
-    val telemetry = entry.game.telemetry()
-    val coverHeight = when {
-        compact -> 86.dp
-        wideAspect -> 122.dp
-        else -> 114.dp
-    }
-
-    Surface(
-        onClick = onOpen,
-        enabled = entry.canOpen,
-        interactionSource = interactionSource,
-        color = if (interactive && hovered && entry.canOpen) HallSurfaceCardHover else HallSurfaceCard,
-        shape = HallCardShape,
-        border = if (animated) null else BorderStroke(1.dp, HallHairline),
-        modifier = modifier
-            .let {
-                if (animated) {
-                    it.graphicsLayer {
-                        val value = cardScale.value
-                        scaleX = value
-                        scaleY = value
-                    }.drawWithContent {
-                        drawContent()
-                        val strokeWidth = 1.dp.toPx()
-                        val halfStroke = strokeWidth / 2f
-                        val radius = (18.dp.toPx() - halfStroke).coerceAtLeast(0f)
-                        drawRoundRect(
-                            color = borderColor.value,
-                            topLeft = Offset(halfStroke, halfStroke),
-                            size = Size(
-                                (size.width - strokeWidth).coerceAtLeast(0f),
-                                (size.height - strokeWidth).coerceAtLeast(0f),
-                            ),
-                            cornerRadius = CornerRadius(radius, radius),
-                            style = Stroke(width = strokeWidth),
-                        )
-                    }
-                } else it
-            }
-            .testTag("hall-card-${entry.id}"),
-    ) {
-        Column(Modifier.fillMaxHeight()) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(coverHeight)
-                    .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp)),
-            ) {
-                HallCover(
-                    entry = entry,
-                    modifier = Modifier
-                        .matchParentSize()
-                        .let {
-                            if (animated) {
-                                it.graphicsLayer {
-                                    val value = coverScale.value
-                                    scaleX = value
-                                    scaleY = value
-                                }
-                            } else it
-                        },
-                )
-                Box(
-                    Modifier
-                        .matchParentSize()
-                        .background(
-                            Brush.verticalGradient(
-                                0.00f to Color(0x28080D10),
-                                0.55f to Color.Transparent,
-                                1.00f to HallSurfaceCard.copy(alpha = 0.92f),
-                            ),
-                        ),
-                )
-                Box(Modifier.align(Alignment.TopStart).padding(10.dp)) {
-                    HallStatusGlassBadge(canOpen = entry.canOpen, available = entry.available)
-                }
-                HallCardFavoriteButton(
-                    favorite = favorite,
-                    entryId = entry.id,
-                    onClick = onFavorite,
-                    modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
-                )
-            }
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .padding(horizontal = 15.dp, vertical = if (compact) 11.dp else 13.dp),
-                verticalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp)) {
-                    Text(
-                        text = entry.game.name,
-                        color = HallInkPrimary,
-                        fontSize = if (compact) 16.sp else 17.5.sp,
-                        lineHeight = 22.sp,
-                        letterSpacing = (-0.2).sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(5.dp),
-                        verticalArrangement = Arrangement.spacedBy(5.dp),
-                    ) {
-                        HallMetaGlassChip(text = hallText("categories.extended"), accent = HallAccentBright)
-                        if (telemetry.hasExpansion) {
-                            HallMetaGlassChip(text = hallText("expansionTag"), accent = HallAmber)
-                        } else if (telemetry.hasArtPack) {
-                            HallMetaGlassChip(text = hallText("artPackTag"), accent = HallCyan)
-                        }
-                        HallTelemetryLabel(telemetry)?.let { label ->
-                            HallMetaGlassChip(text = label, accent = HallCyan)
-                        }
-                    }
-                    Text(
-                        text = entry.game.description,
-                        color = HallInkSecondary,
-                        fontSize = 12.sp,
-                        lineHeight = 17.5.sp,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.heightIn(min = 35.dp),
-                    )
-                }
-
-                Column(verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 10.dp)) {
-                    Box(Modifier.fillMaxWidth().height(1.dp).background(HallHairlineSoft))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = if (entry.canOpen) hallText("enter") else readI18n("gamePortal.maintenance"),
-                            color = if (entry.canOpen) HallAccentBright else HallInkTertiary,
-                            fontSize = 12.5.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = null,
-                            modifier = Modifier
-                                .size(16.dp)
-                                .let {
-                                    if (animated) it.graphicsLayer { translationX = arrowOffset.value * 3.dp.toPx() } else it
-                                },
-                            tint = if (entry.canOpen) HallAccentBright else HallInkTertiary,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun HallEcosystemFooterNote(
-    compact: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    val shape = RoundedCornerShape(16.dp)
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(Color(0x9910171C))
-            .drawBehind {
-                val strokeWidth = 1.dp.toPx()
-                val dash = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 5.dp.toPx()), 0f)
-                drawRoundRect(
-                    color = HallHairline,
-                    topLeft = Offset(strokeWidth / 2f, strokeWidth / 2f),
-                    size = Size(size.width - strokeWidth, size.height - strokeWidth),
-                    cornerRadius = CornerRadius(16.dp.toPx(), 16.dp.toPx()),
-                    style = Stroke(width = strokeWidth, pathEffect = dash),
-                )
-            },
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = if (compact) 11.dp else 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .background(HallAccent.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
-                    .border(1.dp, HallAccent.copy(alpha = 0.26f), RoundedCornerShape(10.dp)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    painterResource(Res.drawable.extension_30),
-                    contentDescription = null,
-                    tint = HallAccentBright,
-                    modifier = Modifier.size(17.dp),
-                )
-            }
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                Text(
-                    text = hallText("moreModesTitle"),
-                    color = HallInkPrimary,
-                    fontSize = 13.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = hallText("moreModesSubtitle"),
-                    color = HallInkTertiary,
-                    fontSize = 11.5.sp,
-                    lineHeight = 16.sp,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun HallEmptyStateCard(
     isFavorites: Boolean,
     modifier: Modifier = Modifier,
@@ -3008,93 +1380,6 @@ private fun HallCardFavoriteButton(
             description = hallText(if (favorite) "unfavorite" else "favorite"),
             color = starColor,
             modifier = Modifier.size(19.dp),
-        )
-    }
-}
-
-@Composable
-private fun HallEyebrowBadge(
-    text: String,
-    accent: Color,
-    highlight: Boolean,
-) {
-    Row(
-        modifier = Modifier
-            .background(
-                if (highlight) HallAccent.copy(alpha = 0.18f) else HallGlassDark,
-                CircleShape,
-            )
-            .border(
-                1.dp,
-                if (highlight) HallAccent.copy(alpha = 0.48f) else HallHairlineStrong,
-                CircleShape,
-            )
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-        if (highlight) {
-            Icon(Icons.Default.Star, null, Modifier.size(11.dp), tint = HallAccentBright)
-        }
-        Text(
-            text = text,
-            color = accent,
-            fontSize = 10.5.sp,
-            lineHeight = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            softWrap = false,
-        )
-    }
-}
-
-@Composable
-private fun HallLiveTelemetryBadge(text: String) {
-    Row(
-        modifier = Modifier
-            .background(HallGlassDark, CircleShape)
-            .border(1.dp, HallAccent.copy(alpha = 0.36f), CircleShape)
-            .padding(horizontal = 9.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-        Box(Modifier.size(6.dp).background(HallAccent, CircleShape))
-        Text(
-            text = text,
-            color = HallInkPrimary,
-            fontSize = 10.5.sp,
-            lineHeight = 13.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            softWrap = false,
-        )
-    }
-}
-
-@Composable
-private fun HallStatusGlassBadge(
-    canOpen: Boolean,
-    available: Boolean,
-) {
-    val dotColor = if (canOpen && available) HallAccent else HallAmber
-    val label = if (!canOpen) readI18n("gamePortal.maintenance") else hallText(if (available) "available" else "maintenance")
-    Row(
-        modifier = Modifier
-            .background(HallGlassDark, CircleShape)
-            .border(1.dp, dotColor.copy(alpha = 0.34f), CircleShape)
-            .padding(horizontal = 9.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-        Box(Modifier.size(6.dp).background(dotColor, CircleShape))
-        Text(
-            text = label,
-            color = if (available && canOpen) HallInkPrimary else HallAmberSoft,
-            fontSize = 10.5.sp,
-            lineHeight = 13.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            softWrap = false,
         )
     }
 }
@@ -3188,16 +1473,7 @@ internal fun prewarmHallBattlefieldBitmaps() {
 @Composable
 private fun HallBattlefield(scene: Int, modifier: Modifier) {
     val bitmap = remember(scene) { cachedHallBattlefieldBitmap(scene) }
-    Canvas(modifier) {
-        drawImage(
-            image = bitmap,
-            dstSize = IntSize(
-                size.width.roundToInt().coerceAtLeast(1),
-                size.height.roundToInt().coerceAtLeast(1),
-            ),
-            filterQuality = FilterQuality.Medium,
-        )
-    }
+    Image(bitmap, contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop)
 }
 
 private fun DrawScope.drawHallBattlefieldScene(scene: Int) {
