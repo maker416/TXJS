@@ -602,4 +602,33 @@ class BundleParseTest {
         }
     }
 
+    @Test
+    fun hostGameDialogKeysExistInAllBundles() {
+        bundleNames.forEach { name ->
+            val root = Toml.parseToTomlTable(File(bundleDir, name).readText())
+            val multiplayer = assertNotNull(root["multiplayer"] as? TomlTable, "$name: missing multiplayer")
+            val hostDialog = assertNotNull(multiplayer["hostDialog"] as? TomlTable, "$name: missing multiplayer.hostDialog")
+            listOf(
+                "badge", "subtitle",
+                "protocolBadgeT", "protocolBadgeQ", "protocolBadgeR",
+                "protocolFormatT", "protocolFormatQ", "protocolFormatR",
+                "protocolHintT", "protocolHintQ", "protocolHintR",
+                "roomIdLabel", "roomIdPlaceholder", "roomIdAutoHint",
+                "sectionMods", "modsReadyCount", "modsNoneEnabled", "modsNetworkOnly", "modsHintOff",
+                "transferModTitle", "transferModBadge",
+                "transferModNeedMods", "transferModNeedLogin", "transferModHintOn", "transferModHintOff",
+                "paramsAllDefault", "paramsCustomCount", "paramsReset",
+                "placeholderDefault", "placeholderMaxPlayer",
+                "summaryVanilla", "summaryModded", "summaryModSync",
+                "summaryDefaultHint", "summaryCustomHint",
+                "confirmBadge", "noticeBadge", "backToConfig",
+            ).forEach { key ->
+                assertTrue(
+                    (hostDialog[key] as? TomlLiteral)?.content?.isNotBlank() == true,
+                    "$name: missing multiplayer.hostDialog.$key",
+                )
+            }
+        }
+    }
+
 }

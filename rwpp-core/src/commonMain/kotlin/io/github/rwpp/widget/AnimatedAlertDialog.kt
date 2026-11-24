@@ -114,9 +114,42 @@ fun AnimatedTransitionDialog(
     onDismissStarted: () -> Unit,
     content: @Composable (AnimatedTransitionDialogHelper) -> Unit,
 ) {
+    val enableAnimations = uiAnimationsEnabled()
+    AnimatedTransitionDialogInternal(
+        onDismissRequest = onDismissRequest,
+        enableDismiss = enableDismiss,
+        contentAlignment = contentAlignment,
+        inlineDesktop = inlineDesktop,
+        onDismissStarted = onDismissStarted,
+        enter = if (enableAnimations) {
+            fadeIn(tween(ANIMATION_TIME.toInt())) +
+                scaleIn(tween(ANIMATION_TIME.toInt()), initialScale = 0.96f)
+        } else {
+            EnterTransition.None
+        },
+        exit = if (enableAnimations) {
+            fadeOut(tween(ANIMATION_TIME.toInt())) +
+                scaleOut(tween(ANIMATION_TIME.toInt()), targetScale = 0.96f)
+        } else {
+            ExitTransition.None
+        },
+        content = content,
+    )
+}
+
+@Composable
+internal fun AnimatedTransitionDialogInternal(
+    onDismissRequest: () -> Unit,
+    enableDismiss: Boolean,
+    contentAlignment: Alignment = Alignment.Center,
+    inlineDesktop: Boolean,
+    onDismissStarted: () -> Unit = {},
+    enter: EnterTransition,
+    exit: ExitTransition,
+    content: @Composable (AnimatedTransitionDialogHelper) -> Unit,
+) {
     val visibility = remember { MutableTransitionState(false).apply { targetState = true } }
     var dismissRequested by remember { mutableStateOf(false) }
-    val enableAnimations = uiAnimationsEnabled()
     val currentOnDismissRequest by rememberUpdatedState(onDismissRequest)
     val currentOnDismissStarted by rememberUpdatedState(onDismissStarted)
     val currentEnableDismiss by rememberUpdatedState(enableDismiss)
@@ -168,10 +201,8 @@ fun AnimatedTransitionDialog(
             ) {
                 AnimatedVisibility(
                     visibleState = visibility,
-                    enter = if (enableAnimations) fadeIn(tween(ANIMATION_TIME.toInt())) +
-                        scaleIn(tween(ANIMATION_TIME.toInt()), initialScale = 0.96f) else EnterTransition.None,
-                    exit = if (enableAnimations) fadeOut(tween(ANIMATION_TIME.toInt())) +
-                        scaleOut(tween(ANIMATION_TIME.toInt()), targetScale = 0.96f) else ExitTransition.None,
+                    enter = enter,
+                    exit = exit,
                 ) {
                     BackHandlerScope(enabled = { !dismissRequested }) {
                         content(helper)
@@ -275,6 +306,31 @@ fun AnimatedAlertDialog(
             enableDismiss = enableDismiss,
             inlineDesktop = inlineDesktop,
             onDismissStarted = onDismissStarted,
+        ) { animatedTransitionDialogHelper ->
+            content(animatedTransitionDialogHelper::triggerAnimatedDismiss)
+        }
+    }
+}
+
+@Composable
+internal fun AnimatedAlertDialogWithMotion(
+    visible: Boolean,
+    onDismissRequest: () -> Unit,
+    enter: EnterTransition,
+    exit: ExitTransition,
+    enableDismiss: Boolean = true,
+    inlineDesktop: Boolean = false,
+    onDismissStarted: () -> Unit = {},
+    content: @Composable (dismiss: () -> Unit) -> Unit,
+) {
+    if (visible && LocalDialogInteractive.current) {
+        AnimatedTransitionDialogInternal(
+            onDismissRequest = onDismissRequest,
+            enableDismiss = enableDismiss,
+            inlineDesktop = inlineDesktop,
+            onDismissStarted = onDismissStarted,
+            enter = enter,
+            exit = exit,
         ) { animatedTransitionDialogHelper ->
             content(animatedTransitionDialogHelper::triggerAnimatedDismiss)
         }
