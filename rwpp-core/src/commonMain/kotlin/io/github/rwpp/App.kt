@@ -468,7 +468,7 @@ fun App(
                 val portalRoute = launcherPage as? LauncherPage.GamePortal
                 if (portalRoute != null) {
                     LauncherBrowserPageHost(portalRoute, EnterTransition.None, ExitTransition.None) {
-                        GamePortalView(portalRoute.appId,
+                        GamePortalView(portalRoute,
                             onExit = { resetNavigation(LauncherPage.GameplayHall) },
                             onOpenRoom = {
                                 isSinglePlayerGame = false

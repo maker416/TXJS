@@ -52,37 +52,58 @@ import org.slf4j.LoggerFactory
 
 private val portalLogger = LoggerFactory.getLogger("GamePortal")
 
+internal suspend fun verifyGameTestAccess(appId: String, password: String): GameTestAccess {
+    val session = AccountSession.sessionSnapshotOrNull() ?: throw GamePortalException("session_expired")
+    val platform = resolveOpenPlatformUrl()
+    val appKey = resolveAccountAppKey(appKoin.get<AccountPreferences>().appKey)
+    val client = GamePortalClient(platform, appKey, AccountSession.httpOverride ?: appKoin.get<Net>().client)
+    val access = client.testAccess(session.token, appId, password)
+    if (!AccountSession.isCurrentSession(session) || platform != resolveOpenPlatformUrl())
+        throw GamePortalException("session_expired")
+    return access
+}
+
 /** The website selects a server ID; approval, downloads, engine connection and admission stay native. */
 @Composable
-internal fun GamePortalView(appId: String, onExit: () -> Unit, onOpenRoom: () -> Unit) {
-    val route = remember(appId) { LauncherPage.GamePortal(appId) }
-    val session = remember(appId) { AccountSession.sessionSnapshotOrNull() }
+internal fun GamePortalView(route: LauncherPage.GamePortal, onExit: () -> Unit, onOpenRoom: () -> Unit) {
+    val appId = route.appId
+    val session = remember(route) { AccountSession.sessionSnapshotOrNull() }
     val platformUrl = resolveOpenPlatformUrl()
-    var gameInfo by remember(appId, platformUrl) { mutableStateOf<OnlineGame?>(null) }
-    var failed by remember(appId) { mutableStateOf(false) }
+    val prefs = koinInject<AccountPreferences>()
+    val appKey = resolveAccountAppKey(prefs.appKey)
+    val client = remember(platformUrl, appKey) {
+        GamePortalClient(platformUrl, appKey, AccountSession.httpOverride ?: appKoin.get<Net>().client)
+    }
+    var gameInfo by remember(route, client) { mutableStateOf<OnlineGame?>(null) }
+    var failure by remember(route, client) { mutableStateOf<String?>(null) }
     var retry by remember(appId) { mutableIntStateOf(0) }
     val active = launcherPage == route
     LaunchedEffect(AccountSession.token, AccountSession.loggedIn, active) {
         if (active && (session == null || !AccountSession.isCurrentSession(session))) onExit()
     }
-    LaunchedEffect(appId, platformUrl, retry) {
+    LaunchedEffect(route, client, retry) {
         if (session == null) return@LaunchedEffect
-        failed = false
+        failure = null
         try {
-            gameInfo = withContext(Dispatchers.IO) { OnlineGameClient(platformUrl).game(appId) }
-                ?.takeIf { it.portalRevision > 0 && isOnlineGamePortalUrl(it.portalUrl) }
-            failed = gameInfo == null
+            gameInfo = client.game(session.token, appId, route.testAccess)
         } catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { failed = true }
+        catch (error: GamePortalException) {
+            failure = when (error.code) {
+                "game_maintenance" -> "gameplayHall.maintenanceNotice"
+                "game_portal_unavailable" -> "gamePortal.testPortalUnavailable"
+                else -> "gamePortal.unavailable"
+            }
+        }
+        catch (_: Exception) { failure = "gamePortal.unavailable" }
     }
     val approved = gameInfo
     if (approved == null || session == null) {
         BackHandler(active, onExit)
         Column(Modifier.fillMaxSize().padding(24.dp).testTag("game-portal-unavailable"),
             verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-            if (!failed && session != null) UiCircularProgressIndicator()
-            Text(readI18n(if (failed) "gamePortal.unavailable" else "gamePortal.loading"))
-            if (failed) TextButton(onClick = { retry++ }) { Text(readI18n("browser.refresh")) }
+            if (failure == null && session != null) UiCircularProgressIndicator()
+            Text(readI18n(failure ?: "gamePortal.loading"))
+            if (failure != null) TextButton(onClick = { retry++ }) { Text(readI18n("browser.refresh")) }
             TextButton(onClick = onExit) { Text(readI18n("gamePortal.back")) }
         }
         return
@@ -91,7 +112,7 @@ internal fun GamePortalView(appId: String, onExit: () -> Unit, onOpenRoom: () ->
     val config = koinInject<ConfigIO>()
     val multiplayer = koinInject<MultiplayerPreferences>()
     PortalExpansionEntry(approved, platformUrl, multiplayer, { config.saveConfig(multiplayer) }, active, onExit) {
-        GamePortalHomepage(approved, platformUrl, route, session, config, onExit, onOpenRoom, onRefresh = {
+        GamePortalHomepage(approved, platformUrl, route, session, config, client, onExit, onOpenRoom, onRefresh = {
             gameInfo = null
             retry++
         })
@@ -134,6 +155,7 @@ private fun GamePortalHomepage(
     route: LauncherPage.GamePortal,
     session: AccountSessionSnapshot,
     config: ConfigIO,
+    client: GamePortalClient,
     onExit: () -> Unit,
     onOpenRoom: () -> Unit,
     onRefresh: () -> Unit,
@@ -151,18 +173,17 @@ private fun GamePortalHomepage(
     }
     var syncRetry by remember(approved, session, platformUrl, appKey) { mutableIntStateOf(0) }
     var joinDuringSync by remember(approved, session, syncRetry) { mutableStateOf(false) }
-    val refresh = remember(platformUrl, appId) {
-        suspend { withContext(Dispatchers.IO) { OnlineGameClient(platformUrl).game(appId) } }
+    val refresh = remember(client, route, session) {
+        suspend { client.game(session.token, appId, route.testAccess) }
     }
-    val controller = remember(approved, session, platformUrl, appKey) {
-        val client = GamePortalClient(platformUrl, appKey, AccountSession.httpOverride ?: appKoin.get<Net>().client)
+    val controller = remember(approved, session, route, client) {
         GamePortalController(
             approved = approved,
             currentSession = { launcherPage == route && AccountSession.isCurrentSession(session) &&
                 resolveOpenPlatformUrl() == platformUrl && resolveAccountAppKey(prefs.appKey) == appKey },
             refresh = refresh,
-            player = { client.player(session.token, appId, approved.portalRevision) },
-            authorize = { client.authorize(session.token, appId, approved.portalRevision, it) },
+            player = { client.player(session.token, appId, approved.portalRevision, route.testAccess) },
+            authorize = { client.authorize(session.token, appId, approved.portalRevision, it, route.testAccess) },
             needsConsent = { current ->
                 val expansion = current.expansionBinding
                 if (expansionKey != null) false
@@ -316,6 +337,7 @@ internal fun PortalJoinStatus(state: GamePortalUiState, message: String, onCance
     val failure = state.failure?.localized()
     var showDetails by remember(state.failure) { mutableStateOf(false) }
     val label = when {
+        state.error == "game_maintenance" -> readI18n("gameplayHall.maintenanceNotice")
         state.error == "cleanup_failed" -> readI18n("gamePortal.cleanupFailed")
         state.cancelling -> readI18n("gamePortal.cancelling")
         failure != null -> failure.title + " · " + failure.explanation

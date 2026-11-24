@@ -106,6 +106,18 @@ class OnlineGameClientTest {
         }
     }
 
+    @Test fun aBrokenPortalOnlyClosesItsOwnDirectoryEntry() {
+        MockWebServer().use { server ->
+            val broken = game().trim().removeSuffix("}") + """, "portal_url":"file:///bad", "portal_revision":1}"""
+            val healthy = game(appId = pack).trim().removeSuffix("}") + """, "portal_url":"https://game.example/", "portal_revision":1}"""
+            server.enqueue(response("""{"games":[$broken,$healthy]}"""))
+            val entries = OnlineGameClient("http://127.0.0.1:${server.port}").games()
+            assertFalse(entries[0].canEnter)
+            assertEquals("", entries[0].portalUrl)
+            assertTrue(entries[1].canEnter)
+        }
+    }
+
     @Test fun literalSocketAndAssetValidationNeverNeedsDns() {
         listOf("127.0.0.1:5123", "203.0.113.4:1", "[2001:db8::1]:5123", "[::1]:65535").forEach {
             assertTrue(isOnlineGameEndpoint(it), it)

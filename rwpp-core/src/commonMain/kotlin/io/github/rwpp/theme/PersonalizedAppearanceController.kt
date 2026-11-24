@@ -24,6 +24,7 @@ import io.github.rwpp.game.ConnectingPlayer
 import io.github.rwpp.game.Game
 import io.github.rwpp.game.Player
 import io.github.rwpp.net.appearance.AppearanceClient
+import io.github.rwpp.net.appearance.GameTestIdentity
 import io.github.rwpp.net.appearance.IdentityChatCodec
 import io.github.rwpp.net.appearance.VerifiedAppearanceRoster
 import io.github.rwpp.net.appearance.VerifiedIdentityChallenge
@@ -48,7 +49,7 @@ import java.util.concurrent.atomic.AtomicReference
  * 游戏线上只交换有期限的句柄；UAS Bearer 只经 AppearanceClient 发往固定官方 HTTPS 服务。
  */
 object PersonalizedAppearanceController {
-    private class Transport(val socket: Socket, val endpoint: String)
+    private class Transport(val socket: Socket, val endpoint: String, @Volatile var testIdentity: GameTestIdentity?)
     private data class Reply(val nonce: String, val challenge: String, val observer: String)
     private data class Binding(
         val player: Player, val slot: Int, val name: String, val connectionId: String,
@@ -61,6 +62,7 @@ object PersonalizedAppearanceController {
     )
 
     private val transport = AtomicReference<Transport?>()
+    private val pendingTestIdentity = AtomicReference<GameTestIdentity?>()
     private val registeredTransport = AtomicReference<Transport?>()
     private val readyTransport = AtomicReference<Transport?>()
     private val nonce = AtomicReference<String?>()
@@ -72,12 +74,23 @@ object PersonalizedAppearanceController {
     private var presentation by mutableStateOf<Presentation?>(null)
     private var now by mutableLongStateOf(0L)
 
+    /** The join transaction owns this scope until the engine has registered its native socket. */
+    internal suspend fun <T> withTestIdentity(identity: GameTestIdentity?, connect: suspend () -> T): T {
+        if (identity == null) return connect()
+        pendingTestIdentity.set(identity)
+        try {
+            return connect()
+        } finally {
+            pendingTestIdentity.compareAndSet(identity, null)
+        }
+    }
+
     /** 网络注入回调只捕获 Socket 事实；不在游戏线程做 DNS、HTTP 或 UI 状态写入。 */
     fun onGameSocketConnected(socket: Socket) {
         if (!socket.isConnected || socket.isClosed || transport.get()?.socket === socket) return
         val host = socket.inetAddress?.hostAddress ?: return
         val endpoint = if (':' in host) "[$host]:${socket.port}" else "$host:${socket.port}"
-        transport.set(Transport(socket, endpoint))
+        transport.set(Transport(socket, endpoint, pendingTestIdentity.get()))
         registeredTransport.set(null)
         readyTransport.set(null)
         nonce.set(null)
@@ -112,7 +125,11 @@ object PersonalizedAppearanceController {
     }
 
     /** 登出/切号先同步作废迟到结果；下一轮在原真实连接执行 clear，再申请新的观察会话。 */
-    fun onAccountInvalidated() {
+    fun onAccountInvalidated(clearTestIdentity: Boolean = true) {
+        if (clearTestIdentity) {
+            pendingTestIdentity.set(null)
+            transport.get()?.testIdentity = null
+        }
         epoch.incrementAndGet()
         nonce.set(null)
         reply.set(null)
@@ -201,10 +218,13 @@ object PersonalizedAppearanceController {
                     val attemptEpoch = cut
                     fun currentAttempt() = transport.get() === captured && !captured.socket.isClosed &&
                         epoch.get() == attemptEpoch && account == AccountSession.sessionSnapshotOrNull()
+                    val testIdentity = captured.testIdentity?.takeIf {
+                        it.accountToken == session?.token && it.access.validFor(resolveOpenPlatformUrl())
+                    }
                     try {
                         if (now >= lookupAt) {
                             lookupAt = now + 15
-                            val found = withContext(Dispatchers.IO) { client.lookupServerInfo(captured.endpoint) }
+                            val found = withContext(Dispatchers.IO) { client.lookupServerInfo(captured.endpoint, testIdentity) }
                             if (!currentAttempt()) continue
                             if (server != found) {
                                 context = null
@@ -255,7 +275,7 @@ object PersonalizedAppearanceController {
                             if (login != null && privacyAllows) {
                                 val ticket = withContext(Dispatchers.IO) {
                                     client.claim(received.challenge, received.nonce, expectedServer.serverId,
-                                        resolveAccountAppKey(appKoin.getOrNull<AccountPreferences>()?.appKey.orEmpty()), login.token)
+                                        resolveAccountAppKey(appKoin.getOrNull<AccountPreferences>()?.appKey.orEmpty()), login.token, testIdentity)
                                 }
                                 if (!currentAttempt()) continue
                                 require(ticket.expiresAt > now && ticket.expiresAt <= now + 65)

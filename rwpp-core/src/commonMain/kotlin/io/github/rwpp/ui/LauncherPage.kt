@@ -11,6 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.rwpp.platform.checkUiThread
+import io.github.rwpp.net.games.GameTestAccess
 import kotlin.properties.ReadWriteProperty
 import kotlin.reflect.KProperty
 
@@ -35,7 +36,7 @@ sealed interface LauncherPage {
     /** 更多玩法的第二主界面。 */
     data object GameplayHall : LauncherPage
     /** Approved provider website; native admission remains owned by the client. */
-    data class GamePortal(val appId: String) : LauncherPage
+    data class GamePortal(val appId: String, val testAccess: GameTestAccess? = null) : LauncherPage
     /** 单人游戏子菜单（战役/生存/遭遇战/沙盒入口）。 */
     data object SinglePlayer : LauncherPage
     /** 任务（战役）页。 */

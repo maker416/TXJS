@@ -58,7 +58,7 @@ class PortalExpansionHandle internal constructor(
         serverId: String?,
     ): Long {
         val artifact = manifest.artifact ?: throw PortalExpansionChangedException()
-        if (expected != ExpansionJoinExpectation(key.appId, key.binding) || serverId == null) {
+        if (expected?.gameAppId != key.appId || expected.binding != key.binding || serverId == null) {
             throw PortalExpansionChangedException()
         }
         ExpansionDirectSync.authorize(artifact, transport, expected, serverId)

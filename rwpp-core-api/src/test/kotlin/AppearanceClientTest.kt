@@ -6,6 +6,8 @@
  */
 
 import io.github.rwpp.net.appearance.AppearanceClient
+import io.github.rwpp.net.appearance.GameTestIdentity
+import io.github.rwpp.net.games.GameTestAccess
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import kotlin.test.Test
@@ -52,6 +54,36 @@ class AppearanceClientTest {
             val client = AppearanceClient("http://127.0.0.1:${official.port}")
             assertFailsWith<IOException> { client.claim(challenge, nonce, "official", "app", "secret") }
             assertNull(other.takeRequest(100, TimeUnit.MILLISECONDS))
+        } }
+    }
+
+    @Test fun testIdentityUsesOnlyTheIssuingPlatformAndSelectedRoom() {
+        val game = "11111111-1111-1111-1111-111111111111"
+        MockWebServer().use { official -> MockWebServer().use { other ->
+            val base = "http://127.0.0.1:${official.port}"
+            val client = AppearanceClient(base)
+            val who = GameTestIdentity(game, "node", GameTestAccess(observer, System.currentTimeMillis() / 1000 + 60, base), "app", "uas")
+            official.enqueue(response("""{"server_id":"node","game_app_id":"$game"}"""))
+            official.enqueue(response("""{"ticket":"$challenge","expires_at":60}"""))
+            assertEquals("node", client.lookupServerInfo("1.1.1.1:5123", who)?.serverId)
+            assertEquals(challenge, client.claim(challenge, nonce, "node", "app", "uas", who).ticket)
+            repeat(2) {
+                val request = official.takeRequest()
+                assertEquals(observer, request.getHeader("X-Game-Test-Access"))
+                assertEquals("app", request.getHeader("X-App-Key"))
+                assertEquals("Bearer uas", request.getHeader("Authorization"))
+            }
+            official.enqueue(response("""{"server_id":"other","game_app_id":"$game"}"""))
+            assertFailsWith<IOException> { client.lookupServerInfo("1.1.1.1:5123", who) }
+            assertFailsWith<IOException> { client.claim(challenge, nonce, "node", "app", "switched-account", who) }
+            assertFailsWith<IOException> { client.claim(challenge, nonce, "other", "app", "uas", who) }
+            val expired = GameTestIdentity(game, "node", GameTestAccess(observer, 1, base), "app", "uas")
+            assertFailsWith<IOException> { client.lookupServerInfo("1.1.1.1:5123", expired) }
+            assertEquals(3, official.requestCount)
+            assertFailsWith<IOException> {
+                AppearanceClient("http://127.0.0.1:${other.port}").lookupServerInfo("1.1.1.1:5123", who)
+            }
+            assertEquals(0, other.requestCount)
         } }
     }
 

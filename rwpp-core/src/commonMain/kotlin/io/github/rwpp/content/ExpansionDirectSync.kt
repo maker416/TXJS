@@ -7,9 +7,11 @@
 
 package io.github.rwpp.content
 
+import io.github.rwpp.account.AccountSession
 import io.github.rwpp.config.resolveOpenPlatformUrl
 import io.github.rwpp.expansion.ExpansionBinding
 import io.github.rwpp.net.appearance.AppearanceClient
+import io.github.rwpp.net.appearance.GameTestIdentity
 import io.github.rwpp.net.sync.direct.DirectContentArtifact
 import io.github.rwpp.net.sync.direct.DirectModDownloadProgress
 import io.github.rwpp.net.sync.direct.DirectModSyncTransport
@@ -18,7 +20,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import java.io.IOException
 
-data class ExpansionJoinExpectation(val gameAppId: String, val binding: ExpansionBinding)
+data class ExpansionJoinExpectation(val gameAppId: String, val binding: ExpansionBinding, val testIdentity: GameTestIdentity? = null)
 
 /** Direct bytes alone cannot grant a game identity: approval is looked up by the actual TCP peer. */
 internal object ExpansionDirectSync {
@@ -29,7 +31,11 @@ internal object ExpansionDirectSync {
         serverId: String? = null,
     ) = withContext(Dispatchers.IO) {
         val peer = transport.peerEndpoint ?: throw IOException("Missing actual Direct peer")
-        val identity = AppearanceClient(resolveOpenPlatformUrl()).lookupServerInfo(peer)
+        val testIdentity = expected?.testIdentity
+        if (testIdentity != null && testIdentity.accountToken != AccountSession.sessionSnapshotOrNull()?.token) {
+            throw IOException("Game test session changed")
+        }
+        val identity = AppearanceClient(resolveOpenPlatformUrl()).lookupServerInfo(peer, testIdentity)
             ?: throw IOException("This endpoint has no approved game expansion")
         val appId = identity.gameAppId
         val binding = identity.expansionBinding
@@ -57,7 +63,7 @@ internal object ExpansionDirectSync {
                 installed = ExpansionPackages.install(archive, appId, binding)
             } finally { archive.delete() }
         }
-        val authorization = ExpansionJoinExpectation(appId, binding)
+        val authorization = ExpansionJoinExpectation(appId, binding, expected?.testIdentity)
         authorize(artifact, transport, authorization, identity.serverId)
         val token = ExpansionContentController.prepare(requireNotNull(installed), appId)
         try {

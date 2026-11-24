@@ -297,7 +297,7 @@ object AccountSession : KoinComponent {
         }
         if (updated) {
             RoomIdentityController.onPresenceSettingsChanged()
-            io.github.rwpp.theme.PersonalizedAppearanceController.onAccountInvalidated()
+            io.github.rwpp.theme.PersonalizedAppearanceController.onAccountInvalidated(clearTestIdentity = false)
         }
     }
 

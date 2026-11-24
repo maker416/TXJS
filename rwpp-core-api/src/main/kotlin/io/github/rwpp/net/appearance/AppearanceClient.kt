@@ -8,6 +8,7 @@
 package io.github.rwpp.net.appearance
 
 import io.github.rwpp.config.normalizeOpenPlatformUrl
+import io.github.rwpp.net.games.GameTestAccess
 import io.github.rwpp.net.games.OnlineGameArtBinding
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -76,6 +77,12 @@ data class VerifiedGameServer(
     @SerialName("expansion_binding") val expansionBinding: io.github.rwpp.expansion.ExpansionBinding? = null,
 )
 
+/** Credentials for one approved native room. Never included in Direct or game packets. */
+class GameTestIdentity(
+    val gameAppId: String, val serverId: String, val access: GameTestAccess,
+    val appKey: String, val accountToken: String,
+)
+
 /** 官方 HTTPS 桥接；UAS 凭据只发送到该固定地址，不跟随重定向。 */
 class AppearanceClient(baseUrl: String, http: OkHttpClient = OkHttpClient()) {
     private val base = requireNotNull(normalizeOpenPlatformUrl(baseUrl)).toHttpUrl()
@@ -101,9 +108,18 @@ class AppearanceClient(baseUrl: String, http: OkHttpClient = OkHttpClient()) {
 
     fun lookupServer(endpoint: String): String? = lookupServerInfo(endpoint)?.serverId
 
-    fun lookupServerInfo(endpoint: String): VerifiedGameServer? {
-        val data = read(Request.Builder().url(url("api/v1/identity/servers/lookup")
-            .addQueryParameter("endpoint", endpoint).build()).build()) ?: return null
+    private fun Request.Builder.withTestIdentity(identity: GameTestIdentity): Request.Builder {
+        if (!identity.access.validFor(base.toString()) || identity.appKey.isBlank() || identity.accountToken.isBlank())
+            throw IOException("Game test access expired or unavailable")
+        return header("X-Game-Test-Access", identity.access.token)
+            .header("X-App-Key", identity.appKey).header("Authorization", "Bearer ${identity.accountToken}")
+    }
+
+    fun lookupServerInfo(endpoint: String, testIdentity: GameTestIdentity? = null): VerifiedGameServer? {
+        val request = Request.Builder().url(url("api/v1/identity/servers/lookup")
+            .addQueryParameter("endpoint", endpoint).build())
+        testIdentity?.let { request.withTestIdentity(it) }
+        val data = read(request.build()) ?: return null
         return json.decodeFromJsonElement(VerifiedGameServer.serializer(), data).also {
             if (it.serverId.isBlank() || it.serverId.length > 128 || it.serverId.any(Char::isWhitespace)) {
                 throw IOException("Invalid identity server")
@@ -111,6 +127,8 @@ class AppearanceClient(baseUrl: String, http: OkHttpClient = OkHttpClient()) {
             if (it.gameAppId != null && !UUID.matches(it.gameAppId)) throw IOException("Invalid game identity")
             if (it.gameAppId == null && it.artBinding != null) throw IOException("Unscoped art binding")
             if (it.expansionBinding != null && (it.gameAppId == null || !it.expansionBinding.valid())) throw IOException("Invalid game expansion binding")
+            if (testIdentity != null && (it.gameAppId != testIdentity.gameAppId || it.serverId != testIdentity.serverId))
+                throw IOException("Game test access does not match the connected server")
         }
     }
 
@@ -122,11 +140,16 @@ class AppearanceClient(baseUrl: String, http: OkHttpClient = OkHttpClient()) {
         return json.decodeFromJsonElement(VerifiedIdentityChallenge.serializer(), data)
     }
 
-    fun claim(challengeId: String, nonce: String, serverId: String, appKey: String, token: String): IdentityTicket {
+    fun claim(challengeId: String, nonce: String, serverId: String, appKey: String, token: String,
+        testIdentity: GameTestIdentity? = null): IdentityTicket {
         val body = json.encodeToString(Claim.serializer(), Claim(challengeId, nonce, serverId))
-        val data = read(Request.Builder().url(url("api/v1/identity/claims").build())
+        val request = Request.Builder().url(url("api/v1/identity/claims").build())
             .header("X-App-Key", appKey).header("Authorization", "Bearer $token")
-            .post(body.toRequestBody(JSON_TYPE)).build()) ?: throw IOException("Identity challenge expired")
+        testIdentity?.let {
+            if (serverId != it.serverId || token != it.accountToken || appKey != it.appKey) throw IOException("Game test session changed")
+            request.withTestIdentity(it)
+        }
+        val data = read(request.post(body.toRequestBody(JSON_TYPE)).build()) ?: throw IOException("Identity challenge expired")
         return json.decodeFromJsonElement(IdentityTicket.serializer(), data).also {
             if (!HEX_TOKEN.matches(it.ticket)) throw IOException("Invalid identity ticket")
         }

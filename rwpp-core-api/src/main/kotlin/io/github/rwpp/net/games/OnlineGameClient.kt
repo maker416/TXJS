@@ -58,7 +58,11 @@ data class OnlineGame(
     @SerialName("portal_url") val portalUrl: String = "",
     @SerialName("portal_revision") val portalRevision: Long = 0,
     @SerialName("expansion_sync_endpoint") val expansionSyncEndpoint: String? = null,
-)
+    @SerialName("has_test_password") val testPasswordSet: Boolean = false,
+) {
+    val canEnter: Boolean get() = available && portalRevision > 0 && isOnlineGamePortalUrl(portalUrl) &&
+        servers.any { it.online && it.available }
+}
 
 /** Public directory only: never accepts, stores or sends UAS tokens or developer credentials. */
 class OnlineGameClient(baseUrl: String, http: OkHttpClient = OkHttpClient()) {
@@ -71,19 +75,28 @@ class OnlineGameClient(baseUrl: String, http: OkHttpClient = OkHttpClient()) {
         val data = get("api", "v1", "games") ?: return emptyList() // Older platforms have no directory.
         val games = json.decodeFromJsonElement(Directory.serializer(), data).games
         if (games.size > 256 || games.map { it.appId }.distinct().size != games.size) invalid()
-        games.forEach(::validate)
-        return games
+        return games.map { game ->
+            val entry = if (game.portalRevision < 0 || game.portalUrl.isNotEmpty() &&
+                (game.portalRevision == 0L || !isOnlineGamePortalUrl(game.portalUrl))) {
+                game.copy(available = false, portalUrl = "", portalRevision = 0)
+            } else game
+            validate(entry)
+            entry
+        }
     }
 
     /** Refresh before joining: a previously visible entry may have been suspended or moved. */
     fun game(appId: String): OnlineGame? {
         require(UUID.matches(appId))
         val data = get("api", "v1", "games", appId) ?: return null
-        return json.decodeFromJsonElement(OnlineGame.serializer(), data).also {
+        return decodeGame(data, appId)
+    }
+
+    internal fun decodeGame(data: JsonObject, appId: String): OnlineGame =
+        json.decodeFromJsonElement(OnlineGame.serializer(), data).also {
             validate(it)
             if (it.appId != appId) invalid()
         }
-    }
 
     private fun get(vararg path: String): JsonObject? {
         val url = base.newBuilder().apply { path.forEach(::addPathSegment) }.build()

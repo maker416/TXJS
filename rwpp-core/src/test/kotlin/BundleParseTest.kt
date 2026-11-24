@@ -569,8 +569,9 @@ class BundleParseTest {
                 "premiereBadge", "onlineSection", "classicSection", "artPackTag", "expansionTag",
                 "serverOnlineSingle", "serversOnline", "playersOnline", "moreModesTitle", "moreModesSubtitle",
                 "intelStatusTitle", "intelContentTitle", "intelEcosystemTitle", "intelPlayersCapacity",
-                "intelServersTotal", "intelServerReady", "intelServerOffline", "intelServerOfflineHint",
-                "intelPortalReady", "intelPortalReadyHint", "intelPortalMaintenanceHint",
+                "intelServersTotal", "intelServerReady", "available", "maintenance", "maintenanceNotice",
+                "developerTest", "testPassword", "enterTest", "testVerifying", "testPasswordIncorrect",
+                "testRateLimited", "testAccessFailed", "directoryFailed",
                 "intelExpansionDesc", "intelArtPackDesc", "intelPlatformVerified", "intelPlatformVerifiedDesc",
                 "intelEcosystemDesc", "emptyDirectoryTitle", "failedDirectoryTitle", "loadingDirectoryTitle", "retry",
             ).forEach { key ->

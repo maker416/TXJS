@@ -51,6 +51,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -60,12 +61,15 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -77,6 +81,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
@@ -106,6 +111,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
@@ -116,23 +123,28 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import io.github.rwpp.account.AccountSession
 import io.github.rwpp.app.LauncherVisibility
-import io.github.rwpp.app.pollWhileVisible
+import io.github.rwpp.app.whileVisible
 import io.github.rwpp.config.resolveOpenPlatformUrl
 import io.github.rwpp.i18n.readI18n
+import io.github.rwpp.net.games.GamePortalException
+import io.github.rwpp.net.games.GameTestAccess
 import io.github.rwpp.net.games.OnlineGame
 import io.github.rwpp.net.games.OnlineGameClient
-import io.github.rwpp.net.games.isOnlineGamePortalUrl
 import io.github.rwpp.platform.BackHandler
 import io.github.rwpp.rwpp_core.generated.resources.Res
 import io.github.rwpp.rwpp_core.generated.resources.dns_30
 import io.github.rwpp.rwpp_core.generated.resources.extension_30
 import io.github.rwpp.rwpp_core.generated.resources.gameplay_favorite_outline
 import io.github.rwpp.rwpp_core.generated.resources.public_30
+import io.github.rwpp.widget.LocalDialogInteractive
 import io.github.rwpp.widget.animateUiColorAsState
 import io.github.rwpp.widget.animateUiFloatAsState
 import io.github.rwpp.widget.uiAnimationsEnabled
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
 import kotlin.math.PI
@@ -175,9 +187,10 @@ private data class HallEntry(
     val scene: Int,
     val game: OnlineGame,
 ) {
-    val available: Boolean get() = game.available
-    val canOpen: Boolean get() = isOnlineGamePortalUrl(game.portalUrl) && game.portalRevision > 0
+    val canOpen = game.canEnter
 }
+
+private data class HallLoginRequest(val game: OnlineGame, val testing: Boolean)
 
 private data class OnlineGameTelemetry(
     val onlineServers: Int,
@@ -433,6 +446,7 @@ internal fun GameplayHallView(
     },
     loggedIn: Boolean = AccountSession.loggedIn,
     onLogin: () -> Unit = { UI.showAccountView = true },
+    verifyTestAccess: suspend (String, String) -> GameTestAccess = ::verifyGameTestAccess,
 ) {
     val animated = uiAnimationsEnabled()
     val pageScope = LocalPageAnimatedVisibilityScope.current
@@ -454,30 +468,37 @@ internal fun GameplayHallView(
     var selectedAppId by rememberSaveable { mutableStateOf<String?>(null) }
     var showMobileDetails by rememberSaveable { mutableStateOf(false) }
     val contentListState = rememberLazyListState()
-    var pendingPortal by remember { mutableStateOf<String?>(null) }
+    var pendingLogin by remember(platformUrl) { mutableStateOf<HallLoginRequest?>(null) }
+    var maintenanceGame by remember(platformUrl) { mutableStateOf<OnlineGame?>(null) }
+    var passwordGame by remember(platformUrl) { mutableStateOf<OnlineGame?>(null) }
     var games by remember { mutableStateOf(cachedInitial) }
     var loading by remember { mutableStateOf(cachedInitial.isEmpty()) }
     var loadFailed by remember { mutableStateOf(false) }
     var retry by remember { mutableIntStateOf(0) }
     val latestLoad by rememberUpdatedState(loadGames)
     LaunchedEffect(retry, platformUrl) {
-        LauncherVisibility.visible.pollWhileVisible(30_000) {
-            try {
-                val loaded = latestLoad()
-                games = loaded
-                directoryCache?.let {
-                    it.platformUrl = platformUrl
-                    it.games = loaded
+        LauncherVisibility.visible.whileVisible {
+            var retryDelay = 1_000L
+            while (true) {
+                try {
+                    val loaded = latestLoad()
+                    games = loaded
+                    directoryCache?.let {
+                        it.platformUrl = platformUrl
+                        it.games = loaded
+                    }
+                    loadFailed = false
+                    retryDelay = 1_000L
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    games = emptyList()
+                    directoryCache?.takeIf { it.platformUrl == platformUrl }?.games = emptyList()
+                    loadFailed = true
                 }
-                loadFailed = false
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                games = emptyList()
-                directoryCache?.takeIf { it.platformUrl == platformUrl }?.games = emptyList()
-                loadFailed = true
-            } finally {
                 loading = false
+                delay(if (loadFailed) retryDelay else 30_000L)
+                if (loadFailed) retryDelay = (retryDelay * 2).coerceAtMost(30_000L)
             }
         }
     }
@@ -487,18 +508,27 @@ internal fun GameplayHallView(
         HallEntry("game-${game.appId}", index % 3, game)
     }
 
+    fun enterGame(game: OnlineGame, testing: Boolean = false) {
+        if (!testing && !game.canEnter) {
+            maintenanceGame = game
+        } else if (!loggedIn) {
+            pendingLogin = HallLoginRequest(game, testing)
+            onLogin()
+        } else if (testing) {
+            passwordGame = game
+        } else {
+            onOpenPage(LauncherPage.GamePortal(game.appId))
+        }
+    }
     val expansionUnavailableText = hallText("expansionUnavailable")
+    val latestEnter by rememberUpdatedState(::enterGame)
     LaunchedEffect(UI.pendingExpansionGameAppId) {
         val appId = UI.pendingExpansionGameAppId ?: return@LaunchedEffect
         try {
             val approved = refreshGame(appId)
             if (UI.pendingExpansionGameAppId != appId) return@LaunchedEffect
-            if (approved?.expansionBinding == null || !isOnlineGamePortalUrl(approved.portalUrl)) UI.showWarning(expansionUnavailableText)
-            else if (loggedIn) onOpenPage(LauncherPage.GamePortal(approved.appId))
-            else {
-                pendingPortal = approved.appId
-                onLogin()
-            }
+            if (approved == null || (approved.canEnter && approved.expansionBinding == null)) UI.showWarning(expansionUnavailableText)
+            else latestEnter(approved, false)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -508,23 +538,13 @@ internal fun GameplayHallView(
         }
     }
 
-    val portalUnavailable = readI18n("gamePortal.unavailable")
     LaunchedEffect(loggedIn, UI.showAccountView) {
-        val pending = pendingPortal ?: return@LaunchedEffect
+        val pending = pendingLogin ?: return@LaunchedEffect
         if (loggedIn) {
-            pendingPortal = null
+            pendingLogin = null
             UI.showAccountView = false
-            onOpenPage(LauncherPage.GamePortal(pending))
-        } else if (!UI.showAccountView) pendingPortal = null
-    }
-    val open: (HallEntry) -> Unit = { entry ->
-        val game = entry.game
-        if (!entry.canOpen) UI.showWarning(portalUnavailable)
-        else if (loggedIn) onOpenPage(LauncherPage.GamePortal(game.appId))
-        else {
-            pendingPortal = game.appId
-            onLogin()
-        }
+            enterGame(games.firstOrNull { it.appId == pending.game.appId } ?: pending.game, pending.testing)
+        } else if (!UI.showAccountView) pendingLogin = null
     }
     val favorite: (HallEntry) -> Unit = { entry ->
         favorites = if (entry.id in favorites) favorites - entry.id else favorites + entry.id
@@ -537,7 +557,7 @@ internal fun GameplayHallView(
         val matchesQuery = trimmedQuery.isEmpty() ||
             entry.game.name.contains(trimmedQuery, ignoreCase = true) ||
             entry.game.description.contains(trimmedQuery, ignoreCase = true)
-        matchesCategory && (!availableOnly || entry.available) && matchesQuery
+        matchesCategory && (!availableOnly || entry.canOpen) && matchesQuery
     }
 
     val selectedEntry = entries.firstOrNull { it.game.appId == selectedAppId } ?: entries.firstOrNull()
@@ -559,6 +579,35 @@ internal fun GameplayHallView(
         HallCategory.Favorites to favorites.count { favId -> allEntries.any { it.id == favId } },
     )
 
+    if (LocalDialogInteractive.current) maintenanceGame?.let { game ->
+        AlertDialog(
+            onDismissRequest = { maintenanceGame = null },
+            title = { Text(game.name) },
+            text = { Text(hallText("maintenanceNotice")) },
+            confirmButton = {
+                TextButton(onClick = { maintenanceGame = null }) { Text(hallText("gotIt")) }
+            },
+            dismissButton = {
+                if (game.testPasswordSet) TextButton(onClick = {
+                    maintenanceGame = null
+                    enterGame(game, testing = true)
+                }) { Text(hallText("developerTest")) }
+            },
+        )
+    }
+    if (LocalDialogInteractive.current) passwordGame?.let { game ->
+        if (loggedIn) key(game.appId) {
+            HallDeveloperTestDialog(
+                game = game,
+                verify = verifyTestAccess,
+                onDismiss = { passwordGame = null },
+                onVerified = { access ->
+                    passwordGame = null
+                    onOpenPage(LauncherPage.GamePortal(game.appId, access))
+                },
+            )
+        } else SideEffect { passwordGame = null }
+    }
     BoxWithConstraints(Modifier.fillMaxSize().testTag("gameplay-hall")) {
         val compact = maxHeight < 500.dp
         val narrow = maxWidth < 540.dp || (maxWidth < 840.dp && maxWidth < maxHeight)
@@ -571,7 +620,7 @@ internal fun GameplayHallView(
         }
         val detailOnly = narrow && showMobileDetails && selectedEntry != null
         val goBack: () -> Unit = { if (detailOnly) showMobileDetails = false else onExit() }
-        BackHandler(true, goBack)
+        BackHandler(maintenanceGame == null && passwordGame == null, goBack)
 
         // 保留平台实时战场背景，叠加中性黑曜石遮罩与克制翡翠/深青氛围光，静置零动画帧。
         Box(
@@ -697,7 +746,8 @@ internal fun GameplayHallView(
                                     entry = selectedEntry,
                                     favorite = selectedEntry.id in favorites,
                                     onFavorite = { favorite(selectedEntry) },
-                                    onOpen = { open(selectedEntry) },
+                                    onOpen = { enterGame(selectedEntry.game) },
+                                    onTest = { enterGame(selectedEntry.game, testing = true) },
                                     coverHeight = coverHeight,
                                     compact = compact,
                                     modifier = Modifier.weight(1f).fillMaxHeight().hallFeedMotion(motion),
@@ -711,6 +761,76 @@ internal fun GameplayHallView(
             }
         }
     }
+}
+
+@Composable
+private fun HallDeveloperTestDialog(
+    game: OnlineGame,
+    verify: suspend (String, String) -> GameTestAccess,
+    onDismiss: () -> Unit,
+    onVerified: (GameTestAccess) -> Unit,
+) {
+    var password by remember { mutableStateOf("") }
+    var checking by remember { mutableStateOf(false) }
+    var errorKey by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val dismiss = {
+        scope.cancel()
+        onDismiss()
+    }
+    AlertDialog(
+        onDismissRequest = dismiss,
+        title = { Text(hallText("developerTest")) },
+        text = {
+            OutlinedTextField(
+                value = password,
+                onValueChange = {
+                    password = it
+                    errorKey = null
+                },
+                enabled = !checking,
+                label = { Text(hallText("testPassword")) },
+                modifier = Modifier.fillMaxWidth().testTag("hall-test-password"),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                visualTransformation = PasswordVisualTransformation(),
+                isError = errorKey != null,
+                supportingText = errorKey?.let { key -> { Text(hallText(key)) } },
+            )
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !checking && password.isNotEmpty(),
+                onClick = {
+                    if (!checking) {
+                        checking = true
+                        errorKey = null
+                        scope.launch {
+                            val access = try {
+                                verify(game.appId, password)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (e: Exception) {
+                                errorKey = when ((e as? GamePortalException)?.code) {
+                                    "invalid_test_password" -> "testPasswordIncorrect"
+                                    "rate_limited" -> "testRateLimited"
+                                    "game_maintenance", "game_portal_unavailable" -> "maintenanceNotice"
+                                    else -> "testAccessFailed"
+                                }
+                                return@launch
+                            } finally {
+                                checking = false
+                            }
+                            onVerified(access)
+                        }
+                    }
+                },
+            ) { Text(hallText(if (checking) "testVerifying" else "enterTest")) }
+        },
+        dismissButton = {
+            TextButton(onClick = dismiss) { Text(readI18n("common.cancel")) }
+        },
+    )
 }
 
 @Composable
@@ -745,6 +865,7 @@ private fun HallGameDetails(
     favorite: Boolean,
     onFavorite: () -> Unit,
     onOpen: () -> Unit,
+    onTest: () -> Unit,
     coverHeight: Dp,
     compact: Boolean,
     modifier: Modifier = Modifier,
@@ -777,7 +898,6 @@ private fun HallGameDetails(
         ) {
             Surface(
                 onClick = onOpen,
-                enabled = entry.canOpen,
                 shape = HallControlShape,
                 color = if (entry.canOpen) HallAccent else HallSurfaceElevated,
                 modifier = Modifier.testTag("hall-open"),
@@ -789,14 +909,26 @@ private fun HallGameDetails(
                 ) {
                     val tint = if (entry.canOpen) HallAccentDeep else HallInkSecondary
                     Text(
-                        if (entry.canOpen) hallText("enter") else readI18n("gamePortal.maintenance"),
+                        hallText(if (entry.canOpen) "enter" else "maintenance"),
                         color = tint, fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
                     )
                     if (entry.canOpen) Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.size(17.dp), tint = tint)
                 }
             }
-            if (telemetryLabel != null) HallMetaGlassChip(telemetryLabel, HallAccentBright)
-            else if (entry.game.servers.isNotEmpty()) HallMetaGlassChip(hallText("intelServerOffline"), HallAmber)
+            if (!entry.canOpen && entry.game.testPasswordSet) {
+                Surface(
+                    onClick = onTest,
+                    shape = HallControlShape,
+                    color = HallSurfaceElevated,
+                    border = BorderStroke(1.dp, HallHairlineStrong),
+                    modifier = Modifier.testTag("hall-developer-test"),
+                ) {
+                    Box(Modifier.heightIn(min = 44.dp).padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
+                        Text(hallText("developerTest"), color = HallInkPrimary, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                    }
+                }
+            }
+            if (entry.canOpen && telemetryLabel != null) HallMetaGlassChip(telemetryLabel, HallAccentBright)
             if (telemetry.hasExpansion) HallMetaGlassChip(hallText("expansionTag"), HallAmber)
             if (telemetry.hasArtPack) {
                 val version = telemetry.artVersion.takeIf { it.isNotBlank() }
@@ -1291,7 +1423,7 @@ private fun HallDirectoryZeroStage(
                 textAlign = TextAlign.Center,
                 modifier = Modifier.testTag("hall-directory-status"),
             )
-            Surface(
+            if (!loading && !loadFailed) Surface(
                 onClick = onRefresh,
                 shape = CircleShape,
                 color = HallAccent.copy(alpha = 0.16f),
@@ -1305,7 +1437,7 @@ private fun HallDirectoryZeroStage(
                 ) {
                     Icon(Icons.Default.Refresh, null, Modifier.size(16.dp), tint = HallAccentBright)
                     Text(
-                        text = hallText(if (loadFailed) "retry" else "refresh"),
+                        text = hallText("refresh"),
                         color = HallAccentBright,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,

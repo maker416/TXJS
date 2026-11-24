@@ -104,7 +104,7 @@ internal class GamePortalController(
                 val game = fresh()
                 putJsonArray("servers") { game.servers.forEach { server -> add(buildJsonObject {
                     put("server_id", server.serverId); put("name", server.name)
-                    put("available", game.available && server.available); put("online", server.online)
+                    put("available", game.available && server.online && server.available); put("online", server.online)
                     put("current_players", server.currentPlayers); put("max_players", server.maxPlayers)
                     put("closed_message", server.closedMessage)
                 }) } }
@@ -156,7 +156,7 @@ internal class GamePortalController(
                 cleanup?.join()
                 val game = fresh()
                 validateExpansion(game)
-                if (!game.available || game.servers.none { it.serverId == serverId && it.available }) throw GamePortalException("server_unavailable")
+                if (!game.available || game.servers.none { it.serverId == serverId && it.online && it.available }) throw GamePortalException("server_unavailable")
                 var useArt = true
                 if (needsConsent(game)) {
                     val consent = PortalContentConsent(game, game.expansionBinding != null)
@@ -212,7 +212,7 @@ internal class GamePortalController(
         val game = fresh()
         if (!isCurrent(attempt)) throw CancellationException("Portal join superseded")
         validateExpansion(game)
-        if (!game.available || game.servers.singleOrNull { it.serverId == attempt.serverId && it.available }?.endpoint != ready.endpoint ||
+        if (!game.available || game.servers.singleOrNull { it.serverId == attempt.serverId && it.online && it.available }?.endpoint != ready.endpoint ||
             game.expansionBinding != expected.expansionBinding || attempt.useArt && game.artBinding != expected.artBinding) {
             throw GamePortalException("game_changed")
         }

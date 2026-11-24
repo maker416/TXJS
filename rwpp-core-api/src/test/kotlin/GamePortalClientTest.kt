@@ -18,6 +18,59 @@ class GamePortalClientTest {
     private fun response(data: String) = MockResponse().setHeader("Content-Type", "application/json")
         .setBody("""{"code":"ok","data":$data}""")
 
+    @Test fun maintenanceIsEnforcedAtEveryAccessAndTestCredentialsStayOnPlatform(): Unit = runBlocking {
+        MockWebServer().use { server -> MockWebServer().use { other ->
+            val base = "http://127.0.0.1:${server.port}"
+            val client = GamePortalClient(base, "client-key")
+            val denied = """{"code":"game_maintenance","message":"维护中，暂不可进入"}"""
+            server.enqueue(MockResponse().setResponseCode(409).setBody(denied))
+            assertEquals("game_maintenance", assertFailsWith<GamePortalException> { client.game("uas", app) }.code)
+            val public = server.takeRequest()
+            assertEquals("/api/v1/client/game-portals/$app/access", public.path)
+            assertNull(public.getHeader("Authorization"))
+
+            val secret = "a".repeat(64)
+            server.enqueue(response("""{"access_token":"$secret","expires_at":${System.currentTimeMillis() / 1000 + 900}}"""))
+            val access = client.testAccess("uas", app, " space matters ")
+            val passwordRequest = server.takeRequest()
+            assertEquals("/api/v1/client/game-portals/$app/test-access", passwordRequest.path)
+            assertEquals("Bearer uas", passwordRequest.getHeader("Authorization"))
+            assertEquals(" space matters ", Json.parseToJsonElement(passwordRequest.body.readUtf8()).jsonObject["password"]!!.jsonPrimitive.content)
+            assertFalse(access.toString().contains(secret))
+
+            val game = """{"app_id":"$app","name":"Test","available":false,"portal_url":"https://game.example/","portal_revision":1,
+                "servers":[{"server_id":"a","name":"A","endpoint":"127.0.0.1:5123","online":true,"available":true}]}"""
+            server.enqueue(response(game))
+            assertTrue(client.game("uas", app, access).canEnter)
+            val scoped = server.takeRequest()
+            assertEquals(secret, scoped.getHeader("X-Game-Test-Access"))
+            assertEquals("Bearer uas", scoped.getHeader("Authorization"))
+            assertEquals("client-key", scoped.getHeader("X-App-Key"))
+            server.enqueue(response(game.replace("\"online\":true", "\"online\":false")))
+            assertFalse(client.game("uas", app, access).available)
+            server.takeRequest()
+
+            server.enqueue(MockResponse().setResponseCode(409).setBody(denied))
+            assertEquals("game_maintenance", assertFailsWith<GamePortalException> { client.game("uas", app, access) }.code)
+            val foreign = GamePortalClient("http://127.0.0.1:${other.port}", "client-key")
+            assertFailsWith<GamePortalException> { foreign.game("uas", app, access) }
+            assertNull(other.takeRequest(50, TimeUnit.MILLISECONDS))
+        } }
+    }
+
+    @Test fun oldPlatformFallsBackOnlyForOrdinaryPlayersAndOnlyForReadyGames(): Unit = runBlocking {
+        MockWebServer().use { server ->
+            val client = GamePortalClient("http://127.0.0.1:${server.port}", "client-key")
+            server.enqueue(MockResponse().setResponseCode(404))
+            server.enqueue(response("""{"app_id":"$app","name":"Old","available":true,"portal_url":"https://game.example","portal_revision":1}"""))
+            assertEquals("game_maintenance", assertFailsWith<GamePortalException> { client.game("uas", app) }.code)
+            server.takeRequest()
+            val fallback = server.takeRequest()
+            assertEquals("/api/v1/games/$app", fallback.path)
+            assertNull(fallback.getHeader("Authorization"))
+        }
+    }
+
     @Test fun officialRequestsBindGameRevisionAndNonceWithoutWebsiteCredentials(): Unit = runBlocking {
         MockWebServer().use { server ->
             val client = GamePortalClient("http://127.0.0.1:${server.port}", "client-key")

@@ -15,13 +15,14 @@ import kotlin.test.*
 
 class OnlineGameJoinTest {
     private val game = OnlineGame("game-id", "Published", available = true,
-        servers = listOf(OnlineGameServer("node-1", "Server", "127.0.0.1:5123", available = true)))
+        servers = listOf(OnlineGameServer("node-1", "Server", "127.0.0.1:5123", available = true, online = true)))
 
     @Test fun withdrawnGameAndOfflineNodeCannotPrepareAppearanceOrConnect(): Unit = runBlocking {
         var prepared = 0
         val prepare: suspend (OnlineGame, Boolean) -> Long = { _, _ -> prepared++; 7 }
         for (fresh in listOf(null, game.copy(available = false), game.copy(appId = "another-game"),
-            game.copy(servers = game.servers.map { it.copy(available = false) }), game.copy(servers = emptyList()))) {
+            game.copy(servers = game.servers.map { it.copy(available = false) }),
+            game.copy(servers = game.servers.map { it.copy(online = false) }), game.copy(servers = emptyList()))) {
             assertFailsWith<IOException> { prepareOnlineGameJoin(game, "node-1", true, { fresh }, prepare) }
         }
         assertEquals(0, prepared)

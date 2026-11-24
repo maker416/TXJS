@@ -32,7 +32,7 @@ internal suspend fun prepareOnlineGameJoin(
     val game = refresh(expected.appId)?.takeIf { it.appId == expected.appId }
         ?: throw IOException("Game unavailable")
     if (!game.available) throw OnlineGameChangedException(game)
-    val server = game.servers.singleOrNull { it.serverId == serverId && it.available }
+    val server = game.servers.singleOrNull { it.serverId == serverId && it.online && it.available }
         ?: throw OnlineGameChangedException(game)
     if (server.endpoint != expected.servers.singleOrNull { it.serverId == serverId }?.endpoint ||
         game.expansionBinding != expected.expansionBinding ||

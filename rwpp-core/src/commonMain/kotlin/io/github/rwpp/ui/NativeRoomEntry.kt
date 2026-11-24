@@ -8,7 +8,11 @@
 package io.github.rwpp.ui
 
 import io.github.rwpp.account.RoomIdentityController
+import io.github.rwpp.account.AccountSession
+import io.github.rwpp.appKoin
+import io.github.rwpp.config.AccountPreferences
 import io.github.rwpp.config.ConfigIO
+import io.github.rwpp.config.resolveAccountAppKey
 import io.github.rwpp.core.*
 import io.github.rwpp.event.broadcastIn
 import io.github.rwpp.event.events.JoinGameEvent
@@ -16,6 +20,8 @@ import io.github.rwpp.game.Game
 import io.github.rwpp.i18n.readI18n
 import io.github.rwpp.logger
 import io.github.rwpp.net.*
+import io.github.rwpp.net.appearance.GameTestIdentity
+import io.github.rwpp.theme.PersonalizedAppearanceController
 import kotlinx.coroutines.*
 
 /** The same native synchronization, engine and admission transaction is used by every entry point. */
@@ -59,8 +65,16 @@ internal suspend fun LoadingContext.joinNativeRoom(
     val hostTransferMods = request.hostTransferMods
     val userName = request.userName
     val onlineGameThemeToken = request.onlineGame?.themeToken
+    val portal = request.returnPage as? LauncherPage.GamePortal
+    val testIdentity = request.onlineGame?.let { online ->
+        portal?.takeIf { it.appId == online.appId }?.testAccess?.let { access ->
+            val account = AccountSession.sessionSnapshotOrNull() ?: throw java.io.IOException("Game test session expired")
+            GameTestIdentity(online.appId, online.serverId, access,
+                resolveAccountAppKey(appKoin.getOrNull<AccountPreferences>()?.appKey.orEmpty()), account.token)
+        }
+    }
     val onlineGameExpansion = request.onlineGame?.expansionBinding?.let {
-        io.github.rwpp.content.ExpansionJoinExpectation(request.onlineGame.appId, it)
+        io.github.rwpp.content.ExpansionJoinExpectation(request.onlineGame.appId, it, testIdentity)
     }
     val onlineGameAppId = request.onlineGame?.appId
     val preloadedExpansion = request.onlineGame?.preloadedExpansion
@@ -166,7 +180,9 @@ internal suspend fun LoadingContext.joinNativeRoom(
                     configIO.setGameConfig("lastNetworkIP", address)
 
                     suspend fun connectAndConfirmAdmission(): Result<String> {
-                        val result = game.directJoinServer(address, capturedRoomDescription?.joinRelayUuid(), this)
+                        val result = PersonalizedAppearanceController.withTestIdentity(testIdentity) {
+                            game.directJoinServer(address, capturedRoomDescription?.joinRelayUuid(), this)
+                        }
                         if (result.isSuccess) {
                             joined = true
                             directReservation?.let { reservation ->

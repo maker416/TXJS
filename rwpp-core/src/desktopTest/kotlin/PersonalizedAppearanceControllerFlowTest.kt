@@ -47,6 +47,8 @@ import io.github.rwpp.net.appearance.VerifiedAppearanceMember
 import io.github.rwpp.net.appearance.VerifiedAppearanceRoster
 import io.github.rwpp.net.appearance.VerifiedIdentityChallenge
 import io.github.rwpp.net.appearance.IdentityChatCodec
+import io.github.rwpp.net.appearance.GameTestIdentity
+import io.github.rwpp.net.games.GameTestAccess
 import io.github.rwpp.net.games.OnlineGameArtBinding
 import io.github.rwpp.ui.LauncherPage
 import io.github.rwpp.ui.resetNavigation
@@ -383,6 +385,36 @@ class PersonalizedAppearanceControllerFlowTest {
         await { gate.entered.count == 0L }
         await { variant(target, "room.player.background") == null }
         assertEquals(1L, gate.responded.count, "the independent expiry clock must work before HTTP completes")
+    }
+
+    @Test
+    fun testRoomSendsAccessToOfficialLookupAndClaimOnly() = runBlocking {
+        gameScope = "11111111-1111-1111-1111-111111111111"
+        val base = resolveOpenPlatformUrl()
+        withContext(Dispatchers.Main) {
+            AccountSession.bindClient(AccountApiClient(base, "ak_test", OkHttpClient()))
+            AccountSession.applyPreview(AccountUser(7, "self", nickname = "Self", accountId = "202"), "uas-test-token")
+            AccountSession.networkEnabled = true
+        }
+        val access = GameTestAccess("game-test-access", System.currentTimeMillis() / 1000 + 120, base)
+        val who = GameTestIdentity(requireNotNull(gameScope), "official-test", access, "ak_test", "uas-test-token")
+        socket.close()
+        accepted.close()
+        PersonalizedAppearanceController.withTestIdentity(who) {
+            socket = Socket("127.0.0.1", listener.localPort)
+            accepted = listener.accept()
+            PersonalizedAppearanceController.onGameSocketConnected(socket)
+        }
+        startController()
+        await { commands.any { it.startsWith("/txjsid prove ") } }
+        val requestsWithAccess = requests.filter { it.getHeader("X-Game-Test-Access") != null }
+        assertEquals(listOf("/api/v1/identity/servers/lookup", "/api/v1/identity/claims"),
+            requestsWithAccess.map { it.requestUrl!!.encodedPath })
+        assertTrue(requestsWithAccess.all {
+            it.getHeader("X-Game-Test-Access") == access.token &&
+                it.getHeader("Authorization") == "Bearer uas-test-token" && it.getHeader("X-App-Key") == "ak_test"
+        })
+        assertTrue(commands.none { access.token in it || "uas-test-token" in it || "ak_test" in it })
     }
 
     @Test

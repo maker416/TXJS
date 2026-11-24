@@ -34,6 +34,8 @@ import io.github.rwpp.appKoin
 import io.github.rwpp.config.Settings
 import io.github.rwpp.i18n.i18nTable
 import io.github.rwpp.i18n.reloadI18n
+import io.github.rwpp.net.games.GamePortalException
+import io.github.rwpp.net.games.GameTestAccess
 import io.github.rwpp.net.games.OnlineGame
 import io.github.rwpp.net.games.OnlineGameArtBinding
 import io.github.rwpp.net.games.OnlineGameServer
@@ -71,7 +73,7 @@ class GameplayHallUiTest {
     private val offline = OnlineGame(
         otherId,
         "边境探索",
-        "暂停开放的区服仍可进入主页查看最新公告与版本动态。",
+        "合作探索边境星域。",
         servers = listOf(OnlineGameServer("closed", "维护区服", "127.0.0.1:6000")),
         portalUrl = "https://offline.example/",
         portalRevision = 2,
@@ -126,6 +128,10 @@ class GameplayHallUiTest {
         onNodeWithTag("hall-search").performTextInput("边境探索")
         onNodeWithTag("hall-card-game-$otherId").assertIsDisplayed().performClick()
         onNodeWithTag("hall-description").assertTextEquals(offline.description)
+        onNodeWithTag("hall-open").assertTextContains("维护中").performClick()
+        onNodeWithText("维护中，暂不可进入").assertIsDisplayed()
+        onNodeWithText("开发者测试").assertDoesNotExist()
+        onNodeWithText("知道了").performClick()
         runOnIdle { assertNull(destination) }
 
         onNodeWithTag("hall-search").performTextReplacement("nothing-matches")
@@ -153,7 +159,9 @@ class GameplayHallUiTest {
         onNodeWithTag("hall-description").assertTextEquals(offline.description)
         runOnIdle { assertNull(destination) }
         onNodeWithTag("hall-open").performClick()
-        runOnIdle { assertEquals(LauncherPage.GamePortal(otherId), destination) }
+        onNodeWithText("维护中，暂不可进入").assertIsDisplayed()
+        onNodeWithText("知道了").performClick()
+        runOnIdle { assertNull(destination) }
         onNodeWithTag("hall-server-closed").assertDoesNotExist()
         onNodeWithTag("hall-back").performClick()
         runOnIdle { assertEquals(1, closed) }
@@ -210,7 +218,7 @@ class GameplayHallUiTest {
                         GameplayHallView(
                             onExit = { closePage(LauncherPage.GameplayHall) },
                             onOpenPage = { navigateTo(it) },
-                            loadGames = { listOf(published, offline.copy(available = true)) },
+                            loadGames = { listOf(published, offline.copy(available = true, servers = published.servers)) },
                             loggedIn = true,
                         )
                     }
@@ -253,7 +261,7 @@ class GameplayHallUiTest {
                 GameplayHallView(
                     onExit = {},
                     onOpenPage = { destination = it },
-                    loadGames = { listOf(published, offline.copy(available = true)) },
+                    loadGames = { listOf(published, offline.copy(available = true, servers = published.servers)) },
                     loggedIn = loggedIn,
                     onLogin = {
                         login++
@@ -284,18 +292,18 @@ class GameplayHallUiTest {
 
     @Test
     fun directoryFailureAndEmptyDirectoryNeverInventOnlineOrClassicGames() = runDesktopComposeUiTest(width = 1280, height = 720) {
-        var fail by mutableStateOf(true)
-        show(load = { if (fail) error("unavailable") else emptyList() })
-        onNodeWithTag("hall-directory-status").assertTextContains("暂时无法获取网游目录", substring = true)
+        var attempts = 0
+        show(load = { if (++attempts <= 2) error("unavailable") else emptyList() })
+        onNodeWithTag("hall-directory-status").assertTextContains("加载失败，正在自动重试", substring = true)
+        onNodeWithTag("hall-refresh").assertDoesNotExist()
         onNodeWithTag("hall-details").assertDoesNotExist()
         onNodeWithTag("hall-card-game-$gameId").assertDoesNotExist()
         onNodeWithTag("hall-card-royale").assertDoesNotExist()
         onNodeWithTag("hall-card-multiplayer").assertDoesNotExist()
         save("directory-failure-desktop.png")
 
-        runOnIdle { fail = false }
-        onNodeWithTag("hall-refresh").performClick()
-        waitUntil(timeoutMillis = 3_000) {
+        mainClock.advanceTimeBy(3_500)
+        waitUntil(timeoutMillis = 5_000) {
             onAllNodesWithText("暂无已上架网游").fetchSemanticsNodes().isNotEmpty()
         }
         onNodeWithTag("hall-directory-status").assertTextContains("暂无已上架网游", substring = true)
@@ -307,10 +315,87 @@ class GameplayHallUiTest {
     @Test
     fun missingPortalKeepsPublicCardButCannotOpenNativeServerSelection() = runDesktopComposeUiTest(width = 960, height = 640) {
         var destination: LauncherPage? = null
-        show(load = { listOf(published, offline.copy(portalUrl = "", portalRevision = 0)) }, onOpen = { destination = it })
-        onNodeWithTag("hall-card-game-$otherId").assertIsDisplayed().assertIsEnabled().performClick()
-        onNodeWithTag("hall-description").assertTextEquals(offline.description)
-        onNodeWithTag("hall-open").assertIsNotEnabled()
+        show(load = { listOf(published.copy(portalUrl = "", portalRevision = 0)) }, onOpen = { destination = it })
+        onNodeWithTag("hall-card-game-$gameId").assertIsDisplayed().assertIsSelected()
+        onNodeWithTag("hall-developer-test").assertDoesNotExist()
+        onNodeWithTag("hall-open").assertTextContains("维护中").assertIsEnabled().performClick()
+        onNodeWithText("维护中，暂不可进入").assertIsDisplayed()
+        onNodeWithText("开发者测试").assertDoesNotExist()
+        onNodeWithText("知道了").performClick()
+        onNodeWithTag("hall-description").assertTextEquals(published.description)
+        runOnIdle { assertNull(destination) }
+    }
+
+    @Test
+    fun requiresLoginAndValidPasswordForDeveloperTesting() = runDesktopComposeUiTest(width = 960, height = 640) {
+        var destination: LauncherPage? = null
+        var loggedIn by mutableStateOf(false)
+        val locked = offline.copy(testPasswordSet = true)
+        val grant = GameTestAccess("test-session", Long.MAX_VALUE)
+        setContent {
+            UiMotionTheme(darkColorScheme(), Typography()) {
+                GameplayHallView(
+                    onExit = {},
+                    onOpenPage = { destination = it },
+                    loadGames = { listOf(published, locked) },
+                    loggedIn = loggedIn,
+                    onLogin = { UI.showAccountView = true },
+                    verifyTestAccess = { appId, password ->
+                        assertEquals(otherId, appId)
+                        if (password != "development") throw GamePortalException("invalid_test_password")
+                        grant
+                    },
+                )
+            }
+        }
+        onNodeWithTag("hall-developer-test").assertDoesNotExist()
+        onNodeWithTag("hall-card-game-$otherId").performClick()
+        onNodeWithTag("hall-open").assertTextContains("维护中")
+        save("developer-test-entry.png")
+        onNodeWithTag("hall-developer-test").assertTextContains("开发者测试").assertIsDisplayed().performClick()
+        onNodeWithTag("hall-test-password").assertDoesNotExist()
+        runOnIdle {
+            assertTrue(UI.showAccountView)
+            assertNull(destination)
+            loggedIn = true
+        }
+        onNodeWithTag("hall-test-password").assertIsDisplayed()
+        save("developer-test-password.png", "hall-test-password")
+        onNodeWithTag("hall-test-password").performTextInput("wrong")
+        onNodeWithText("进入测试").performClick()
+        onNodeWithText("测试密码错误，请重新输入。").assertIsDisplayed()
+        runOnIdle { assertNull(destination) }
+        onNodeWithTag("hall-test-password").performTextReplacement("development")
+        onNodeWithText("进入测试").performClick()
+        runOnIdle { assertEquals(LauncherPage.GamePortal(otherId, grant), destination) }
+    }
+
+    @Test
+    fun dismissingPendingVerificationKeepsThePlayerInTheHall() = runDesktopComposeUiTest(width = 960, height = 640) {
+        val verification = CompletableDeferred<GameTestAccess>()
+        var verifying = false
+        var destination: LauncherPage? = null
+        setContent {
+            UiMotionTheme(darkColorScheme(), Typography()) {
+                GameplayHallView(
+                    onExit = {},
+                    onOpenPage = { destination = it },
+                    loadGames = { listOf(offline.copy(testPasswordSet = true)) },
+                    loggedIn = true,
+                    verifyTestAccess = { _, _ ->
+                        verifying = true
+                        verification.await()
+                    },
+                )
+            }
+        }
+        onNodeWithTag("hall-developer-test").assertIsDisplayed().performClick()
+        onNodeWithTag("hall-test-password").performTextInput("development")
+        onNodeWithText("进入测试").performClick()
+        waitUntil { verifying }
+        onNodeWithText("取消").performClick()
+        runOnIdle { verification.complete(GameTestAccess("late-response", Long.MAX_VALUE)) }
+        onNodeWithTag("hall-test-password").assertDoesNotExist()
         runOnIdle { assertNull(destination) }
     }
 
@@ -449,7 +534,7 @@ class GameplayHallUiTest {
         runOnIdle { navigateTo(LauncherPage.GameplayHall) }
         waitUntil(timeoutMillis = 5_000) { loads == 3 }
         waitForIdle()
-        onNodeWithTag("hall-directory-status").assertTextContains("暂时无法获取网游目录", substring = true)
+        onNodeWithTag("hall-directory-status").assertTextContains("加载失败，正在自动重试", substring = true)
         onNodeWithTag("hall-card-game-$gameId").assertDoesNotExist()
 
         // 失败后缓存必须同步清空，再次进入时不得回放过期网游。
@@ -558,9 +643,9 @@ class GameplayHallUiTest {
         runOnIdle { fail = true }
         onNodeWithTag("hall-refresh").performClick()
         onNodeWithTag("hall-details").assertDoesNotExist()
-        onNodeWithTag("hall-directory-status").assertTextContains("暂时无法获取网游目录", substring = true)
+        onNodeWithTag("hall-directory-status").assertTextContains("加载失败，正在自动重试", substring = true)
         runOnIdle { fail = false }
-        onNodeWithTag("hall-refresh").performClick()
+        mainClock.advanceTimeBy(1_500)
         onNodeWithTag("hall-card-game-$otherId").assertIsSelected()
         onNodeWithTag("hall-description").assertTextEquals(updated.description)
 
