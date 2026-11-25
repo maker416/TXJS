@@ -611,8 +611,8 @@ class BundleParseTest {
             val hostDialog = assertNotNull(multiplayer["hostDialog"] as? TomlTable, "$name: missing multiplayer.hostDialog")
             listOf(
                 "badge", "subtitle",
-                "protocolBadgeT", "protocolBadgeQ", "protocolBadgeR",
-                "protocolFormatT", "protocolFormatQ", "protocolFormatR",
+                "protocolBadgeQ", "protocolBadgeR",
+                "protocolFormatQ", "protocolFormatR",
                 "protocolHintT", "protocolHintQ", "protocolHintR",
                 "roomIdLabel", "roomIdPlaceholder", "roomIdAutoHint",
                 "sectionMods", "modsReadyCount", "modsNoneEnabled", "modsNetworkOnly", "modsHintOff",

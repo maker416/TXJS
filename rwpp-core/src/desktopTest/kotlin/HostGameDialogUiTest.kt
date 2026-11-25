@@ -26,7 +26,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -34,6 +36,7 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
@@ -125,6 +128,9 @@ class HostGameDialogUiTest {
 
             // 默认选中 Q 房间，输入房间号和 4 项规则参数
             onNodeWithTag("host-configure-stage").assertIsDisplayed()
+            onNodeWithText("暂未开放，开发中", useUnmergedTree = true).assertIsDisplayed()
+            onNodeWithTag("host-protocol-t").assertIsNotEnabled().performTouchInput { click() }
+            runOnIdle { assertEquals(HostCommandPrefix.Q, form.prefix) }
             onNodeWithTag("host-field-room-id").performTextInput("55201abc")
             onNodeWithTag("host-field-max-player").performTextInput("250")
             onNodeWithTag("host-field-unit-limit").performTextInput("1500")
@@ -145,37 +151,20 @@ class HostGameDialogUiTest {
             assertEquals("", form.roomId)
             onNodeWithTag("host-room-id-auto").assertIsDisplayed()
 
-            // 切到 T 房间并重新输入房号，关闭模组时因有已启用模组须先进入原版清模组确认
-            onNodeWithTag("host-protocol-t").performClick()
+            // 切回 Q 房间，重新输入房号并提交保留的规则参数
+            onNodeWithTag("host-protocol-q").performClick()
             waitForIdle()
             onNodeWithTag("host-field-room-id").performTextInput("7788")
             onNodeWithTag("host-submit-button").performClick()
             waitForIdle()
 
-            assertEquals(HostDialogStage.VanillaClearModsConfirm, stage)
-            assertNull(submission)
-            onNodeWithTag("host-vanilla-clear-confirm-stage").assertIsDisplayed()
-
-            // 取消返回配置页，保留已填写参数
-            onNodeWithTag("host-notice-cancel").performClick()
-            waitForIdle()
             assertEquals(HostDialogStage.Configure, stage)
-            assertEquals("7788", form.roomId)
-
-            // 再次点击创建并确认清空模组开房
-            onNodeWithTag("host-submit-button").performClick()
-            waitForIdle()
-            onNodeWithTag("host-notice-confirm").performClick()
-            waitForIdle()
-
             val submitted = assertNotNull(submission)
-            assertEquals("t.mxy.wang/C7788P100U1500C8000Z2", buildQuickHostCommand(submitted.options))
+            assertEquals("QC7788P100U1500C8000Z2", buildQuickHostCommand(submitted.options))
             assertFalse(submitted.enableMods)
             assertFalse(submitted.transferMod)
 
             // 恢复默认按钮一键清空所有自定义参数
-            stage = HostDialogStage.Configure
-            waitForIdle()
             onNodeWithTag("host-reset-params").performClick()
             waitForIdle()
             assertEquals("", form.roomId)
@@ -326,7 +315,7 @@ class HostGameDialogUiTest {
     fun landscapeCompactViewportKeepsFooterSubmitAndCloseAlwaysReachable() =
         runDesktopComposeUiTest(width = 740, height = 360) {
             settings.setUiAnimationsEnabled(false)
-            var form by mutableStateOf(HostGameFormState(prefix = HostCommandPrefix.T))
+            var form by mutableStateOf(HostGameFormState())
             var submitted = 0
             var closed = 0
 

@@ -849,7 +849,7 @@ private fun HostProtocolModeChip(
     palette: HostDialogPalette,
 ) {
     val label = protocolTitle(prefix)
-    val format = protocolFormat(prefix)
+    val subtitle = protocolSubtitle(prefix, compactWidth = false)
     Surface(
         shape = CircleShape,
         color = palette.panelSurface,
@@ -857,7 +857,7 @@ private fun HostProtocolModeChip(
     ) {
         if (animated) {
             AnimatedContent(
-                targetState = "$label · $format",
+                targetState = "$label · $subtitle",
                 transitionSpec = {
                     fadeIn(tween(150, easing = StandardDecelerateEasing)) togetherWith
                         fadeOut(tween(90, easing = FastOutSlowInEasing))
@@ -878,7 +878,7 @@ private fun HostProtocolModeChip(
             }
         } else {
             Text(
-                text = "$label · $format",
+                text = "$label · $subtitle",
                 style = MaterialTheme.typography.labelSmall.copy(
                     fontWeight = FontWeight.Medium,
                     fontSize = 11.sp,
@@ -1022,7 +1022,7 @@ private fun HostProtocolSection(
             onRoomIdChange = onRoomIdChange,
         )
 
-        // 随协议平滑淡换的说明条（完整保留官方公益 T 房与手动公开到列表提示）
+        // 随协议平滑淡换的说明条
         Surface(
             shape = RoundedCornerShape(11.dp),
             color = if (prefix == HostCommandPrefix.T) {
@@ -1092,6 +1092,7 @@ private fun HostProtocolSegmentItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val enabled = prefix != HostCommandPrefix.T
     val interactionSource = remember { MutableInteractionSource() }
     val hovered by interactionSource.collectIsHoveredAsState()
     val hoverBg by animateUiColorAsState(
@@ -1139,9 +1140,10 @@ private fun HostProtocolSegmentItem(
         modifier = modifier
             .clip(shape)
             .background(hoverBg, shape)
-            .hoverable(interactionSource)
+            .hoverable(interactionSource, enabled = enabled)
             .selectable(
                 selected = selected,
+                enabled = enabled,
                 interactionSource = interactionSource,
                 indication = null,
                 role = Role.RadioButton,
@@ -1182,36 +1184,15 @@ private fun HostProtocolSegmentItem(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            if (!compactWidth && prefix == HostCommandPrefix.T) {
-                Surface(
-                    shape = CircleShape,
-                    color = if (selected) {
-                        palette.primary.copy(alpha = if (palette.isDark) 0.22f else 0.16f)
-                    } else {
-                        palette.secondary.copy(alpha = if (palette.isDark) 0.14f else 0.12f)
-                    },
-                ) {
-                    Text(
-                        text = protocolBadge(prefix),
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        ),
-                        color = if (selected) palette.primary else palette.secondary,
-                        maxLines = 1,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
-                    )
-                }
-            }
         }
         Text(
-            text = if (compactWidth) protocolBadge(prefix) else protocolFormat(prefix),
+            text = protocolSubtitle(prefix, compactWidth),
             style = MaterialTheme.typography.labelSmall.copy(
                 fontSize = 11.sp,
                 fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
             ),
             color = subColor,
-            maxLines = 1,
+            maxLines = if (enabled) 1 else 2,
             overflow = TextOverflow.Ellipsis,
         )
     }
@@ -2507,16 +2488,14 @@ private fun protocolTitle(prefix: HostCommandPrefix): String = when (prefix) {
     HostCommandPrefix.R -> readI18n("multiplayer.hostPrefixR")
 }
 
-private fun protocolBadge(prefix: HostCommandPrefix): String = when (prefix) {
-    HostCommandPrefix.T -> readI18n("multiplayer.hostDialog.protocolBadgeT")
-    HostCommandPrefix.Q -> readI18n("multiplayer.hostDialog.protocolBadgeQ")
-    HostCommandPrefix.R -> readI18n("multiplayer.hostDialog.protocolBadgeR")
-}
-
-private fun protocolFormat(prefix: HostCommandPrefix): String = when (prefix) {
-    HostCommandPrefix.T -> readI18n("multiplayer.hostDialog.protocolFormatT")
-    HostCommandPrefix.Q -> readI18n("multiplayer.hostDialog.protocolFormatQ")
-    HostCommandPrefix.R -> readI18n("multiplayer.hostDialog.protocolFormatR")
+private fun protocolSubtitle(prefix: HostCommandPrefix, compactWidth: Boolean): String = when (prefix) {
+    HostCommandPrefix.T -> protocolHint(prefix)
+    HostCommandPrefix.Q -> readI18n(
+        if (compactWidth) "multiplayer.hostDialog.protocolBadgeQ" else "multiplayer.hostDialog.protocolFormatQ",
+    )
+    HostCommandPrefix.R -> readI18n(
+        if (compactWidth) "multiplayer.hostDialog.protocolBadgeR" else "multiplayer.hostDialog.protocolFormatR",
+    )
 }
 
 private val trailingCodeSuffixRegex = Regex("""\s*\([A-Za-z]\)$""")
