@@ -33,7 +33,11 @@ import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import javax.swing.JDialog
 
-val LocalDesktopBrowserPageOwner = staticCompositionLocalOf<ComposeDialog?> { null }
+/**
+ * 承载内置浏览器的宿主菜单窗口。透明/分层的菜单窗口不能接收 JCEF 子窗口的鼠标输入，
+ * 因此只要存在宿主，网页一律放进独立的不透明子窗口（见 [BrowserPageWindow]）。
+ */
+val LocalDesktopBrowserPageOwner = staticCompositionLocalOf<JDialog?> { null }
 
 @Composable
 actual fun ResourceBrowserLayout(

@@ -28,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
@@ -118,11 +119,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.logging.Level
 import java.util.logging.Logger
 import javax.imageio.ImageIO
+import javax.swing.JDialog
 import javax.swing.JFrame
 import javax.swing.JOptionPane
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
+import io.github.rwpp.platform.LocalDesktopBrowserPageOwner
 import io.github.rwpp.projectVersion
 
 
@@ -391,6 +394,9 @@ fun swingApplication() = SwingUtilities.invokeLater {
         }
     }
 
+    // 软件渲染会回退到透明 Swing 菜单窗口，其中的 JCEF 子窗口收不到鼠标输入；
+    // 把菜单宿主窗口交给网页页，沿用原生透明菜单的独立不透明子窗口方案。
+    val browserPageOwner = mutableStateOf<JDialog?>(null)
     val menuContent: @Composable () -> Unit = {
         if (!isLoading && !menuInputReady) {
             DesktopMenuInputWarmup(
@@ -466,9 +472,11 @@ fun swingApplication() = SwingUtilities.invokeLater {
                     )
                 }
 
-                App(isPremium = isPremium) { path ->
-                    backgroundImagePath = path
-                    backgroundImageEnabled = settings.backgroundImageEnabled
+                CompositionLocalProvider(LocalDesktopBrowserPageOwner provides browserPageOwner.value) {
+                    App(isPremium = isPremium) { path ->
+                        backgroundImagePath = path
+                        backgroundImageEnabled = settings.backgroundImageEnabled
+                    }
                 }
 
             }
@@ -546,6 +554,7 @@ fun swingApplication() = SwingUtilities.invokeLater {
         launcherOverlay = DesktopLauncherOverlay(
             panel, displayHost, window, initiallyVisible = false,
             nativeContent = menuContent.takeUnless { startupSettings.renderingBackend.equals("Software", ignoreCase = true) },
+            onHostWindowChanged = { browserPageOwner.value = it },
         ) { visible ->
             DesktopMenuBackgroundEngine.request(menuBackgroundEnabled && visible)
         }

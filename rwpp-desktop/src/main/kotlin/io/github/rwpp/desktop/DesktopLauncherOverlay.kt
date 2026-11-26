@@ -55,6 +55,8 @@ class DesktopLauncherOverlay(
     private val nativeWindowFactory: (Window) -> ComposeDialog = { owner ->
         ComposeDialog(owner, Dialog.ModalityType.MODELESS, owner.graphicsConfiguration)
     },
+    /** 菜单窗口变化（原生透明窗口、Swing 回退窗口或销毁）时通知宿主，用于给内置浏览器选独立窗口。 */
+    private val onHostWindowChanged: (JDialog?) -> Unit = {},
     private val onVisibilityChanged: (Boolean) -> Unit = {},
 ) {
     private val log = LoggerFactory.getLogger(DesktopLauncherOverlay::class.java)
@@ -139,6 +141,7 @@ class DesktopLauncherOverlay(
         window.addWindowFocusListener(windowListener)
         window.addPropertyChangeListener("graphicsConfiguration", graphicsConfigurationListener)
         overlay.addWindowListener(overlayListener)
+        onHostWindowChanged(overlay)
         scheduleUpdate()
     }
 
@@ -341,6 +344,7 @@ class DesktopLauncherOverlay(
             overlay = dialog
             nativeLayer = layer
             dialog.addWindowListener(overlayListener)
+            onHostWindowChanged(dialog)
             log.info("[UI] Launcher menu uses native transparent Direct3D rendering")
         } catch (failure: Exception) {
             candidate?.dispose()
@@ -361,6 +365,7 @@ class DesktopLauncherOverlay(
         nativeLayer = null
         overlay = createSwingOverlay()
         overlay.addWindowListener(overlayListener)
+        onHostWindowChanged(overlay)
         update(forcePaint = true)
     }
 
@@ -385,6 +390,7 @@ class DesktopLauncherOverlay(
         window.removePropertyChangeListener("graphicsConfiguration", graphicsConfigurationListener)
         overlay.removeWindowListener(overlayListener)
         overlay.dispose()
+        onHostWindowChanged(null)
         publishedVisible = false
         onVisibilityChanged(false)
     }
